@@ -1,0 +1,8 @@
+config.json
+prefs.json
+profiles.json
+library-cache.json
+downloads/
+hls/
+.DS_Store
+node_modules/

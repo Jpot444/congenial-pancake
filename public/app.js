@@ -1,0 +1,3286 @@
+/* IPTV Portal — front end.
+ *
+ * Everything talks to the local server, never to the provider directly:
+ *   /api/xtream   → provider API passthrough
+ *   /api/playlist → parsed M3U (M3U mode)
+ *   /api/play     → resolves a proxied, playable stream URL
+ */
+
+const PAGE_SIZE = 60;
+
+const $ = (sel) => document.querySelector(sel);
+
+/* Titles and SSIDs come from the provider and the network, not from us, so
+   anything interpolated into markup gets escaped on the way in. */
+const escapeHtml = (s) =>
+  String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+  );
+
+const el = (tag, cls) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  return n;
+};
+
+const state = {
+  config: null,
+  tab: 'live',
+  category: null,
+  query: '',
+  catQuery: '',
+  /** Per-tab cache: { categories: [], items: [] } */
+  library: { live: null, movies: null, series: null },
+  visible: PAGE_SIZE,
+  filtered: [],
+  downloads: { items: [], active: null, queued: 0 },
+  recentlyWatched: [],
+};
+
+/* ------------------------------------------------------- prefs (server) */
+
+/**
+ * Pins and favorites are held on the server so they're the same on the
+ * laptop, the iPad and the phone. Kept in memory and pushed on change.
+ */
+const prefs = {
+  data: {
+    pinnedCategories: [],
+    favorites: [],
+    liveLatency: 'balanced',
+    filtersEnabled: true,
+    filters: {},
+  },
+
+  async load() {
+    try {
+      this.data = await api('/api/prefs');
+    } catch {
+      /* fall back to the empty defaults */
+    }
+  },
+
+  async save() {
+    try {
+      await fetch('/api/prefs', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(this.data),
+      });
+    } catch {
+      toast('Could not save preferences to the server.');
+    }
+  },
+
+};
+
+/* -------------------------------------------------------------- profiles
+
+ * Personas, in the Netflix sense. Favorites, pinned categories, watch history
+ * and ratings all hang off whichever profile is active. Which profile this
+ * device last used is remembered locally; everything else lives on the server
+ * so a profile is the same on the laptop, the iPad and the phone.
+ */
+
+const AVATARS = ['🎬', '🍿', '📺', '🎥', '🐂', '🌾', '⭐', '🎯', '🃏', '🚀', '🎸', '🏈'];
+const SWATCHES = ['#A21F24', '#6E1418', '#2F5D50', '#2B4C7E', '#7A4E1D', '#4A3A63'];
+
+const profiles = {
+  all: [],
+  current: null,
+  data: { favorites: [], pinnedCategories: [] },
+
+  async load() {
+    const res = await api('/api/profiles');
+    this.all = res.profiles || [];
+    const lastId = localStorage.getItem('portal.profile');
+    const match = this.all.find((p) => p.id === lastId);
+    if (match) await this.select(match, { silent: true });
+  },
+
+  async select(profile, { silent = false } = {}) {
+    this.current = profile;
+    localStorage.setItem('portal.profile', profile.id);
+    this.data = await api(`/api/profiles/${profile.id}/prefs`);
+    $('#chipAvatar').textContent = profile.emoji;
+    $('#chipAvatar').style.background = profile.color;
+    $('#chipName').textContent = profile.name;
+    $('#profileChip').hidden = false;
+    if (!silent) toast(`Watching as ${profile.name}.`);
+  },
+
+  /** Recently watched, which fills the For You shelf. */
+  async loadTaste() {
+    if (!this.current) return;
+    try {
+      const taste = await api(`/api/profiles/${this.current.id}/taste`);
+      state.recentlyWatched = taste.recentlyWatched || [];
+    } catch {
+      state.recentlyWatched = [];
+    }
+  },
+
+  async save() {
+    if (!this.current) return;
+    try {
+      await fetch(`/api/profiles/${this.current.id}/prefs`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(this.data),
+      });
+    } catch {
+      toast('Could not save to this profile.');
+    }
+  },
+
+  /* -- pinned categories -- */
+  pinKey(tab, id) {
+    return `${tab}:${id}`;
+  },
+  isPinned(tab, id) {
+    return (this.data.pinnedCategories || []).includes(this.pinKey(tab, id));
+  },
+  togglePin(tab, id) {
+    const key = this.pinKey(tab, id);
+    const list = (this.data.pinnedCategories ||= []);
+    const at = list.indexOf(key);
+    if (at >= 0) list.splice(at, 1);
+    else list.unshift(key);
+    this.save();
+    return at < 0;
+  },
+
+  /* -- favorites -- */
+  favKey(item) {
+    return `${item.kind}:${item.id}`;
+  },
+  hasFav(item) {
+    return (this.data.favorites || []).some((f) => f.key === this.favKey(item));
+  },
+  toggleFav(item) {
+    const key = this.favKey(item);
+    const list = (this.data.favorites ||= []);
+    const at = list.findIndex((f) => f.key === key);
+    if (at >= 0) list.splice(at, 1);
+    else list.unshift({ key, item });
+    this.data.favorites = list.slice(0, 500);
+    this.save();
+    return at < 0;
+  },
+  favItems() {
+    return (this.data.favorites || []).map((f) => f.item);
+  },
+};
+
+/* --------------------------------------------------------------- helpers */
+
+async function api(path, params) {
+  const url = new URL(path, location.origin);
+  for (const [k, v] of Object.entries(params || {})) {
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
+  }
+  const res = await fetch(url);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+const img = (src) => (src ? `/img?u=${encodeURIComponent(src)}` : '');
+
+/* ------------------------------------------------------------ touch mode
+
+ * Kept per-device in localStorage rather than in the profile: the same profile
+ * is used from a phone and a laptop, and only one of them wants fat controls.
+ */
+
+const touchMode = {
+  on: false,
+
+  init() {
+    const saved = localStorage.getItem('portal.touch');
+    // No stored choice? Take the hint from the hardware — a coarse pointer
+    // means a finger, which is every iPhone and iPad.
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches;
+    this.apply(saved === null ? Boolean(coarse) : saved === '1', { silent: true });
+  },
+
+  apply(on, { silent = false } = {}) {
+    this.on = on;
+    document.documentElement.classList.toggle('touch', on);
+    const btn = $('#touchToggle');
+    btn.classList.toggle('is-on', on);
+    btn.setAttribute('aria-pressed', String(on));
+    if (!silent) toast(on ? 'Touch mode on — larger controls.' : 'Touch mode off.');
+  },
+
+  toggle() {
+    const next = !this.on;
+    localStorage.setItem('portal.touch', next ? '1' : '0');
+    this.apply(next);
+  },
+};
+
+$('#touchToggle').addEventListener('click', () => touchMode.toggle());
+
+/* ----------------------------------------------------------- pi health */
+
+/**
+ * A read-only look at the box. It exists because the portal ate itself once
+ * when the card filled up silently — storage is the headline, and the panel
+ * polls while open so the bar moves as downloads land and get deleted.
+ */
+const health = {
+  timer: null,
+  lastBad: false,
+
+  async open() {
+    $('#healthModal').hidden = false;
+    await this.refresh();
+    clearInterval(this.timer);
+    this.timer = setInterval(() => this.refresh(), 4000);
+  },
+
+  close() {
+    $('#healthModal').hidden = true;
+    clearInterval(this.timer);
+    this.timer = null;
+  },
+
+  async refresh() {
+    let data;
+    try {
+      const res = await fetch('/api/health', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      data = await res.json();
+    } catch (err) {
+      $('#healthBody').innerHTML =
+        `<p class="health-note">Can't reach the server — ${escapeHtml(err.message)}</p>`;
+      $('#healthLive').classList.remove('is-beating');
+      return;
+    }
+    $('#healthBody').innerHTML = this.render(data);
+    const live = $('#healthLive');
+    live.classList.add('is-beating');
+    // A one-frame flicker each poll, so it's obvious the numbers are current.
+    setTimeout(() => live.classList.remove('is-beating'), 600);
+    this.markBadge(data);
+  },
+
+  /** Surface trouble on the header button so it's seen without opening. */
+  markBadge(data) {
+    const dot = $('#healthDot');
+    const bad = data.disk.low || data.network.level === 'poor' || (data.power && !data.power.ok);
+    const warn = data.network.level === 'fair' || (data.cpu.tempC || 0) >= 70 ||
+      (data.disk.total && data.disk.free / data.disk.total < 0.1);
+    dot.hidden = !(bad || warn);
+    dot.classList.toggle('warn', !bad && warn);
+  },
+
+  render(d) {
+    const rows = [];
+
+    /* ---- storage: the reason this panel exists ---- */
+    if (d.disk.free != null) {
+      const total = d.disk.total || 0;
+      const usedPct = total ? Math.min(100, ((total - d.disk.free) / total) * 100) : 0;
+      const tone = d.disk.low ? 'bad' : d.disk.free < d.disk.reserve * 3 ? 'warn' : 'ok';
+      rows.push(row('Storage', {
+        value: `${gb(d.disk.free)} free`,
+        sub: total ? `${gb(total - d.disk.free)} used of ${gb(total)}` : '',
+        pill: [tone, tone === 'ok' ? 'Healthy' : tone === 'warn' ? 'Getting full' : 'Full'],
+        bar: [tone, usedPct],
+      }));
+    }
+
+    /* ---- network strength ---- */
+    const n = d.network;
+    if (n.kind === 'wifi') {
+      const tone = n.level === 'good' ? 'ok' : n.level === 'fair' ? 'warn' : 'bad';
+      const bits = [`${n.dbm} dBm`];
+      if (n.bitrateMbps) bits.push(`${n.bitrateMbps} Mbit/s link`);
+      rows.push(row('Wi-Fi', {
+        value: n.ssid || n.iface,
+        sub: bits.join(' · '),
+        pill: [tone, n.level === 'good' ? 'Strong' : n.level === 'fair' ? 'Fair' : 'Weak'],
+      }));
+    } else {
+      rows.push(row('Network', { value: 'Wired', sub: 'Ethernet — no signal to worry about', pill: ['ok', 'Strong'] }));
+    }
+
+    /* ---- provider throughput: what actually decides if a stream plays ---- */
+    const p = d.provider;
+    if (p.bytesPerSec != null) {
+      const ratio = p.bytesPerSec / p.needBytesPerSec;
+      const tone = ratio >= 1.6 ? 'ok' : ratio >= 1.05 ? 'warn' : 'bad';
+      rows.push(row('Provider', {
+        value: `${(p.bytesPerSec / 1048576).toFixed(2)} MB/s`,
+        sub: `${ratio.toFixed(1)}× what a 1080p stream needs`,
+        pill: [tone, tone === 'ok' ? 'Comfortable' : tone === 'warn' ? 'Marginal' : 'Too slow'],
+      }));
+    } else {
+      rows.push(row('Provider', {
+        value: p.streaming ? 'Streaming' : 'Idle',
+        sub: p.streaming ? 'Measuring…' : 'Speed shows while something is playing or downloading',
+        pill: [p.streaming ? 'ok' : 'neutral', p.streaming ? 'Active' : 'Idle'],
+      }));
+    }
+
+    /* ---- the Pi itself ---- */
+    if (d.cpu.tempC != null) {
+      const t = d.cpu.tempC;
+      const tone = t < 65 ? 'ok' : t < 78 ? 'warn' : 'bad';
+      rows.push(row('CPU', {
+        value: `${t.toFixed(0)}°C`,
+        sub: `load ${d.cpu.load1.toFixed(2)} across ${d.cpu.cores} core${d.cpu.cores === 1 ? '' : 's'}`,
+        pill: [tone, tone === 'ok' ? 'Cool' : tone === 'warn' ? 'Warm' : 'Hot'],
+      }));
+    } else {
+      rows.push(row('CPU', {
+        value: `load ${d.cpu.load1.toFixed(2)}`,
+        sub: `${d.cpu.cores} core${d.cpu.cores === 1 ? '' : 's'}`,
+      }));
+    }
+
+    const m = d.memory;
+    const memPct = m.total ? (m.used / m.total) * 100 : 0;
+    rows.push(row('Memory', {
+      value: `${gb(m.available)} free`,
+      sub: `${memPct.toFixed(0)}% of ${gb(m.total)} in use`,
+      pill: memPct > 92 ? ['bad', 'Tight'] : memPct > 80 ? ['warn', 'Busy'] : ['ok', 'Fine'],
+    }));
+
+    /* ---- downloads ---- */
+    const dl = d.downloads;
+    const parts = [`${dl.stored} stored`];
+    if (dl.queued) parts.push(`${dl.queued} queued`);
+    if (dl.failed) parts.push(`${dl.failed} failed`);
+    rows.push(row('Downloads', {
+      value: dl.active ? dl.active.name : parts.join(' · '),
+      sub: dl.active && dl.active.total
+        ? `${((dl.active.bytes / dl.active.total) * 100).toFixed(0)}% — ${parts.join(' · ')}`
+        : (dl.active ? parts.join(' · ') : ''),
+      pill: dl.active ? ['ok', 'Downloading'] : null,
+    }));
+
+    rows.push(row('Uptime', {
+      value: duration(d.uptime.host),
+      sub: `portal running ${duration(d.uptime.server)}`,
+    }));
+
+    /* ---- power: reads like a network fault, isn't one ---- */
+    let note = '';
+    if (d.power && !d.power.ok) {
+      note = `<p class="health-note"><strong>Power warning:</strong> ${escapeHtml(d.power.flags.join(', '))}. ` +
+        `An under-powered supply causes stalls and I/O errors that look exactly like a bad connection.</p>`;
+    } else if (d.disk.low) {
+      note = `<p class="health-note"><strong>Disk is critically low.</strong> ` +
+        `New downloads will be refused until you free space — that guard is what stops a full card ` +
+        `corrupting your profile and download list.</p>`;
+    }
+
+    return rows.join('') + note;
+
+    function row(key, { value, sub = '', pill = null, bar = null }) {
+      const pillHtml = pill && pill[0] !== 'neutral'
+        ? `<span class="health-pill ${pill[0]}">${escapeHtml(pill[1])}</span>`
+        : pill ? `<span class="health-pill">${escapeHtml(pill[1])}</span>` : '<span></span>';
+      const barHtml = bar
+        ? `<div class="health-bar ${bar[0]}"><i style="width:${bar[1].toFixed(1)}%"></i></div>`
+        : '';
+      return `<div class="health-row">
+        <span class="health-key">${escapeHtml(key)}</span>
+        <span class="health-val">${escapeHtml(String(value))}${sub ? `<span class="health-sub">${escapeHtml(sub)}</span>` : ''}</span>
+        ${pillHtml}
+        ${barHtml}
+      </div>`;
+    }
+
+    function gb(bytes) {
+      if (bytes == null) return '—';
+      if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`;
+      return `${Math.round(bytes / 1048576)} MB`;
+    }
+
+    function duration(secs) {
+      const d2 = Math.floor(secs / 86400);
+      const h = Math.floor((secs % 86400) / 3600);
+      const mi = Math.floor((secs % 3600) / 60);
+      if (d2) return `${d2}d ${h}h`;
+      if (h) return `${h}h ${mi}m`;
+      return `${mi}m`;
+    }
+  },
+};
+
+/* Quietly check every minute so a filling disk shows up as a dot on the
+   button before it becomes the reason a download failed. */
+async function watchHealthBadge() {
+  try {
+    const res = await fetch('/api/health', { cache: 'no-store' });
+    if (res.ok) health.markBadge(await res.json());
+  } catch {
+    /* offline — the panel says so if opened */
+  }
+}
+watchHealthBadge();
+setInterval(watchHealthBadge, 60000);
+
+$('#healthBtn').addEventListener('click', () => health.open());
+$('#healthClose').addEventListener('click', () => health.close());
+$('#healthModal').addEventListener('click', (e) => {
+  if (e.target.id === 'healthModal') health.close();
+});
+
+/* ---------------------------------------------------------------- loader */
+
+const loader = {
+  show(label, detail = '') {
+    $('#loaderLabel').textContent = label;
+    $('#loaderDetail').textContent = detail;
+    this.set(0);
+    $('#loader').hidden = false;
+  },
+  set(fraction, detail) {
+    const pct = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+    $('#loaderFill').style.width = `${pct}%`;
+    $('#loaderPct').textContent = `${pct}%`;
+    if (detail !== undefined) $('#loaderDetail').textContent = detail;
+  },
+  label(text) {
+    $('#loaderLabel').textContent = text;
+  },
+  hide() {
+    $('#loader').hidden = true;
+  },
+};
+
+const mb = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`;
+
+/**
+ * Fetch JSON while reporting real transfer progress. Needs Content-Length,
+ * which the server now sets explicitly on every JSON response.
+ */
+async function fetchWithProgress(url, onProgress) {
+  const res = await fetch(url);
+  const total = Number(res.headers.get('content-length') || 0);
+
+  if (!res.body || !total) {
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+
+  const reader = res.body.getReader();
+  const chunks = [];
+  let received = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    onProgress?.(received / total, received, total);
+  }
+
+  const merged = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  const data = JSON.parse(new TextDecoder().decode(merged));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+function toast(message) {
+  const node = $('#toast');
+  node.textContent = message;
+  node.hidden = false;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => (node.hidden = true), 2600);
+}
+
+function clockFromTimestamp(ts) {
+  if (!ts) return '';
+  return new Date(Number(ts) * 1000).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+/* ----------------------------------------------------------------- setup */
+
+function showSetup() {
+  $('#setupView').hidden = false;
+  $('#siteHeader').hidden = true;
+  $('#appView').hidden = true;
+}
+
+document.querySelectorAll('.tab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((t) => t.classList.remove('is-active'));
+    tab.classList.add('is-active');
+    document.querySelectorAll('.mode-panel').forEach((p) => {
+      p.hidden = p.dataset.panel !== tab.dataset.mode;
+    });
+  });
+});
+
+$('#setupForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const mode = document.querySelector('.tab.is-active').dataset.mode;
+  const form = new FormData(event.target);
+  const button = $('#setupSubmit');
+  const error = $('#setupError');
+
+  error.hidden = true;
+  button.disabled = true;
+  button.textContent = 'Connecting…';
+
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        mode,
+        host: form.get('host'),
+        username: form.get('username'),
+        password: form.get('password'),
+        preferredFormat: form.get('preferredFormat'),
+        playlistUrl: form.get('playlistUrl'),
+        epgUrl: form.get('epgUrl'),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Connection failed.');
+
+    state.config = data;
+    if (data.userInfo && data.userInfo.exp_date) {
+      const expires = new Date(Number(data.userInfo.exp_date) * 1000);
+      toast(`Connected. Subscription runs to ${expires.toLocaleDateString()}.`);
+    } else {
+      toast('Connected.');
+    }
+    await startApp();
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Connect';
+  }
+});
+
+$('#settingsBtn').addEventListener('click', async () => {
+  if (!confirm('Disconnect this provider and return to setup?')) return;
+  await fetch('/api/config', { method: 'DELETE' });
+  state.library = { live: null, movies: null, series: null };
+  state.config = null;
+  showSetup();
+});
+
+/* ------------------------------------------------------- library loading */
+
+/** Build categories from M3U group-titles, since there's no category API. */
+function groupsToCategories(items) {
+  const counts = new Map();
+  for (const item of items) {
+    const g = item.group || 'Uncategorized';
+    counts.set(g, (counts.get(g) || 0) + 1);
+  }
+  return [...counts.keys()].sort().map((name) => ({ id: name, name }));
+}
+
+async function loadTab(tab) {
+  if (state.library[tab]) return state.library[tab];
+
+  if (state.config.mode === 'm3u') {
+    const buckets = await api('/api/playlist');
+    const bucketFor = { live: 'live', movies: 'movie', series: 'series' };
+    for (const [key, bucket] of Object.entries(bucketFor)) {
+      const items = (buckets[bucket] || []).map((row, i) => ({
+        kind: bucket,
+        id: row.id || `${bucket}-${i}`,
+        name: row.name,
+        logo: row.logo,
+        categoryId: row.group || 'Uncategorized',
+        group: row.group,
+        directUrl: row.streamUrl,
+        sourceUrl: row.url,
+      }));
+      state.library[key] = { categories: groupsToCategories(items), items };
+    }
+    return state.library[tab];
+  }
+
+  // The server filters and trims before sending, so this stays small even on
+  // a provider carrying six figures of titles.
+  const titles = { live: 'Live TV', movies: 'Movies', series: 'Series' };
+  loader.show(`Loading ${titles[tab] || tab}…`);
+
+  const data = await fetchWithProgress(`/api/library?tab=${encodeURIComponent(tab)}`, (f, got, total) =>
+    loader.set(f, `${mb(got)} of ${mb(total)}`)
+  );
+
+  loader.label('Building the library…');
+  loader.set(1, `${(data.items || []).length.toLocaleString()} titles`);
+
+  state.library[tab] = {
+    categories: data.categories || [],
+    items: (data.items || []).map((row) => ({ ...row, logo: img(row.logo) })),
+    totals: data.totals,
+  };
+  return state.library[tab];
+}
+
+/* ---------------------------------------------------------- movie rows ---
+
+ * The Movies page is built from named rows rather than one flat grid. Each row
+ * pulls from one or more of the provider's own categories — `match` is tested
+ * against the category name, so several map into a single shelf.
+ *
+ * Edit this list to change what appears and in what order.
+ */
+const MOVIE_ROWS = [
+  { title: 'For You', special: 'recent' },
+  { title: 'New Releases', match: [/^EN\s*-\s*NEW RELEASE/i], sort: 'added' },
+  { title: 'IMDB Top 250', match: [/^EN\s*-\s*IMDB TOP 250/i] },
+  { title: 'Action', match: [/^EN\s*-\s*ACTION/i, /^EN\s*-\s*ADVENTURE/i] },
+  { title: 'Comedy', match: [/^EN\s*-\s*COMEDY/i] },
+  { title: 'Horror', match: [/^EN\s*-\s*HORROR/i, /^EN\s*-\s*THRILLER/i] },
+  { title: 'Documentary', match: [/^EN\s*-\s*DOCUMENTAR/i] },
+  { title: 'Concerts', match: [/^EN\s*-\s*CONCERTS/i] },
+  { title: 'Christmas', match: [/^EN\s*-\s*CHRISTMAS/i] },
+  { title: 'Classic', match: [/^EN\s*-\s*2020 & OLD/i, /^EN\s*-\s*WESTERNS/i] },
+];
+
+/**
+ * Series shelves lean on two signals the provider gives us: category names
+ * for the platform rows (NETFLIX SERIES, HBO MAX…, matched at the start so
+ * foreign variants like "GERMANY NETFLIX" stay out) and per-title `genre`
+ * metadata for the genre rows, since the provider's own series categories
+ * carry no genre split at all.
+ */
+const SERIES_ROWS = [
+  { title: 'For You', special: 'recent' },
+  { title: 'New Releases', all: true, sort: 'added' },
+  { title: 'Netflix', match: [/^NETFLIX/i] },
+  { title: 'HBO Max', match: [/^HBO MAX/i] },
+  { title: 'Disney+', match: [/^DISNEY\+/i] },
+  { title: 'Apple TV+', match: [/^APPLE\+/i] },
+  { title: 'Prime Video', match: [/^AMAZON/i] },
+  { title: 'Comedy', genre: /Comedy/i },
+  { title: 'Drama', genre: /Drama/i },
+  { title: 'Crime', genre: /Crime|Mystery/i },
+  { title: 'Sci-Fi & Fantasy', genre: /Sci-?Fi|Fantasy/i },
+  { title: 'Documentary', genre: /Documentary/i, match: [/DOCU-SERIES/i] },
+  { title: 'Reality', genre: /Reality/i, match: [/REALITY/i] },
+  { title: 'Kids', genre: /Kids|Animation|Family/i, match: [/KIDS/i] },
+];
+
+const SHELF_DEFS = { movies: MOVIE_ROWS, series: SERIES_ROWS };
+
+/** Recently watched, resolved back to full library items so they can play. */
+function forYouItems(tab) {
+  const lib = state.library[tab];
+  if (!lib) return [];
+  const byId = new Map(lib.items.map((i) => [String(i.id), i]));
+  const seen = new Set();
+  const out = [];
+
+  for (const row of state.recentlyWatched || []) {
+    // Series history rows are per-episode; seriesId points at the show.
+    const wantKind = tab === 'series' ? 'series' : 'movie';
+    if (row.kind !== wantKind) continue;
+    const key = String(tab === 'series' ? row.seriesId ?? row.id : row.id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // Prefer the library record — it carries ext and artwork.
+    const item = byId.get(key);
+    if (item) out.push(item);
+  }
+  return out.slice(0, 24);
+}
+
+function buildShelves(tab) {
+  const lib = state.library[tab];
+  if (!lib) return [];
+
+  const rows = [];
+  for (const def of SHELF_DEFS[tab] || []) {
+    if (def.special === 'recent') {
+      const items = forYouItems(tab);
+      if (items.length) rows.push({ title: def.title, items });
+      continue;
+    }
+
+    const ids = new Set(
+      (def.match ? lib.categories.filter((c) => def.match.some((re) => re.test(c.name))) : [])
+        .map((c) => String(c.id))
+    );
+
+    let items = def.all
+      ? lib.items
+      : lib.items.filter(
+          (i) =>
+            ids.has(String(i.categoryId)) ||
+            (def.genre && def.genre.test(i.genre || ''))
+        );
+    if (def.sort === 'added') items = [...items].sort((a, b) => (b.added || 0) - (a.added || 0));
+    if (items.length) rows.push({ title: def.title, items });
+  }
+  return rows;
+}
+
+function renderRows() {
+  const grid = $('#grid');
+  grid.hidden = true;
+  $('#loadMore').hidden = true;
+  $('#emptyState').hidden = true;
+
+  const wrap = $('#rowsView');
+  wrap.hidden = false;
+  wrap.innerHTML = '';
+
+  const rows = buildShelves(state.tab);
+  if (!rows.length) {
+    wrap.hidden = true;
+    $('#emptyState').hidden = false;
+    $('#emptyState').textContent = 'No rows to show yet.';
+    return;
+  }
+
+  let total = 0;
+  const frag = document.createDocumentFragment();
+
+  for (const row of rows) {
+    total += row.items.length;
+    const section = el('section', 'shelf');
+
+    const head = el('div', 'shelf-head');
+    const title = el('h2', 'shelf-title');
+    title.textContent = row.title;
+    const count = el('span', 'shelf-count');
+    count.textContent = row.items.length.toLocaleString();
+    head.append(title, count);
+
+    const rail = el('div', 'rail');
+    const track = el('div', 'rail-track');
+    // Cap each shelf; the full category is still reachable through search.
+    for (const item of row.items.slice(0, 40)) {
+      const card = cardFor(item);
+      card.classList.add('rail-card');
+      track.append(card);
+    }
+
+    const prev = el('button', 'rail-nav prev');
+    prev.setAttribute('aria-label', `Scroll ${row.title} left`);
+    prev.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
+    const next = el('button', 'rail-nav next');
+    next.setAttribute('aria-label', `Scroll ${row.title} right`);
+    next.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>';
+
+    // Tween it by hand. `behavior: 'smooth'` is unreliable here — it silently
+    // does nothing in some engines — and the fixed floor covers a rail that
+    // reports no width because it hasn't been laid out yet.
+    const page = (dir) => {
+      const step = Math.max(track.clientWidth * 0.85, 400);
+      const from = track.scrollLeft;
+      const to = Math.max(0, Math.min(track.scrollWidth - track.clientWidth, from + dir * step));
+      if (to === from) return;
+
+      const start = performance.now();
+      const glide = (now) => {
+        const t = Math.min(1, (now - start) / 320);
+        const eased = 1 - (1 - t) * (1 - t); // ease-out
+        track.scrollLeft = from + (to - from) * eased;
+        if (t < 1) requestAnimationFrame(glide);
+      };
+      requestAnimationFrame(glide);
+    };
+    prev.addEventListener('click', () => page(-1));
+    next.addEventListener('click', () => page(1));
+
+    const syncNav = () => {
+      prev.classList.toggle('is-off', track.scrollLeft < 8);
+      next.classList.toggle(
+        'is-off',
+        track.scrollLeft + track.clientWidth >= track.scrollWidth - 8
+      );
+    };
+    track.addEventListener('scroll', syncNav, { passive: true });
+    requestAnimationFrame(syncNav);
+
+    rail.append(prev, track, next);
+    section.append(head, rail);
+    frag.append(section);
+  }
+
+  wrap.append(frag);
+  $('#contentMeta').textContent = `${rows.length} rows · ${total.toLocaleString()} titles`;
+}
+
+/* ------------------------------------------------------------- rendering */
+
+function renderCategories(categories, items) {
+  const list = $('#catList');
+  list.innerHTML = '';
+
+  const counts = new Map();
+  for (const item of items) {
+    counts.set(item.categoryId, (counts.get(item.categoryId) || 0) + 1);
+  }
+
+  const makeRow = (id, name, count, { pinnable = true } = {}) => {
+    const row = el('div', 'cat-row');
+
+    const btn = el('button', 'cat');
+    if (String(state.category ?? '') === String(id ?? '')) btn.classList.add('is-active');
+    const label = el('span');
+    label.textContent = name;
+    const badge = el('b');
+    badge.textContent = count.toLocaleString();
+    btn.append(label, badge);
+    btn.addEventListener('click', () => {
+      state.category = id;
+      state.visible = PAGE_SIZE;
+      $('#sidebar').classList.remove('is-open');
+      render();
+    });
+    row.append(btn);
+
+    if (pinnable) {
+      const pin = el('button', 'pin-btn');
+      const pinned = profiles.isPinned(state.tab, id);
+      pin.classList.toggle('is-on', pinned);
+      pin.title = pinned ? 'Unpin category' : 'Pin to top';
+      pin.setAttribute('aria-label', pin.title);
+      pin.innerHTML =
+        '<svg viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 3v2H6v-2l4-3-1-6z"/><path d="M12 14v7"/></svg>';
+      pin.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const nowPinned = profiles.togglePin(state.tab, id);
+        toast(nowPinned ? `Pinned “${name}”.` : `Unpinned “${name}”.`);
+        render();
+      });
+      row.append(pin);
+    }
+
+    return row;
+  };
+
+  // "All" always sits at the very top and can't be pinned.
+  list.append(makeRow(null, 'All', items.length, { pinnable: false }));
+
+  const q = state.catQuery.toLowerCase();
+  const visible = categories.filter((cat) => {
+    if (!counts.get(String(cat.id))) return false;
+    return !q || cat.name.toLowerCase().includes(q);
+  });
+
+  const pinned = visible.filter((c) => profiles.isPinned(state.tab, c.id));
+  const rest = visible.filter((c) => !profiles.isPinned(state.tab, c.id));
+
+  const section = (title, rows) => {
+    if (!rows.length) return;
+    const heading = el('div', 'cat-section');
+    heading.textContent = title;
+    list.append(heading);
+    for (const cat of rows) {
+      list.append(makeRow(cat.id, cat.name, counts.get(String(cat.id)) || 0));
+    }
+  };
+
+  if (pinned.length) {
+    section('Pinned', pinned);
+    section('All categories', rest);
+  } else {
+    for (const cat of rest) {
+      list.append(makeRow(cat.id, cat.name, counts.get(String(cat.id)) || 0));
+    }
+  }
+
+  if (q && !visible.length) {
+    const none = el('div', 'cat-empty');
+    none.textContent = `No category matches “${state.catQuery}”.`;
+    list.append(none);
+  }
+}
+
+/**
+ * How far through this title the profile is, 0–1, from the history already
+ * loaded for the For You shelf. Returns 0 for unwatched or finished titles —
+ * a full stripe on something you've completed is just noise.
+ */
+function watchedProgress(item) {
+  const key = resumeKeyFor(item);
+  for (const row of state.recentlyWatched || []) {
+    // Series cards aggregate episodes, so match the show as well as the key.
+    const isShow = item.kind === 'series' && String(row.seriesId ?? '') === String(item.id);
+    if (row.key !== key && !isShow) continue;
+    if (row.completed || !row.duration || !row.position) continue;
+    const ratio = row.position / row.duration;
+    if (ratio < 0.01 || ratio > RESUME_MAX_RATIO) continue;
+    return ratio;
+  }
+  return 0;
+}
+
+function cardFor(item) {
+  const card = el('button', 'card');
+
+  const art = el('div', 'card-art');
+  if (item.logo) {
+    const image = el('img');
+    image.loading = 'lazy';
+    image.alt = '';
+    image.src = item.logo;
+    image.addEventListener('error', () => {
+      image.remove();
+      const fb = el('div', 'fallback');
+      fb.textContent = item.name;
+      art.append(fb);
+    });
+    art.append(image);
+  } else {
+    const fb = el('div', 'fallback');
+    fb.textContent = item.name;
+    art.append(fb);
+  }
+
+  if (item.kind === 'live') {
+    const badge = el('div', 'badge live');
+    badge.append(el('span', 'dot'));
+    badge.append(document.createTextNode('LIVE'));
+    art.append(badge);
+  } else if (findLocalCopy(item.kind, item.id)) {
+    // Already on disk — this one plays instantly and offline.
+    const badge = el('div', 'badge saved');
+    badge.textContent = 'SAVED';
+    art.append(badge);
+  }
+
+  // Stripe along the foot of the poster for anything part-watched.
+  const watched = watchedProgress(item);
+  if (watched > 0) {
+    const bar = el('div', 'card-progress');
+    const fill = el('i');
+    fill.style.width = `${Math.min(100, watched * 100)}%`;
+    bar.append(fill);
+    art.append(bar);
+  }
+
+  const title = el('h3', 'card-title');
+  title.textContent = item.name;
+  card.append(art, title);
+
+  if (item.rating) {
+    const sub = el('p', 'card-sub');
+    sub.textContent = `★ ${item.rating}`;
+    card.append(sub);
+  }
+
+  card.addEventListener('click', () => openPlayer(item));
+  return card;
+}
+
+function renderSkeletons() {
+  const grid = $('#grid');
+  grid.innerHTML = '';
+  grid.classList.toggle('is-live', state.tab === 'live');
+  for (let i = 0; i < 18; i += 1) grid.append(el('div', 'skeleton'));
+  $('#emptyState').hidden = true;
+  $('#loadMore').hidden = true;
+}
+
+function render() {
+  const titles = {
+    live: 'Live TV',
+    movies: 'Movies',
+    series: 'Series',
+    favorites: 'Favorites',
+    downloads: 'Downloads',
+  };
+  $('#contentTitle').textContent = titles[state.tab];
+
+  document.querySelectorAll('.nav a').forEach((a) => {
+    a.classList.toggle('is-active', a.dataset.tab === state.tab);
+  });
+
+  if (state.tab === 'downloads') return renderDownloads();
+
+  $('#downloadList').hidden = true;
+  $('#rowsView').hidden = true;
+  $('#grid').hidden = false;
+
+  // Movies browse as named shelves. A search collapses back to a flat grid,
+  // since rows make no sense when you're looking for one specific title.
+  const rowsMode =
+    (state.tab === 'movies' || state.tab === 'series') && !state.query && state.category === null;
+  const isFavorites = state.tab === 'favorites';
+  document.querySelector('.app-shell').classList.toggle('no-sidebar', isFavorites || rowsMode);
+
+  if (rowsMode && state.library[state.tab]) return renderRows();
+
+  const source = isFavorites
+    ? { categories: [], items: profiles.favItems() }
+    : state.library[state.tab] || { categories: [], items: [] };
+
+  if (!isFavorites) renderCategories(source.categories, source.items);
+
+  let items = source.items;
+  if (state.category !== null && !isFavorites) {
+    items = items.filter((i) => String(i.categoryId) === String(state.category));
+  }
+  if (state.query) {
+    const q = state.query.toLowerCase();
+    items = items.filter((i) => i.name.toLowerCase().includes(q));
+  }
+  state.filtered = items;
+
+  const grid = $('#grid');
+  grid.innerHTML = '';
+  grid.classList.toggle('is-live', state.tab === 'live');
+
+  const slice = items.slice(0, state.visible);
+  const frag = document.createDocumentFragment();
+  for (const item of slice) frag.append(cardFor(item));
+  grid.append(frag);
+
+  const empty = $('#emptyState');
+  if (!items.length) {
+    empty.hidden = false;
+    empty.textContent = state.query
+      ? `Nothing matches “${state.query}”.`
+      : isFavorites
+        ? 'No favorites yet. Tap the heart while watching something.'
+        : 'Nothing here.';
+  } else {
+    empty.hidden = true;
+  }
+
+  $('#contentMeta').textContent = items.length
+    ? `${slice.length.toLocaleString()} of ${items.length.toLocaleString()}`
+    : '';
+  $('#loadMore').hidden = items.length <= state.visible;
+}
+
+/* -------------------------------------------------------------- downloads */
+
+function formatBytes(n) {
+  if (!n) return '0 MB';
+  const gb = n / 1024 ** 3;
+  if (gb >= 1) return `${gb.toFixed(2)} GB`;
+  return `${(n / 1024 ** 2).toFixed(0)} MB`;
+}
+
+async function refreshDownloads({ rerender = false } = {}) {
+  try {
+    state.downloads = await api('/api/downloads');
+  } catch {
+    return;
+  }
+  const busy = state.downloads.items.filter(
+    (j) => j.status === 'downloading' || j.status === 'queued'
+  ).length;
+  const badge = $('#dlCount');
+  badge.textContent = busy;
+  badge.hidden = !busy;
+
+  // Only rebuild the grid when the data actually moved. The 2s poll used to
+  // recreate every card each tick — flickering posters and yanking buttons
+  // out from under a click even when nothing was downloading.
+  const sig = JSON.stringify(state.downloads.items);
+  const changed = sig !== refreshDownloads._sig;
+  refreshDownloads._sig = sig;
+  if (rerender && changed && state.tab === 'downloads') renderDownloads();
+}
+
+/** Poster for a download: stored at save time, else matched from the library. */
+function downloadPoster(job) {
+  if (job.poster) return img(job.poster);
+  const lib = state.library[job.kind === 'series' ? 'series' : 'movies'];
+  const hit = (lib?.items || []).find((i) => String(i.id) === String(job.streamId));
+  return hit ? hit.logo : '';
+}
+
+function renderDownloads() {
+  $('#downloadList').hidden = true;
+  // render() hides this too, but only after its early return for this tab —
+  // so arriving from Movies or Series left their shelves showing underneath.
+  $('#rowsView').hidden = true;
+  $('#loadMore').hidden = true;
+  document.querySelector('.app-shell').classList.add('no-sidebar');
+
+  const grid = $('#grid');
+  grid.hidden = false;
+  grid.className = 'grid';
+  grid.innerHTML = '';
+  // This lives outside #grid, so clearing the grid doesn't remove it — without
+  // this, going in and out of a show stacks up back buttons.
+  document.querySelectorAll('.folder-back').forEach((b) => b.remove());
+
+  const items = state.downloads.items || [];
+  const empty = $('#emptyState');
+
+  if (!items.length) {
+    empty.hidden = false;
+    empty.textContent =
+      'Nothing downloaded yet. Open a movie or episode and press the download arrow.';
+    $('#contentMeta').textContent = '';
+    openSeriesFolder = null;
+    return;
+  }
+  empty.hidden = true;
+
+  // Drilled into one show? Render just its episodes, with a way back out.
+  if (openSeriesFolder) {
+    const episodes = items
+      .filter((j) => seriesKeyOf(j) === openSeriesFolder)
+      .sort((a, b) => (a.season - b.season) || (a.episode - b.episode));
+
+    if (!episodes.length) {
+      openSeriesFolder = null; // last episode removed while we were inside
+    } else {
+      const back = el('button', 'btn btn-ghost folder-back');
+      back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
+      back.append(document.createTextNode(' All downloads'));
+      back.addEventListener('click', () => {
+        openSeriesFolder = null;
+        renderDownloads();
+      });
+      grid.before(back);
+      grid.dataset.folderBack = '1';
+
+      const show = episodes[0].seriesName || episodes[0].name;
+      $('#contentMeta').textContent = `${show} · ${episodes.length} episode${
+        episodes.length === 1 ? '' : 's'
+      }`;
+      for (const job of episodes) grid.append(downloadCard(job));
+      return;
+    }
+  }
+
+  const done = items.filter((j) => j.status === 'done').length;
+  $('#contentMeta').textContent =
+    `${done} ready${state.downloads.queued ? ` · ${state.downloads.queued} queued` : ''}`;
+
+  const frag = document.createDocumentFragment();
+
+  // Episodes collapse into one card per show; films stay as they are.
+  const shows = new Map();
+  const loose = [];
+  for (const job of items) {
+    const key = seriesKeyOf(job);
+    if (!key) {
+      loose.push(job);
+      continue;
+    }
+    if (!shows.has(key)) shows.set(key, []);
+    shows.get(key).push(job);
+  }
+
+  for (const [key, episodes] of shows) frag.append(seriesFolderCard(key, episodes));
+  for (const job of loose) frag.append(downloadCard(job));
+
+  grid.append(frag);
+}
+
+/** Identity a download groups under, or '' for anything that isn't an episode. */
+function seriesKeyOf(job) {
+  if (job.kind !== 'series') return '';
+  if (job.seriesId) return `s${job.seriesId}`;
+  // Downloads made before series fields were stored still carry a resume key
+  // shaped `series:<id>:s1e2` — enough to group them.
+  const m = /^series:([^:]+):/.exec(job.resumeKey || '');
+  return m ? `s${m[1]}` : '';
+}
+
+/** One card standing for a whole show, opening its episode list when tapped. */
+function seriesFolderCard(key, episodes) {
+  const card = el('div', 'card dl-card dl-folder');
+  const ready = episodes.filter((j) => j.status === 'done').length;
+  const busy = episodes.filter((j) => j.status === 'downloading' || j.status === 'queued').length;
+  const cover = episodes.find((j) => downloadPoster(j));
+
+  const art = el('div', 'card-art');
+  const poster = cover ? downloadPoster(cover) : '';
+  if (poster) {
+    const image = el('img');
+    image.loading = 'lazy';
+    image.alt = '';
+    image.src = poster;
+    art.append(image);
+  } else {
+    const fb = el('div', 'fallback');
+    fb.textContent = episodes[0].seriesName || episodes[0].name;
+    art.append(fb);
+  }
+
+  const badge = el('div', 'badge');
+  badge.textContent = busy ? `${busy} DOWNLOADING` : `${episodes.length} EPISODES`;
+  art.append(badge);
+
+  // Stack edge, so it reads as a folder rather than a single episode.
+  art.append(el('div', 'folder-edge'));
+
+  const title = el('h3', 'card-title');
+  title.textContent = episodes[0].seriesName || episodes[0].name;
+
+  const sub = el('p', 'card-sub');
+  const seasons = [...new Set(episodes.map((j) => j.season).filter(Boolean))];
+  sub.textContent =
+    (seasons.length === 1 ? `Season ${seasons[0]} · ` : seasons.length ? `${seasons.length} seasons · ` : '') +
+    `${ready} of ${episodes.length} ready`;
+
+  card.append(art, title, sub);
+  card.addEventListener('click', () => {
+    openSeriesFolder = key;
+    renderDownloads();
+  });
+  return card;
+}
+
+/** Which show's episode list is open, or null at the top level. */
+let openSeriesFolder = null;
+
+function downloadCard(job) {
+  {
+    const card = el('div', `card dl-card dl-${job.status}`);
+
+    const art = el('div', 'card-art');
+    const poster = downloadPoster(job);
+    if (poster) {
+      const image = el('img');
+      image.loading = 'lazy';
+      image.alt = '';
+      image.src = poster;
+      image.addEventListener('error', () => {
+        image.remove();
+        const fb = el('div', 'fallback');
+        fb.textContent = job.name;
+        art.append(fb);
+      });
+      art.append(image);
+    } else {
+      const fb = el('div', 'fallback');
+      fb.textContent = job.name;
+      art.append(fb);
+    }
+
+    // Status badge
+    const badge = el('div', 'badge dl-badge');
+    const pct = job.total ? Math.floor((job.bytes / job.total) * 100) : 0;
+    badge.textContent =
+      job.status === 'done'
+        ? 'READY'
+        : job.status === 'downloading'
+          ? `${pct}%`
+          : job.status === 'queued'
+            ? 'QUEUED'
+            : job.status === 'paused'
+              ? job.autoPaused
+                ? 'WAITING'
+                : 'PAUSED'
+              : 'FAILED';
+    art.append(badge);
+
+    // Progress across the foot of the poster while it's still coming down.
+    if (job.status === 'downloading' || job.status === 'paused') {
+      const bar = el('div', 'dl-artbar');
+      const fill = el('div', 'dl-artfill');
+      fill.style.width = job.total ? `${(job.bytes / job.total) * 100}%` : '4%';
+      bar.append(fill);
+      art.append(bar);
+    }
+
+    if (job.status === 'done') {
+      art.style.cursor = 'pointer';
+      art.addEventListener('click', () =>
+        openPlayer({
+          kind: 'movie',
+          id: `dl-${job.id}`,
+          name: job.name,
+          logo: poster,
+          directUrl: `/api/downloads/${job.id}/file`,
+          sourceUrl: `x.${job.ext}`,
+          localOnly: true,
+          downloadId: job.id,
+          // Shares its watch position with the streamed version.
+          resumeKey: job.resumeKey || '',
+        })
+      );
+    }
+
+    const title = el('h3', 'card-title');
+    title.textContent = job.name;
+
+    // Still in its original container after downloading? Then it plays via
+    // on-the-fly conversion, which is the slow path this whole feature exists
+    // to avoid — say so plainly instead of letting it look finished.
+    const unoptimized =
+      job.status === 'done' && !job.preparing && !NATIVE_CONTAINERS.includes(String(job.ext || '').toLowerCase());
+
+    const sub = el('p', 'card-sub');
+    sub.textContent =
+      job.status === 'done'
+        ? job.preparing
+          ? 'Optimizing for instant playback…'
+          : unoptimized
+            ? job.prepareError
+              ? `Not optimized — ${job.prepareError}`
+              : 'Not optimized yet — playback will be slow'
+            : formatBytes(job.total)
+        : job.status === 'error'
+          ? job.error || 'Failed'
+          : job.status === 'downloading'
+            ? `${formatBytes(job.bytes)} of ${formatBytes(job.total)}`
+            : job.status === 'paused'
+              ? job.autoPaused
+                ? 'Paused while you watch — resumes on its own'
+                : `${formatBytes(job.bytes)} saved`
+              : 'Waiting for the connection';
+
+    const actions = el('div', 'dl-actions');
+
+    if (unoptimized) {
+      const fix = el('button', 'btn btn-primary btn-sm');
+      fix.textContent = job.prepareError ? 'Retry optimize' : 'Optimize';
+      fix.title = 'Convert to a plain MP4 so it plays and scrubs instantly';
+      fix.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        fix.disabled = true;
+        try {
+          const res = await fetch(`/api/downloads/${job.id}/optimize`, { method: 'POST' });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Could not start optimizing.');
+          toast('Optimizing — this runs once, then playback is instant.');
+        } catch (err) {
+          toast(err.message);
+          fix.disabled = false;
+        }
+        await refreshDownloads({ rerender: true });
+      });
+      actions.append(fix);
+    }
+
+    if (job.status === 'done') {
+      const save = el('a', 'btn btn-ghost btn-sm');
+      save.href = `/api/downloads/${job.id}/save`;
+      save.textContent = 'Save to device';
+      save.setAttribute('download', `${job.name}.${job.ext}`);
+      actions.append(save);
+    }
+
+    if (job.status === 'downloading' || job.status === 'queued') {
+      const pause = el('button', 'btn btn-ghost btn-sm');
+      pause.textContent = 'Pause';
+      pause.title = 'Frees your single provider connection so you can watch';
+      pause.addEventListener('click', async () => {
+        pause.disabled = true;
+        await fetch(`/api/downloads/${job.id}/pause`, { method: 'POST' });
+        await refreshDownloads({ rerender: true });
+      });
+      actions.append(pause);
+    }
+
+    if (job.status === 'error' || job.status === 'paused') {
+      const retry = el('button', 'btn btn-ghost btn-sm');
+      retry.textContent = job.status === 'paused' ? 'Resume' : 'Retry';
+      retry.addEventListener('click', async () => {
+        retry.disabled = true;
+        await fetch(`/api/downloads/${job.id}/retry`, { method: 'POST' });
+        await refreshDownloads({ rerender: true });
+      });
+      actions.append(retry);
+    }
+
+    const remove = el('button', 'icon-btn dl-remove');
+    remove.title = 'Remove';
+    remove.setAttribute('aria-label', 'Remove download');
+    remove.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+    remove.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      const verb = job.status === 'done' ? 'Delete' : 'Cancel';
+      if (!confirm(`${verb} “${job.name}”?`)) return;
+      await fetch(`/api/downloads/${job.id}`, { method: 'DELETE' });
+      await refreshDownloads({ rerender: true });
+    });
+    art.append(remove);
+
+    card.append(art, title, sub, actions);
+    return card;
+  }
+}
+
+
+/** Queue the thing currently open in the player. */
+/** Whichever season the episode sheet is currently showing. */
+let currentSeason = null;
+
+/**
+ * Queue every episode of the season on screen, skipping any already on disk
+ * or already queued. They run one at a time — the provider allows a single
+ * connection — so this is a queue, not a parallel burst.
+ */
+async function requestSeasonDownload() {
+  if (!currentSeason || !currentSeason.episodes.length) {
+    return toast('No season is open.');
+  }
+  const { item, season, episodes } = currentSeason;
+
+  await refreshDownloads();
+  const already = new Set(
+    (state.downloads.items || []).map((j) => String(j.streamId))
+  );
+  const pending = episodes.filter((e) => !already.has(String(e.id)));
+
+  if (!pending.length) {
+    return toast(`Season ${season} is already downloaded.`);
+  }
+
+  // This can be many gigabytes on a Pi, so make the size of it explicit
+  // rather than silently queueing twenty episodes.
+  const skipped = episodes.length - pending.length;
+  const ok = confirm(
+    `Download ${pending.length} episode${pending.length === 1 ? '' : 's'} ` +
+      `of ${item.name} — Season ${season}?` +
+      (skipped ? `\n\n${skipped} already downloaded and will be skipped.` : '') +
+      `\n\nThey download one at a time and pause automatically while you watch.`
+  );
+  if (!ok) return;
+
+  let queued = 0;
+  for (const episode of pending) {
+    // Sequential: each POST is cheap, and this keeps queue order predictable.
+    // eslint-disable-next-line no-await-in-loop
+    const done = await requestDownload(item, { ...episode, season }, { quiet: true });
+    if (done) queued += 1;
+  }
+
+  await refreshDownloads({ rerender: true });
+  toast(`Queued ${queued} episode${queued === 1 ? '' : 's'} of Season ${season}.`);
+}
+
+async function requestDownload(item, episode, { quiet = false } = {}) {
+  // Keep the artwork with the job so the Downloads grid has a poster even
+  // before the library has been loaded in this session.
+  const poster = item.logo && item.logo.startsWith('/img?u=')
+    ? decodeURIComponent(item.logo.slice('/img?u='.length))
+    : item.logo || '';
+
+  const payload = episode
+    ? {
+        kind: 'series',
+        streamId: episode.id,
+        ext: episode.container_extension || 'mp4',
+        poster,
+        // Stored so the offline copy resumes at the same point as the stream.
+        resumeKey: `series:${item.id}:s${episode.season}e${episode.episode_num}`,
+        // Lets Downloads group episodes under their show.
+        seriesId: item.id,
+        seriesName: item.name,
+        season: episode.season,
+        episode: episode.episode_num,
+        name: `${item.name} S${episode.season}E${episode.episode_num} ${episode.title || ''}`.trim(),
+      }
+    : {
+        kind: 'movie',
+        streamId: item.id,
+        ext: item.ext || 'mp4',
+        poster,
+        resumeKey: `movie:${item.id}`,
+        name: item.name,
+        sourceUrl: item.localOnly ? '' : undefined,
+      };
+
+  if (item.directUrl && !item.localOnly) {
+    payload.sourceUrl = item.sourceUrl;
+    payload.streamId = '';
+  }
+
+  try {
+    const res = await fetch('/api/downloads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not queue that download.');
+    // A season download reports once at the end rather than per episode.
+    if (quiet) return true;
+    await refreshDownloads({ rerender: true });
+    toast(
+      state.downloads.queued > 1
+        ? `Queued “${payload.name}”. It starts when the current one finishes.`
+        : `Downloading “${payload.name}”. Watch progress in Downloads.`
+    );
+    return true;
+  } catch (err) {
+    if (!quiet) toast(err.message);
+    return false;
+  }
+}
+
+/* ---------------------------------------------------------------- router */
+
+async function goTo(tab) {
+  state.tab = tab;
+  state.category = null;
+  state.visible = PAGE_SIZE;
+  state.catQuery = '';
+  state.query = '';
+  $('#catSearch').value = '';
+  $('#searchInput').value = '';
+
+  if (tab === 'downloads') {
+    await refreshDownloads();
+    return render();
+  }
+  if (tab === 'favorites') return render();
+
+  // For You reflects what's been watched since the page was last opened.
+  if (tab === 'movies' || tab === 'series') await profiles.loadTaste();
+
+  if (!state.library[tab]) {
+    renderSkeletons();
+    try {
+      await loadTab(tab);
+    } catch (err) {
+      $('#grid').innerHTML = '';
+      const empty = $('#emptyState');
+      empty.hidden = false;
+      empty.textContent = `Couldn't load ${tab}: ${err.message}`;
+      return;
+    } finally {
+      loader.hide();
+    }
+  }
+  render();
+}
+
+function routeFromHash() {
+  const tab = (location.hash.replace('#/', '') || 'live').toLowerCase();
+  return ['live', 'movies', 'series', 'favorites', 'downloads'].includes(tab) ? tab : 'live';
+}
+
+window.addEventListener('hashchange', () => goTo(routeFromHash()));
+
+/* ---------------------------------------------------------------- player */
+
+let engine = null;
+
+function teardown() {
+  const video = $('#video');
+  if (engine) {
+    try {
+      engine.destroy();
+    } catch {
+      /* engine already gone */
+    }
+    engine = null;
+  }
+  video.removeAttribute('src');
+  video.load();
+}
+
+function status(message) {
+  const node = $('#videoStatus');
+  if (!message) {
+    node.hidden = true;
+    return;
+  }
+  node.textContent = message;
+  node.hidden = false;
+}
+
+/**
+ * Pick a playback engine. Our proxy URLs carry no file extension, so the
+ * format has to be passed in explicitly.
+ */
+function attach(url, format, opts = {}) {
+  const video = $('#video');
+
+  teardown();
+  status(format === 'ts' ? 'Tuning in — skipping the provider backlog…' : 'Connecting to stream…');
+
+  // Always start at normal speed.
+  //
+  // This used to carry the previous rate across an attach, so a speed-control
+  // extension would keep its setting. That turned out to be a ratchet: if the
+  // rate was ever wrong — the extension's own hotkeys sit on plain letter keys
+  // and fire while the player has focus — every later seek copied the bad value
+  // forward and it could never recover. Normalising here means a seek or a
+  // reopen always clears it, and an extension is free to re-apply its own rate.
+  video.playbackRate = 1;
+  video.defaultPlaybackRate = 1;
+  // Assigning a value it already holds fires no ratechange, so repaint by hand
+  // or the warning badge lingers after the rate is back to normal.
+  paintSpeed();
+
+  // A natively-played file seeks itself; a remux was already started at the
+  // right offset server-side, so this only applies to the direct-file path.
+  if (opts.seekTo > 0) {
+    video.addEventListener(
+      'loadedmetadata',
+      () => {
+        if (Number.isFinite(video.duration) && opts.seekTo < video.duration) {
+          video.currentTime = opts.seekTo;
+        }
+      },
+      { once: true }
+    );
+  }
+
+  const clearOnPlay = () => status('');
+  video.addEventListener('playing', clearOnPlay, { once: true });
+
+  if (format === 'ts') {
+    if (window.mpegts && mpegts.isSupported()) {
+      // mpegts.js does its fetching inside a Web Worker, which has no document
+      // base URL — a relative path throws "Failed to parse URL". Absolutise it.
+      const absolute = new URL(url, location.href).href;
+      engine = mpegts.createPlayer(
+        { type: 'mpegts', isLive: true, url: absolute },
+        {
+          enableWorker: true,
+          // The provider delivers in lumpy 4-5s chunks. mpegts.js's built-in
+          // chaser fires above 1.5s of buffer, so it would seek on every lump —
+          // that's the "skips to the end" behaviour. We manage the live edge
+          // ourselves instead, and only when it's genuinely drifted.
+          liveBufferLatencyChasing: false,
+          // Don't hold data back before handing it to the decoder.
+          enableStashBuffer: false,
+          lazyLoad: false,
+          autoCleanupSourceBuffer: true,
+          autoCleanupMaxBackwardDuration: 30,
+          autoCleanupMinBackwardDuration: 10,
+        }
+      );
+      engine.attachMediaElement(video);
+      engine.load();
+      engine.play().catch(() => {});
+      engine.on(mpegts.Events.ERROR, (type, detail) =>
+        status(`Stream error (${type}: ${detail}). Try switching this provider to HLS in settings.`)
+      );
+      return;
+    }
+    status('MPEG-TS playback is unavailable in this browser. Switch to HLS in settings.');
+    return;
+  }
+
+  if (format === 'm3u8') {
+    if (window.Hls && Hls.isSupported()) {
+      // VOD is a remux we deliberately ran ahead of the player, so let hls.js
+      // pull as much of that cushion into memory as it can. Live keeps the
+      // tight settings — a big forward buffer there is just added latency.
+      const live = format === 'ts' || currentLiveItem;
+      engine = new Hls(
+        live
+          ? { lowLatencyMode: true, backBufferLength: 60 }
+          : {
+              lowLatencyMode: false,
+              // Keep everything behind the playhead. While a conversion is
+              // still running the playlist has no end marker, so hls.js reads
+              // it as live — and with a back buffer being evicted the playhead
+              // can fall outside the window and get dragged forward to the
+              // "live edge", i.e. the conversion frontier. Never evicting means
+              // the window always starts at zero and nothing yanks playback.
+              backBufferLength: Infinity,
+              // Don't let it hunt for a live edge that is really just ffmpeg
+              // running ahead of us.
+              liveSyncDuration: 1e9,
+              liveMaxLatencyDuration: 2e9,
+              liveDurationInfinity: false,
+              maxBufferLength: 120,
+              maxMaxBufferLength: 300,
+              maxBufferSize: 200 * 1000 * 1000,
+              // A remux in progress has no ENDLIST yet, so hls.js reads it as
+              // live and would join at the edge — i.e. however many seconds we
+              // prebuffered into the film. Films start at the beginning.
+              startPosition: 0,
+            }
+      );
+      engine.loadSource(url);
+      engine.attachMedia(video);
+      engine.on(Hls.Events.ERROR, (_, data) => {
+        if (!data.fatal) return;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) engine.startLoad();
+        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) engine.recoverMediaError();
+        else status(`Playback failed: ${data.details}`);
+      });
+      return;
+    }
+    // Safari plays HLS natively. Same live-edge trap applies on iOS, so pin a
+    // remuxed film to the start once metadata lands.
+    video.src = url;
+    if (!currentLiveItem) {
+      video.addEventListener(
+        'loadedmetadata',
+        () => {
+          if (video.currentTime > 1) video.currentTime = 0;
+        },
+        { once: true }
+      );
+    }
+    video.play().catch(() => {});
+    return;
+  }
+
+  video.src = url;
+  video.play().catch(() => status('Press play to start.'));
+  video.addEventListener(
+    'error',
+    () => status('This file format may not be supported by the browser (MKV and AVI usually are not).'),
+    { once: true }
+  );
+}
+
+/* --------------------------------------------------------- live edge UI */
+
+let liveTimer = null;
+
+/** How far behind the live edge we currently are, in seconds. */
+function currentLag() {
+  const video = $('#video');
+  if (!video.buffered.length) return null;
+  return video.buffered.end(video.buffered.length - 1) - video.currentTime;
+}
+
+function startLiveTracking() {
+  stopLiveTracking();
+  const pill = $('#livePill');
+  const lag = $('#liveLag');
+  pill.hidden = false;
+  $('#latencyMode').hidden = false;
+
+  liveTimer = setInterval(() => {
+    const behind = currentLag();
+    if (behind === null) return;
+    // Under ~3s is as live as this provider gets; don't nag about it.
+    const atEdge = behind < 3;
+    pill.classList.toggle('is-behind', !atEdge);
+    lag.textContent = atEdge ? 'LIVE' : `${Math.round(behind)}s behind`;
+  }, 1000);
+}
+
+function stopLiveTracking() {
+  if (liveTimer) clearInterval(liveTimer);
+  liveTimer = null;
+  $('#livePill').hidden = true;
+  $('#latencyMode').hidden = true;
+}
+
+/** Manual catch-up. Deliberately never automatic — surprise seeks are the bug. */
+$('#livePill').addEventListener('click', () => {
+  const video = $('#video');
+  if (!video.buffered.length) return;
+  const edge = video.buffered.end(video.buffered.length - 1);
+  video.currentTime = Math.max(0, edge - 1.5);
+  video.play().catch(() => {});
+});
+
+$('#latencyMode').addEventListener('change', async (event) => {
+  prefs.data.liveLatency = event.target.value;
+  await prefs.save();
+  if (currentLiveItem) {
+    toast('Reconnecting with the new latency setting…');
+    const { url, format } = await resolveStream(currentLiveItem);
+    attach(url, format);
+  }
+});
+
+let currentLiveItem = null;
+
+/* ------------------------------------------------------ film scrubber ---
+
+ * A remux in progress only knows about the part it has written, so the native
+ * scrubber can never be longer than that. This bar works in real film time
+ * instead: total runtime comes from the provider's metadata, and the position
+ * shown is the session's offset plus wherever the video element is.
+ *
+ * Seeking inside what's already remuxed is an ordinary seek. Landing outside
+ * it restarts the remux at that point, which becomes the new offset.
+ */
+
+const film = {
+  active: false,
+  duration: 0,   // true runtime in seconds
+  offset: 0,     // where this remux session begins within the film
+  ready: 0,      // seconds remuxed in this session
+  item: null,
+  override: null,
+  seeking: false,
+};
+
+/**
+ * Work out a title's true runtime in seconds.
+ *
+ * `duration_secs` cannot be trusted — this provider stores seconds for some
+ * titles (6000 for a 01:40:00 film) and minutes for others (173 for one
+ * running 02:53:44). The formatted `duration` string is unambiguous, so it
+ * wins; duration_secs is only a fallback, and then only if it's sane.
+ */
+function parseRuntime(info) {
+  const text = String(info?.duration || '').trim();
+
+  const hhmmss = /^(\d+):([0-5]\d):([0-5]\d)$/.exec(text);
+  if (hhmmss) return +hhmmss[1] * 3600 + +hhmmss[2] * 60 + +hhmmss[3];
+
+  const mmss = /^(\d+):([0-5]\d)$/.exec(text);
+  if (mmss) return +mmss[1] * 60 + +mmss[2];
+
+  const secs = Number(info?.duration_secs);
+  return Number.isFinite(secs) && secs > 0 ? secs : 0;
+}
+
+function hms(total) {
+  if (!Number.isFinite(total) || total < 0) return '0:00';
+  const s = Math.floor(total % 60);
+  const m = Math.floor((total / 60) % 60);
+  const h = Math.floor(total / 3600);
+  const mm = h ? String(m).padStart(2, '0') : String(m);
+  return h ? `${h}:${mm}:${String(s).padStart(2, '0')}` : `${mm}:${String(s).padStart(2, '0')}`;
+}
+
+/** Where we are in the film, not in the session. */
+function filmPosition() {
+  return film.offset + ($('#video').currentTime || 0);
+}
+
+/* ---------------------------------------------------------- cinema mode
+
+ * Films and episodes take the whole viewport. The chrome floats over the
+ * picture and fades out once you stop moving the mouse, the way a streaming
+ * app does — the back button returns to whichever section the title came from.
+ */
+
+let chromeTimer = null;
+const CHROME_IDLE = 3000;
+// A finger has no hover, so the only way to bring the controls back is a tap.
+// Give them noticeably longer to live on a touch device.
+const CHROME_IDLE_TOUCH = 7000;
+
+function showChrome() {
+  const overlay = $('#playerOverlay');
+  if (!overlay.classList.contains('cinema')) return;
+  overlay.classList.remove('chrome-hidden');
+  clearTimeout(chromeTimer);
+  // Only get out of the way while something is actually playing.
+  chromeTimer = setTimeout(
+    () => {
+      if (!$('#video').paused && !film.seeking) overlay.classList.add('chrome-hidden');
+    },
+    touchMode.on ? CHROME_IDLE_TOUCH : CHROME_IDLE
+  );
+}
+
+/** Where the back button lands; remembered because film.item is live-agnostic. */
+let cinemaReturnHash = '#/movies';
+
+function enterCinema(item) {
+  const overlay = $('#playerOverlay');
+  overlay.classList.add('cinema');
+  overlay.classList.remove('chrome-hidden');
+
+  // Launched from the Downloads grid? Back returns there, not to Movies.
+  const fromDownloads = Boolean(item.downloadId && item.localOnly);
+  const labels = { series: 'Series', live: 'Live TV', movie: 'Movies' };
+  cinemaReturnHash = fromDownloads
+    ? '#/downloads'
+    : item.kind === 'series' ? '#/series' : item.kind === 'live' ? '#/live' : '#/movies';
+
+  $('#cinemaTop').hidden = false;
+  $('#cinemaTitle').textContent = item.name || '';
+  $('#cinemaSub').textContent = '';
+  $('#cinemaBackLabel').textContent = fromDownloads ? 'Downloads' : labels[item.kind] || 'Back';
+  document.body.style.overflow = 'hidden';
+  showChrome();
+}
+
+function exitCinema() {
+  const overlay = $('#playerOverlay');
+  overlay.classList.remove('cinema', 'chrome-hidden');
+  $('#cinemaTop').hidden = true;
+  clearTimeout(chromeTimer);
+  chromeTimer = null;
+}
+
+/** Back out of the player and land on the section this title belongs to. */
+function leaveCinema() {
+  const back = cinemaReturnHash;
+  closePlayer();
+  if (location.hash !== back) location.hash = back;
+}
+
+$('#cinemaBack').addEventListener('click', leaveCinema);
+
+for (const evt of ['mousemove', 'touchstart', 'click']) {
+  $('#playerOverlay').addEventListener(evt, showChrome, { passive: true });
+}
+
+// A paused film should keep its controls up rather than fading them away.
+$('#video').addEventListener('pause', showChrome);
+
+document.addEventListener('keydown', (event) => {
+  const overlay = $('#playerOverlay');
+  if (overlay.hidden || !overlay.classList.contains('cinema')) return;
+  if (event.target.matches('input, textarea, select')) return;
+
+  if (event.code === 'Space' || event.key === 'k') {
+    event.preventDefault();
+    $('#vodPlay').click();
+  } else if (event.key === 'ArrowLeft') {
+    event.preventDefault();
+    seekFilm(filmPosition() - 10);
+  } else if (event.key === 'ArrowRight') {
+    event.preventDefault();
+    seekFilm(filmPosition() + 10);
+  } else if (event.key === 'f') {
+    $('#vodFull').click();
+  }
+  showChrome();
+});
+
+function showFilmBar(item, duration, override) {
+  film.active = true;
+  film.duration = duration || 0;
+  // Resuming starts the conversion partway into the title, and resolveStream
+  // has already recorded where. Zeroing it here would make the scrubber read
+  // session time instead of real running time.
+  film.offset = lastRemux.offset || 0;
+  film.ready = 0;
+  film.item = item;
+  film.override = override || null;
+
+  const video = $('#video');
+  video.controls = false;           // ours replaces it
+  $('#vodBar').hidden = false;
+  $('#vodTotal').textContent = hms(film.duration);
+  enterCinema(item);
+  paintFilmBar();
+}
+
+function hideFilmBar() {
+  // Note: does NOT exit cinema — live TV runs full screen with no film bar.
+  film.active = false;
+  film.item = null;
+  $('#vodBar').hidden = true;
+  $('#video').controls = true;
+}
+
+function paintFilmBar() {
+  if (!film.active) return;
+  const pos = filmPosition();
+
+  // Never let the advertised runtime be shorter than what we've already
+  // remuxed or played — bad metadata shouldn't strand the knob off the end.
+  const floor = Math.max(pos, film.offset + film.ready);
+  if (floor > film.duration) {
+    film.duration = Math.ceil(floor);
+    $('#vodTotal').textContent = hms(film.duration);
+  }
+
+  const total = film.duration || pos;
+  const pct = total ? Math.max(0, Math.min(100, (pos / total) * 100)) : 0;
+
+  $('#vodPlayed').style.width = `${pct}%`;
+  $('#vodKnob').style.left = `${pct}%`;
+  $('#vodElapsed').textContent = hms(pos);
+
+  // Lighter band showing the span already remuxed — instant to seek within.
+  if (total) {
+    const readyStart = (film.offset / total) * 100;
+    const readyWidth = Math.min(100 - readyStart, (film.ready / total) * 100);
+    $('#vodReady').style.left = `${readyStart}%`;
+    $('#vodReady').style.width = `${Math.max(0, readyWidth)}%`;
+  }
+
+  const icon = $('#vodPlayIcon');
+  icon.innerHTML = $('#video').paused
+    ? '<path d="M7 5l12 7-12 7z"/>'
+    : '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';
+}
+
+/** Seek to an absolute point in the film, remuxing again if we must. */
+async function seekFilm(target) {
+  if (!film.active || film.seeking) return;
+  const video = $('#video');
+
+  // A seek inside the converted window never re-attaches, so this is the only
+  // place an odd rate would otherwise survive a scrubber click.
+  normalizeRate();
+  // Runtime may not have arrived yet; don't let an unknown duration collapse
+  // every seek onto zero.
+  const ceiling = film.duration > 0 ? film.duration - 2 : Number.MAX_SAFE_INTEGER;
+  const clamped = Math.max(0, Math.min(ceiling, target));
+
+  // A title playing natively (mp4, or a local file) has a real duration and
+  // Range support — an ordinary seek works. Restarting a remux for it would
+  // spend a provider connection to do what the video element does for free.
+  if (!lastRemux.session && Number.isFinite(video.duration) && clamped < video.duration) {
+    video.currentTime = clamped;
+    paintFilmBar();
+    return;
+  }
+
+  // Inside the current session's remuxed span? Then it's just a normal seek.
+  const withinStart = film.offset;
+  const withinEnd = film.offset + film.ready;
+  if (clamped >= withinStart && clamped < withinEnd - 1) {
+    video.currentTime = clamped - film.offset;
+    paintFilmBar();
+    return;
+  }
+
+  film.seeking = true;
+  stopLeadWatch();
+  loader.show(`Jumping to ${hms(clamped)}…`, '');
+
+  try {
+    // A downloads-backed title seeks against the file on disk — fast, and no
+    // provider connection spent. Everything else restarts the provider remux.
+    const remux = await api(
+      '/api/remux',
+      film.item?.downloadId
+        ? { download: film.item.downloadId, start: Math.floor(clamped) }
+        : {
+            kind: film.override?.kind || (film.item.kind === 'movie' ? 'movie' : film.item.kind),
+            id: film.override?.id ?? film.item.id,
+            ext: film.override?.ext ?? film.item.ext ?? '',
+            vcodec: film.override?.vcodec || film.item.vcodec || '',
+            start: Math.floor(clamped),
+          }
+    );
+    lastRemux = remux;
+
+    film.offset = remux.offset || 0;
+    film.ready = 0;
+    await waitForPrebuffer(remux);
+    attach(remux.url, 'm3u8');
+    startLeadWatch();
+  } catch (err) {
+    toast(`Couldn't jump there: ${err.message}`);
+  } finally {
+    film.seeking = false;
+    loader.hide();
+    paintFilmBar();
+  }
+}
+
+/* ---- scrubber interaction ---- */
+
+function trackFraction(event) {
+  const rect = $('#vodTrack').getBoundingClientRect();
+  const x = (event.touches ? event.touches[0].clientX : event.clientX) - rect.left;
+  return Math.max(0, Math.min(1, x / rect.width));
+}
+
+$('#vodTrack').addEventListener('click', (event) => {
+  if (!film.duration) return;
+  seekFilm(trackFraction(event) * film.duration);
+});
+
+$('#vodTrack').addEventListener('mousemove', (event) => {
+  if (!film.duration) return;
+  const hover = $('#vodHover');
+  hover.hidden = false;
+  hover.textContent = hms(trackFraction(event) * film.duration);
+  hover.style.left = `${trackFraction(event) * 100}%`;
+});
+
+$('#vodTrack').addEventListener('mouseleave', () => ($('#vodHover').hidden = true));
+
+$('#vodTrack').addEventListener('keydown', (event) => {
+  const step = event.shiftKey ? 300 : 30;
+  if (event.key === 'ArrowRight') seekFilm(filmPosition() + step);
+  else if (event.key === 'ArrowLeft') seekFilm(filmPosition() - step);
+  else return;
+  event.preventDefault();
+  // The document-level handler seeks on these keys too. Without this, one
+  // arrow press fired both — two different jumps, and on a remuxed title two
+  // competing conversions.
+  event.stopPropagation();
+});
+
+/**
+ * Surface an altered playback rate. Nothing here ever sets a rate other than
+ * 1 — but an extension can, and a video quietly running at a fraction of speed
+ * is baffling without something on screen saying so.
+ */
+function paintSpeed() {
+  const rate = $('#video').playbackRate;
+  const off = Math.abs(rate - 1) > 0.01;
+  $('#vodSpeed').hidden = !off;
+  if (off) $('#vodSpeedLabel').textContent = `${Number(rate.toFixed(2))}×`;
+
+  // The bar fades after a few idle seconds, so a badge living inside it is
+  // invisible exactly when you need it. This warning sits outside the fading
+  // chrome and stays put until the speed is normal again.
+  const warn = $('#speedWarn');
+  warn.hidden = !off;
+  if (off) $('#speedWarnLabel').textContent = `Playing at ${Number(rate.toFixed(2))}× — click to reset`;
+}
+
+/** Put playback back to normal speed. */
+function normalizeRate() {
+  const video = $('#video');
+  if (Math.abs(video.playbackRate - 1) > 0.01) {
+    video.playbackRate = 1;
+    video.defaultPlaybackRate = 1;
+  }
+  paintSpeed();
+}
+
+$('#video').addEventListener('ratechange', paintSpeed);
+
+for (const id of ['#vodSpeed', '#speedWarn']) {
+  $(id).addEventListener('click', () => {
+    normalizeRate();
+    toast('Playback speed reset to normal.');
+  });
+}
+
+/**
+ * Record who last changed the rate. Nothing in this app sets a rate other than
+ * 1, so if it drifts the culprit is outside — a speed-control extension, most
+ * likely — and the captured stack is what tells us which.
+ */
+let lastRateChange = null;
+
+$('#video').addEventListener('ratechange', () => {
+  const rate = $('#video').playbackRate;
+  if (Math.abs(rate - 1) > 0.01) {
+    lastRateChange = { rate, at: new Date().toISOString(), stack: new Error().stack || '' };
+  }
+});
+window.portalDiagnostics = () => ({
+  playbackRate: $('#video').playbackRate,
+  lastRateChange,
+  filmOffset: film.offset,
+  filmReady: Math.round(film.ready),
+  remuxSession: lastRemux.session || null,
+  videoDuration: $('#video').duration,
+  currentTime: $('#video').currentTime,
+});
+
+$('#vodBack10').addEventListener('click', () => seekFilm(filmPosition() - 10));
+$('#vodFwd10').addEventListener('click', () => seekFilm(filmPosition() + 10));
+
+$('#vodPlay').addEventListener('click', () => {
+  const video = $('#video');
+  if (video.paused) video.play().catch(() => {});
+  else video.pause();
+  paintFilmBar();
+});
+
+$('#vodMute').addEventListener('click', () => {
+  const video = $('#video');
+  video.muted = !video.muted;
+  $('#vodMute').style.color = video.muted ? 'var(--live)' : '';
+});
+
+$('#vodFull').addEventListener('click', () => {
+  // Fullscreen the shell, not the video element — that keeps our controls in
+  // frame instead of handing over to the browser's own overlay.
+  const target = document.querySelector('.player-shell') || document.querySelector('.video-frame');
+  if (document.fullscreenElement) document.exitFullscreen();
+  else target.requestFullscreen?.();
+});
+
+$('#video').addEventListener('timeupdate', paintFilmBar);
+$('#video').addEventListener('play', paintFilmBar);
+$('#video').addEventListener('pause', paintFilmBar);
+
+// A natively-played file (local mp4) has no remux and no probe, so the only
+// source of its runtime is the media itself.
+$('#video').addEventListener('loadedmetadata', () => {
+  const video = $('#video');
+  if (!film.active || film.duration > 0) return;
+  if (Number.isFinite(video.duration) && video.duration > 0) {
+    film.duration = Math.floor(video.duration);
+    $('#vodTotal').textContent = hms(film.duration);
+    paintFilmBar();
+  }
+});
+
+/* ------------------------------------------------------- remux lead ---
+
+ * ffmpeg produces only as fast as the provider serves it. For a high-bitrate
+ * title that can be slower than playback, so the cushion drains and the film
+ * stalls mid-scene — which is why it happens on some films and not others.
+ *
+ * Rather than let the video stutter, watch how far ahead the remux is and take
+ * a single deliberate pause when it gets thin, showing the same loading screen
+ * with real progress. One honest wait beats repeated stuttering.
+ */
+
+let activeRemux = null;
+let leadTimer = null;
+let recovering = false;
+
+const LEAD_FLOOR = 12;   // seconds of runway before we step in
+const LEAD_RESUME = 40;  // rebuild to this before playing again
+
+/**
+ * Bumped whenever the watcher is stopped or restarted. The recovery loop below
+ * is async and outlives clearInterval, so it checks this before touching the
+ * video or the loader — otherwise a seek that happened mid-recovery would find
+ * the old loop pausing, resuming and relabelling its brand-new stream.
+ */
+let leadGen = 0;
+
+function startLeadWatch() {
+  stopLeadWatch();
+  if (!activeRemux) return;
+  const gen = ++leadGen;
+
+  leadTimer = setInterval(async () => {
+    const video = $('#video');
+    if (gen !== leadGen) return;
+    if (!activeRemux || recovering || video.paused || !video.duration) return;
+
+    let status;
+    try {
+      status = await api('/api/remux/status', { id: activeRemux.session });
+    } catch {
+      return stopLeadWatch(); // session gone; nothing left to guard
+    }
+    if (gen !== leadGen) return; // superseded while the request was in flight
+
+    film.ready = status.seconds;
+
+    // Once ffmpeg has written the whole file there's no runway to run out of.
+    // Mark the entire remainder seekable before the polling stops, or the
+    // ready band freezes at whatever the last poll happened to see.
+    if (status.complete) {
+      if (film.duration) film.ready = Math.max(film.ready, film.duration - film.offset);
+      paintFilmBar();
+      return stopLeadWatch();
+    }
+    paintFilmBar();
+
+    const lead = status.seconds - video.currentTime;
+    if (lead > LEAD_FLOOR) return;
+
+    recovering = true;
+    const wasPlaying = !video.paused;
+    video.pause();
+    loader.show('Buffering ahead — the provider is feeding this one slowly', '');
+    const pausedAt = Date.now();
+    let firstGained = null;
+
+    while (recovering && gen === leadGen) {
+      let s;
+      try {
+        s = await api('/api/remux/status', { id: activeRemux.session });
+      } catch {
+        break;
+      }
+      if (gen !== leadGen) break;
+      const gained = s.seconds - video.currentTime;
+      if (firstGained === null) firstGained = gained;
+      const eta = bankingEta(
+        gained - firstGained,
+        (Date.now() - pausedAt) / 1000,
+        LEAD_RESUME - gained
+      );
+      loader.set(
+        Math.max(0, Math.min(1, gained / LEAD_RESUME)),
+        `${Math.max(0, Math.floor(gained))}s of ${LEAD_RESUME}s runway${eta}`
+      );
+      if (s.complete || gained >= LEAD_RESUME) break;
+      await new Promise((r) => setTimeout(r, 700));
+    }
+
+    // Only clean up if we still own playback. A seek during recovery has
+    // already attached a new stream and is running its own loader.
+    if (gen === leadGen) {
+      loader.hide();
+      recovering = false;
+      if (wasPlaying) video.play().catch(() => {});
+    }
+  }, 3000);
+}
+
+function stopLeadWatch() {
+  leadGen += 1;       // invalidates any in-flight recovery loop
+  recovering = false; // and releases the flag it spins on
+  clearInterval(leadTimer);
+  leadTimer = null;
+}
+
+/**
+ * Hold playback until the server has banked enough video. ffmpeg can only remux
+ * as fast as the provider serves, so starting on the first segment means the
+ * player repeatedly catches up to the encoder and stalls. Waiting here is what
+ * buys uninterrupted playback afterwards.
+ */
+/** "about 1m 20s" from a seconds count. */
+function etaText(seconds) {
+  const s = Math.max(1, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return r ? `${m}m ${r}s` : `${m}m`;
+}
+
+/**
+ * Wall-clock estimate of how long a banking wait has left, from the observed
+ * rate: video-seconds gained per real second since the wait began.
+ */
+function bankingEta(gained, elapsed, remaining) {
+  if (elapsed < 2.5 || gained <= 0) return '';
+  const rate = gained / elapsed;
+  if (rate < 0.05) return '';
+  const eta = remaining / rate;
+  return eta > 2 ? ` · about ${etaText(eta)} left` : '';
+}
+
+async function waitForPrebuffer(remux) {
+  if (!remux.session) return;
+  const target = remux.prebuffer || 45;
+  activeRemux = { session: remux.session, target };
+
+  loader.show('Buffering — this plays through without stopping', '');
+  const startedAt = Date.now();
+  let firstSeconds = null;
+
+  for (;;) {
+    let status;
+    try {
+      status = await api('/api/remux/status', { id: remux.session });
+    } catch {
+      return; // Session vanished; let the player try regardless.
+    }
+
+    if (status.failed) throw new Error(status.error || 'Conversion failed');
+
+    film.ready = status.seconds;
+    if (firstSeconds === null) firstSeconds = status.seconds;
+    const ready = Math.min(status.seconds, target);
+    const elapsed = (Date.now() - startedAt) / 1000;
+    const eta = bankingEta(status.seconds - firstSeconds, elapsed, target - status.seconds);
+    loader.set(ready / target, `${Math.floor(ready)}s of ${target}s buffered${eta}`);
+
+    // Short files finish before reaching the target — that's still enough.
+    if (status.seconds >= target || status.complete) break;
+
+    await new Promise((r) => setTimeout(r, 600));
+  }
+
+  loader.set(1, 'Ready');
+  loader.hide();
+}
+
+/* ------------------------------------------------------------- resume ---
+
+ * Playback already reports its position against the active profile, so the
+ * only thing missing was reading it back. A title is worth resuming when it
+ * was left more than a minute in and short of the end.
+ */
+
+const RESUME_MIN = 60;      // ignore a position from the opening minute
+const RESUME_MAX_RATIO = 0.95; // past this it counts as finished
+
+/**
+ * One identity per title, whatever route it's played by. A film streamed from
+ * the provider and the same film opened from Downloads share this key, so the
+ * position carries between them.
+ */
+function resumeKeyFor(item, episode, season) {
+  if (item.resumeKey) return item.resumeKey; // downloads carry theirs
+  if (episode) return `series:${item.id}:s${season}e${episode.episode_num}`;
+  return `${item.kind}:${item.id}`;
+}
+
+async function fetchProgress(key) {
+  if (!profiles.current || !key) return null;
+  try {
+    const row = await api(`/api/profiles/${profiles.current.id}/progress`, { key });
+    if (!row.found || row.completed) return null;
+    if (row.position < RESUME_MIN) return null;
+    if (row.duration && row.position / row.duration > RESUME_MAX_RATIO) return null;
+    return row;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Show the resume choice and settle on a start position. Resolves to the saved
+ * seconds, or 0 to start from the top.
+ */
+function askResume(name, row) {
+  return new Promise((resolve) => {
+    const ask = $('#resumeAsk');
+    $('#resumeTitle').textContent = name;
+    $('#resumeMeta').textContent = row.duration
+      ? `${hms(row.position)} of ${hms(row.duration)}`
+      : `Stopped at ${hms(row.position)}`;
+    $('#resumeFill').style.width = row.duration
+      ? `${Math.min(100, (row.position / row.duration) * 100)}%`
+      : '0%';
+    $('#resumeGo').textContent = `Resume from ${hms(row.position)}`;
+    ask.hidden = false;
+
+    const finish = (value) => {
+      ask.hidden = true;
+      $('#resumeGo').onclick = null;
+      $('#resumeRestart').onclick = null;
+      resolve(value);
+    };
+
+    $('#resumeGo').onclick = () => finish(row.position);
+    $('#resumeRestart').onclick = () => finish(0);
+  });
+}
+
+/** Containers a browser opens directly. .mkv is the one that breaks iOS. */
+const NATIVE_CONTAINERS = ['mp4', 'm4v', 'mov'];
+
+/** Last /api/remux response — carries the ffprobe duration fallback. */
+let lastRemux = {};
+
+/**
+ * Has this title already been pulled to disk? If so it plays from there:
+ * instantly, with no buffering, and without spending the provider's single
+ * connection. Downloads record the same stream id the library uses.
+ */
+function findLocalCopy(kind, id) {
+  const want = kind === 'series' ? 'series' : 'movie';
+  return (state.downloads.items || []).find(
+    (job) => job.status === 'done' && job.kind === want && String(job.streamId) === String(id)
+  );
+}
+
+/** Play a completed download, remuxing off local disk if the container needs it. */
+async function playLocalCopy(job, startAt = 0) {
+  if (needsRemux(job.ext)) {
+    // The file is on disk but still in its original container, so it has to be
+    // converted as it plays — the exact stop-start this feature exists to
+    // avoid. Say so, rather than letting it look like a network problem.
+    toast('This download is not optimized yet — playback may stall. Fix it from Downloads.');
+    const remuxed = await api('/api/remux', {
+      download: job.id,
+      start: startAt || '',
+    });
+    lastRemux = remuxed;
+    film.offset = remuxed.offset || 0;
+    await waitForPrebuffer(remuxed);
+    return { url: remuxed.url, format: 'm3u8', local: true };
+  }
+  lastRemux = {};
+  // Plays natively, so the file seeks itself once metadata is in.
+  return { url: `/api/downloads/${job.id}/file`, format: 'file', local: true, seekTo: startAt };
+}
+
+function needsRemux(ext) {
+  if (!ext) return false;
+  return !NATIVE_CONTAINERS.includes(String(ext).toLowerCase());
+}
+
+async function resolveStream(item, override) {
+  const startAt = Math.floor(override?.startAt || 0);
+
+  if (item.directUrl) {
+    const source = item.sourceUrl || '';
+    const localExt = (source.split('.').pop() || '').toLowerCase();
+
+    // A downloaded .mkv is just as unplayable as a streamed one. Remux it from
+    // local disk, which is fast and costs no provider connection.
+    if (item.localOnly && item.downloadId && needsRemux(localExt)) {
+      const data = await api('/api/remux', { download: item.downloadId });
+      // Keep the response — sourceDuration is the scrubber's runtime, and
+      // session is what marks this as remux-backed for seeking.
+      lastRemux = data;
+      await waitForPrebuffer(data);
+      return { url: data.url, format: 'm3u8' };
+    }
+
+    const format = /\.m3u8(\?|$)/i.test(source)
+      ? 'm3u8'
+      : /\.ts(\?|$)/i.test(source)
+        ? 'ts'
+        : 'file';
+    // A native local file honours a resume point by seeking itself.
+    return { url: item.directUrl, format, seekTo: format === 'file' ? startAt : 0 };
+  }
+  const kind = override?.kind || (item.kind === 'movie' ? 'movie' : item.kind);
+  const id = override?.id ?? item.id;
+  const ext = override?.ext ?? item.ext ?? '';
+
+  // Already on disk? Then never touch the provider for it.
+  if (kind !== 'live') {
+    const local = findLocalCopy(kind, id);
+    if (local) return playLocalCopy(local, startAt);
+  }
+  // VOD arrives as .mkv from this provider, which no browser will open — send
+  // it through the remuxer instead of handing the player a dead file.
+  if (kind !== 'live' && needsRemux(ext)) {
+    // Pass the codec when we have it — it decides TS vs fMP4 packaging and
+    // saves the server an ffprobe round trip against the provider.
+    const remuxed = await api('/api/remux', {
+      kind,
+      id,
+      ext,
+      vcodec: override?.vcodec || item.vcodec || '',
+      // Lets the server copy audio instead of transcoding it when it's
+      // already stereo AAC, which is most of the English catalogue.
+      acodec: override?.acodec || item.acodec || '',
+      achannels: override?.achannels || item.achannels || '',
+      start: startAt || '',
+    });
+    lastRemux = remuxed;
+    film.offset = remuxed.offset || 0;
+    await waitForPrebuffer(remuxed);
+    return { url: remuxed.url, format: 'm3u8' };
+  }
+
+  const data = await api('/api/play', {
+    kind,
+    id,
+    ext,
+    latency: kind === 'live' ? prefs.data.liveLatency : '',
+  });
+  const format =
+    kind === 'live' ? data.format : /^(m3u8|ts)$/.test(data.format) ? data.format : 'file';
+  return { url: data.url, format };
+}
+
+function updateFavButton(item) {
+  $('#favBtn').classList.toggle('is-on', profiles.hasFav(item));
+}
+
+/**
+ * Guards the long await chain in openPlayer (metadata fetch, then up to 45s of
+ * prebuffer). Closing the player bumps the token, so a stale open resolves to
+ * nothing instead of attaching a stream to a hidden overlay — which kept the
+ * provider's single connection burning behind the user's back.
+ */
+let playToken = 0;
+
+async function openPlayer(item) {
+  const myToken = ++playToken;
+  const overlay = $('#playerOverlay');
+  overlay.hidden = false;
+  document.body.style.overflow = 'hidden';
+
+  // Full screen from the first frame — the windowed shell used to flash up
+  // for the whole buffering wait before cinema mode finally engaged.
+  enterCinema(item);
+
+  document.querySelector('.player-shell').classList.remove('awaiting-pick');
+  $('#playerTitle').textContent = item.name;
+  $('#playerSub').textContent = '';
+  $('#playerDetail').hidden = true;
+  $('#playerDetail').innerHTML = '';
+  updateFavButton(item);
+  $('#favBtn').onclick = () => {
+    const added = profiles.toggleFav(item);
+    updateFavButton(item);
+    toast(added ? 'Added to favorites.' : 'Removed from favorites.');
+    if (state.tab === 'favorites') render();
+  };
+
+  // Live TV can't be downloaded, and neither can something already on disk.
+  const downloadBtn = $('#downloadBtn');
+  const downloadable = item.kind === 'movie' && !item.localOnly;
+  downloadBtn.hidden = !downloadable && item.kind !== 'series';
+  downloadBtn.onclick = downloadable ? () => requestDownload(item) : null;
+  if (item.kind === 'series') {
+    downloadBtn.title = 'Download the whole season';
+    downloadBtn.onclick = () => requestSeasonDownload();
+  } else {
+    downloadBtn.title = 'Download for offline';
+  }
+
+  if (item.kind === 'series') {
+    document.querySelector('.player-shell').classList.add('awaiting-pick');
+    await renderSeries(item);
+    return;
+  }
+
+  currentLiveItem = item.kind === 'live' ? item : null;
+  $('#latencyMode').value = prefs.data.liveLatency || 'balanced';
+
+  // A previous title's remux must not leak its duration into this one — that
+  // put the wrong runtime on the scrubber for anything that plays natively.
+  lastRemux = {};
+
+  // Know what's on disk before deciding how to play it. Live never has a
+  // local copy, so don't spend a round trip on it before tuning the channel.
+  if (item.kind !== 'live') await refreshDownloads();
+  const localCopy = item.kind === 'live' || item.localOnly ? null : findLocalCopy(item.kind, item.id);
+
+  // Pick up where this profile left off, if it did. Asked before anything is
+  // fetched so a resume starts the conversion at the right point rather than
+  // converting from zero and then jumping.
+  let startAt = 0;
+  if (item.kind === 'movie' && (!item.localOnly || item.resumeKey)) {
+    const saved = await fetchProgress(resumeKeyFor(item));
+    if (saved) {
+      if (myToken !== playToken) return;
+      startAt = await askResume(item.name, saved);
+      if (myToken !== playToken) return;
+    }
+  }
+
+  // Ask for the details while the provider connection is still free — once
+  // ffmpeg is streaming, this call comes back empty. Skipped for a local copy:
+  // a downloaded film should play with the provider entirely out of the loop.
+  let vodInfo = null;
+  if (item.kind === 'movie' && !item.localOnly && !localCopy && state.config.mode === 'xtream') {
+    loader.show('Fetching film details…');
+    vodInfo = await fetchVodInfo(item);
+  }
+
+  try {
+    if (localCopy) {
+      status('Playing your downloaded copy…');
+    } else if (item.kind !== 'live' && needsRemux(item.ext || (item.sourceUrl || '').split('.').pop())) {
+      status('Converting for playback — this takes a few seconds…');
+    }
+    const { url, format, seekTo } = await resolveStream(item, { startAt });
+    if (myToken !== playToken) return; // player closed while we were buffering
+    attach(url, format, { seekTo });
+    if (item.kind === 'live') {
+      stopLeadWatch();
+      hideFilmBar();
+    } else {
+      startLeadWatch();
+      // Films get the real-runtime scrubber; a local file already has a
+      // correct duration of its own, so the native controls are fine there.
+      if (item.kind === 'movie') {
+        // Provider metadata first, ffprobe's reading of the source second.
+        // Local files get it too — the probe runs against the file on disk,
+        // so the runtime is there without touching the provider.
+        const runtime = parseRuntime(vodInfo) || lastRemux.sourceDuration || 0;
+        showFilmBar(item, runtime);
+        applyVodInfo(vodInfo);
+        if (localCopy || item.localOnly) {
+          $('#cinemaSub').textContent = 'Playing from your downloads';
+        }
+      }
+    }
+    if (item.kind === 'live') startLiveTracking();
+    else stopLiveTracking();
+    // Watching offline still counts — it's the same title, and the position
+    // is keyed the same way, so the two routes share one resume point.
+    if (!item.localOnly || item.resumeKey) beginHistory(item);
+  } catch (err) {
+    status(`Couldn't start playback: ${err.message}`);
+  } finally {
+    loader.hide();
+  }
+
+  if (item.kind === 'live' && state.config.mode === 'xtream') renderEpg(item);
+}
+
+async function renderEpg(item) {
+  try {
+    const data = await api('/api/xtream', {
+      action: 'get_short_epg',
+      stream_id: item.id,
+      limit: 8,
+    });
+    const listings = data.epg_listings || [];
+    if (!listings.length) return;
+
+    const detail = $('#playerDetail');
+    detail.innerHTML = '';
+    const heading = el('h3');
+    heading.textContent = 'Up next';
+    detail.append(heading);
+
+    const now = Date.now() / 1000;
+    listings.forEach((listing) => {
+      const row = el('div', 'epg-row');
+      const start = Number(listing.start_timestamp);
+      const stop = Number(listing.stop_timestamp);
+      if (start <= now && now < stop) row.classList.add('is-now');
+      const time = el('div', 'epg-time');
+      time.textContent = `${clockFromTimestamp(start)} – ${clockFromTimestamp(stop)}`;
+      const title = el('div', 'epg-title');
+      title.textContent = listing.title || 'No listing';
+      row.append(time, title);
+      detail.append(row);
+    });
+
+    const current = listings.find(
+      (l) => Number(l.start_timestamp) <= now && now < Number(l.stop_timestamp)
+    );
+    if (current) {
+      $('#playerSub').textContent = `Now: ${current.title}`;
+      $('#cinemaSub').textContent = `Now: ${current.title}`;
+    }
+    detail.hidden = false;
+  } catch {
+    /* EPG is a nicety, not a requirement */
+  }
+}
+
+/**
+ * Pull a film's details. Must happen BEFORE the remux starts: this provider
+ * allows one connection, and while ffmpeg is streaming it answers metadata
+ * calls with `{"error":""}`. Asking first is the only reliable order.
+ */
+async function fetchVodInfo(item) {
+  try {
+    const data = await api('/api/xtream', { action: 'get_vod_info', vod_id: item.id });
+    return data && data.info ? data.info : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyVodInfo(info) {
+  if (!info) return;
+  const bits = [info.releasedate, info.genre, info.duration].filter(Boolean);
+  if (bits.length) {
+    $('#playerSub').textContent = bits.join(' · ');
+    $('#cinemaSub').textContent = bits.join(' · ');
+  }
+  if (!info.plot) return;
+
+  const detail = $('#playerDetail');
+  detail.innerHTML = '';
+  const heading = el('h3');
+  heading.textContent = 'Synopsis';
+  const plot = el('p');
+  plot.textContent = info.plot;
+  detail.append(heading, plot);
+  detail.hidden = false;
+}
+
+
+async function renderSeries(item) {
+  const detail = $('#playerDetail');
+  detail.hidden = false;
+  detail.innerHTML = '<h3>Loading episodes…</h3>';
+
+  let data;
+  try {
+    data = await api('/api/xtream', { action: 'get_series_info', series_id: item.id });
+  } catch (err) {
+    detail.innerHTML = '';
+    const heading = el('h3');
+    heading.textContent = `Couldn't load episodes: ${err.message}`;
+    detail.append(heading);
+    return;
+  }
+
+  const episodes = data.episodes || {};
+  const seasons = Object.keys(episodes).sort((a, b) => Number(a) - Number(b));
+  if (!seasons.length) {
+    detail.innerHTML = '<h3>No episodes listed for this series.</h3>';
+    return;
+  }
+
+  const info = data.info || {};
+  if (info.genre || info.releaseDate) {
+    $('#playerSub').textContent = [info.releaseDate, info.genre].filter(Boolean).join(' · ');
+  }
+
+  detail.innerHTML = '';
+  const picker = el('div', 'season-picker');
+  const list = el('div', 'ep-list');
+  detail.append(picker, list);
+
+  const showSeason = (season) => {
+    // Remembered so the header download button knows which season to take.
+    currentSeason = { item, season, episodes: episodes[season] || [] };
+    picker.querySelectorAll('.season-chip').forEach((chip) => {
+      chip.classList.toggle('is-active', chip.dataset.season === season);
+    });
+    list.innerHTML = '';
+    (episodes[season] || []).forEach((episode) => {
+      const row = el('div', 'ep');
+      const num = el('span', 'ep-num');
+      num.textContent = String(episode.episode_num).padStart(2, '0');
+      const name = el('span', 'ep-name');
+      name.textContent = episode.title || `Episode ${episode.episode_num}`;
+
+      const grab = el('button', 'ep-dl');
+      grab.title = 'Download this episode';
+      grab.setAttribute('aria-label', 'Download this episode');
+      grab.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg>';
+      grab.addEventListener('click', (event) => {
+        event.stopPropagation();
+        requestDownload(item, { ...episode, season });
+      });
+
+      row.append(num, name, grab);
+      row.addEventListener('click', async () => {
+        const myToken = playToken; // closing the player invalidates this pick
+
+        // Offer to pick up where this episode was left, before converting.
+        let startAt = 0;
+        const saved = await fetchProgress(resumeKeyFor(item, episode, season));
+        if (saved) {
+          if (myToken !== playToken) return;
+          startAt = await askResume(
+            `${item.name} — S${season}E${episode.episode_num}`,
+            saved
+          );
+          if (myToken !== playToken) return;
+        }
+
+        list.querySelectorAll('.ep').forEach((r) => r.classList.remove('is-playing'));
+        row.classList.add('is-playing');
+        document.querySelector('.player-shell').classList.remove('awaiting-pick');
+        $('#playerSub').textContent = `S${season} · E${episode.episode_num} — ${name.textContent}`;
+        $('#cinemaSub').textContent = `S${season} · E${episode.episode_num} — ${name.textContent}`;
+        try {
+          const { url, format, seekTo } = await resolveStream(item, {
+            kind: 'series',
+            id: episode.id,
+            ext: episode.container_extension || 'mp4',
+            vcodec: episode.info?.video?.codec_name || '',
+            acodec: episode.info?.audio?.codec_name || '',
+            achannels: episode.info?.audio?.channels || '',
+            startAt,
+          });
+          if (myToken !== playToken) return;
+          attach(url, format, { seekTo });
+          showFilmBar(item, parseRuntime(episode.info), {
+            kind: 'series',
+            id: episode.id,
+            ext: episode.container_extension || 'mp4',
+            vcodec: episode.info?.video?.codec_name || '',
+            acodec: episode.info?.audio?.codec_name || '',
+            achannels: episode.info?.audio?.channels || '',
+          });
+          // After showFilmBar — enterCinema clears the subtitle line.
+          $('#cinemaSub').textContent = `S${season} · E${episode.episode_num} — ${name.textContent}`;
+          startLeadWatch();
+          beginHistory(item, {
+            key: `series:${item.id}:s${season}e${episode.episode_num}`,
+            name: `${item.name} — S${season}E${episode.episode_num}`,
+            seriesId: item.id,
+            season: Number(season),
+            episode: Number(episode.episode_num),
+          });
+        } catch (err) {
+          status(`Couldn't start episode: ${err.message}`);
+        }
+      });
+      list.append(row);
+    });
+  };
+
+  seasons.forEach((season) => {
+    const chip = el('button', 'season-chip');
+    chip.dataset.season = season;
+    chip.textContent = `Season ${season}`;
+    chip.addEventListener('click', () => showSeason(season));
+    picker.append(chip);
+  });
+
+  showSeason(seasons[0]);
+}
+
+function closePlayer() {
+  playToken += 1; // cancel any open/episode pick still awaiting its stream
+  endHistory();
+  hideFilmBar();
+  exitCinema();
+  stopLeadWatch();
+  recovering = false;
+  activeRemux = null;
+  teardown();
+  stopLiveTracking();
+  currentLiveItem = null;
+  status('');
+  // Stop any remux so ffmpeg isn't holding the single provider connection.
+  fetch('/api/remux/stop', { method: 'GET' }).catch(() => {});
+  $('#playerOverlay').hidden = true;
+  document.body.style.overflow = '';
+}
+
+$('#playerClose').addEventListener('click', closePlayer);
+$('#playerOverlay').addEventListener('click', (event) => {
+  if (event.target === $('#playerOverlay')) closePlayer();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('#healthModal').hidden) return health.close();
+  if (event.key === 'Escape' && !$('#playerOverlay').hidden) closePlayer();
+});
+
+/* --------------------------------------------------------------- chrome */
+
+$('#loadMore').addEventListener('click', () => {
+  state.visible += PAGE_SIZE;
+  render();
+});
+
+$('#filterToggle').addEventListener('change', async (event) => {
+  prefs.data.filtersEnabled = event.target.checked;
+  await prefs.save();
+  // The server caches per filter setting, so the unfiltered fetch is slow the
+  // first time on a library this size.
+  state.library = { live: null, movies: null, series: null };
+  toast(
+    event.target.checked
+      ? 'Showing English/US categories only.'
+      : 'Showing every category — the full library takes a while to load.'
+  );
+  await goTo(state.tab);
+});
+
+let catSearchTimer;
+$('#catSearch').addEventListener('input', (event) => {
+  clearTimeout(catSearchTimer);
+  const value = event.target.value.trim();
+  catSearchTimer = setTimeout(() => {
+    state.catQuery = value;
+    render();
+  }, 140);
+});
+
+let searchTimer;
+$('#searchInput').addEventListener('input', (event) => {
+  clearTimeout(searchTimer);
+  const value = event.target.value.trim();
+  searchTimer = setTimeout(() => {
+    state.query = value;
+    state.visible = PAGE_SIZE;
+    render();
+  }, 180);
+});
+
+$('#navToggle').addEventListener('click', () => $('#mainNav').classList.toggle('is-open'));
+$('#catToggle').addEventListener('click', () => $('#sidebar').classList.add('is-open'));
+$('#sidebarClose').addEventListener('click', () => $('#sidebar').classList.remove('is-open'));
+document.querySelectorAll('.nav a').forEach((a) =>
+  a.addEventListener('click', () => $('#mainNav').classList.remove('is-open'))
+);
+
+/* ------------------------------------------------------- profile gate UI */
+
+let managing = false;
+let editingProfile = null;
+
+function renderProfileGate() {
+  const grid = $('#profileGrid');
+  grid.innerHTML = '';
+
+  for (const profile of profiles.all) {
+    const tile = el('button', 'profile-tile');
+    const avatar = el('span', 'profile-avatar');
+    avatar.textContent = profile.emoji;
+    avatar.style.background = profile.color;
+    const name = el('span', 'profile-name');
+    name.textContent = profile.name;
+    tile.append(avatar, name);
+    tile.addEventListener('click', async () => {
+      if (managing) return openProfileModal(profile);
+      await profiles.select(profile);
+      $('#profileGate').hidden = true;
+      await startApp();
+    });
+    grid.append(tile);
+  }
+
+  const add = el('button', 'profile-tile profile-add');
+  const plus = el('span', 'profile-avatar');
+  plus.textContent = '+';
+  const addLabel = el('span', 'profile-name');
+  addLabel.textContent = 'Add profile';
+  add.append(plus, addLabel);
+  add.addEventListener('click', () => openProfileModal(null));
+  grid.append(add);
+
+  $('#manageBtn').hidden = profiles.all.length === 0;
+  $('#manageBtn').textContent = managing ? 'Done' : 'Manage profiles';
+  $('#profileGate').classList.toggle('is-managing', managing);
+}
+
+function showProfileGate() {
+  $('#setupView').hidden = true;
+  $('#siteHeader').hidden = true;
+  $('#appView').hidden = true;
+  $('#profileGate').hidden = false;
+  renderProfileGate();
+}
+
+$('#manageBtn').addEventListener('click', () => {
+  managing = !managing;
+  renderProfileGate();
+});
+
+$('#profileChip').addEventListener('click', () => {
+  managing = false;
+  showProfileGate();
+});
+
+/* ---- add / edit modal ---- */
+
+function buildPickers(selectedEmoji, selectedColor) {
+  const emojiWrap = $('#emojiPicker');
+  const colorWrap = $('#colorPicker');
+  emojiWrap.innerHTML = '';
+  colorWrap.innerHTML = '';
+
+  let emoji = selectedEmoji;
+  let color = selectedColor;
+
+  for (const choice of AVATARS) {
+    const btn = el('button');
+    btn.type = 'button';
+    btn.textContent = choice;
+    btn.classList.toggle('is-on', choice === emoji);
+    btn.addEventListener('click', () => {
+      emoji = choice;
+      emojiWrap.querySelectorAll('button').forEach((b) => b.classList.remove('is-on'));
+      btn.classList.add('is-on');
+    });
+    emojiWrap.append(btn);
+  }
+
+  for (const choice of SWATCHES) {
+    const btn = el('button');
+    btn.type = 'button';
+    btn.style.background = choice;
+    btn.classList.toggle('is-on', choice === color);
+    btn.addEventListener('click', () => {
+      color = choice;
+      colorWrap.querySelectorAll('button').forEach((b) => b.classList.remove('is-on'));
+      btn.classList.add('is-on');
+    });
+    colorWrap.append(btn);
+  }
+
+  return {
+    emoji: () => emoji,
+    color: () => color,
+  };
+}
+
+let pickers = null;
+
+function openProfileModal(profile) {
+  editingProfile = profile;
+  const form = $('#profileForm');
+  form.reset();
+  $('#profileError').hidden = true;
+
+  $('#profileModalTitle').textContent = profile ? 'Edit profile' : 'Add a profile';
+  $('#profileSubmit').textContent = profile ? 'Save' : 'Create profile';
+  form.elements.name.value = profile ? profile.name : '';
+  // Editing name and icon is open; creating and deleting need the password.
+  $('#passwordField').hidden = Boolean(profile);
+  $('#profileDelete').hidden = !profile;
+
+  pickers = buildPickers(profile ? profile.emoji : AVATARS[0], profile ? profile.color : SWATCHES[0]);
+  $('#profileModal').hidden = false;
+  form.elements.name.focus();
+}
+
+function closeProfileModal() {
+  $('#profileModal').hidden = true;
+  editingProfile = null;
+}
+
+$('#profileCancel').addEventListener('click', closeProfileModal);
+$('#profileModal').addEventListener('click', (event) => {
+  if (event.target === $('#profileModal')) closeProfileModal();
+});
+
+$('#profileForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const error = $('#profileError');
+  const submit = $('#profileSubmit');
+  error.hidden = true;
+  submit.disabled = true;
+
+  const body = {
+    name: form.elements.name.value.trim(),
+    emoji: pickers.emoji(),
+    color: pickers.color(),
+  };
+
+  try {
+    let res;
+    if (editingProfile) {
+      res = await fetch(`/api/profiles/${editingProfile.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } else {
+      body.password = form.elements.password.value;
+      res = await fetch('/api/profiles', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save that profile.');
+
+    closeProfileModal();
+    await profiles.load();
+    // Re-selecting keeps the header chip in step with a rename or new icon.
+    if (profiles.current) {
+      const refreshed = profiles.all.find((p) => p.id === profiles.current.id);
+      if (refreshed) await profiles.select(refreshed, { silent: true });
+    }
+    renderProfileGate();
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+$('#profileDelete').addEventListener('click', async () => {
+  if (!editingProfile) return;
+  const password = prompt(
+    `Delete “${editingProfile.name}”? This removes its favorites and watch history.\n\nEnter the profile password:`
+  );
+  if (password === null) return;
+
+  try {
+    const res = await fetch(`/api/profiles/${editingProfile.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not delete that profile.');
+
+    if (profiles.current && profiles.current.id === editingProfile.id) {
+      profiles.current = null;
+      localStorage.removeItem('portal.profile');
+      $('#profileChip').hidden = true;
+    }
+    closeProfileModal();
+    await profiles.load();
+    renderProfileGate();
+    toast('Profile deleted.');
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+/* ------------------------------------------------------- watch history --
+
+ * Every play is reported against the active profile. This is the raw signal
+ * the personalization layer reads back through /api/profiles/:id/taste, so
+ * it records what was watched, how far, and in which category.
+ */
+
+let historyTarget = null;
+let historyTimer = null;
+
+function beginHistory(item, extra = {}) {
+  if (!profiles.current) return;
+  const source = state.library[item.kind === 'movie' ? 'movies' : item.kind] || {};
+  const category = (source.categories || []).find(
+    (c) => String(c.id) === String(item.categoryId)
+  );
+
+  historyTarget = {
+    key: extra.key || resumeKeyFor(item),
+    kind: item.kind,
+    id: item.id,
+    name: extra.name || item.name,
+    categoryId: item.categoryId || '',
+    categoryName: category ? category.name : '',
+    poster: item.logo || '',
+    seriesId: extra.seriesId,
+    season: extra.season,
+    episode: extra.episode,
+    newPlay: true,
+  };
+
+  reportHistory();
+  clearInterval(historyTimer);
+  historyTimer = setInterval(reportHistory, 15000);
+}
+
+function reportHistory() {
+  if (!historyTarget || !profiles.current) return;
+  const video = $('#video');
+  const isLive = historyTarget.kind === 'live';
+  // After a seek the video element restarts at zero, so record where we are in
+  // the film — otherwise resume points would be wrong for anything scrubbed.
+  const position = Math.floor(film.active ? filmPosition() : video.currentTime || 0);
+
+  // A live stream reports the length of its buffered window as `duration`
+  // (often just seconds), which would make a channel look finished the moment
+  // you watched past it. Live is explicitly durationless and never complete.
+  // Prefer the provider's real runtime; the remux only knows its own progress.
+  const duration = isLive
+    ? 0
+    : film.active && film.duration
+      ? Math.floor(film.duration)
+      : Number.isFinite(video.duration)
+        ? Math.floor(video.duration)
+        : 0;
+
+  const payload = {
+    ...historyTarget,
+    position,
+    duration,
+    completed: !isLive && duration > 0 && position / duration > 0.95,
+  };
+  historyTarget.newPlay = false;
+
+  navigator.sendBeacon?.(
+    `/api/profiles/${profiles.current.id}/history`,
+    new Blob([JSON.stringify(payload)], { type: 'application/json' })
+  );
+}
+
+function endHistory() {
+  reportHistory();
+  clearInterval(historyTimer);
+  historyTimer = null;
+  historyTarget = null;
+}
+
+window.addEventListener('pagehide', () => reportHistory());
+
+/* ------------------------------------------------------------------ boot */
+
+async function startApp() {
+  $('#setupView').hidden = true;
+  $('#siteHeader').hidden = false;
+  $('#appView').hidden = false;
+  $('#profileGate').hidden = true;
+  $('#filterToggle').checked = prefs.data.filtersEnabled !== false;
+  await refreshDownloads();
+  await goTo(routeFromHash());
+
+  // Keep the progress bars and the nav badge honest while anything is running.
+  setInterval(() => {
+    const busy =
+      state.downloads.active ||
+      (state.downloads.items || []).some((j) => j.status === 'downloading' || j.status === 'queued');
+    if (busy || state.tab === 'downloads') refreshDownloads({ rerender: true });
+  }, 2000);
+}
+
+(async function boot() {
+  // Before anything renders, so controls are the right size on first paint.
+  touchMode.init();
+  try {
+    const config = await api('/api/config');
+    if (!config.configured) return showSetup();
+    state.config = config;
+    await prefs.load();
+    await profiles.load();
+    // No profile picked on this device yet — ask before showing the library.
+    if (!profiles.current) return showProfileGate();
+    await startApp();
+  } catch (err) {
+    showSetup();
+    toast(`Startup problem: ${err.message}`);
+  }
+})();
