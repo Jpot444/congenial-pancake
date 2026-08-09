@@ -2482,6 +2482,25 @@ async function handleApi(req, res, pathname, query) {
     return json(res, 200, await readHealth());
   }
 
+  /* One yes/no for "is anyone actually using this right now". The auto-updater
+   * asks before restarting, so a push never drops a film mid-scene.
+   *
+   * A finished remux still plays from disk with ffmpeg long gone, so provider
+   * traffic alone would read as idle while someone is halfway through a film.
+   * lastAccess is the honest signal: the reaper at the top of this file already
+   * trusts it to decide a session is abandoned. */
+  if (pathname === '/api/activity') {
+    const streaming = providerStreams > 0;
+    const watching = [...remuxSessions.values()].some((s) => Date.now() - s.lastAccess < 60_000);
+    const downloading = Boolean(activeJob && activeJob.status === 'downloading');
+    return json(res, 200, {
+      busy: streaming || watching || downloading,
+      streaming,
+      watching,
+      downloading,
+    });
+  }
+
   if (pathname === '/api/downloads') {
     if (req.method === 'GET') {
       const rows = [...downloads.values()].sort((a, b) => b.createdAt - a.createdAt);

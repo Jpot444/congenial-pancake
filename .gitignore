@@ -6,3 +6,5 @@ downloads/
 hls/
 .DS_Store
 node_modules/
+auto-update.log
+.auto-update.lock

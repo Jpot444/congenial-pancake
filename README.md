@@ -37,6 +37,24 @@ To use a different port or bind to your LAN so the TV and phone can reach it:
 PORT=9000 HOST=0.0.0.0 node server.js
 ```
 
+## Deploying to the Pi
+
+`git push` is the whole deploy. `scripts/auto-update.sh` runs on the Pi every
+couple of minutes, and when `origin/main` moves it pulls and restarts the
+portal on its own. Setup and troubleshooting are in
+[scripts/README.md](scripts/README.md).
+
+Two things follow from that. **`main` is the live branch** — anything merged
+there is running on the television a couple of minutes later, with nobody
+reviewing it in between, so work on a branch and merge when you mean it. And
+**an update waits for the box to be idle**: the script asks `/api/activity`
+first and holds off while a film is playing, a stream is open or a download is
+running, rather than dropping a stream mid-scene. It retries on the next tick.
+
+`./deploy.sh` still rsyncs straight from a laptop and is still the fastest way
+to try something, but the two do not mix well — see the end of
+[scripts/README.md](scripts/README.md).
+
 ## Connecting your provider
 
 **Xtream Codes** (most common — you were given a server URL, username and
