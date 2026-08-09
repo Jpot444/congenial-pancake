@@ -210,7 +210,7 @@ const touchMode = {
     const btn = $('#touchToggle');
     btn.classList.toggle('is-on', on);
     btn.setAttribute('aria-pressed', String(on));
-    if (!silent) toast(on ? 'Touch mode on — larger controls.' : 'Touch mode off.');
+    if (!silent) toast(on ? 'Touch mode on — larger tap targets.' : 'Touch mode off.');
   },
 
   toggle() {
@@ -2182,12 +2182,68 @@ $('#vodMute').addEventListener('click', () => {
   $('#vodMute').style.color = video.muted ? 'var(--live)' : '';
 });
 
+/**
+ * iPhone and iPad — including iPadOS 13+, which reports itself as a Mac and can
+ * only be told apart by the fact that it has touch points.
+ */
+const isIOS = () =>
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+/**
+ * Hand iOS its own full-screen player. webkitEnterFullscreen is the video
+ * element's entry point and is what produces the standard view — the same one
+ * every iOS video app shows, with Apple's controls at Apple's sizes.
+ *
+ * It refuses to open before the media has metadata, which is reachable here:
+ * the bar appears as soon as the remux starts, so the button can be hit before
+ * the first frame lands. Wait for metadata rather than no-op on the tap.
+ */
+function enterNativeFullscreen(video) {
+  if (video.readyState < 1) {
+    video.addEventListener('loadedmetadata', () => video.webkitEnterFullscreen(), { once: true });
+    return;
+  }
+  video.webkitEnterFullscreen();
+}
+
 $('#vodFull').addEventListener('click', () => {
-  // Fullscreen the shell, not the video element — that keeps our controls in
-  // frame instead of handing over to the browser's own overlay.
+  const video = $('#video');
+
+  // On iPhone the element Fullscreen API does not exist at all, so fullscreening
+  // the shell was a silent no-op; on iPad it worked but kept our chrome instead
+  // of the player the platform already has.
+  if (isIOS() && typeof video.webkitEnterFullscreen === 'function') {
+    enterNativeFullscreen(video);
+    return;
+  }
+
+  // Everywhere else, fullscreen the shell, not the video element — that keeps
+  // our controls in frame instead of handing over to the browser's own overlay.
   const target = document.querySelector('.player-shell') || document.querySelector('.video-frame');
   if (document.fullscreenElement) document.exitFullscreen();
   else target.requestFullscreen?.();
+});
+
+/* Apple's player is the only thing on screen while it is up, so our bar just
+ * sits behind it competing for the same taps on the way out. Stand down for the
+ * duration and take the film back on exit.
+ *
+ * This is the one place a remuxed film shows the native scrubber, which spans
+ * only what has been remuxed so far rather than the whole runtime — the reason
+ * the custom bar exists in the first place. */
+$('#video').addEventListener('webkitbeginfullscreen', () => {
+  $('#video').controls = true;
+  if (film.active) $('#vodBar').hidden = true;
+});
+
+$('#video').addEventListener('webkitendfullscreen', () => {
+  if (film.active) {
+    $('#video').controls = false;
+    $('#vodBar').hidden = false;
+    paintFilmBar();
+  }
+  showChrome();
 });
 
 $('#video').addEventListener('timeupdate', paintFilmBar);

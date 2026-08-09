@@ -272,6 +272,23 @@ keeps its controls up.
 
 Live TV keeps the old windowed player; the cinema layout is only for VOD.
 
+**Fullscreen on iPhone and iPad hands over to Apple's player.** Everywhere else
+the fullscreen button expands the shell so the custom chrome stays in frame, but
+iOS gets `video.webkitEnterFullscreen()` and the standard system video view
+instead. Two reasons: on iPhone the element Fullscreen API does not exist at all,
+so the old shell-fullscreen was a silent no-op and the button simply did nothing;
+and on iPad it worked but produced a scaled-up version of our bar rather than the
+controls every other video app on the device uses.
+
+The trade-off is that the native scrubber is back for as long as the system
+player is up, and on a remuxed film it can only span what has been remuxed —
+exactly the limitation [the custom bar exists to work around](#the-scrubber-runs-on-real-film-time).
+The custom bar is restored on `webkitendfullscreen`.
+
+Touch mode does not scale the playback controls. It still enlarges tap targets
+for browsing — category lists, episode rows, nav, chips — where a fingertip is
+still aiming at cursor-sized targets.
+
 ### The scrubber runs on real film time
 
 The remux only knows the part it has written, so the native scrubber could

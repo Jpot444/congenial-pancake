@@ -487,29 +487,10 @@ svg {
 .touch .icon-btn { width: 46px; height: 46px; }
 .touch .icon-btn svg { width: 22px; height: 22px; }
 
-.touch .vod-btn { width: 48px; height: 48px; border-radius: 10px; }
-.touch .vod-btn svg { width: 24px; height: 24px; }
-.touch .vod-btn-lg { width: 58px; height: 58px; }
-.touch .vod-btn-lg svg { width: 30px; height: 30px; }
-
-.touch .cinema-back { height: 50px; padding: 0 22px 0 16px; font-size: 17px; }
-.touch .cinema-back svg { width: 22px; height: 22px; }
-
-/* A thin scrubber is the hardest thing on the page to hit accurately.
-   These carry `.vod-bar` purely for specificity: the `.cinema ...` rules for
-   the same elements sit later in this file, and at equal weight they'd win. */
-.touch .vod-bar .vod-track { height: 46px; }
-.touch .vod-bar .vod-track::before,
-.touch .vod-bar .vod-ready,
-.touch .vod-bar .vod-played { height: 7px; border-radius: 999px; }
-.touch .vod-bar .vod-knob { width: 22px; height: 22px; margin-left: -11px; transform: scale(1); }
-
-.touch .vod-bar { gap: 12px; padding-top: 74px; padding-bottom: 30px; }
-.touch .vod-bar .vod-time { font-size: 16px; min-width: 68px; }
-.touch .vod-bar .vod-btn { width: 48px; height: 48px; }
-.touch .vod-bar .vod-btn svg { width: 24px; height: 24px; }
-.touch .vod-bar .vod-btn-lg { width: 58px; height: 58px; }
-.touch .vod-bar .vod-btn-lg svg { width: 30px; height: 30px; }
+/* The playback controls are deliberately not scaled here. Full screen on an
+   iPhone or iPad is Apple's own player now, which brings correctly-sized
+   controls of its own, and in the windowed player the blown-up bar covered
+   more of the picture than it was worth. */
 
 .touch .pin-btn { width: 40px; height: 40px; }
 .touch .pin-btn svg { width: 18px; height: 18px; }
@@ -534,10 +515,6 @@ svg {
 .touch .latency-select, .touch .live-pill { height: 40px; font-size: 14px; }
 .touch .speed-warn { height: 42px; font-size: 15px; }
 
-/* Touch buttons are taller, so the title's own line has to start lower. */
-@media (max-width: 700px) {
-  .touch .cinema-titles { padding-top: 18px; }
-}
 .touch .modal-card .picker button { width: 50px; height: 50px; font-size: 23px; }
 
 /* Chrome that vanishes after three seconds is unusable when a tap is the only
