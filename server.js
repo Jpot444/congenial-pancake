@@ -1077,6 +1077,18 @@ let providerStreams = 0;          // live /stream connections currently piping
 let lastProviderActiveAt = 0;
 const RESUME_GRACE_MS = 8000;     // idle time required before downloads resume
 
+/**
+ * Last time a file on disk was served to a player. A finished download touches
+ * neither the provider nor a remux session, so without this it looks exactly
+ * like an idle box — and /api/activity would wave the auto-updater through
+ * while somebody was halfway through a film.
+ *
+ * A timestamp rather than an in-flight count on purpose: Safari plays video as
+ * a long series of short range requests, so a counter sits at zero between
+ * them and reads idle at the wrong moment.
+ */
+let localPlaybackAt = 0;
+
 /* ---- provider throughput meter ----
  *
  * The one number that actually predicts whether a stream will play smoothly.
@@ -2493,11 +2505,16 @@ async function handleApi(req, res, pathname, query) {
     const streaming = providerStreams > 0;
     const watching = [...remuxSessions.values()].some((s) => Date.now() - s.lastAccess < 60_000);
     const downloading = Boolean(activeJob && activeJob.status === 'downloading');
+    // Generous window: Safari can leave a real gap between range requests while
+    // it chews through what it already has, and a false idle here costs someone
+    // their film.
+    const playingLocal = Date.now() - localPlaybackAt < 90_000;
     return json(res, 200, {
-      busy: streaming || watching || downloading,
+      busy: streaming || watching || downloading || playingLocal,
       streaming,
       watching,
       downloading,
+      playingLocal,
     });
   }
 
@@ -2564,6 +2581,9 @@ async function handleApi(req, res, pathname, query) {
 
     if (suffix === '/file' || suffix === '/save') {
       if (job.status !== 'done') return json(res, 409, { error: 'Download not finished' });
+      // Playing, or saving to the phone. Either way the box is in use and a
+      // restart underneath it would cut the transfer off mid-stream.
+      localPlaybackAt = Date.now();
       return serveLocalFile(req, res, path.join(DOWNLOAD_DIR, job.file), {
         attachmentName: suffix === '/save' ? `${job.name}.${job.ext}` : null,
       });

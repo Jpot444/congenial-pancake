@@ -10,6 +10,31 @@ The final argument is how far across the plate to look for the emblem, as a
 fraction of width. 0.39 stops just before the vertical rule that divides the
 bison from the wordmark; raising it pulls that rule into the crop.
 
+## diagnose.sh
+
+Answers the question the health panel cannot: *where* the bottleneck is when
+something will not play. Run it on the Pi while the problem is happening —
+everything it does is read-only.
+
+    ./scripts/diagnose.sh
+
+It reports whether the portal is up and in use, how many times pm2 has
+restarted it, whether Tailscale has a direct path or is relaying through DERP,
+the wifi signal and negotiated bitrate, how fast a real download reads and
+serves over loopback, and whether the provider answers.
+
+The loopback figure is the one that splits the problem in two. It takes the
+network out entirely, so:
+
+- **Fast over loopback but stuttering on the phone** — the link, not the box.
+  Look at the relay line and the wifi signal.
+- **Slow over loopback too** — the SD card or the Pi itself.
+
+It also flags downloads still sitting in a non-MP4 container. Those are
+converted while they play, which a Pi cannot always keep up with; they stall
+for their own reasons and no amount of bandwidth fixes them. Re-optimize from
+the Downloads tab.
+
 ## auto-update.sh
 
 Deploys whatever is on `main` and restarts the portal, so a `git push` is the
