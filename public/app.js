@@ -427,6 +427,72 @@ setInterval(watchHealthBadge, 60000);
 
 $('#healthBtn').addEventListener('click', () => health.open());
 $('#healthClose').addEventListener('click', () => health.close());
+/* --------------------------------------------------- connection test ---
+ *
+ * The health panel reports what the Pi sees of its own link. From outside the
+ * house that is not the number that matters — what matters is what reaches the
+ * device you are watching on, and only that device can measure it.
+ *
+ * Roughly what a stream needs, in Mbit/s. The server works in bytes per second
+ * for the same judgement (needBytesPerSec); this is the same call in the units
+ * a speed reads in.
+ */
+const SPEED_TIERS = [
+  [25, 'ok', 'Plenty — anything in the library will play.'],
+  [10, 'ok', 'Fine for 1080p.'],
+  [4, 'warn', 'Marginal. High-bitrate films will stall to buffer.'],
+  [0, 'bad', 'Too slow to stream. This is why playback stops after a second.'],
+];
+
+$('#speedTest').addEventListener('click', async () => {
+  const btn = $('#speedTest');
+  const out = $('#speedResult');
+  const label = btn.textContent;
+
+  btn.disabled = true;
+  btn.textContent = 'Measuring…';
+  out.hidden = false;
+  out.textContent = 'Pulling a few MB from the box…';
+
+  try {
+    const started = performance.now();
+    const res = await fetch(`/api/speedtest?bytes=${8 * 1024 * 1024}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    let got = 0;
+    if (res.body && res.body.getReader) {
+      const reader = res.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        got += value.length;
+        // A link slow enough to need the full sample has already answered the
+        // question; a partial read gives the same rate without the wait.
+        if (performance.now() - started > 12000) {
+          await reader.cancel();
+          break;
+        }
+      }
+    } else {
+      got = (await res.arrayBuffer()).byteLength;
+    }
+
+    const seconds = (performance.now() - started) / 1000;
+    const mbit = (got * 8) / seconds / 1e6;
+    const [, tone, verdict] = SPEED_TIERS.find(([floor]) => mbit >= floor);
+
+    out.className = `health-note conn-${tone}`;
+    out.textContent =
+      `${mbit.toFixed(1)} Mbit/s (${(got / 1048576).toFixed(1)} MB in ${seconds.toFixed(1)}s). ${verdict}`;
+  } catch (err) {
+    out.className = 'health-note conn-bad';
+    out.textContent = `Couldn't measure it — ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+});
+
 $('#healthModal').addEventListener('click', (e) => {
   if (e.target.id === 'healthModal') health.close();
 });

@@ -1089,6 +1089,9 @@ const RESUME_GRACE_MS = 8000;     // idle time required before downloads resume
  */
 let localPlaybackAt = 0;
 
+/** One incompressible block, reused for every /api/speedtest response. */
+const SPEEDTEST_CHUNK = crypto.randomBytes(64 * 1024);
+
 /* ---- provider throughput meter ----
  *
  * The one number that actually predicts whether a stream will play smoothly.
@@ -2501,6 +2504,38 @@ async function handleApi(req, res, pathname, query) {
    * traffic alone would read as idle while someone is halfway through a film.
    * lastAccess is the honest signal: the reaper at the top of this file already
    * trusts it to decide a session is abandoned. */
+  /* Filler bytes, purely so a phone can measure what it actually gets from this
+   * box. /api/health reports what the Pi sees of its own link; on a connection
+   * from outside the house that is a different number from what arrives, and
+   * the gap between them is exactly where playback problems hide.
+   *
+   * Random rather than zeros: anything compressing the response in transit
+   * would otherwise report a speed nobody can actually stream at. */
+  if (pathname === '/api/speedtest') {
+    const asked = Number(query.get('bytes')) || 8 * 1024 * 1024;
+    const total = Math.min(Math.max(asked, 1024), 64 * 1024 * 1024);
+    res.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'content-length': total,
+      'cache-control': 'no-store',
+    });
+    let sent = 0;
+    const pump = () => {
+      while (sent < total) {
+        const size = Math.min(SPEEDTEST_CHUNK.length, total - sent);
+        sent += size;
+        const slice = size === SPEEDTEST_CHUNK.length ? SPEEDTEST_CHUNK : SPEEDTEST_CHUNK.subarray(0, size);
+        // Respect backpressure, or a slow link buffers the whole sample in RAM
+        // on a box that does not have it to spare.
+        if (!res.write(slice)) return res.once('drain', pump);
+      }
+      res.end();
+    };
+    req.on('close', () => res.destroy());
+    pump();
+    return;
+  }
+
   if (pathname === '/api/activity') {
     const streaming = providerStreams > 0;
     const watching = [...remuxSessions.values()].some((s) => Date.now() - s.lastAccess < 60_000);

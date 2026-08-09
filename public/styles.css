@@ -2292,6 +2292,25 @@ svg {
   line-height: 1.5;
 }
 
+/* The connection test borrows the note block, but unlike the rest of it the
+   answer is often good news — so it recolours by result. Bad keeps the red. */
+.health-speed { margin-top: 18px; }
+
+/* conn-, not speed-: .speed-warn is already the player's playback-rate pill,
+   and it is absolutely positioned — sharing the name threw this note out of
+   the card and halfway up the screen. */
+.conn-ok {
+  border-color: rgba(87, 200, 139, .35);
+  background: rgba(87, 200, 139, .08);
+  color: #7FD4A0;
+}
+
+.conn-warn {
+  border-color: rgba(233, 161, 59, .35);
+  background: rgba(233, 161, 59, .08);
+  color: #E9A13B;
+}
+
 /* A dot on the header button so a problem is visible without opening it. */
 .icon-btn { position: relative; }
 .btn-dot {

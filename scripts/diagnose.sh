@@ -120,6 +120,9 @@ if have iw; then
   else
     line "wifi" "no wireless interface — wired?"
   fi
+else
+  # Saying nothing here reads as "wifi is fine" rather than "never looked".
+  line "wifi" "cannot tell — iw is not installed (sudo apt install iw)"
 fi
 
 say "Serving a download over loopback"

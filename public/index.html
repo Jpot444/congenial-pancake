@@ -32,6 +32,16 @@
     <div id="healthBody" class="health-body">
       <p class="health-loading">Reading the box…</p>
     </div>
+
+    <!-- Sits outside #healthBody because that is replaced wholesale every few
+         seconds by the poll, which would wipe the result mid-read. -->
+    <div class="health-speed">
+      <button type="button" class="btn btn-ghost btn-sm" id="speedTest">
+        Test this device's connection
+      </button>
+      <p class="health-note" id="speedResult" hidden></p>
+    </div>
+
     <div class="modal-actions">
       <span class="spacer"></span>
       <button type="button" class="btn btn-ghost" id="healthClose">Close</button>

@@ -35,6 +35,22 @@ converted while they play, which a Pi cannot always keep up with; they stall
 for their own reasons and no amount of bandwidth fixes them. Re-optimize from
 the Downloads tab.
 
+### The half this script cannot measure
+
+Everything above runs on the Pi, so it can only see as far as the Pi's own
+network card. It cannot see what actually arrives at the phone, and from
+outside the house those are very different numbers — which is exactly where
+playback problems hide.
+
+**Test this device's connection**, in the Pi health panel, closes that gap. It
+pulls 8MB from `/api/speedtest` and reports what the device it is running on
+actually got, so run it on the phone that is struggling. Roughly: 10 Mbit/s and
+up is fine for 1080p, 4 to 10 is marginal and will stall on high-bitrate films,
+below 4 is why playback stops after a second.
+
+The filler it sends is random rather than zeros, so anything compressing the
+response in transit cannot report a speed nobody can stream at.
+
 ## auto-update.sh
 
 Deploys whatever is on `main` and restarts the portal, so a `git push` is the
