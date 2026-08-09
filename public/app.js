@@ -986,6 +986,101 @@ function cardFor(item) {
   return card;
 }
 
+/* ------------------------------------------------------ live categories ---
+
+ * Live opens on its categories rather than every station at once. A provider
+ * carries a few thousand channels, and one flat wall of them is not something
+ * anyone browses — the categories are the only usable way in. Tapping one
+ * drills into just its stations, and the back button returns here.
+ */
+
+function renderLiveCategories() {
+  const source = state.library.live;
+
+  // Counts and cover art in one pass. The item list runs to thousands, so
+  // walking it once per category would be visible on the Pi.
+  const counts = new Map();
+  const covers = new Map();
+  for (const item of source.items) {
+    const id = String(item.categoryId);
+    counts.set(id, (counts.get(id) || 0) + 1);
+    if (!covers.has(id)) covers.set(id, []);
+    const art = covers.get(id);
+    if (art.length < 4 && item.logo) art.push(item.logo);
+  }
+
+  const grid = $('#grid');
+  grid.className = 'grid is-cats';
+  grid.innerHTML = '';
+
+  // Providers ship plenty of categories with nothing in them.
+  const stocked = source.categories.filter((cat) => counts.get(String(cat.id)));
+  // Pins already mean "put this first" in the sidebar; honour them here too.
+  const ordered = [
+    ...stocked.filter((cat) => profiles.isPinned('live', cat.id)),
+    ...stocked.filter((cat) => !profiles.isPinned('live', cat.id)),
+  ];
+
+  const frag = document.createDocumentFragment();
+  for (const cat of ordered) {
+    const id = String(cat.id);
+    frag.append(liveCategoryCard(cat, counts.get(id) || 0, covers.get(id) || []));
+  }
+  grid.append(frag);
+
+  const empty = $('#emptyState');
+  empty.hidden = ordered.length > 0;
+  if (!ordered.length) empty.textContent = 'No live categories.';
+
+  $('#contentMeta').textContent = ordered.length
+    ? `${ordered.length.toLocaleString()} categor${ordered.length === 1 ? 'y' : 'ies'}`
+    : '';
+  $('#loadMore').hidden = true;
+}
+
+/** One square standing for a category, opening its stations when tapped. */
+function liveCategoryCard(cat, count, covers) {
+  const card = el('button', 'card cat-card');
+
+  const art = el('div', 'card-art');
+  if (covers.length) {
+    const mosaic = el('div', 'cat-mosaic');
+    // Drives the tile layout in CSS: one logo fills the square, four quarter it.
+    mosaic.dataset.n = String(Math.min(covers.length, 4));
+    for (const src of covers) {
+      const image = el('img');
+      image.loading = 'lazy';
+      image.alt = '';
+      image.src = src;
+      // A dead logo should leave a gap, not a broken-image glyph.
+      image.addEventListener('error', () => image.remove());
+      mosaic.append(image);
+    }
+    art.append(mosaic);
+  } else {
+    const fb = el('div', 'fallback');
+    fb.textContent = cat.name;
+    art.append(fb);
+  }
+
+  const title = el('h3', 'card-title');
+  title.textContent = cat.name;
+
+  // Under the title rather than badged over the art — the mosaic is the whole
+  // point of the tile, and a badge sits on top of one of the four logos.
+  const sub = el('p', 'card-sub');
+  sub.textContent = `${count.toLocaleString()} channel${count === 1 ? '' : 's'}`;
+
+  card.append(art, title, sub);
+
+  card.addEventListener('click', () => {
+    state.category = cat.id;
+    state.visible = PAGE_SIZE;
+    render();
+  });
+  return card;
+}
+
 function renderSkeletons() {
   const grid = $('#grid');
   grid.innerHTML = '';
@@ -1014,15 +1109,22 @@ function render() {
   $('#downloadList').hidden = true;
   $('#rowsView').hidden = true;
   $('#grid').hidden = false;
+  // It sits outside #grid, so emptying the grid leaves it behind — including on
+  // the way out of a Downloads folder into another tab.
+  document.querySelectorAll('.folder-back').forEach((b) => b.remove());
 
   // Movies browse as named shelves. A search collapses back to a flat grid,
   // since rows make no sense when you're looking for one specific title.
   const rowsMode =
     (state.tab === 'movies' || state.tab === 'series') && !state.query && state.category === null;
+  // Live opens on its categories rather than every station at once.
+  const liveCatsMode = state.tab === 'live' && !state.query && state.category === null;
   const isFavorites = state.tab === 'favorites';
-  document.querySelector('.app-shell').classList.toggle('no-sidebar', isFavorites || rowsMode);
+  document.querySelector('.app-shell')
+    .classList.toggle('no-sidebar', isFavorites || rowsMode || liveCatsMode);
 
   if (rowsMode && state.library[state.tab]) return renderRows();
+  if (liveCatsMode && state.library.live) return renderLiveCategories();
 
   const source = isFavorites
     ? { categories: [], items: profiles.favItems() }
@@ -1043,6 +1145,20 @@ function render() {
   const grid = $('#grid');
   grid.innerHTML = '';
   grid.classList.toggle('is-live', state.tab === 'live');
+  grid.classList.remove('is-cats');
+
+  // Inside one live category — offer the way back out to the squares.
+  if (state.tab === 'live' && state.category !== null) {
+    const back = el('button', 'btn btn-ghost folder-back');
+    back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
+    back.append(document.createTextNode(' All categories'));
+    back.addEventListener('click', () => {
+      state.category = null;
+      state.visible = PAGE_SIZE;
+      render();
+    });
+    grid.before(back);
+  }
 
   const slice = items.slice(0, state.visible);
   const frag = document.createDocumentFragment();

@@ -420,6 +420,34 @@ Remux output lands in `hls/` and is deleted when the session ends or after five
 idle minutes. A full episode's segments are roughly the size of the source, so
 keep an eye on space on the Pi's SD card.
 
+## Live TV opens on its categories
+
+Live used to land on one flat grid of every station the provider carries. At a
+few thousand channels that is not a list anyone browses — the categories are the
+only usable way in, and they were buried in a sidebar that is a drawer on a
+phone.
+
+So Live opens on square tiles, one per category, showing up to four station
+logos and the channel count. Tapping one drills into just that category's
+stations, with an **All categories** button back out. Same on the phone, the
+iPad and the Mac — the only difference is how many squares fit in a row.
+
+Details worth knowing:
+
+- **Search still cuts across everything.** Typing in the header collapses the
+  tiles and searches every station in every category, because looking for one
+  channel by name is the case the tiles are bad at. Clearing it returns you to
+  the squares.
+- **Pinned categories come first.** The sidebar pins already mean "put this at
+  the top", so the tiles honour them rather than inventing a second ordering.
+- **Empty categories are dropped.** Providers ship plenty of them.
+- The sidebar hides on the tile screen — the tiles *are* the category picker —
+  and comes back once you are inside one, so you can switch without going out.
+
+Logos use `object-fit: contain`, not `cover`: a station logo cropped square is
+unreadable, which is the same reason the channel grid contains rather than
+covers.
+
 ## Live latency
 
 Xtream servers dump a deep backlog the instant you connect. Measured on this

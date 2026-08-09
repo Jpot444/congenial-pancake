@@ -1053,6 +1053,36 @@ svg {
 
 .grid.is-live { grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); }
 
+/* ---- live categories, as squares ---- */
+.grid.is-cats { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.grid.is-cats .card-art { aspect-ratio: 1 / 1; }
+
+/* Up to four station logos stand in for the category, which is far easier to
+   recognise across the room than the provider's naming. */
+.cat-mosaic {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-rows: 1fr;
+}
+
+/* A single logo fills the tile rather than sitting in a quarter of it.
+   Set from JS as a data attribute — :has() is not old enough to rely on. */
+.cat-mosaic[data-n="1"] { grid-template-columns: 1fr; }
+.cat-mosaic[data-n="2"] { grid-auto-rows: 1fr; grid-template-columns: 1fr 1fr; }
+
+.cat-mosaic img {
+  width: 100%;
+  height: 100%;
+  /* contain, not cover: a station logo cropped to a square is unreadable. */
+  object-fit: contain;
+  padding: 12%;
+  display: block;
+}
+
+.cat-mosaic[data-n="1"] img { padding: 18%; }
+
 .card {
   display: flex;
   flex-direction: column;
@@ -2106,6 +2136,8 @@ svg {
   .content-head h1 { font-size: 22px; }
   .grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 18px 14px; }
   .grid.is-live { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+  /* Two squares to a phone row; below this they stop being readable. */
+  .grid.is-cats { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
   .field-row { grid-template-columns: 1fr; gap: 0; }
   .setup { padding: 56px 0 80px; }
   .player-overlay { padding: 0; }
