@@ -48,20 +48,66 @@ if have pm2; then
       }
     });
   '
+
+  # A restart count on its own says nothing: a deploy and a crash look
+  # identical. The update log knows how many were deliberate, and whatever is
+  # left over is the interesting number.
+  restarts=$(pm2 jlist 2>/dev/null | node -e '
+    let raw = ""; process.stdin.on("data", (c) => (raw += c));
+    process.stdin.on("end", () => { try {
+      const a = JSON.parse(raw).find((x) => x.name === process.argv[1]);
+      console.log(a ? a.pm2_env.restart_time || 0 : "");
+    } catch {} });' "$PM2_APP")
+  applied=$(grep -c 'restarted' auto-update.log 2>/dev/null || echo 0)
+  if [[ -n "${restarts:-}" ]]; then
+    line "restarts from auto-update" "$applied"
+    line "restarts unaccounted for" "$(( restarts - applied )) (deploys, reboots — or crashes)"
+  fi
+
+  # Crashes leave a stack trace behind; deploys do not.
+  errlog=$(pm2 jlist 2>/dev/null | node -e '
+    let raw = ""; process.stdin.on("data", (c) => (raw += c));
+    process.stdin.on("end", () => { try {
+      const a = JSON.parse(raw).find((x) => x.name === process.argv[1]);
+      console.log(a ? a.pm2_env.pm_err_log_path || "" : "");
+    } catch {} });' "$PM2_APP")
+  if [[ -n "${errlog:-}" && -s "$errlog" ]]; then
+    traces=$(grep -c -E '^[A-Za-z]*Error|at .*\(' "$errlog" 2>/dev/null || echo 0)
+    line "lines in the error log" "$(wc -l <"$errlog") ($traces look like crashes)"
+    if [[ "${traces:-0}" -gt 0 ]]; then
+      printf '    --- last 12 lines of %s ---\n' "$errlog"
+      tail -n 12 "$errlog" | sed 's/^/    /'
+    fi
+  else
+    line "error log" "empty — nothing has crashed"
+  fi
 fi
 
 say "Link to the Pi"
 if have tailscale; then
-  # A relayed connection goes through a public DERP server and is the single
-  # most common reason video stalls while the wifi itself looks fine.
-  peers=$(tailscale status 2>/dev/null | grep -v '^#' | grep -c 'relay' || true)
-  line "tailscale" "$(tailscale status 2>/dev/null | head -1 | cut -c1-60)"
-  if [[ "${peers:-0}" -gt 0 ]]; then
-    line "RELAYED peers" "$peers — traffic is going via DERP, not direct"
-    tailscale status 2>/dev/null | grep 'relay' | sed 's/^/    /'
-  else
-    line "relayed peers" "none — connections are direct"
-  fi
+  # Grepping the text output cannot tell an idle peer from a relayed one, and
+  # got it wrong. The JSON is unambiguous: a peer carrying traffic with no
+  # CurAddr is going through a DERP relay rather than peer to peer.
+  tailscale status --json 2>/dev/null | node -e '
+    let raw = "";
+    process.stdin.on("data", (c) => (raw += c));
+    process.stdin.on("end", () => {
+      let s;
+      try { s = JSON.parse(raw); } catch { console.log("  could not read tailscale status"); return; }
+      const online = Object.values(s.Peer || {}).filter((p) => p.Online);
+      if (!online.length) return console.log("  no peers online");
+      for (const p of online) {
+        const how = p.CurAddr ? `direct ${p.CurAddr}`
+                  : p.Active ? `RELAYED via "${p.Relay || "?"}"`
+                  : `idle (would use "${p.Relay || "?"}")`;
+        console.log(`  ${String(p.HostName || "?").padEnd(22)}${String(p.OS || "").padEnd(9)}${how}`);
+      }
+      const relayed = online.filter((p) => p.Active && !p.CurAddr);
+      console.log(relayed.length
+        ? `\n  ${relayed.length} peer(s) carrying traffic through a relay — video goes the long way round`
+        : "\n  every peer carrying traffic is connected directly");
+    });
+  '
 else
   line "tailscale" "not on PATH"
 fi
@@ -90,12 +136,14 @@ probe=$(curl -fsS --max-time 5 "http://127.0.0.1:$PORT/api/downloads" 2>/dev/nul
       // always keep up with — it is its own stall, unrelated to the network.
       const stale = done.filter((j) => !NATIVE.has(String(j.ext || "").toLowerCase()));
       const pick = done.find((j) => NATIVE.has(String(j.ext || "").toLowerCase())) || done[0];
+      // Unit separator, not a tab: bash treats tab as IFS whitespace, so runs of
+      // them collapse and every empty field shifts the ones after it along.
       console.log([pick ? pick.id : "", pick ? pick.name : "", done.length,
-                   stale.length, stale.map((j) => j.name).slice(0, 5).join("; ")].join("\t"));
+                   stale.length, stale.map((j) => j.name).slice(0, 5).join("; ")].join(""));
     } catch { /* no downloads */ }
   });
 ')
-IFS=$'\t' read -r id pick_name done_count stale_count stale_names <<<"${probe:-}"
+IFS=$'\037' read -r id pick_name done_count stale_count stale_names <<<"${probe:-}"
 
 if [[ -n "${stale_count:-}" && "${stale_count:-0}" -gt 0 ]]; then
   line "NOT optimized (converts on play)" "$stale_count of $done_count"
@@ -107,7 +155,10 @@ fi
 
 if [[ -n "${id:-}" ]]; then
   line "test file" "$pick_name"
-  speed=$(curl -s -o /dev/null --max-time 12 -r 0-25000000 \
+  # Open-ended range, capped by time rather than by byte count: asking for a
+  # fixed 25MB of a file smaller than that is a 416 with no body, which reads
+  # back as 0 MB/s and looks exactly like a broken disk.
+  speed=$(curl -s -o /dev/null --max-time 8 -r 0- \
           -w '%{speed_download}' "http://127.0.0.1:$PORT/api/downloads/$id/file" 2>/dev/null)
   line "read+serve speed" "$(human "${speed%%.*}")"
 else
