@@ -1594,7 +1594,13 @@ svg {
 
 .cinema .player-shell {
   width: 100vw;
+  /* Safari counts its own collapsible toolbars inside 100vh, so the shell ran
+     taller than the screen and the control bar — pinned to its bottom — sat
+     underneath the browser chrome. Nothing scrolls here to bring it back, which
+     is why the buttons were unreachable on a phone. dvh tracks what is actually
+     visible; the vh above it is the fallback for anything without dvh. */
   height: 100vh;
+  height: 100dvh;
   max-width: none;
   border: 0;
   border-radius: 0;
@@ -1628,6 +1634,8 @@ svg {
   top: 0; right: 0;
   z-index: 4;
   padding: 26px 32px;
+  padding-top: max(26px, env(safe-area-inset-top));
+  padding-right: max(32px, env(safe-area-inset-right));
   background: transparent;
   border-bottom: 0;
   transition: opacity .28s var(--ease);
@@ -1659,6 +1667,8 @@ svg {
   align-items: flex-start;
   gap: 20px;
   padding: 26px 200px 60px 32px; /* clear of the action buttons top-right */
+  padding-top: max(26px, env(safe-area-inset-top));
+  padding-left: max(32px, env(safe-area-inset-left));
   background: linear-gradient(180deg, rgba(0, 0, 0, .82) 0%, rgba(0, 0, 0, 0) 100%);
   transition: opacity .28s var(--ease);
 }
@@ -1709,6 +1719,12 @@ svg {
   z-index: 3;
   gap: 18px;
   padding: 70px 32px 26px;
+  /* The home indicator and, in landscape, the notch both sit inside the
+     viewport on an iPhone. max() keeps the desktop padding where there is no
+     inset to clear. */
+  padding-right: max(32px, env(safe-area-inset-right));
+  padding-bottom: max(26px, env(safe-area-inset-bottom));
+  padding-left: max(32px, env(safe-area-inset-left));
   border-top: 0;
   background: linear-gradient(0deg, rgba(0, 0, 0, .88) 0%, rgba(0, 0, 0, .55) 45%, rgba(0, 0, 0, 0) 100%);
   transition: opacity .28s var(--ease);
@@ -1746,13 +1762,39 @@ svg {
   /* The buttons float top-right, so on a phone the title gets its own line
      underneath rather than being squeezed into what's left of the first —
      reserving horizontal space truncated it to a couple of characters. */
-  .cinema-top { flex-wrap: wrap; padding: 16px 16px 44px; }
+  /* These re-declare padding wholesale, so the safe-area insets set alongside
+     the base rules have to be restated or they are dropped on exactly the
+     device that needs them. */
+  .cinema-top {
+    flex-wrap: wrap;
+    padding: 16px 16px 44px;
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-left: max(16px, env(safe-area-inset-left));
+  }
   .cinema-titles { flex-basis: 100%; padding-top: 12px; }
-  .cinema .player-bar { padding: 16px; }
-  .cinema .vod-bar { gap: 10px; padding: 56px 16px 18px; }
+  .cinema .player-bar {
+    padding: 16px;
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
+  .cinema .vod-bar {
+    gap: 10px;
+    padding: 56px 16px 18px;
+    padding-right: max(16px, env(safe-area-inset-right));
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    padding-left: max(16px, env(safe-area-inset-left));
+  }
   .cinema .vod-time { min-width: 50px; font-size: 12px; }
   .cinema-titles h2 { font-size: 15px; }
 }
+
+/* Windowed playback still needs a fingertip-sized target; 32px is a cursor
+   size. Keyed off touch rather than width on purpose — a phone held sideways
+   is 844px wide, so a width query misses the very orientation people watch in.
+   Deliberately 40, not the 48/58 that used to make the bar dominate the
+   picture, and it never shows in full screen: that is Apple's own player. */
+.touch .cinema .vod-btn { width: 40px; height: 40px; }
+.touch .cinema .vod-btn svg { width: 20px; height: 20px; }
 
 /* ---- custom scrubber for remuxed films ---- */
 .vod-bar {
@@ -1965,7 +2007,16 @@ svg {
 @media (max-width: 560px) {
   .vod-bar { gap: 9px; padding: 11px 12px; }
   .vod-time { min-width: 46px; font-size: 11.5px; }
+  /* A phone has hardware volume keys, so this is the control worth losing. */
   #vodMute { display: none; }
+
+  /* One row cannot hold a usable scrubber and every button at this width: the
+     track was collapsing to nothing and the fullscreen button was being pushed
+     off the edge entirely. Give the scrubber its own line above the transport,
+     which is what it needs to be draggable anyway. */
+  .cinema .vod-bar { flex-wrap: wrap; gap: 8px; }
+  .cinema .vod-bar .vod-track { order: -1; flex-basis: 100%; }
+  .cinema .vod-time { min-width: 38px; font-size: 11px; }
 }
 
 .player-detail {

@@ -307,6 +307,35 @@ Touch mode does not scale the playback controls. It still enlarges tap targets
 for browsing — category lists, episode rows, nav, chips — where a fingertip is
 still aiming at cursor-sized targets.
 
+### Why the player uses dvh, not vh
+
+Safari counts its own collapsible toolbars inside `100vh`. The cinema shell was
+`height: 100vh` with the control bar pinned to its bottom, so on a phone the bar
+sat underneath the browser chrome — and the overlay does not scroll, so there was
+no way to bring it back. That is why the controls were unreachable without
+rotating the phone or nudging the page.
+
+`100dvh` tracks what is actually visible, with a plain `100vh` above it as the
+fallback. The notch and the home indicator sit inside the viewport too, so the
+bar and the top chrome clear them with `max(<padding>, env(safe-area-inset-*))`
+— `max()` rather than addition, so desktop keeps its own spacing where there is
+no inset to clear.
+
+Watch out for the phone-width media queries: they re-declare `padding` wholesale,
+which drops the insets on exactly the device that needs them. They restate them.
+
+Two sizing rules go with it:
+
+- **Transport buttons are 40px on a touch device**, keyed off `.touch` rather
+  than a width query — a phone held sideways is 844px wide, so a width query
+  misses the orientation people actually watch in. 40, not the 48/58 that used
+  to swamp the picture, and it never shows in full screen, which on an iPhone or
+  iPad is Apple's player.
+- **Below 560px the scrubber gets its own line** above the transport row. One
+  row could not hold both: the track collapsed to 0px at 320 and the fullscreen
+  button was pushed off the edge. The mute button is dropped at that width
+  instead — a phone has hardware volume keys.
+
 ### The header has to fit the screen
 
 Everything in the bar is either a control or the badge, so anything that does
