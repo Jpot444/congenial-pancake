@@ -307,6 +307,29 @@ Touch mode does not scale the playback controls. It still enlarges tap targets
 for browsing — category lists, episode rows, nav, chips — where a fingertip is
 still aiming at cursor-sized targets.
 
+### The header has to fit the screen
+
+Everything in the bar is either a control or the badge, so anything that does
+not fit is a button you cannot reach. Overflowing it does not scroll the bar —
+it makes the whole document wider than the phone and the entire page slides
+sideways, which is what made it awkward to use on a phone.
+
+Two different things push it over, and they need separate answers:
+
+- **Phones.** The badge, the profile chip and four 46px touch targets do not fit
+  in 390px, let alone 320px. The wordmark is dropped below 560px — it is the only
+  thing in the bar that is not a control — and the header's own buttons come down
+  to 40px, which still clears a fingertip. At 320px that leaves ~50px spare.
+- **Tablets in landscape.** The nav rejoins the flow as soon as it stops being a
+  dropdown, and touch mode makes its five links about 464px wide, which is more
+  than an iPad has left over at 1024 or 1194 once the badge and controls are
+  placed. So the dropdown breakpoint is 1200, not 860. The 12.9" at 1366 has the
+  room and keeps the full nav.
+
+The badge is also the only flex item allowed to shrink, and it needs
+`min-width: 0` to do it — without that a flex item refuses to go below its
+content width and pushes the controls off the edge instead.
+
 ### The scrubber runs on real film time
 
 The remux only knows the part it has written, so the native scrubber could

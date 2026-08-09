@@ -601,8 +601,8 @@ svg {
 .nav-count { background: #fff; color: var(--brand-red-deep); }
 .nav a.is-active .nav-count { background: var(--brand-red-deep); color: #fff; }
 
+/* .brand-sub goes at 1200 with the rest of the header compaction. */
 @media (max-width: 620px) {
-  .brand-sub { display: none; }
   .brand { padding: 6px 12px 6px 10px; }
 }
 
@@ -2036,9 +2036,19 @@ svg {
   .feature-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
-@media (max-width: 860px) {
-  .wrap { padding: 0 18px; }
-
+/* ---- the header has to fit on one screen ----
+ *
+ * Everything in the bar is either a control or the badge, so anything that does
+ * not fit is a control you cannot reach — the page slides sideways instead of
+ * scrolling, which is what made the phone layout unusable.
+ *
+ * The nav is what breaks a tablet. It rejoins the flow the moment it is not a
+ * dropdown, and touch mode makes its five links ~464px wide, which is more than
+ * an iPad has left over in landscape once the badge and the controls are placed.
+ * 1200 covers every iPad landscape width except the 12.9" at 1366, which has the
+ * room to lay the nav out in full.
+ */
+@media (max-width: 1200px) {
   .nav {
     position: fixed;
     top: var(--header-h);
@@ -2054,7 +2064,30 @@ svg {
 
   .nav.is-open { transform: translateY(0); }
   .nav a { padding: 12px 14px; border-radius: var(--radius-sm); }
-  .nav-toggle, .cat-toggle, .sidebar-close { display: grid; }
+  .nav-toggle { display: grid; }
+
+  /* The badge gives way, never the controls — the controls are what you came to
+     tap, and a flex item will not shrink below its contents without min-width. */
+  .header-inner { gap: 14px; }
+  .brand {
+    flex-shrink: 1;
+    min-width: 0;
+    margin-right: 0;
+    padding-right: 12px;
+  }
+  .brand-sub { display: none; }
+  .brand-words { min-width: 0; }
+  .brand-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The nav leaves the flow when it becomes a dropdown, so without this the
+     controls bunch up against the badge with the rest of the bar left empty. */
+  .header-actions { flex-shrink: 0; gap: 6px; margin-left: auto; }
+  .search input { width: 110px; }
+}
+
+@media (max-width: 860px) {
+  .wrap { padding: 0 18px; }
+
+  .cat-toggle, .sidebar-close { display: grid; }
 
   .app-shell { grid-template-columns: 1fr; gap: 0; }
 
@@ -2083,6 +2116,22 @@ svg {
   .search { display: none; }
   .feature-grid { grid-template-columns: 1fr; }
   .epg-time { width: 84px; }
+
+  /* On a phone the wordmark is the only thing left that can go without costing
+     a control, and dropping it buys back most of the width the buttons need. */
+  .wrap { padding: 0 14px; }
+  .brand-words { display: none; }
+  .brand-bison { width: 34px; }
+  .brand { border-right: 0; padding: 0 2px 0 0; }
+  .header-actions { gap: 5px; }
+
+  /* Touch mode's 46px targets are what pushed the bar off the screen in the
+     first place. 40 still clears a fingertip and the whole row fits at 320. */
+  .site-header .icon-btn,
+  .touch .site-header .icon-btn { width: 40px; height: 40px; }
+  .touch .site-header .icon-btn svg { width: 20px; height: 20px; }
+  .touch .profile-chip { height: 40px; padding: 0 5px; }
+  .touch .chip-avatar { width: 26px; height: 26px; font-size: 14px; }
 }
 
 /* ============================================================ health === */
