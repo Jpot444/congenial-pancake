@@ -120,9 +120,20 @@ if have iw; then
   else
     line "wifi" "no wireless interface — wired?"
   fi
+elif [[ -r /proc/net/wireless ]]; then
+  # No iw, but the kernel publishes the essentials here with nothing installed.
+  # Only the link rate needs the tool, and signal is the number that matters.
+  line "wifi" "from /proc/net/wireless (install iw for the link rate)"
+  awk 'NR > 2 && NF {
+    gsub(/\.$/, "", $3); gsub(/\.$/, "", $4);
+    verdict = ($4 + 0 >= -60) ? "good" \
+            : ($4 + 0 >= -70) ? "fair — expect it to wobble" \
+            : "WEAK, this is your bottleneck";
+    printf "    %-10s quality %s/70, signal %s dBm  (%s)\n", $1, $3, $4, verdict;
+  }' /proc/net/wireless
 else
   # Saying nothing here reads as "wifi is fine" rather than "never looked".
-  line "wifi" "cannot tell — iw is not installed (sudo apt install iw)"
+  line "wifi" "cannot tell — no iw and no /proc/net/wireless"
 fi
 
 say "Serving a download over loopback"
