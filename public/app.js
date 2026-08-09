@@ -994,6 +994,23 @@ function cardFor(item) {
  * drills into just its stations, and the back button returns here.
  */
 
+/** The provider's own URL behind a logo, which may or may not be proxied. */
+function logoSource(logo) {
+  const proxied = /^\/img\?u=(.*)$/.exec(logo || '');
+  return proxied ? decodeURIComponent(proxied[1]) : logo || '';
+}
+
+/**
+ * Providers hand out plenty of animated logos — spinning idents and promo
+ * loops. Nothing in the URL says so outright, but the format is the giveaway
+ * in practice: nobody ships a still station logo as a GIF or an APNG. WebP is
+ * left out on purpose, since most of those are ordinary still images.
+ */
+function looksAnimated(logo) {
+  const file = logoSource(logo).split('?')[0].toLowerCase();
+  return file.endsWith('.gif') || file.endsWith('.apng');
+}
+
 function renderLiveCategories() {
   const source = state.library.live;
 
@@ -1004,9 +1021,12 @@ function renderLiveCategories() {
   for (const item of source.items) {
     const id = String(item.categoryId);
     counts.set(id, (counts.get(id) || 0) + 1);
-    if (!covers.has(id)) covers.set(id, []);
-    const art = covers.get(id);
-    if (art.length < 4 && item.logo) art.push(item.logo);
+    // First still logo in the category wins. An animated one is never taken as
+    // a substitute — the tile falls back to the category's name instead, which
+    // is quieter than a looping ident.
+    if (item.logo && !covers.has(id) && !looksAnimated(item.logo)) {
+      covers.set(id, item.logo);
+    }
   }
 
   const grid = $('#grid');
@@ -1024,7 +1044,7 @@ function renderLiveCategories() {
   const frag = document.createDocumentFragment();
   for (const cat of ordered) {
     const id = String(cat.id);
-    frag.append(liveCategoryCard(cat, counts.get(id) || 0, covers.get(id) || []));
+    frag.append(liveCategoryCard(cat, counts.get(id) || 0, covers.get(id) || ''));
   }
   grid.append(frag);
 
@@ -1039,28 +1059,30 @@ function renderLiveCategories() {
 }
 
 /** One square standing for a category, opening its stations when tapped. */
-function liveCategoryCard(cat, count, covers) {
+function liveCategoryCard(cat, count, cover) {
   const card = el('button', 'card cat-card');
 
   const art = el('div', 'card-art');
-  if (covers.length) {
-    const mosaic = el('div', 'cat-mosaic');
-    // Drives the tile layout in CSS: one logo fills the square, four quarter it.
-    mosaic.dataset.n = String(Math.min(covers.length, 4));
-    for (const src of covers) {
-      const image = el('img');
-      image.loading = 'lazy';
-      image.alt = '';
-      image.src = src;
-      // A dead logo should leave a gap, not a broken-image glyph.
-      image.addEventListener('error', () => image.remove());
-      mosaic.append(image);
-    }
-    art.append(mosaic);
-  } else {
+  const nameOnly = () => {
     const fb = el('div', 'fallback');
     fb.textContent = cat.name;
     art.append(fb);
+  };
+
+  if (cover) {
+    const image = el('img');
+    image.loading = 'lazy';
+    image.alt = '';
+    image.src = cover;
+    // A logo the provider links but no longer serves should read as a named
+    // tile, not a broken-image glyph.
+    image.addEventListener('error', () => {
+      image.remove();
+      nameOnly();
+    });
+    art.append(image);
+  } else {
+    nameOnly();
   }
 
   const title = el('h3', 'card-title');

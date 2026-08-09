@@ -456,10 +456,21 @@ few thousand channels that is not a list anyone browses — the categories are t
 only usable way in, and they were buried in a sidebar that is a drawer on a
 phone.
 
-So Live opens on square tiles, one per category, showing up to four station
-logos and the channel count. Tapping one drills into just that category's
-stations, with an **All categories** button back out. Same on the phone, the
-iPad and the Mac — the only difference is how many squares fit in a row.
+So Live opens on square tiles, one per category, showing a single station logo
+and the channel count. Tapping one drills into just that category's stations,
+with an **All categories** button back out. Same on the phone, the iPad and the
+Mac — the only difference is how many squares fit in a row.
+
+**The cover logo is the first still one in the category.** Providers hand out a
+lot of animated logos — spinning idents and promo loops — and a wall of those
+moving at once is unreadable. Nothing in the URL declares it, but the format
+gives it away in practice: nobody ships a still station logo as a GIF or an
+APNG, so those are skipped when picking. WebP is deliberately not treated as
+animated, since most of those are ordinary still images.
+
+An animated logo is never taken as a second choice. A category whose stations
+*all* carry one falls back to showing its name, which is quieter than a looping
+ident — if a category of yours ends up as bare text, that is why.
 
 Details worth knowing:
 
