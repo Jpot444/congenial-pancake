@@ -117,6 +117,15 @@ From the Downloads tab each finished item offers:
   attachment`. On an iPad this drops it into the Files app, where it's genuinely
   offline and survives airplane mode.
 - **Play** — streams it from local disk, using no provider connection at all.
+- **✕**, top right of the poster — deletes it and frees the space. On a series
+  card at the top level that means the whole show, after a confirmation naming
+  how many episodes go. Inside a show, each episode carries its own ✕ and
+  removing one leaves the rest; take the last one and you land back at the top
+  level rather than in an empty folder.
+
+The ✕ was previously revealed on hover, which meant it did not exist on a phone
+at all — a finger cannot hover, so deleting anything needed a mouse. It is now
+shown outright wherever the pointer cannot hover.
 
 **Your account allows one concurrent connection**, so downloads run strictly one
 at a time and a download in progress will block live playback. That's why every

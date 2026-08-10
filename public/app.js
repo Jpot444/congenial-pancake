@@ -1439,6 +1439,30 @@ function seriesFolderCard(key, episodes) {
     (seasons.length === 1 ? `Season ${seasons[0]} · ` : seasons.length ? `${seasons.length} seasons · ` : '') +
     `${ready} of ${episodes.length} ready`;
 
+  // Deletes the whole show. The episodes each keep their own X inside the
+  // folder, so removing one of those leaves the rest alone.
+  const remove = el('button', 'icon-btn dl-remove');
+  remove.title = 'Delete this show';
+  remove.setAttribute('aria-label', 'Delete this show');
+  remove.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  remove.addEventListener('click', async (event) => {
+    // Without this the same click opens the folder underneath it.
+    event.stopPropagation();
+    const show = episodes[0].seriesName || episodes[0].name;
+    const count = episodes.length;
+    if (!confirm(`Delete all ${count} episode${count === 1 ? '' : 's'} of “${show}”?`)) return;
+
+    remove.disabled = true;
+    // One at a time: every removal rewrites the download index, and firing
+    // them together races that write.
+    for (const episode of episodes) {
+      await fetch(`/api/downloads/${episode.id}`, { method: 'DELETE' });
+    }
+    toast(`Deleted ${count} episode${count === 1 ? '' : 's'} of “${show}”.`);
+    await refreshDownloads({ rerender: true });
+  });
+  art.append(remove);
+
   card.append(art, title, sub);
   card.addEventListener('click', () => {
     openSeriesFolder = key;

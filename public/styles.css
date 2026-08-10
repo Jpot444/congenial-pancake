@@ -1325,7 +1325,13 @@ svg {
   transition: width .5s var(--ease);
 }
 
-.dl-remove {
+/* Every one of these carries .dl-card for weight. `.icon-btn` sets
+   position: relative further down the file for its notification dot, and at
+   equal specificity the later rule wins — which quietly dropped this button
+   out of the corner and back into the flow. It has been sitting there the
+   whole time, invisible, so nobody saw where it had gone. The same applies to
+   the touch-mode 46px sizing. */
+.dl-card .dl-remove {
   position: absolute;
   top: 8px; right: 8px;
   z-index: 3;
@@ -1336,9 +1342,21 @@ svg {
   transition: opacity .16s var(--ease), color .16s var(--ease);
 }
 
-.dl-remove svg { width: 14px; height: 14px; }
+.dl-card .dl-remove svg { width: 14px; height: 14px; }
 .dl-card:hover .dl-remove { opacity: 1; }
-.dl-remove:hover { color: var(--live); border-color: var(--live); }
+.dl-card .dl-remove:hover { color: var(--live); border-color: var(--live); }
+
+/* Revealed on hover, it never appeared on a phone at all — a finger has no
+   hover, so deleting a download needed a mouse. The media query is the real
+   fix since it keys off the hardware; the .touch rule covers anyone who has
+   switched touch mode on by hand. Bigger here so it can be hit deliberately,
+   and no bigger, because it deletes things. */
+@media (hover: none) {
+  .dl-card .dl-remove { opacity: 1; width: 34px; height: 34px; }
+  .dl-card .dl-remove svg { width: 16px; height: 16px; }
+}
+
+.touch .dl-card .dl-remove { opacity: 1; }
 
 .dl-card .dl-actions {
   display: flex;
