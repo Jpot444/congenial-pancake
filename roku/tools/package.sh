@@ -40,12 +40,25 @@ if [ -z "${ROKU_DEV_PASSWORD:-}" ]; then
 fi
 
 echo "Uploading to $ROKU_IP…"
-# The installer speaks multipart/form-data and digest auth; -f turns an HTTP
-# error into a non-zero exit instead of a page of HTML.
-curl -f -s --digest -u "rokudev:$ROKU_DEV_PASSWORD" \
+# The installer speaks multipart/form-data and digest auth. Two curl flags
+# matter here: -f turns an HTTP error into a non-zero exit instead of a page of
+# HTML, and an empty Expect header stops curl sending "Expect: 100-continue",
+# which the Roku's minimal HTTP server does not answer — leaving the upload to
+# sit for curl's full one second timeout before the body is sent, and on some
+# builds to fail outright.
+if ! curl -f -sS --digest -u "rokudev:$ROKU_DEV_PASSWORD" \
+  -H "Expect:" \
   -F "mysubmit=Install" \
   -F "archive=@$ZIP_PATH" \
   -F "passwd=" \
-  "http://$ROKU_IP/plugin_install" > /dev/null
+  "http://$ROKU_IP/plugin_install" > /dev/null; then
+  echo
+  echo "Upload failed. Most often that is one of:" >&2
+  echo "  - wrong developer password (disable and re-enable Developer Mode to reset it)" >&2
+  echo "  - Developer Mode not enabled, so nothing is listening on port 80" >&2
+  echo "  - $ROKU_IP is not this Roku any more (check Settings > Network > About)" >&2
+  exit 1
+fi
 
 echo "Installed. The channel should be launching on the TV now."
+echo "Watch its console with:  telnet $ROKU_IP 8085"
