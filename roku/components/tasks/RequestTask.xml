@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- A single JSON request. One instance per call: a Task can only be running
+     once, so callers create these rather than sharing one. -->
+<component name="RequestTask" extends="Task">
+  <interface>
+    <!-- { url, method, body, timeout } -->
+    <field id="request" type="assocarray" />
+    <!-- { ok, status, error, json, text } -->
+    <field id="response" type="assocarray" />
+    <!-- Echoed back untouched so a caller juggling several requests can tell
+         which one just landed. -->
+    <field id="tag" type="string" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/components/tasks/RequestTask.brs" />
+</component>

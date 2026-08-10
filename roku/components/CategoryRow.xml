@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- One row of the category list: pin marker, name, item count. -->
+<component name="CategoryRow" extends="Group">
+  <interface>
+    <field id="itemContent" type="node" onChange="onContentChanged" />
+    <field id="focusPercent" type="float" onChange="onFocusChanged" />
+  </interface>
+
+  <children>
+    <Rectangle id="background" width="520" height="64" color="0x1D1715FF" opacity="0" />
+    <Rectangle id="marker" width="5" height="64" color="0xA21F24FF" opacity="0" />
+
+    <!-- Drawn rather than a glyph: Roku's system font can't be relied on for
+         symbols like ★, and a missing one renders as an empty box. -->
+    <Rectangle id="pin" translation="[22,28]" width="10" height="10" color="0xA21F24FF"
+               visible="false" />
+
+    <Label id="name" translation="[52,15]" width="360" height="36" color="0xA3928CFF"
+           wrap="false" ellipsisText="…">
+      <Font role="font" uri="font:MediumSystemFontFile" size="26" />
+    </Label>
+
+    <Label id="count" translation="[420,18]" width="86" height="32" color="0x705F5AFF"
+           horizAlign="right">
+      <Font role="font" uri="font:SystemFontFile" size="22" />
+    </Label>
+  </children>
+
+  <script type="text/brightscript" uri="pkg:/components/CategoryRow.brs" />
+</component>

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Movie / series tile: poster, title, and a heart when it's a favorite.
+     scaleToFit rather than scaleToFill because the Favorites grid mixes in
+     live channel logos, which are wide and would otherwise be stretched. -->
+<component name="PosterCard" extends="Group">
+  <interface>
+    <field id="itemContent" type="node" onChange="onContentChanged" />
+    <field id="focusPercent" type="float" onChange="onFocusChanged" />
+  </interface>
+
+  <children>
+    <Rectangle id="frame" width="228" height="338" color="0x241C1AFF" translation="[-4,-4]" />
+    <Rectangle width="220" height="330" color="0x1D1715FF" />
+
+    <Poster id="poster" width="220" height="330" loadDisplayMode="scaleToFit" />
+
+    <!-- Providers routinely ship rows with no artwork; the name has to stand
+         in for the poster rather than leaving a hole in the grid. -->
+    <Label id="fallback" translation="[14,115]" width="192" height="120" wrap="true"
+           horizAlign="center" color="0x705F5AFF" visible="false">
+      <Font role="font" uri="font:MediumSystemFontFile" size="24" />
+    </Label>
+
+    <!-- A drawn corner tab rather than a ♥ glyph: Roku's system font can't be
+         relied on for symbols, and a missing one renders as an empty box. -->
+    <Rectangle id="favBadge" width="52" height="10" color="0xA21F24FF" translation="[168,0]"
+               visible="false" />
+
+    <Label id="title" translation="[0,342]" width="220" height="34" wrap="false" ellipsisText="…"
+           color="0xA3928CFF">
+      <Font role="font" uri="font:SystemFontFile" size="22" />
+    </Label>
+  </children>
+
+  <script type="text/brightscript" uri="pkg:/components/PosterCard.brs" />
+</component>

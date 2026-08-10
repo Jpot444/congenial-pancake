@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Full-screen playback. Everything arriving here is already a URL the Video
+     node can open: live is HLS straight from /api/play, and anything in a
+     container Roku won't take has been through /api/remux first. -->
+<component name="PlayerView" extends="Group">
+  <interface>
+    <!-- { url, streamFormat, title, subtitle, isLive } -->
+    <field id="request" type="assocarray" onChange="onRequestChanged" />
+    <!-- Updated on its own so the live EPG line can land after playback has
+         already started, without re-setting request and restarting the video. -->
+    <field id="subtitleText" type="string" onChange="onSubtitleChanged" />
+    <!-- Bumped when the user backs out or the stream ends. -->
+    <field id="closed" type="integer" value="0" />
+    <!-- Non-empty when playback failed; the scene turns it into a dialog. -->
+    <field id="playbackError" type="string" />
+
+    <function name="activate" />
+    <function name="stop" />
+  </interface>
+
+  <children>
+    <Rectangle width="1920" height="1080" color="0x000000FF" />
+
+    <Video id="video" width="1920" height="1080" translation="[0,0]" />
+
+    <!-- A scrim rather than a solid bar: it has to sit over moving video and
+         still leave the picture readable. -->
+    <Group id="banner">
+      <Rectangle width="1920" height="200" color="0x0B0807CC" />
+      <Label id="title" translation="[80,44]" width="1760" height="52" wrap="false" ellipsisText="…"
+             color="0xF6F1EEFF">
+        <Font role="font" uri="font:MediumBoldSystemFontFile" size="40" />
+      </Label>
+      <Label id="subtitle" translation="[80,108]" width="1760" height="40" color="0xA3928CFF">
+        <Font role="font" uri="font:MediumSystemFontFile" size="26" />
+      </Label>
+    </Group>
+  </children>
+
+  <script type="text/brightscript" uri="pkg:/components/PlayerView.brs" />
+</component>
