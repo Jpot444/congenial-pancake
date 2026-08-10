@@ -790,6 +790,10 @@ svg {
 .btn-primary { background: var(--text); color: #08080a; }
 .btn-primary:disabled { opacity: .5; cursor: progress; }
 .btn-ghost { background: transparent; border-color: var(--line); color: var(--muted); }
+
+/* Reads as destructive without shouting: muted until you go near it. */
+.btn-danger { color: rgba(255, 107, 94, .8); border-color: rgba(255, 107, 94, .3); }
+.btn-danger:hover { color: var(--live); border-color: var(--live); background: rgba(255, 107, 94, .08); }
 .btn-ghost:hover { color: var(--text); border-color: #3a3a44; }
 .btn-block { width: 100%; margin-top: 6px; }
 .btn-more { display: block; margin: 40px auto 0; }
@@ -2122,7 +2126,11 @@ svg {
     padding: 14px 18px 20px;
     background: var(--bg-raised);
     border-bottom: 1px solid var(--line);
-    transform: translateY(-130%);
+    /* Its own height plus the header clears the screen exactly, whatever either
+       of them happens to be. The -130% this replaces was a guess that only just
+       worked at one header height, and a taller bar on a phone left the closed
+       dropdown's bottom edge painted over the top of it. */
+    transform: translateY(calc(-100% - var(--header-h)));
     transition: transform .26s var(--ease);
   }
 
@@ -2179,7 +2187,30 @@ svg {
 }
 
 @media (max-width: 560px) {
-  .search { display: none; }
+  /* Search used to be dropped entirely at this width, which is why it only
+     turned up when the phone was turned sideways. There is no room for it
+     beside the controls, so it gets a row of its own instead — the header
+     grows, and --header-h carries that to the nav dropdown and the sidebar
+     without either of them needing to know. */
+  :root { --header-h: 116px; }
+
+  .header-inner {
+    flex-wrap: wrap;
+    align-content: center;
+    row-gap: 9px;
+    padding-top: 8px;
+  }
+
+  .header-actions { flex: 1; flex-wrap: wrap; }
+
+  .search {
+    display: flex;
+    order: 9;           /* after the buttons, so it lands on the second row */
+    flex-basis: 100%;
+    height: 40px;
+  }
+  .search input { width: 100%; min-width: 0; }
+
   .feature-grid { grid-template-columns: 1fr; }
   .epg-time { width: 84px; }
 
