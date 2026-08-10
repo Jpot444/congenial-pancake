@@ -32,9 +32,9 @@ sub init()
 
     m.tabs = ["live", "movies", "series", "favorites", "settings"]
     m.tabLabels = ["Live TV", "Movies", "Series", "Favorites", "Settings"]
-    m.tab = "live"
+    m.section = "live"
 
-    ' tab -> library root ContentNode, so flipping back to a section you have
+    ' section -> catalog root ContentNode, so flipping back to a section you have
     ' already opened is instant.
     m.libraries = {}
     m.libraryTotals = {}
@@ -103,7 +103,7 @@ sub onPrefsResponse(event as Object)
     rebuildFavoriteIndex()
     renderCategories()
     refreshGridFavorites()
-    if m.tab = "favorites" then renderFavorites()
+    if m.section = "favorites" then renderFavorites()
 end sub
 
 ' Only the two lists this client owns are sent back. server.js merges a PUT
@@ -142,7 +142,7 @@ sub rebuildFavoriteIndex()
 end sub
 
 function isPinned(categoryId as String) as Boolean
-    key = PinKey(m.tab, categoryId)
+    key = PinKey(m.section, categoryId)
     for each pin in m.prefs.pinnedCategories
         if AsText(pin) = key then return true
     end for
@@ -150,7 +150,7 @@ function isPinned(categoryId as String) as Boolean
 end function
 
 sub togglePin(categoryId as String)
-    key = PinKey(m.tab, categoryId)
+    key = PinKey(m.section, categoryId)
 
     at = -1
     for i = 0 to m.prefs.pinnedCategories.Count() - 1
@@ -206,7 +206,7 @@ sub toggleFavorite(item as Object)
     if m.detail.item <> invalid and m.detail.item.favKey = key then m.detail.isFavorite = nowFavorite
     if m.series.item <> invalid and m.series.item.favKey = key then m.series.isFavorite = nowFavorite
 
-    if m.tab = "favorites" then renderFavorites()
+    if m.section = "favorites" then renderFavorites()
 end sub
 
 '-------------------------------------------------------------------- tabs
@@ -215,12 +215,12 @@ sub onNavSelected(event as Object)
     showTab(m.tabs[event.getData()])
 end sub
 
-sub showTab(tab as String)
-    m.tab = tab
+sub showTab(section as String)
+    m.section = section
     m.catQuery = ""
     closeOverlays()
 
-    isSettings = (tab = "settings")
+    isSettings = (section = "settings")
     m.browse.visible = not isSettings
     m.settings.visible = isSettings
 
@@ -231,7 +231,7 @@ sub showTab(tab as String)
         return
     end if
 
-    if tab = "favorites" then
+    if section = "favorites" then
         m.sectionTitle.text = "Favorites"
         m.categories.visible = false
         m.categoryEmpty.visible = false
@@ -252,28 +252,28 @@ sub showTab(tab as String)
     m.gridEmpty.translation = [640, 300]
     m.posterGrid.numColumns = 5
 
-    if tab = "live" then
+    if section = "live" then
         m.sectionTitle.text = "Live TV"
-    else if tab = "movies" then
+    else if section = "movies" then
         m.sectionTitle.text = "Movies"
     else
         m.sectionTitle.text = "Series"
     end if
     m.browseHint.text = "OK to open  ·  * to pin a category or favorite an item  ·  Back to step out"
 
-    library = m.libraries[tab]
-    if library <> invalid and not m.forceRefresh then
+    catalog = m.libraries[section]
+    if catalog <> invalid and not m.forceRefresh then
         renderCategories()
         setZone("categories")
         return
     end if
 
-    loadLibrary(tab)
+    loadLibrary(section)
 end sub
 
 '----------------------------------------------------------------- library
 
-sub loadLibrary(tab as String)
+sub loadLibrary(section as String)
     m.sectionCount.text = ""
     m.categories.content = invalid
     m.posterGrid.content = invalid
@@ -286,7 +286,7 @@ sub loadLibrary(tab as String)
     showLoading("Loading " + m.sectionTitle.text + "…", false)
 
     m.libraryTask = CreateObject("roSGNode", "LibraryTask")
-    m.libraryTask.tab = tab
+    m.libraryTask.section = section
     m.libraryTask.refresh = m.forceRefresh
     m.libraryTask.observeField("done", "onLibraryDone")
     m.libraryTask.control = "RUN"
@@ -302,16 +302,16 @@ sub onLibraryDone(event as Object)
     if task.errorMessage <> "" then
         m.gridEmpty.text = task.errorMessage
         m.gridEmpty.visible = true
-        showDialog("Can't load " + task.tab, task.errorMessage + Chr(10) + Chr(10) + "Server: " + ConfigBaseUrl())
+        showDialog("Can't load " + task.section, task.errorMessage + Chr(10) + Chr(10) + "Server: " + ConfigBaseUrl())
         setZone("nav")
         return
     end if
 
-    m.libraries[task.tab] = task.library
-    m.libraryTotals[task.tab] = task.itemTotal
+    m.libraries[task.section] = task.catalog
+    m.libraryTotals[task.section] = task.itemTotal
 
     ' The user may have moved on while this was in flight.
-    if task.tab <> m.tab then return
+    if task.section <> m.section then return
 
     renderCategories()
     setZone("categories")
@@ -320,17 +320,17 @@ end sub
 '-------------------------------------------------------------- categories
 
 sub renderCategories()
-    if m.tab = "favorites" or m.tab = "settings" then return
+    if m.section = "favorites" or m.section = "settings" then return
 
-    library = m.libraries[m.tab]
-    if library = invalid then return
+    catalog = m.libraries[m.section]
+    if catalog = invalid then return
 
     query = LCase(m.catQuery)
 
     pinned = []
     rest = []
-    for i = 0 to library.getChildCount() - 1
-        category = library.getChild(i)
+    for i = 0 to catalog.getChildCount() - 1
+        category = catalog.getChild(i)
         if query = "" or Instr(1, LCase(category.title), query) > 0 then
             if isPinned(category.catId) then
                 pinned.Push(category)
@@ -361,7 +361,7 @@ sub renderCategories()
 
     m.categories.content = content
 
-    total = m.libraryTotals[m.tab]
+    total = m.libraryTotals[m.section]
     if total = invalid then total = 0
     shown = pinned.Count() + rest.Count()
     m.sectionCount.text = total.ToStr() + " items in " + shown.ToStr() + " categories"
@@ -418,11 +418,11 @@ end sub
 sub selectCategory(categoryId as String)
     m.currentCategoryId = categoryId
 
-    library = m.libraries[m.tab]
-    if library = invalid then return
+    catalog = m.libraries[m.section]
+    if catalog = invalid then return
 
-    for i = 0 to library.getChildCount() - 1
-        category = library.getChild(i)
+    for i = 0 to catalog.getChildCount() - 1
+        category = catalog.getChild(i)
         if category.catId = categoryId then
             renderGrid(category)
             return
@@ -440,7 +440,7 @@ sub renderGrid(category as Object)
     ' items actually on screen instead of the whole catalogue.
     applyFavorites(category)
 
-    if m.tab = "live" then
+    if m.section = "live" then
         m.posterGrid.visible = false
         m.liveGrid.content = category
         m.liveGrid.jumpToItem = 0
@@ -475,7 +475,7 @@ sub clearGrid(message as String)
 end sub
 
 function activeGrid() as Object
-    if m.tab = "live" then return m.liveGrid
+    if m.section = "live" then return m.liveGrid
     return m.posterGrid
 end function
 
@@ -705,7 +705,7 @@ sub openPlayer(url as String, streamFormat as String)
 end sub
 
 sub onPlayerClosed()
-    m.player.callFunc("stop", invalid)
+    m.player.callFunc("stopVideo", invalid)
     m.player.visible = false
     releaseRemux()
 
@@ -727,7 +727,7 @@ sub onPlaybackError()
     message = m.player.playbackError
     if message = "" then return
 
-    m.player.callFunc("stop", invalid)
+    m.player.callFunc("stopVideo", invalid)
     m.player.visible = false
     releaseRemux()
     showDialog("Playback stopped", message)
@@ -932,7 +932,7 @@ sub focusNav()
 end sub
 
 sub focusCategories()
-    if m.tab = "favorites" then
+    if m.section = "favorites" then
         setZone("nav")
         return
     end if
@@ -985,7 +985,7 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
         return false
     end if
 
-    if m.tab = "settings" then
+    if m.section = "settings" then
         if key = "back" or key = "up" then
             focusNav()
             return true

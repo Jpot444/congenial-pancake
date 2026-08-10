@@ -13,7 +13,7 @@ sub init()
     m.top.appendChild(m.bannerTimer)
 end sub
 
-' activate and stop are called through callFunc, which always passes an argument.
+' activate and stopVideo are called through callFunc, which always passes an argument.
 sub activate(args as Dynamic)
     m.video.setFocus(true)
 end sub
@@ -42,7 +42,7 @@ sub onSubtitleChanged()
     m.subtitle.text = m.top.subtitleText
 end sub
 
-sub stop(args as Dynamic)
+sub stopVideo(args as Dynamic)
     stopPlayback()
 end sub
 

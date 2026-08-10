@@ -70,8 +70,8 @@ end function
 ' Keys must match public/app.js exactly or the two clients stop seeing each
 ' other's pins and favorites. Note the asymmetry: pins are keyed by tab
 ' ("movies"), favorites by item kind ("movie").
-function PinKey(tab as String, categoryId as String) as String
-    return tab + ":" + categoryId
+function PinKey(section as String, categoryId as String) as String
+    return section + ":" + categoryId
 end function
 
 function FavKey(kind as String, id as String) as String
@@ -79,8 +79,8 @@ function FavKey(kind as String, id as String) as String
 end function
 
 ' live -> live, movies -> movie, series -> series
-function KindForTab(tab as String) as String
-    if tab = "movies" then return "movie"
-    if tab = "series" then return "series"
+function KindForTab(section as String) as String
+    if section = "movies" then return "movie"
+    if section = "series" then return "series"
     return "live"
 end function

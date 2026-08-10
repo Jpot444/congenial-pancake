@@ -56,10 +56,11 @@ can be installed at a time — that is a Roku limit, not ours.
 
 ### Watching the logs
 
-While a sideloaded channel runs, the device streams its console over telnet:
+While a sideloaded channel runs, the device streams its console on port 8085.
+macOS dropped `telnet`, so use `nc`:
 
 ```sh
-telnet <roku-ip> 8085
+nc <roku-ip> 8085
 ```
 
 Every `print`, every crash and every SceneGraph warning shows up there. It is
@@ -229,8 +230,13 @@ python3 roku/tools/check.py
 There is no BrightScript compiler on hand, so this stands in for one: it
 balances `sub`/`if`/`for`/`while` blocks, verifies every `onChange`,
 `observeField` target and `<function>` resolves to a real routine, checks
-`itemComponentName` and script URIs point at something, and validates the
-manifest's file references. `package.sh` runs it before zipping.
+`itemComponentName` and script URIs point at something, rejects reserved words
+used as names, and validates the manifest's file references. `package.sh` runs
+it before zipping.
+
+The reserved-word rule earns its place: `tab`, `stop`, `library` and `pos` are
+all BrightScript keywords, and using one as a variable gets you a bare
+"Syntax Error" on the device with no indication of which token is at fault.
 
 ---
 

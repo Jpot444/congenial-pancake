@@ -25,6 +25,20 @@ CLOSERS = {
 errors = []
 warnings = []
 
+# BrightScript reserved words. Using one as a variable, parameter, function or
+# interface-field name is a compile error, and the device reports it only as
+# "Syntax Error" on the line — no hint as to which token is the problem. The
+# non-obvious ones are the print-statement helpers (tab, pos), the debugger
+# statement (stop), and the import statement (library).
+RESERVED = {
+    "and", "as", "box", "createobject", "dim", "each", "else", "elseif", "end",
+    "endfor", "endfunction", "endif", "endsub", "endwhile", "eval", "exit",
+    "exitfor", "exitwhile", "false", "for", "function", "getglobalaa", "goto",
+    "if", "in", "invalid", "let", "library", "line_num", "m", "mod", "next",
+    "not", "objfun", "or", "pos", "print", "rem", "return", "rnd", "run",
+    "step", "stop", "sub", "tab", "then", "to", "true", "type", "void", "while",
+}
+
 
 def brs_files():
     for base, _, names in os.walk(ROOT):
@@ -116,6 +130,59 @@ def check_blocks(path):
 
     if depth["routine"] != 0:
         errors.append("%s: sub/function starting line %d never closed" % (rel(path), routine_line))
+
+
+def check_reserved_words(path):
+    """Flag reserved words used as names rather than as syntax."""
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.readlines()
+
+    for number, raw in enumerate(lines, start=1):
+        line = strip_comments(raw)
+        if not line.strip():
+            continue
+
+        def flag(name, role):
+            if name.lower() in RESERVED:
+                errors.append(
+                    "%s:%d reserved word '%s' used as a %s"
+                    % (rel(path), number, name, role)
+                )
+
+        declaration = re.match(r"^\s*(?:sub|function)\s+(\w+)\s*\(([^)]*)", line, re.I)
+        if declaration:
+            flag(declaration.group(1), "routine name")
+            for parameter in declaration.group(2).split(","):
+                name = parameter.strip().split(" ")[0].split("=")[0].strip()
+                if name:
+                    flag(name, "parameter name")
+
+        assignment = re.match(r"^\s*(\w+)\s*=[^=]", line)
+        if assignment:
+            flag(assignment.group(1), "variable")
+
+        loop = re.match(r"^\s*for\s+each\s+(\w+)\s+in\b", line, re.I)
+        if loop:
+            flag(loop.group(1), "loop variable")
+
+        counted = re.match(r"^\s*for\s+(\w+)\s*=", line, re.I)
+        if counted:
+            flag(counted.group(1), "loop variable")
+
+
+def check_reserved_fields(path):
+    """Interface fields are read back as m.top.<id>, so the same rule applies."""
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError:
+        return
+
+    for element in root.iter("field"):
+        name = element.get("id", "")
+        if name.lower() in RESERVED:
+            errors.append(
+                "%s: reserved word '%s' used as an interface field id" % (rel(path), name)
+            )
 
 
 def routines_in(path):
@@ -252,6 +319,9 @@ def check_manifest():
 def main():
     for path in brs_files():
         check_blocks(path)
+        check_reserved_words(path)
+    for path in xml_files():
+        check_reserved_fields(path)
     check_handlers()
     check_component_references()
     check_manifest()

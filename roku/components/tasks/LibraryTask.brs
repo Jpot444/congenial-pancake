@@ -3,10 +3,10 @@ sub init()
 end sub
 
 sub execute()
-    tab = m.top.tab
-    if tab = "" then tab = "live"
+    section = m.top.section
+    if section = "" then section = "live"
 
-    params = { tab: tab }
+    params = { "tab": section }
     if m.top.refresh then params.refresh = "1"
 
     ' A cold server has to pull the whole catalogue from the provider the first
@@ -58,6 +58,6 @@ sub execute()
     end for
 
     m.top.itemTotal = kept
-    m.top.library = root
+    m.top.catalog = root
     m.top.done = true
 end sub

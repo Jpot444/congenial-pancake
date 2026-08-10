@@ -15,7 +15,7 @@
     <field id="playbackError" type="string" />
 
     <function name="activate" />
-    <function name="stop" />
+    <function name="stopVideo" />
   </interface>
 
   <children>

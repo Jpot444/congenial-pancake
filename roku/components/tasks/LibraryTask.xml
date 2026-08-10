@@ -6,11 +6,11 @@
      tree costs nothing, where handing back the raw arrays would deep-copy. -->
 <component name="LibraryTask" extends="Task">
   <interface>
-    <field id="tab" type="string" />
+    <field id="section" type="string" />
     <field id="refresh" type="boolean" value="false" />
 
     <!-- Root ContentNode. Children are categories; their children are items. -->
-    <field id="library" type="node" />
+    <field id="catalog" type="node" />
     <field id="errorMessage" type="string" />
     <field id="itemTotal" type="integer" value="0" />
     <!-- Flips last, so observers see a complete result. -->
