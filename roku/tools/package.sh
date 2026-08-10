@@ -57,12 +57,15 @@ echo "Uploading to ${ROKU_IP}..."
 # the zip back until the 401 comes. Suppressing it pushes the whole body at an
 # unauthenticated endpoint, which the Roku answers with 400.
 #
-# -f turns an HTTP error into a non-zero exit instead of a page of HTML.
+# -f turns a genuine HTTP error into a non-zero exit instead of a page of HTML.
+RESPONSE="$(mktemp)"
+trap 'rm -f "${RESPONSE}"' EXIT
+
 if ! curl -f -sS --digest -u "rokudev:${ROKU_DEV_PASSWORD}" \
   -F "mysubmit=Install" \
   -F "archive=@${ZIP_PATH}" \
   -F "passwd=" \
-  "http://${ROKU_IP}/plugin_install" > /dev/null; then
+  "http://${ROKU_IP}/plugin_install" -o "${RESPONSE}"; then
   echo
   echo "Upload failed. Most often that is one of:" >&2
   echo "  - wrong developer password (disable and re-enable Developer Mode to reset it)" >&2
@@ -73,5 +76,41 @@ if ! curl -f -sS --digest -u "rokudev:${ROKU_DEV_PASSWORD}" \
   exit 1
 fi
 
+# A 200 here does not mean the channel installed. The Roku answers 200 whether
+# it accepted the package or rejected it, and puts the verdict — including the
+# compiler's errors — in the HTML body. Reading that is the difference between
+# "Installed." and knowing which line failed to compile.
+if ! python3 - "${RESPONSE}" <<'PY'
+import html, re, sys
+
+raw = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+text = re.sub(r"<(script|style).*?</\1>", " ", raw, flags=re.S | re.I)
+text = html.unescape(re.sub(r"<[^>]+>", "\n", text))
+
+lines, seen = [], set()
+for line in (l.strip() for l in text.splitlines()):
+    if not line or line in seen:
+        continue
+    if re.search(r"install|success|fail|error|compil|identical|received", line, re.I):
+        seen.add(line)
+        lines.append(line)
+
+verdict = " ".join(lines).lower()
+failed = re.search(r"failure|failed|error", verdict) is not None
+passed = re.search(r"success|identical", verdict) is not None
+
+for line in lines:
+    print("  " + line)
+
+if failed or not passed:
+    print()
+    print("The Roku did NOT install this build.", file=sys.stderr)
+    sys.exit(1)
+PY
+then
+  exit 1
+fi
+
+echo
 echo "Installed. The channel should be launching on the TV now."
 echo "Watch its console with:  nc ${ROKU_IP} 8085"
