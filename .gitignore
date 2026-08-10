@@ -8,3 +8,4 @@ hls/
 node_modules/
 auto-update.log
 .auto-update.lock
+.auto-update-blocked

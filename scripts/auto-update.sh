@@ -48,10 +48,25 @@ if [[ ! -d .git ]]; then
   exit 1
 fi
 
-# A dead network shouldn't fill the log with noise every two minutes.
-if ! git fetch --quiet origin "$BRANCH" 2>/dev/null; then
+BLOCKED_FLAG="$REPO_DIR/.auto-update-blocked"
+
+# A dead network is transient and shouldn't fill the log every two minutes. An
+# authentication failure is not — the repo went private, a token expired, a
+# deploy key was removed — and swallowing it the same way stops updates for
+# good while everything still looks fine. Say so once, then stay quiet until it
+# recovers.
+if ! fetch_err=$(git fetch --quiet origin "$BRANCH" 2>&1); then
+  if printf '%s' "$fetch_err" |
+       grep -qiE 'authentication|could not read username|repository not found|403|permission denied'; then
+    if [[ ! -f "$BLOCKED_FLAG" ]]; then
+      log "BLOCKED: $(printf '%s' "$fetch_err" | tr '\n' ' ' | cut -c1-160)"
+      log "BLOCKED: updates have stopped until this is fixed — see scripts/README.md"
+      : >"$BLOCKED_FLAG"
+    fi
+  fi
   exit 0
 fi
+rm -f "$BLOCKED_FLAG"
 
 local_sha=$(git rev-parse HEAD)
 remote_sha=$(git rev-parse "origin/$BRANCH")

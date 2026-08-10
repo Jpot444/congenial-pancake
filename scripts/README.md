@@ -100,6 +100,41 @@ else. If you would rather use cron, copy a real `PATH` into the crontab:
     PATH=/usr/local/bin:/usr/bin:/bin:/home/hunter/.nvm/versions/node/v20.11.0/bin
     */2 * * * * /home/hunter/iptv-portal/scripts/auto-update.sh
 
+### If the repo goes private
+
+The Pi clones over plain HTTPS with no credentials, which works only while the
+repository is public. Make it private and the fetch starts failing with
+`could not read Username for 'https://github.com'` — the script notices that
+this is a refusal rather than a flaky network, writes two BLOCKED lines to the
+log, drops a `.auto-update-blocked` marker that `diagnose.sh` reports, and then
+stays quiet instead of repeating itself every two minutes.
+
+Give the Pi a read-only deploy key and it works again:
+
+    ssh-keygen -t ed25519 -C "iptv-portal-pi" -f ~/.ssh/id_ed25519_portal -N ""
+    cat ~/.ssh/id_ed25519_portal.pub
+
+Paste that into the repository's **Settings → Deploy keys → Add deploy key**.
+Leave *Allow write access* unchecked — the Pi only ever reads. Then point the
+remote at it:
+
+    cat >> ~/.ssh/config <<'EOF'
+    Host github-portal
+      HostName github.com
+      User git
+      IdentityFile ~/.ssh/id_ed25519_portal
+      IdentitiesOnly yes
+    EOF
+
+    cd ~/iptv-portal
+    git remote set-url origin git@github-portal:Jpot444/congenial-pancake.git
+    git fetch origin main      # accept the host key once
+
+The marker clears itself on the next successful fetch.
+
+A deploy key rather than a personal access token on purpose: it is scoped to
+this one repository, it is read-only, and it does not expire.
+
 ### Checking on it
 
     tail -f ~/iptv-portal/auto-update.log

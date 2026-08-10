@@ -58,6 +58,13 @@ if have pm2; then
       const a = JSON.parse(raw).find((x) => x.name === process.argv[1]);
       console.log(a ? a.pm2_env.restart_time || 0 : "");
     } catch {} });' "$PM2_APP")
+  # Set by auto-update.sh when the fetch itself is being refused, which is
+  # otherwise indistinguishable from "nothing new has been pushed".
+  if [[ -f .auto-update-blocked ]]; then
+    line "AUTO-UPDATE BLOCKED" "cannot fetch — see auto-update.log"
+    grep 'BLOCKED' auto-update.log 2>/dev/null | tail -2 | sed 's/^/    /'
+  fi
+
   applied=$(grep -c 'restarted' auto-update.log 2>/dev/null || echo 0)
   if [[ -n "${restarts:-}" ]]; then
     line "restarts from auto-update" "$applied"
