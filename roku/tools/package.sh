@@ -17,6 +17,17 @@ BUILD_DIR="$CHANNEL_DIR/build"
 ZIP_PATH="$BUILD_DIR/portal-roku.zip"
 ROKU_IP="${1:-}"
 
+# Print what is actually being built. A failed "git pull" is silent by the time
+# you are reading compiler output, and building a stale checkout looks exactly
+# like a fix that did not work.
+if command -v git > /dev/null && git -C "$CHANNEL_DIR" rev-parse --git-dir > /dev/null 2>&1; then
+  echo "Building $(git -C "$CHANNEL_DIR" log -1 --format='%h %s' 2>/dev/null)"
+  if ! git -C "$CHANNEL_DIR" diff --quiet 2>/dev/null; then
+    echo "  (with uncommitted local changes)"
+  fi
+  echo
+fi
+
 echo "Checking the channel..."
 python3 "$CHANNEL_DIR/tools/check.py"
 

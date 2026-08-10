@@ -1,5 +1,9 @@
 ' The web player's palette, in the 0xRRGGBBAA form SceneGraph wants. Kept in
 ' one place so the channel and public/styles.css can be nudged together.
+'
+' Only the entries that change at runtime — focus states, mostly — are read
+' from here. The rest are the same values the XML sets as literals, and are
+' listed so there is one table to check them against.
 
 function Theme() as Object
     return {

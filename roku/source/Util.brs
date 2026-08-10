@@ -77,10 +77,3 @@ end function
 function FavKey(kind as String, id as String) as String
     return kind + ":" + id
 end function
-
-' live -> live, movies -> movie, series -> series
-function KindForTab(section as String) as String
-    if section = "movies" then return "movie"
-    if section = "series" then return "series"
-    return "live"
-end function
