@@ -5,7 +5,7 @@
 ' out:  { ok, status, error, json, text }
 
 function HttpRequest(req as Object) as Object
-    result = { ok: false, status: 0, error: "", json: invalid, text: "" }
+    result = { ok: false, status: 0, error: "", json: invalid, text: "", bytes: 0 }
 
     if req = invalid or AsText(req.url) = "" then
         result.error = "No URL to request"
@@ -71,6 +71,7 @@ function HttpRequest(req as Object) as Object
         return result
     end if
 
+    result.bytes = Len(result.text)
     result.json = ParseJson(result.text)
 
     if result.status >= 400 then
@@ -82,6 +83,12 @@ function HttpRequest(req as Object) as Object
         result.error = "The Pi sent something that wasn't JSON"
         return result
     end if
+
+    ' A library payload runs to megabytes, and the parsed copy is what every
+    ' caller actually reads. Holding the raw text alongside it doubles the peak
+    ' for no benefit — and peak memory is what kills the channel on the big
+    ' sections. Kept only when parsing failed, where it is the evidence.
+    result.text = ""
 
     result.ok = true
     return result

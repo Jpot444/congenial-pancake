@@ -18,7 +18,7 @@ sub execute()
     ' time; after that /api/library answers out of its cache in milliseconds.
     result = HttpRequest({ url: ApiUrl("/api/library", params), timeout: 120000 })
     fetchMs = clock.TotalMilliseconds()
-    print "[library] " + section + ": fetch+parse " + fetchMs.ToStr() + "ms, " + Len(result.text).ToStr() + " bytes"
+    print "[library] " + section + ": fetch+parse " + fetchMs.ToStr() + "ms, " + result.bytes.ToStr() + " bytes"
 
     if not result.ok then
         m.top.errorMessage = result.error
@@ -31,6 +31,11 @@ sub execute()
     items = payload.items
     if type(categories) <> "roArray" then categories = []
     if type(items) <> "roArray" then items = []
+
+    ' Printed before the build, not after: if the channel dies partway through
+    ' this is the last thing the console shows, and it says how big the section
+    ' was — which is the number that matters when it runs out of memory.
+    print "[library] " + section + ": " + items.Count().ToStr() + " rows, " + categories.Count().ToStr() + " categories — building nodes"
 
     ' categoryId -> its node, so the items only need one pass.
     buckets = {}

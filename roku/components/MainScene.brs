@@ -282,6 +282,13 @@ end sub
 '----------------------------------------------------------------- library
 
 sub loadLibrary(section as String)
+    ' Only ever hold one section's catalogue. Movies is tens of thousands of
+    ' ContentNodes; keeping Live's alongside it is what ran the channel out of
+    ' memory. Switching back costs another fetch, but server.js serves that one
+    ' from its own cache in milliseconds, and a re-fetch beats a crash.
+    m.libraries = {}
+    m.libraryTotals = {}
+
     m.sectionCount.text = ""
     m.categories.content = invalid
     m.posterGrid.content = invalid
