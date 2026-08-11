@@ -28,7 +28,7 @@ sub execute()
         if categoryId <> "" and MatchesCategory(match, name) then
             node = CreateObject("roSGNode", "ContentNode")
             node.addFields({ catId: categoryId, itemCount: 0, pinned: false, isSearch: false })
-            node.title = name
+            node.title = SafeText(name)
             root.appendChild(node)
         end if
     end for

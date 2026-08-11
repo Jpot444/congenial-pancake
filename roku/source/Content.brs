@@ -83,9 +83,13 @@ function BuildItemNode(row as Object) as Object
         genre: AsText(row.genre),
         epgId: AsText(row.epgId),
         logo: AsText(row.logo),
-        isFavorite: false
+        isFavorite: false,
+        rawName: AsText(row.name)
     })
-    node.title = AsText(row.name)
+    ' title is folded down to what this device can draw; rawName keeps the
+    ' provider's original, because that is what a favorite writes back to
+    ' /api/prefs and the web player renders those characters perfectly well.
+    node.title = SafeText(node.rawName)
 
     return node
 end function
@@ -110,7 +114,7 @@ function ItemNodeToRecord(node as Object) as Object
     record = {
         kind: node.itemKind,
         id: AsNumber(node.itemId),
-        name: node.title,
+        name: node.rawName,
         logo: node.logo,
         categoryId: node.catId
     }

@@ -229,9 +229,32 @@ by number.
 The channel ships DejaVu Sans rather than using Roku's system font. IPTV
 listings are full of characters the system font has no glyph for — the
 superscript `ᴴᴰ` that channel names use, box-drawing separators, accented
-titles — and each one renders as an empty square. DejaVu covers all of them,
-at about 1.4 MB for the regular and bold faces. `fonts/LICENSE.txt` is its
+titles — and each one renders as an empty square. DejaVu covers those, at
+about 1.4 MB for the regular and bold faces. `fonts/LICENSE.txt` is its
 licence, which permits redistribution.
+
+A font alone is not enough. Listings also carry emoji, regional-indicator flag
+pairs and letters from the mathematical alphanumeric blocks, and **no font that
+could reasonably be shipped covers those** — DejaVu does not, and swapping it
+for another would only move which characters break. So `SafeText()` in
+[`source/Util.brs`](source/Util.brs) folds what is left down to ASCII where
+there is an obvious equivalent and drops it where there is not:
+
+| Listing text | On screen |
+| --- | --- |
+| `US\| CNBC ᴴᴰ` | `US\| CNBC HD` |
+| `US\| ESPN 𝐇𝐃` | `US\| ESPN HD` |
+| `🇺🇸 US\| FOX NEWS` | `US\| FOX NEWS` |
+| `ＵＳ｜ ABC` | `US\| ABC` |
+| `EN - Café ★ 4ᴷ` | `EN - Café ★ 4K` |
+
+Accents and symbols DejaVu does cover are left alone — only the unrenderable is
+touched. Pure-ASCII strings take a fast path and are returned unchanged, which
+is most of them.
+
+This applies to display only. Item nodes keep the provider's original string in
+`rawName`, and that is what a favorite writes back to `/api/prefs`, so the web
+player still shows the emoji it can render.
 
 ### Which containers get remuxed
 

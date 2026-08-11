@@ -97,7 +97,7 @@ sub onInfoResponse(event as Object)
     if plot = "" then
         m.synopsis.text = "No synopsis listed for this title."
     else
-        m.synopsis.text = plot
+        m.synopsis.text = SafeText(plot)
     end if
 
     if AsText(info.movie_image) <> "" and m.top.item.logo = "" then

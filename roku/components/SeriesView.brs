@@ -86,7 +86,7 @@ sub onSeriesResponse(event as Object)
     info = data.info
     if info <> invalid then
         m.meta.text = JoinParts([AsText(info.releaseDate), AsText(info.genre)], "  ·  ")
-        m.synopsis.text = AsText(info.plot)
+        m.synopsis.text = SafeText(AsText(info.plot))
     end if
 
     episodes = data.episodes
@@ -149,7 +149,7 @@ function BuildEpisodeNode(episode as Object, seasonKey as String) as Object
     if ext = "" then ext = "mp4"
     node.ext = ext
 
-    title = AsText(episode.title)
+    title = SafeText(AsText(episode.title))
     if title = "" then title = "Episode " + number
     node.title = title
 
