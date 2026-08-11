@@ -27,9 +27,9 @@ sub execute()
     target = AsNumber(data.prebuffer)
     if target <= 0 then target = 45
 
-    if session = "" then
+    if session = "" or m.top.skipPrebuffer then
         ' Nothing to wait on — hand the playlist over as-is.
-        m.top.result = { ok: true, url: url, session: "", duration: duration, error: "" }
+        m.top.result = { ok: true, url: url, session: session, duration: duration, error: "" }
         return
     end if
 

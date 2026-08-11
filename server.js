@@ -1426,7 +1426,7 @@ function probeSource(input) {
   });
 }
 
-function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audio = {}) {
+function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audio = {}, live = false) {
   const args = [];
   if (/^https?:/i.test(input)) {
     // This provider paces VOD at barely above realtime and drops the socket
@@ -1496,14 +1496,23 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audio = {}) {
     args.push('-hls_segment_filename', path.join(outDir, 'seg%05d.ts'));
   }
 
-  args.push(
-    '-f', 'hls',
-    '-hls_time', '6',
-    '-hls_list_size', '0',
-    '-hls_playlist_type', 'event',
-    '-hls_flags', 'independent_segments',
-    path.join(outDir, 'index.m3u8')
-  );
+  args.push('-f', 'hls', '-hls_time', '6');
+
+  if (live) {
+    // A channel never ends. Keeping every segment would write about 2GB an
+    // hour until the disk filled, so hold a rolling window and drop what
+    // falls off it. playlist_type has to stay unset — both event and vod
+    // promise the playlist only ever grows, which forbids the deletion.
+    args.push('-hls_list_size', '10', '-hls_flags', 'independent_segments+delete_segments');
+  } else {
+    args.push(
+      '-hls_list_size', '0',
+      '-hls_playlist_type', 'event',
+      '-hls_flags', 'independent_segments'
+    );
+  }
+
+  args.push(path.join(outDir, 'index.m3u8'));
   return args;
 }
 
@@ -1512,7 +1521,7 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audio = {}) {
  * provider-backed session runs at a time — the account allows a single
  * connection, so a second would just fail.
  */
-async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, audio = {} }) {
+async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, audio = {}, live = false }) {
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed on this machine');
 
   // One viewer, one session: whatever was running is now abandoned, and an
@@ -1540,7 +1549,7 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, a
 
   const proc = spawn(
     'ffmpeg',
-    ['-v', 'error', '-y', ...ffmpegArgs(input, dir, codec, startSeconds, audio)],
+    ['-v', 'error', '-y', ...ffmpegArgs(input, dir, codec, startSeconds, audio, live)],
     { stdio: ['ignore', 'ignore', 'pipe'] }
   );
 
@@ -1561,7 +1570,13 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, a
     sourceDuration: probed.duration || 0,
     // A seek should feel responsive, so bank less than on a cold open — but
     // not 8s: at this provider's pacing that drains before the first drop.
-    prebuffer: startSeconds > 0 ? 45 : readPrefs().prebufferSeconds || DEFAULT_PREBUFFER,
+    // A channel has no backlog to bank: whatever ffmpeg has written is the
+    // live edge, and waiting for 45s of it would only sit 45s behind.
+    prebuffer: live
+      ? 0
+      : startSeconds > 0
+        ? 45
+        : readPrefs().prebufferSeconds || DEFAULT_PREBUFFER,
     stderr: () => stderr,
   };
   remuxSessions.set(id, session);
@@ -2771,6 +2786,7 @@ async function handleApi(req, res, pathname, query) {
     const downloadId = query.get('download');
     let input;
     let fromProvider = true;
+    let isLive = false;
 
     if (downloadId) {
       // Local file: no provider connection burned, and much faster.
@@ -2781,10 +2797,19 @@ async function handleApi(req, res, pathname, query) {
     } else {
       const kind = query.get('kind');
       const id = query.get('id');
-      const ext = query.get('ext') || 'mkv';
       if (!kind || !id) return json(res, 400, { error: 'kind and id are required' });
       if (cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
-      input = buildStreamUrl(cfg, kind === 'series' ? 'series' : 'movie', id, ext);
+
+      // Live is here for the same reason iOS needed fMP4: a player that will
+      // not demux HEVC inside MPEG-TS reports it as corrupt data rather than
+      // as an unsupported codec. Repackaging fixes it without re-encoding —
+      // the video is copied, exactly as it is for a film.
+      isLive = kind === 'live';
+      // No container to convert away from, so no default extension: let
+      // buildStreamUrl fall through to the configured preferredFormat.
+      const ext = query.get('ext') || (isLive ? '' : 'mkv');
+      const source = isLive ? 'live' : kind === 'series' ? 'series' : 'movie';
+      input = buildStreamUrl(cfg, source, id, ext);
     }
 
     try {
@@ -2796,6 +2821,7 @@ async function handleApi(req, res, pathname, query) {
           codec: (query.get('acodec') || '').toLowerCase(),
           channels: Number(query.get('achannels') || 0),
         },
+        live: isLive,
       });
       return json(res, 200, {
         url: `/hls/${session.id}/index.m3u8`,

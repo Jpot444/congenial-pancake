@@ -3,9 +3,16 @@
 A native Roku channel (BrightScript / SceneGraph) that browses and plays the
 same Live TV, Movies and Series catalogue as the web player, from the same Pi.
 
-It is a **client only**. `server.js` is untouched — every screen here is built
-out of endpoints the web player already uses, and pins and favorites are read
-and written through `/api/prefs` so the two stay in sync.
+Almost entirely a **client**. Every screen is built out of endpoints the web
+player already uses, and pins and favorites are read and written through
+`/api/prefs` so the two stay in sync.
+
+One addition to `server.js` was needed: `/api/remux` now accepts `kind=live`.
+It previously built a `movie` URL for anything that was not `series`, so a live
+channel could not be repackaged at all — and repackaging is the only thing that
+makes an HEVC channel play on this hardware. The change is additive: no
+existing caller passes `kind=live` to that endpoint, so nothing the web player
+does behaves differently. See *When playback is refused*.
 
 Private, sideloaded channel. No Channel Store submission involved.
 
@@ -213,12 +220,22 @@ stream the web player opens can still be refused here — an unsupported codec,
 or a playlist that parses everywhere else. Rather than stopping at the first
 refusal, the channel falls back once and says so on the console:
 
-- **Live** that fails as HLS is retried as MPEG-TS. `buildStreamUrl()` takes
-  the extension, so `/api/play?kind=live&ext=ts` returns the same channel in
-  the other container.
-- **VOD** that fails on direct play is retried through `/api/remux`, which is
-  what that endpoint is for. This covers an `.mp4` whose codec this box cannot
-  decode, which no container check could have predicted.
+Both kinds fall back the same way: **anything refused on direct play is
+retried through `/api/remux`**, which repackages it and normalises the audio.
+
+Live earns a note. A channel that failed as HLS was first retried as plain
+MPEG-TS, and it failed identically — which was the clue. `-c:v copy` into
+fragmented MP4 is what fixes it, and the reason is already written in
+`server.js`, in a comment about iOS:
+
+> Apple's HLS spec carries HEVC in fragmented MP4 only — HEVC inside MPEG-TS
+> will not play on iOS at all.
+
+Roku has the same restriction, and it surfaces confusingly: a player that
+cannot *demux* HEVC-in-TS reports corrupt data, not an unsupported codec. So
+"malformed data" on a stream that plays fine in a browser is the signature to
+look for. Repackaging costs no re-encoding — the video is copied — so a Pi
+handles it comfortably.
 
 One retry, then the error is reported. `[player] error <code>: <message>` in
 the console is the device's own verdict, and Roku's error codes are documented

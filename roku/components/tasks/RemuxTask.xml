@@ -10,6 +10,10 @@
     <field id="progress" type="assocarray" />
     <!-- { ok, url, session, duration, error } -->
     <field id="result" type="assocarray" />
+    <!-- Live has no backlog to bank: whatever ffmpeg has written is the live
+         edge. /api/remux already waits for two segments before answering, so
+         there is nothing further to wait for. -->
+    <field id="skipPrebuffer" type="boolean" value="false" />
     <!-- Set by the player when the user backs out mid-conversion. -->
     <field id="cancel" type="boolean" value="false" />
   </interface>

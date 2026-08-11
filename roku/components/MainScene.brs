@@ -716,17 +716,31 @@ sub startPlayback(spec as Object)
     ' Live is HLS already — the Pi's preferredFormat is m3u8, so /api/play
     ' hands back a .m3u8 the Video node opens natively. Only VOD in a container
     ' Roku won't take has to be converted first.
-    if spec.kind <> "live" and (spec.forceRemux or not IsNativeContainer(spec.ext)) then
-        showLoading("Converting for playback…", true)
+    if spec.forceRemux or (spec.kind <> "live" and not IsNativeContainer(spec.ext)) then
+        ' No progress bar for live: there is no buffer being banked to report,
+        ' only the wait for ffmpeg's first couple of segments.
+        if spec.kind = "live" then
+            showLoading("Converting this channel…", false)
+        else
+            showLoading("Converting for playback…", true)
+        end if
+
         m.remuxTask = CreateObject("roSGNode", "RemuxTask")
-        m.remuxTask.params = {
-            kind: spec.kind,
-            id: spec.id,
-            ext: spec.ext,
-            vcodec: spec.vcodec,
-            acodec: spec.acodec,
-            achannels: spec.achannels
-        }
+        if spec.kind = "live" then
+            ' No codec hints to offer — the section listing does not carry
+            ' them for live — so the server probes and picks the packaging.
+            m.remuxTask.params = { kind: "live", id: spec.id }
+            m.remuxTask.skipPrebuffer = true
+        else
+            m.remuxTask.params = {
+                kind: spec.kind,
+                id: spec.id,
+                ext: spec.ext,
+                vcodec: spec.vcodec,
+                acodec: spec.acodec,
+                achannels: spec.achannels
+            }
+        end if
         m.remuxTask.observeField("progress", "onRemuxProgress")
         m.remuxTask.observeField("result", "onRemuxResult")
         m.remuxTask.control = "RUN"
@@ -851,20 +865,14 @@ function retryPlayback(message as String) as Boolean
     end for
     retry.attempt = spec.attempt + 1
 
-    if spec.kind = "live" then
-        ' The provider serves live as MPEG-TS as well as HLS, and server.js
-        ' will hand over either — buildStreamUrl takes the extension. A
-        ' playlist Roku won't parse is often fine as a plain TS stream.
-        if spec.ext = "ts" then return false
-        retry.ext = "ts"
-        print "[play] live failed as HLS, retrying as ts — " + message
-    else
-        ' An "unsupported format" on VOD means the container or codec is one
-        ' this box won't take. That is exactly what /api/remux exists for.
-        if spec.forceRemux then return false
-        retry.forceRemux = true
-        print "[play] direct play failed, retrying through /api/remux — " + message
-    end if
+    ' Both kinds fall back the same way now. Retrying live as plain TS was
+    ' tried and changed nothing, which is the clue: HEVC inside MPEG-TS is
+    ' something Roku will not demux in either wrapper, and it reports that as
+    ' corrupt data rather than as an unsupported codec. Repackaging into
+    ' fragmented MP4 is what fixes it, and costs no re-encoding.
+    if spec.forceRemux then return false
+    retry.forceRemux = true
+    print "[play] direct play failed, retrying through /api/remux — " + message
 
     startPlayback(retry)
     return true
