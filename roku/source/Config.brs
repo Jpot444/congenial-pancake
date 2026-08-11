@@ -10,7 +10,7 @@
 ' Give the Pi a DHCP reservation on the router. This is a lease, and when it
 ' moves the channel just stops finding the server.
 function ConfigDefaultBase() as String
-    return "http://192.168.1.15:8420"
+    return "http://192.168.1.18:8420"
 end function
 
 function ConfigSection() as Object

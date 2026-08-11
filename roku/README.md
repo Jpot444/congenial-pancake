@@ -105,7 +105,7 @@ fresh from the provider instead of the Pi's cache.
 
 ## Configuration
 
-The server address defaults to `http://192.168.1.15:8420` and is editable from
+The server address defaults to `http://192.168.1.18:8420` and is editable from
 *Settings → Server address*. It is stored in the Roku registry, so it survives
 relaunches but not a reinstall of the channel. You can type a bare host
 (`192.168.1.20`) — `:8420` is filled in, and so is `http://`.
@@ -119,6 +119,11 @@ works on the home network, which for a television is no great loss.
 Give the Pi a **DHCP reservation** on the router. A LAN address is a lease, and
 when it moves the channel simply stops finding the server. There is no fallback
 to lean on: Roku will not reliably resolve `.local` mDNS names either.
+
+This is not hypothetical. The Pi was answering on both `.15` and `.18` — one
+address being a stale lease — and `.15` stopped responding partway through
+development, taking the channel's default with it. `deploy.sh` targets `.18`,
+which is the reliable one.
 
 A value saved from the Settings screen lives in the registry and takes
 precedence over this default, so changing `ConfigDefaultBase()` will not move a
