@@ -296,22 +296,33 @@ sub onLibraryDone(event as Object)
     task = event.getRoSGNode()
     if not event.getData() then return
 
-    hideLoading()
     m.forceRefresh = false
+
+    ' The user may have moved on while this was in flight. Nothing below should
+    ' put a dialog over, or a spinner under, a section they already left.
+    if task.section <> m.section then
+        if task.errorMessage = "" then
+            m.libraries[task.section] = task.catalog
+            m.libraryTotals[task.section] = task.itemTotal
+        end if
+        return
+    end if
+
+    hideLoading()
 
     if task.errorMessage <> "" then
         m.gridEmpty.text = task.errorMessage
         m.gridEmpty.visible = true
-        showDialog("Can't load " + task.section, task.errorMessage + Chr(10) + Chr(10) + "Server: " + ConfigBaseUrl())
+        gap = Chr(10) + Chr(10)
+        detail = task.errorMessage + gap + "Trying: " + ConfigBaseUrl()
+        detail = detail + gap + "If that address is wrong, change it under Settings."
+        showDialog("Can't load " + m.sectionTitle.text, detail)
         setZone("nav")
         return
     end if
 
     m.libraries[task.section] = task.catalog
     m.libraryTotals[task.section] = task.itemTotal
-
-    ' The user may have moved on while this was in flight.
-    if task.section <> m.section then return
 
     renderCategories()
     setZone("categories")
