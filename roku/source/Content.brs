@@ -1,6 +1,63 @@
-' ContentNode builders. These live in source/ rather than inside LibraryTask so
-' the Favorites grid — which rebuilds items out of /api/prefs, not
-' /api/library — can produce nodes the same grid components understand.
+' ContentNode builders, shared by everything that produces grid content: the
+' per-category fetches, and the Favorites grid rebuilding items out of
+' /api/prefs.
+'
+' Why per-category rather than /api/library: this provider's Live section is
+' 57,050 streams across 911 categories, and 10MB of JSON. Turning that into
+' ContentNodes took 24 seconds and then the Roku killed the channel with
+' EXIT_CHANNEL_MEM_LIMIT_FG. Only one category is ever on screen — about 63
+' items on average — so the channel asks for one at a time.
+'
+' The cost is that these read Xtream's own field names, where /api/library
+' handed over rows already projected. ProjectXtreamRow below mirrors
+' projectItem() in server.js field for field; the two need to stay in step.
+
+' section -> [categories action, streams action, item kind]
+function SectionActions(section as String) as Object
+    if section = "movies" then return ["get_vod_categories", "get_vod_streams", "movie"]
+    if section = "series" then return ["get_series_categories", "get_series", "series"]
+    return ["get_live_categories", "get_live_streams", "live"]
+end function
+
+' One raw Xtream row -> the projected shape BuildItemNode expects. Mirrors
+' projectItem() in server.js, including which field carries the id and artwork
+' for each kind — they differ per section.
+function ProjectXtreamRow(row as Object, kind as String) as Object
+    if kind = "live" then
+        return {
+            kind: kind,
+            id: row.stream_id,
+            name: row.name,
+            logo: row.stream_icon,
+            categoryId: row.category_id,
+            epgId: row.epg_channel_id
+        }
+    end if
+
+    if kind = "movie" then
+        ext = AsText(row.container_extension)
+        if ext = "" then ext = "mp4"
+        return {
+            kind: kind,
+            id: row.stream_id,
+            name: row.name,
+            logo: row.stream_icon,
+            categoryId: row.category_id,
+            ext: ext,
+            rating: row.rating
+        }
+    end if
+
+    return {
+        kind: kind,
+        id: row.series_id,
+        name: row.name,
+        logo: row.cover,
+        categoryId: row.category_id,
+        rating: row.rating,
+        genre: row.genre
+    }
+end function
 
 ' One row of /api/library, projected onto a ContentNode. Field names mirror
 ' projectItem() in server.js so the two read side by side.

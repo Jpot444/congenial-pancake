@@ -33,17 +33,18 @@ sub init()
     m.tabLabels = ["Live TV", "Movies", "Series", "Favorites", "Settings"]
     m.section = "live"
 
-    ' section -> catalog root ContentNode, so flipping back to a section you have
-    ' already opened is instant.
-    m.libraries = {}
-    m.libraryTotals = {}
+    ' section -> ContentNode of its categories. Only the category lists are
+    ' cached; a few hundred rows each is nothing, where the streams inside them
+    ' are tens of thousands and are fetched one category at a time.
+    m.categoryLists = {}
     m.forceRefresh = false
+    m.started = false
 
     m.catQuery = ""
     m.categoryIds = []
     m.currentCategoryId = ""
 
-    m.prefs = { pinnedCategories: [], favorites: [] }
+    m.prefs = { pinnedCategories: [], favorites: [], filters: {}, filtersEnabled: true }
     m.favKeys = {}
 
     m.zone = "nav"
@@ -78,11 +79,15 @@ sub init()
     m.top.appendChild(m.loadWatchdog)
 
     renderSettings()
+
+    ' The section load waits on prefs. Categories are filtered here now rather
+    ' than by the server, using the regex /api/prefs carries, so loading before
+    ' it arrives would show the unfiltered list and then have to redo it.
+    showLoading("Starting…", false)
     loadPrefs()
-    showTab("live")
 
     ' Somewhere in the scene has to hold focus from the first frame, or the
-    ' remote does nothing until the library lands.
+    ' remote does nothing until the catalogue lands.
     setZone("nav")
 end sub
 
@@ -97,18 +102,29 @@ end sub
 
 sub onPrefsResponse(event as Object)
     response = event.getData()
-    if not response.ok then
-        ' Not fatal: browsing works without pins and favorites. Say so once,
-        ' in the hint line, rather than blocking with a dialog.
+    if response.ok then
+        data = JsonObject(response)
+        if data.pinnedCategories <> invalid then m.prefs.pinnedCategories = data.pinnedCategories
+        if data.favorites <> invalid then m.prefs.favorites = data.favorites
+        if data.filters <> invalid then m.prefs.filters = data.filters
+        if data.filtersEnabled <> invalid then m.prefs.filtersEnabled = (data.filtersEnabled = true)
+    else
+        ' Not fatal: browsing works without pins, favorites or the filter — the
+        ' unfiltered category list is just longer. Say so in the hint line
+        ' rather than blocking with a dialog.
         m.browseHint.text = "Couldn't load pins and favorites — " + response.error
+    end if
+
+    rebuildFavoriteIndex()
+
+    ' The first reply is what releases the opening section.
+    if not m.started then
+        m.started = true
+        hideLoading()
+        showTab("live")
         return
     end if
 
-    data = JsonObject(response)
-    if data.pinnedCategories <> invalid then m.prefs.pinnedCategories = data.pinnedCategories
-    if data.favorites <> invalid then m.prefs.favorites = data.favorites
-
-    rebuildFavoriteIndex()
     renderCategories()
     refreshGridFavorites()
     if m.section = "favorites" then renderFavorites()
@@ -269,26 +285,19 @@ sub showTab(section as String)
     end if
     m.browseHint.text = "OK to open  ·  * to pin a category or favorite an item  ·  Back to step out"
 
-    catalog = m.libraries[section]
+    catalog = m.categoryLists[section]
     if catalog <> invalid and not m.forceRefresh then
         renderCategories()
         setZone("categories")
         return
     end if
 
-    loadLibrary(section)
+    loadCategories(section)
 end sub
 
-'----------------------------------------------------------------- library
+'----------------------------------------------------------------- catalogue
 
-sub loadLibrary(section as String)
-    ' Only ever hold one section's catalogue. Movies is tens of thousands of
-    ' ContentNodes; keeping Live's alongside it is what ran the channel out of
-    ' memory. Switching back costs another fetch, but server.js serves that one
-    ' from its own cache in milliseconds, and a re-fetch beats a crash.
-    m.libraries = {}
-    m.libraryTotals = {}
-
+sub loadCategories(section as String)
     m.sectionCount.text = ""
     m.categories.content = invalid
     m.posterGrid.content = invalid
@@ -301,12 +310,22 @@ sub loadLibrary(section as String)
     showLoading("Loading " + m.sectionTitle.text + "…", false)
     m.loadWatchdog.control = "start"
 
-    m.libraryTask = CreateObject("roSGNode", "LibraryTask")
-    m.libraryTask.section = section
-    m.libraryTask.refresh = m.forceRefresh
-    m.libraryTask.observeField("done", "onLibraryDone")
-    m.libraryTask.control = "RUN"
+    m.categoriesTask = CreateObject("roSGNode", "CategoriesTask")
+    m.categoriesTask.section = section
+    m.categoriesTask.pattern = filterPattern(section)
+    m.categoriesTask.observeField("done", "onCategoriesDone")
+    m.categoriesTask.control = "RUN"
 end sub
+
+' Going straight to /api/xtream skips the filtering /api/library would have
+' applied, so the same regex from /api/prefs is applied here instead. An empty
+' pattern keeps everything, which is also what happens with filters switched
+' off on the server.
+function filterPattern(section as String) as String
+    if not m.prefs.filtersEnabled then return ""
+    if m.prefs.filters = invalid then return ""
+    return AsText(m.prefs.filters[section])
+end function
 
 sub onLoadTimedOut()
     if not m.loading.visible then return
@@ -320,7 +339,7 @@ sub onLoadTimedOut()
     setZone("nav")
 end sub
 
-sub onLibraryDone(event as Object)
+sub onCategoriesDone(event as Object)
     task = event.getRoSGNode()
     if not event.getData() then return
 
@@ -331,10 +350,7 @@ sub onLibraryDone(event as Object)
     ' the watchdog now belongs to whatever load replaced this one, so stopping
     ' it here would leave that one with no deadline.
     if task.section <> m.section then
-        if task.errorMessage = "" then
-            m.libraries[task.section] = task.catalog
-            m.libraryTotals[task.section] = task.itemTotal
-        end if
+        if task.errorMessage = "" then m.categoryLists[task.section] = task.catalog
         return
     end if
 
@@ -352,8 +368,7 @@ sub onLibraryDone(event as Object)
         return
     end if
 
-    m.libraries[task.section] = task.catalog
-    m.libraryTotals[task.section] = task.itemTotal
+    m.categoryLists[task.section] = task.catalog
 
     renderCategories()
     setZone("categories")
@@ -364,7 +379,7 @@ end sub
 sub renderCategories()
     if m.section = "favorites" or m.section = "settings" then return
 
-    catalog = m.libraries[m.section]
+    catalog = m.categoryLists[m.section]
     if catalog = invalid then return
 
     query = LCase(m.catQuery)
@@ -403,10 +418,8 @@ sub renderCategories()
 
     m.categories.content = content
 
-    total = m.libraryTotals[m.section]
-    if total = invalid then total = 0
     shown = pinned.Count() + rest.Count()
-    m.sectionCount.text = total.ToStr() + " items in " + shown.ToStr() + " categories"
+    m.sectionCount.text = shown.ToStr() + " categories"
 
     if shown = 0 then
         m.categoryEmpty.visible = true
@@ -457,39 +470,77 @@ sub onCategorySelected(event as Object)
     focusGrid()
 end sub
 
+' Fetched per category rather than sliced out of a whole-section download.
+' Averaged over this provider's Live section that is about 63 rows, not 57,050.
 sub selectCategory(categoryId as String)
     m.currentCategoryId = categoryId
+    if categoryId = "" then return
 
-    catalog = m.libraries[m.section]
-    if catalog = invalid then return
+    m.posterGrid.visible = false
+    m.liveGrid.visible = false
+    m.gridTitle.text = categoryTitle(categoryId)
+    m.gridEmpty.text = "Loading…"
+    m.gridEmpty.visible = true
 
+    m.itemsTask = CreateObject("roSGNode", "CategoryItemsTask")
+    m.itemsTask.section = m.section
+    m.itemsTask.categoryId = categoryId
+    m.itemsTask.observeField("done", "onCategoryItems")
+    m.itemsTask.control = "RUN"
+end sub
+
+sub onCategoryItems(event as Object)
+    task = event.getRoSGNode()
+    if not event.getData() then return
+
+    ' Categories can be stepped through faster than the Pi answers.
+    if task.section <> m.section or task.categoryId <> m.currentCategoryId then return
+
+    if task.errorMessage <> "" then
+        clearGrid("Couldn't load this category: " + task.errorMessage)
+        return
+    end if
+
+    renderGrid(task.items, categoryTitle(task.categoryId))
+end sub
+
+function categoryTitle(categoryId as String) as String
+    catalog = m.categoryLists[m.section]
+    if catalog = invalid then return ""
     for i = 0 to catalog.getChildCount() - 1
         category = catalog.getChild(i)
-        if category.catId = categoryId then
-            renderGrid(category)
-            return
-        end if
+        if category.catId = categoryId then return category.title
     end for
-end sub
+    return ""
+end function
 
 '-------------------------------------------------------------------- grid
 
-sub renderGrid(category as Object)
-    m.gridTitle.text = category.title + "  (" + category.itemCount.ToStr() + ")"
-    m.gridEmpty.visible = false
+sub renderGrid(content as Object, title as String)
+    if content = invalid then return
 
-    ' Marking favorites here rather than up front keeps it to the few hundred
-    ' items actually on screen instead of the whole catalogue.
-    applyFavorites(category)
+    count = content.getChildCount()
+    m.gridTitle.text = title + "  (" + count.ToStr() + ")"
+
+    if count = 0 then
+        m.posterGrid.visible = false
+        m.liveGrid.visible = false
+        m.gridEmpty.text = "Nothing in this category."
+        m.gridEmpty.visible = true
+        return
+    end if
+
+    m.gridEmpty.visible = false
+    applyFavorites(content)
 
     if m.section = "live" then
         m.posterGrid.visible = false
-        m.liveGrid.content = category
+        m.liveGrid.content = content
         m.liveGrid.jumpToItem = 0
         m.liveGrid.visible = true
     else
         m.liveGrid.visible = false
-        m.posterGrid.content = category
+        m.posterGrid.content = content
         m.posterGrid.jumpToItem = 0
         m.posterGrid.visible = true
     end if
@@ -853,8 +904,7 @@ end sub
 
 ' Everything cached, including the prefs, came from the old address.
 sub applyServerChange(note as String)
-    m.libraries = {}
-    m.libraryTotals = {}
+    m.categoryLists = {}
     m.forceRefresh = false
     m.prefs = { pinnedCategories: [], favorites: [] }
     rebuildFavoriteIndex()
@@ -910,10 +960,9 @@ sub onSettingsSelected(event as Object)
             m.settingsNote.text = "MKV files will be converted to HLS by the Pi before playing, the same way the web player does it."
         end if
     else if index = 3 then
-        m.libraries = {}
-        m.libraryTotals = {}
+        m.categoryLists = {}
         m.forceRefresh = true
-        m.settingsNote.text = "The next section you open will be pulled fresh from the provider. That takes a while — the cached copy would have been instant."
+        m.settingsNote.text = "Category lists will be re-read the next time you open a section."
     end if
 end sub
 

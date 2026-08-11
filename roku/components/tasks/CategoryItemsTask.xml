@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The streams inside one category. This is the unit the grid actually
+     displays, and keeping the fetch this narrow is what makes the section
+     usable: about 63 rows instead of the 57,050 that loading Live whole
+     brought in. -->
+<component name="CategoryItemsTask" extends="Task">
+  <interface>
+    <field id="section" type="string" />
+    <field id="categoryId" type="string" />
+
+    <!-- ContentNode of item nodes, ready for the grid. -->
+    <field id="items" type="node" />
+    <field id="errorMessage" type="string" />
+    <!-- Flips last, so observers see a complete result. -->
+    <field id="done" type="boolean" value="false" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/Api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Config.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Content.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Http.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/tasks/CategoryItemsTask.brs" />
+</component>

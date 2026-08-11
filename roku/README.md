@@ -140,7 +140,8 @@ did not match the brief:
 
 | What the channel needs | Endpoint | Notes |
 | --- | --- | --- |
-| Categories + items per section | `GET /api/library?tab=live\|movies\|series` | Parsed and turned into a ContentNode tree on a Task thread |
+| The categories in a section | `GET /api/xtream?action=get_live_categories` (or `get_vod_`/`get_series_`) | Filtered here with the prefs regex — see below |
+| The streams inside one category | `GET /api/xtream?action=get_live_streams&category_id=` (or `get_vod_streams`/`get_series`) | One category at a time; this is the unit the grid shows |
 | Movie synopsis, runtime, genre, codecs | `GET /api/xtream?action=get_vod_info&vod_id=` | |
 | Seasons and episodes | `GET /api/xtream?action=get_series_info&series_id=` | |
 | What's on now, for the live banner | `GET /api/xtream?action=get_short_epg&stream_id=&limit=1` | server.js base64-decodes the titles for us |
@@ -148,6 +149,41 @@ did not match the brief:
 | Non-native containers | `GET /api/remux` then poll `/api/remux/status` | Then `/api/remux/stop` when playback ends |
 | Posters and logos | `GET /img?u=` | |
 | Pins and favorites | `GET` / `PUT /api/prefs` | |
+
+### Why not /api/library
+
+The brief pointed at `/api/library`, and v1 used it. It does not survive
+contact with this provider. One call for Live returns **57,050 streams across
+911 categories, 10.2 MB of JSON**. Turning that into ContentNodes took 24
+seconds and then the Roku killed the channel outright:
+
+```
+[library] live: fetch+parse 5080ms, 10246234 bytes
+[library] live: built 57050 items in 911 categories, 24523ms total
+EXIT_CHANNEL_MEM_LIMIT_FG
+```
+
+That is a hard per-channel memory ceiling, not something a leaner projection
+gets under. A browser can hold a 10 MB catalogue; a Roku cannot.
+
+Only one category is ever on screen, and they average about 63 items — so the
+channel fetches the category list once and the streams one category at a time,
+which is what Xtream's `category_id` parameter is for. `/api/xtream` forwards
+every parameter except the credentials, so this needs nothing new from the
+server. Category lists are small enough to cache for all three sections at
+once; the streams inside them are not cached at all.
+
+Two consequences worth knowing:
+
+- **The category filter runs here, not on the server.** `/api/library` applied
+  `prefs.filters[tab]` itself; going direct to `/api/xtream` skips that, so the
+  channel reads the same regex from `/api/prefs` and applies it with `roRegex`.
+  A pattern that fails to compile keeps everything, matching what
+  `buildLibrary()` does. This is duplicated logic and the two need to stay in
+  step.
+- **No item counts beside each category.** The web player has them because it
+  has already downloaded every item. Here the count appears in the grid heading
+  once the category opens.
 
 ### Live TV really is HLS — confirmed, not assumed
 
@@ -267,10 +303,10 @@ Deliberately left out, in rough order of how much they'd be missed:
   profile is picked. The channel only uses the global one — so it syncs with a
   profile-less web session, but not with a specific persona. A profile picker
   at launch would close this.
-- **An "All" pseudo-category.** The web player has one; here a category must be
-  picked. Two reasons: 15,000 posters is not a browsable surface on a D-pad,
-  and a node can only have one parent, so an All row would mean a second copy
-  of every item node in memory.
+- **An "All" pseudo-category**, and **item counts in the category list**. Both
+  need the whole section in memory at once, which is exactly what the channel
+  cannot do — see *Why not /api/library*. Counts show in the grid heading
+  instead, once a category is open.
 - **Search within a section.** Only the category list is searchable, matching
   the scope. Item search would want a server-side endpoint rather than
   filtering thousands of nodes on the device.
