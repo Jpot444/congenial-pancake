@@ -57,11 +57,33 @@ function ConfigNormalizeBase(raw as String) as String
 end function
 
 function ConfigBaseUrl() as String
-    return ConfigNormalizeBase(ConfigRead("baseUrl", ConfigDefaultBase()))
+    stored = ConfigRead("baseUrl", "")
+    if stored <> "" and not ConfigIsUnreachable(stored) then
+        return ConfigNormalizeBase(stored)
+    end if
+    return ConfigNormalizeBase(ConfigDefaultBase())
+end function
+
+' A tailnet name can never resolve here — there is no Tailscale client on a
+' Roku, so the request dies at DNS. One in the registry is a leftover from the
+' build whose default it was, and honouring it strands the channel on a server
+' it cannot reach, with no way back except retyping on a TV keyboard.
+function ConfigIsUnreachable(address as String) as Boolean
+    return Instr(1, LCase(address), ".ts.net") > 0
 end function
 
 sub ConfigSetBaseUrl(raw as String)
     ConfigWrite("baseUrl", ConfigNormalizeBase(raw))
+end sub
+
+' Back to whatever this build ships with. Deleting the key rather than writing
+' the default means a later build's default takes effect too.
+sub ConfigClearBaseUrl()
+    section = ConfigSection()
+    if section.Exists("baseUrl") then
+        section.Delete("baseUrl")
+        section.Flush()
+    end if
 end sub
 
 ' Roku's Video node will open an .mkv, but only on models whose decoder matches

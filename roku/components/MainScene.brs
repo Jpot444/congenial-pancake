@@ -802,14 +802,14 @@ sub onTextEntryClosed()
     m.textEntry.visible = false
 
     if m.textEntryMode = "server" then
-        ConfigSetBaseUrl(m.textEntry.text)
-        ' Everything cached came from the old address.
-        m.libraries = {}
-        m.libraryTotals = {}
-        m.forceRefresh = false
-        renderSettings()
-        m.settingsNote.text = "Now pointing at " + ConfigBaseUrl() + ". Open a section to reload from it."
-        loadPrefs()
+        ' Only write when the text actually changed. Opening this screen and
+        ' backing straight out used to save whatever was on display, which
+        ' pinned the then-current default into the registry — where it went on
+        ' overriding every later build's default.
+        if ConfigNormalizeBase(m.textEntry.text) <> ConfigBaseUrl() then
+            ConfigSetBaseUrl(m.textEntry.text)
+            applyServerChange("Now pointing at " + ConfigBaseUrl() + ". Open a section to reload from it.")
+        end if
         setZone("settings")
     else
         focusCategories()
@@ -820,11 +820,27 @@ end sub
 
 '---------------------------------------------------------------- settings
 
+' Everything cached, including the prefs, came from the old address.
+sub applyServerChange(note as String)
+    m.libraries = {}
+    m.libraryTotals = {}
+    m.forceRefresh = false
+    m.prefs = { pinnedCategories: [], favorites: [] }
+    rebuildFavoriteIndex()
+    renderSettings()
+    m.settingsNote.text = note
+    loadPrefs()
+end sub
+
 sub renderSettings()
     content = CreateObject("roSGNode", "ContentNode")
 
     row = CreateObject("roSGNode", "ContentNode")
     row.title = "Server address:  " + ConfigBaseUrl()
+    content.appendChild(row)
+
+    row = CreateObject("roSGNode", "ContentNode")
+    row.title = "Reset server address to this build's default  (" + ConfigDefaultBase() + ")"
     content.appendChild(row)
 
     row = CreateObject("roSGNode", "ContentNode")
@@ -852,6 +868,9 @@ sub onSettingsSelected(event as Object)
         m.textEntry.callFunc("activate", invalid)
         setZone("textEntry")
     else if index = 1 then
+        ConfigClearBaseUrl()
+        applyServerChange("Back to " + ConfigBaseUrl() + ". Open a section to load from it.")
+    else if index = 2 then
         ConfigSetNativeMkv(not ConfigNativeMkv())
         renderSettings()
         if ConfigNativeMkv() then
@@ -859,7 +878,7 @@ sub onSettingsSelected(event as Object)
         else
             m.settingsNote.text = "MKV files will be converted to HLS by the Pi before playing, the same way the web player does it."
         end if
-    else if index = 2 then
+    else if index = 3 then
         m.libraries = {}
         m.libraryTotals = {}
         m.forceRefresh = true
