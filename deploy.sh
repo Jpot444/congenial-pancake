@@ -48,4 +48,24 @@ rsync -avz --human-readable \
 echo "→ restarting ${PM2_APP}"
 ssh "${REMOTE_USER}@${REMOTE_HOST}" "pm2 restart ${PM2_APP}"
 
-echo "✓ deployed to ${REMOTE_HOST}"
+# pm2 returns the moment it has respawned the process, which is well before
+# the server is listening — it parses a multi-megabyte catalogue cache on the
+# way up. Handing back control at that point means the next command in the
+# script you are running gets connection refused, which reads like a broken
+# deploy rather than an impatient one.
+REMOTE_PORT="${DEPLOY_PORT:-8420}"
+printf '→ waiting for %s:%s' "${REMOTE_HOST}" "${REMOTE_PORT}"
+
+for _ in $(seq 1 40); do
+  if curl -fsS -m 2 -o /dev/null "http://${REMOTE_HOST}:${REMOTE_PORT}/api/health" 2>/dev/null; then
+    printf '\n✓ deployed to %s, answering on %s\n' "${REMOTE_HOST}" "${REMOTE_PORT}"
+    exit 0
+  fi
+  printf '.'
+  sleep 1
+done
+
+printf '\n'
+echo "deployed, but ${REMOTE_HOST}:${REMOTE_PORT} did not answer within 40s." >&2
+echo "Check it with: ssh ${REMOTE_USER}@${REMOTE_HOST} 'pm2 logs ${PM2_APP} --lines 30 --nostream'" >&2
+exit 1
