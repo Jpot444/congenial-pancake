@@ -1587,13 +1587,19 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, a
   });
 
   const playlist = path.join(dir, 'index.m3u8');
-  const deadline = Date.now() + 30000;
+
+  // A live source arrives at realtime, so two six-second segments is twelve
+  // seconds of waiting before anything can be returned — and ffmpeg's own
+  // reconnect flags mean a provider that is stalling shows up as silence
+  // rather than an error. One segment and a longer budget, for live only.
+  const needed = live ? 1 : 2;
+  const deadline = Date.now() + (live ? 60000 : 30000);
 
   while (Date.now() < deadline) {
     if (fs.existsSync(playlist)) {
       const text = fs.readFileSync(playlist, 'utf8');
-      // Wait for a couple of segments so playback doesn't start and stall.
-      if ((text.match(/\.(ts|m4s)/g) || []).length >= 2) return session;
+      // Wait for enough segments that playback doesn't start and stall.
+      if ((text.match(/\.(ts|m4s)/g) || []).length >= needed) return session;
     }
     if (session.exited && session.exitCode !== 0) {
       const detail = stderr.split('\n').filter(Boolean).pop() || `exit ${session.exitCode}`;
@@ -1603,8 +1609,14 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, a
     await new Promise((r) => setTimeout(r, 300));
   }
 
+  // Carry ffmpeg's own last words out with the failure. Without them a
+  // timeout says only that nothing happened, which is the least useful thing
+  // a conversion can report.
+  const stalled = stderr.split('\n').filter(Boolean).pop() || '';
   killSession(id);
-  throw new Error('Remux timed out starting up');
+  throw new Error(
+    'Remux timed out starting up' + (stalled ? `: ${stalled}` : ' (ffmpeg said nothing)')
+  );
 }
 
 /** Reap sessions nothing has fetched from in a while. */
