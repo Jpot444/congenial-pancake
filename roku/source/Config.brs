@@ -86,6 +86,59 @@ sub ConfigClearBaseUrl()
     end if
 end sub
 
+' ------------------------------------------------- what this box can't play
+'
+' Nothing in the provider's listing says what a stream contains, so there is no
+' way to know a title will fail until it does. This is learned by trying: a
+' channel that gets all the way through the fallbacks and still won't open is
+' remembered, and marked in the grid from then on.
+'
+' Deliberately in the registry rather than /api/prefs. Decoder support is a
+' property of this television, not of the account — the web player opens these
+' streams perfectly well, and syncing the list would wrongly hide them there.
+
+function ConfigUnplayable() as Object
+    keys = {}
+
+    raw = ConfigRead("unplayable", "")
+    if raw = "" then return keys
+
+    parsed = ParseJson(raw)
+    if parsed = invalid or type(parsed) <> "roArray" then return keys
+
+    for each key in parsed
+        text = AsText(key)
+        if text <> "" then keys[text] = true
+    end for
+
+    return keys
+end function
+
+sub ConfigSaveUnplayable(keys as Object)
+    list = []
+    for each key in keys
+        ' A registry section is capped, and a few hundred is far more than a
+        ' household will ever accumulate.
+        if list.Count() >= 400 then exit for
+        list.Push(key)
+    end for
+    ConfigWrite("unplayable", FormatJson(list))
+end sub
+
+' Marked by default rather than hidden: a title that failed once may be a
+' provider hiccup, and silently vanishing content is worse than a label.
+function ConfigHideUnplayable() as Boolean
+    return ConfigRead("hideUnplayable", "0") = "1"
+end function
+
+sub ConfigSetHideUnplayable(enabled as Boolean)
+    if enabled then
+        ConfigWrite("hideUnplayable", "1")
+    else
+        ConfigWrite("hideUnplayable", "0")
+    end if
+end sub
+
 ' Roku's Video node will open an .mkv, but only on models whose decoder matches
 ' what is inside it, and only after dragging the seek index over the proxy —
 ' which on a Pi behind Tailscale is a long silent stall. Off by default means

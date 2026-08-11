@@ -98,8 +98,8 @@ as you type, exactly like the web player's category box; Back closes the
 keyboard and keeps the filter.
 
 **Settings** (last tab) holds the server address, the MKV switch described
-below, and a *Reload the library* button that forces the next section to pull
-fresh from the provider instead of the Pi's cache.
+below, controls for titles that failed to play, and a *Reload the library*
+button that re-reads the category lists.
 
 ---
 
@@ -258,6 +258,24 @@ a caller passes `vcodec`; the codec only chooses TS versus fMP4 packaging.
 One retry, then the error is reported. `[player] error <code>: <message>` in
 the console is the device's own verdict, and Roku's error codes are documented
 by number.
+
+### Titles this box can't play
+
+Some streams fail on a Roku that play everywhere else — an audio format the
+model lacks, a level above what it decodes. Nothing in the provider's listing
+distinguishes them, and finding out means trying: there is no way to know in
+advance, and probing 57,000 channels through a one-connection account is not
+an option.
+
+So the channel learns. Anything that exhausts every fallback and still won't
+open is remembered and marked in the grid — dimmed, with **WON'T PLAY HERE**
+across it — and unmarked the moment it does play, so a stream that was merely
+down does not stay struck out. *Settings* can hide them outright instead of
+marking them, and can forget the list.
+
+Kept in the Roku registry, not `/api/prefs`. Decoder support belongs to the
+television, not the account; syncing it would hide from the web player titles
+it opens perfectly well.
 
 ### Fonts
 

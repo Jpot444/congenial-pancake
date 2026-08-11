@@ -13,6 +13,9 @@
     <field id="closed" type="integer" value="0" />
     <!-- Non-empty when playback failed; the scene turns it into a dialog. -->
     <field id="playbackError" type="string" />
+    <!-- Bumped the first time a request actually reaches picture, which is
+         what clears a title off the unplayable list. -->
+    <field id="startedCount" type="integer" value="0" />
 
     <function name="activate" />
     <function name="stopVideo" />

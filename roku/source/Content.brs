@@ -84,6 +84,7 @@ function BuildItemNode(row as Object) as Object
         epgId: AsText(row.epgId),
         logo: AsText(row.logo),
         isFavorite: false,
+        unplayable: false,
         rawName: AsText(row.name)
     })
     ' title is folded down to what this device can draw; rawName keeps the

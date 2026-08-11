@@ -47,6 +47,10 @@ sub init()
     m.prefs = { pinnedCategories: [], favorites: [], filters: {}, filtersEnabled: true }
     m.favKeys = {}
 
+    ' Titles this television has failed to play, learned by trying. Local to
+    ' the device — see the note in Config.brs.
+    m.unplayable = ConfigUnplayable()
+
     m.zone = "nav"
     m.textEntryMode = ""
     m.pendingPlay = invalid
@@ -66,6 +70,7 @@ sub init()
     m.series.observeField("favPressed", "onSeriesFavorite")
     m.player.observeField("closed", "onPlayerClosed")
     m.player.observeField("playbackError", "onPlaybackError")
+    m.player.observeField("startedCount", "onPlaybackStarted")
     m.textEntry.observeField("text", "onTextEntryChanged")
     m.textEntry.observeField("closeCount", "onTextEntryClosed")
 
@@ -504,6 +509,14 @@ sub onCategoryItems(event as Object)
     renderGrid(task.items, categoryTitle(task.categoryId))
 end sub
 
+function UnplayableCount() as Integer
+    total = 0
+    for each key in m.unplayable
+        total = total + 1
+    end for
+    return total
+end function
+
 function categoryTitle(categoryId as String) as String
     catalog = m.categoryLists[m.section]
     if catalog = invalid then return ""
@@ -518,6 +531,8 @@ end function
 
 sub renderGrid(content as Object, title as String)
     if content = invalid then return
+
+    if ConfigHideUnplayable() then dropUnplayable(content)
 
     count = content.getChildCount()
     m.gridTitle.text = title + "  (" + count.ToStr() + ")"
@@ -550,8 +565,47 @@ sub applyFavorites(container as Object)
     if container = invalid then return
     for i = 0 to container.getChildCount() - 1
         child = container.getChild(i)
-        child.isFavorite = m.favKeys.DoesExist(ItemFavKey(child))
+        key = ItemFavKey(child)
+        child.isFavorite = m.favKeys.DoesExist(key)
+        child.unplayable = m.unplayable.DoesExist(key)
     end for
+end sub
+
+' Drops what this box cannot play out of a freshly fetched category. Safe to
+' mutate: the node came straight from the task and nothing else holds it.
+sub dropUnplayable(container as Object)
+    if container = invalid then return
+    for i = container.getChildCount() - 1 to 0 step -1
+        child = container.getChild(i)
+        if m.unplayable.DoesExist(ItemFavKey(child)) then container.removeChildIndex(i)
+    end for
+end sub
+
+' Remembered only after every fallback has been tried, so a first-attempt
+' hiccup does not condemn a channel.
+sub rememberUnplayable(spec as Object)
+    if spec = invalid then return
+
+    key = FavKey(spec.kind, spec.id)
+    if key = "" or m.unplayable.DoesExist(key) then return
+
+    m.unplayable[key] = true
+    ConfigSaveUnplayable(m.unplayable)
+    print "[unplayable] remembered " + key
+    refreshGridFavorites()
+end sub
+
+' And forgotten the moment it plays. A stream that was merely down, or a title
+' the provider has since fixed, should not stay struck out forever.
+sub onPlaybackStarted()
+    if m.pendingPlay = invalid then return
+
+    key = FavKey(m.pendingPlay.kind, m.pendingPlay.id)
+    if key = "" or not m.unplayable.DoesExist(key) then return
+
+    m.unplayable.Delete(key)
+    ConfigSaveUnplayable(m.unplayable)
+    print "[unplayable] cleared " + key
 end sub
 
 sub refreshGridFavorites()
@@ -848,7 +902,13 @@ sub onPlaybackError()
 
     if retryPlayback(message) then return
 
-    showDialog("Playback stopped", message)
+    ' Every route has been tried, so this one is genuinely beyond this box.
+    rememberUnplayable(m.pendingPlay)
+
+    gap = Chr(10) + Chr(10)
+    detail = message + gap
+    detail = detail + "Marked as unplayable on this Roku. It stays marked until it plays."
+    showDialog("Playback stopped", detail)
     focusGrid()
 end sub
 
@@ -982,6 +1042,16 @@ sub renderSettings()
     content.appendChild(row)
 
     row = CreateObject("roSGNode", "ContentNode")
+    hidden = "Off"
+    if ConfigHideUnplayable() then hidden = "On"
+    row.title = "Hide titles that failed to play:  " + hidden
+    content.appendChild(row)
+
+    row = CreateObject("roSGNode", "ContentNode")
+    row.title = "Forget the " + UnplayableCount().ToStr() + " titles marked unplayable"
+    content.appendChild(row)
+
+    row = CreateObject("roSGNode", "ContentNode")
     row.title = "Reload the library from the provider"
     content.appendChild(row)
 
@@ -1011,6 +1081,20 @@ sub onSettingsSelected(event as Object)
             m.settingsNote.text = "MKV files will be converted to HLS by the Pi before playing, the same way the web player does it."
         end if
     else if index = 3 then
+        ConfigSetHideUnplayable(not ConfigHideUnplayable())
+        renderSettings()
+        if ConfigHideUnplayable() then
+            m.settingsNote.text = "Titles this Roku has failed to play are left out of the grids entirely. They come back if you turn this off."
+        else
+            m.settingsNote.text = "Titles this Roku has failed to play stay in the grids, dimmed and labelled, so you can still try them."
+        end if
+    else if index = 4 then
+        m.unplayable = {}
+        ConfigSaveUnplayable(m.unplayable)
+        renderSettings()
+        refreshGridFavorites()
+        m.settingsNote.text = "Cleared. Everything is worth trying again — anything that still fails will re-mark itself."
+    else if index = 5 then
         m.categoryLists = {}
         m.forceRefresh = true
         m.settingsNote.text = "Category lists will be re-read the next time you open a section."

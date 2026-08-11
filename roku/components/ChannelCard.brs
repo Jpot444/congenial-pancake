@@ -3,6 +3,7 @@ sub init()
     m.logo = m.top.findNode("logo")
     m.name = m.top.findNode("name")
     m.favMark = m.top.findNode("favMark")
+    m.blockedBar = m.top.findNode("blockedBar")
 end sub
 
 sub onContentChanged()
@@ -19,6 +20,13 @@ sub onContentChanged()
     m.name.text = content.title
     m.logo.uri = ItemPoster(content)
     m.favMark.visible = content.isFavorite
+
+    m.blockedBar.visible = content.unplayable
+    if content.unplayable then
+        m.logo.opacity = 0.3
+    else
+        m.logo.opacity = 1.0
+    end if
 end sub
 
 sub onFavoriteChanged()

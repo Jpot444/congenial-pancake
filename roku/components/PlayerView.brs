@@ -23,6 +23,7 @@ sub onRequestChanged()
     if request = invalid or AsText(request.url) = "" then return
 
     m.top.playbackError = ""
+    m.reportedStart = false
 
     content = CreateObject("roSGNode", "ContentNode")
     content.url = request.url
@@ -81,7 +82,14 @@ sub onStateChanged()
         return
     end if
 
-    if state = "playing" then hideBannerSoon()
+    if state = "playing" then
+        ' Once per request: buffering flips this back and forth.
+        if not m.reportedStart then
+            m.reportedStart = true
+            m.top.startedCount = m.top.startedCount + 1
+        end if
+        hideBannerSoon()
+    end if
 end sub
 
 sub hideBannerSoon()

@@ -20,6 +20,14 @@
       <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="24" />
     </Label>
 
+    <!-- Shown on anything this box has already failed to play. -->
+    <Rectangle id="blockedBar" width="254" height="26" translation="[136,86]" color="0x0B0807E6"
+               visible="false">
+      <Label text="WON'T PLAY HERE" width="254" height="26" vertAlign="center" color="0xFF6B5EFF">
+        <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="17" />
+      </Label>
+    </Rectangle>
+
     <!-- Drawn, not a glyph — see PosterCard.xml. -->
     <Rectangle id="favMark" translation="[338,0]" width="52" height="8" color="0xA21F24FF"
                visible="false" />

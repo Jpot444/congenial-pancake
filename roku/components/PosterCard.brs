@@ -3,6 +3,7 @@ sub init()
     m.poster = m.top.findNode("poster")
     m.fallback = m.top.findNode("fallback")
     m.favBadge = m.top.findNode("favBadge")
+    m.blockedBar = m.top.findNode("blockedBar")
     m.title = m.top.findNode("title")
 end sub
 
@@ -30,6 +31,15 @@ sub onContentChanged()
     end if
 
     m.favBadge.visible = content.isFavorite
+
+    ' Dimmed as well as labelled: the point is to be able to skip past these
+    ' without reading anything.
+    m.blockedBar.visible = content.unplayable
+    if content.unplayable then
+        m.poster.opacity = 0.3
+    else
+        m.poster.opacity = 1.0
+    end if
 end sub
 
 sub onFavoriteChanged()
