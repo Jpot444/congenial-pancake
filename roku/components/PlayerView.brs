@@ -66,6 +66,9 @@ sub onStateChanged()
     if state = "error" then
         detail = AsText(m.video.errorMsg)
         if detail = "" then detail = "the stream would not open"
+        ' The numeric code is what Roku's docs are indexed by, and it survives
+        ' into the console even when errorMsg is vague.
+        print "[player] error " + AsText(m.video.errorCode) + ": " + detail
         m.top.playbackError = "Playback failed — " + detail
         return
     end if

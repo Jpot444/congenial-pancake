@@ -35,7 +35,7 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
 cd "$CHANNEL_DIR"
-zip -r -q "$ZIP_PATH" manifest source components images
+zip -r -q "$ZIP_PATH" manifest source components images fonts
 
 echo
 echo "Built $ZIP_PATH ($(du -h "$ZIP_PATH" | cut -f1))"

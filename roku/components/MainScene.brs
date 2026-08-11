@@ -646,7 +646,9 @@ sub onDetailPlay()
         achannels: AsText(hints.achannels),
         title: item.title,
         subtitle: JoinParts([item.genre, item.rating], "  ·  "),
-        isLive: false
+        isLive: false,
+        attempt: 0,
+        forceRemux: false
     })
 end sub
 
@@ -678,7 +680,9 @@ sub onEpisodePlay()
         achannels: AsText(episode.achannels),
         title: item.title,
         subtitle: AsText(episode.label),
-        isLive: false
+        isLive: false,
+        attempt: 0,
+        forceRemux: false
     })
 end sub
 
@@ -698,7 +702,9 @@ sub playLive(item as Object)
         achannels: "",
         title: item.title,
         subtitle: "Live",
-        isLive: true
+        isLive: true,
+        attempt: 0,
+        forceRemux: false
     })
     ' What's on now is a nicety; it lands in the banner if it arrives.
     fetchNowPlaying(item.itemId)
@@ -710,7 +716,7 @@ sub startPlayback(spec as Object)
     ' Live is HLS already — the Pi's preferredFormat is m3u8, so /api/play
     ' hands back a .m3u8 the Video node opens natively. Only VOD in a container
     ' Roku won't take has to be converted first.
-    if spec.kind <> "live" and not IsNativeContainer(spec.ext) then
+    if spec.kind <> "live" and (spec.forceRemux or not IsNativeContainer(spec.ext)) then
         showLoading("Converting for playback…", true)
         m.remuxTask = CreateObject("roSGNode", "RemuxTask")
         m.remuxTask.params = {
@@ -793,6 +799,8 @@ sub openPlayer(url as String, streamFormat as String)
         subtitle: m.pendingPlay.subtitle,
         isLive: m.pendingPlay.isLive
     }
+    print "[play] " + m.pendingPlay.kind + " id=" + m.pendingPlay.id + " ext=" + m.pendingPlay.ext + " as " + streamFormat + " attempt=" + m.pendingPlay.attempt.ToStr() + " url=" + url
+
     m.player.callFunc("activate", invalid)
     setZone("player")
 end sub
@@ -823,9 +831,44 @@ sub onPlaybackError()
     m.player.callFunc("stopVideo", invalid)
     m.player.visible = false
     releaseRemux()
+
+    if retryPlayback(message) then return
+
     showDialog("Playback stopped", message)
     focusGrid()
 end sub
+
+' Roku's decoders and its HLS parser are both stricter than a browser's, so a
+' stream the web player opens can still fail here. Rather than stopping at the
+' first refusal, fall back once to the other way of getting the same title.
+function retryPlayback(message as String) as Boolean
+    spec = m.pendingPlay
+    if spec = invalid or spec.attempt >= 1 then return false
+
+    retry = {}
+    for each field in spec
+        retry[field] = spec[field]
+    end for
+    retry.attempt = spec.attempt + 1
+
+    if spec.kind = "live" then
+        ' The provider serves live as MPEG-TS as well as HLS, and server.js
+        ' will hand over either — buildStreamUrl takes the extension. A
+        ' playlist Roku won't parse is often fine as a plain TS stream.
+        if spec.ext = "ts" then return false
+        retry.ext = "ts"
+        print "[play] live failed as HLS, retrying as ts — " + message
+    else
+        ' An "unsupported format" on VOD means the container or codec is one
+        ' this box won't take. That is exactly what /api/remux exists for.
+        if spec.forceRemux then return false
+        retry.forceRemux = true
+        print "[play] direct play failed, retrying through /api/remux — " + message
+    end if
+
+    startPlayback(retry)
+    return true
+end function
 
 ' ffmpeg keeps running on the Pi until it is told otherwise, and it is holding
 ' the provider's single connection while it does.

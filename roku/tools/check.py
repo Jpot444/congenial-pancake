@@ -306,6 +306,12 @@ def check_component_references():
             continue
 
         for element in root.iter():
+            font = element.get("uri", "")
+            if font.startswith("pkg:/") and not os.path.exists(
+                os.path.join(ROOT, font[len("pkg:/"):])
+            ):
+                errors.append("%s: uri points at nothing — %s" % (rel(path), font))
+
             wanted = element.get("itemComponentName")
             if wanted and wanted not in declared:
                 errors.append(

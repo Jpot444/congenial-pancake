@@ -17,12 +17,12 @@
 
     <Label id="name" translation="[52,15]" width="360" height="36" color="0xA3928CFF"
            wrap="false" ellipsisText="…">
-      <Font role="font" uri="font:MediumSystemFontFile" size="26" />
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="26" />
     </Label>
 
     <Label id="count" translation="[420,18]" width="86" height="32" color="0x705F5AFF"
            horizAlign="right">
-      <Font role="font" uri="font:SystemFontFile" size="22" />
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="22" />
     </Label>
   </children>
   <!-- pkg:/source is the main scope, which SceneGraph components do not

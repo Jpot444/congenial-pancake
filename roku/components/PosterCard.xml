@@ -18,7 +18,7 @@
          in for the poster rather than leaving a hole in the grid. -->
     <Label id="fallback" translation="[14,115]" width="192" height="120" wrap="true"
            horizAlign="center" color="0x705F5AFF" visible="false">
-      <Font role="font" uri="font:MediumSystemFontFile" size="24" />
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="24" />
     </Label>
 
     <!-- A drawn corner tab rather than a ♥ glyph: Roku's system font can't be
@@ -28,7 +28,7 @@
 
     <Label id="title" translation="[0,342]" width="220" height="34" wrap="false" ellipsisText="…"
            color="0xA3928CFF">
-      <Font role="font" uri="font:SystemFontFile" size="22" />
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="22" />
     </Label>
   </children>
   <!-- pkg:/source is the main scope, which SceneGraph components do not
