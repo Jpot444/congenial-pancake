@@ -98,10 +98,25 @@ fresh from the provider instead of the Pi's cache.
 
 ## Configuration
 
-The server address defaults to `http://kalshi.taila9b3f4.ts.net:8420` and is
-editable from *Settings → Server address*. It is stored in the Roku registry,
-so it survives relaunches but not a reinstall of the channel. You can type a
-bare host (`192.168.1.20`) — `:8420` is filled in, and so is `http://`.
+The server address defaults to `http://192.168.1.15:8420` and is editable from
+*Settings → Server address*. It is stored in the Roku registry, so it survives
+relaunches but not a reinstall of the channel. You can type a bare host
+(`192.168.1.20`) — `:8420` is filled in, and so is `http://`.
+
+Note this is the Pi's **LAN** address, not the `kalshi.taila9b3f4.ts.net` name
+the web player uses. Roku has no Tailscale client, so the TV cannot resolve
+that name — it fails at DNS before reaching the Pi, and the channel reports
+"could not resolve host". The practical consequence is that the channel only
+works on the home network, which for a television is no great loss.
+
+Give the Pi a **DHCP reservation** on the router. A LAN address is a lease, and
+when it moves the channel simply stops finding the server. There is no fallback
+to lean on: Roku will not reliably resolve `.local` mDNS names either.
+
+A value saved from the Settings screen lives in the registry and takes
+precedence over this default, so changing `ConfigDefaultBase()` will not move a
+device that has already had an address typed into it. Retype it in Settings on
+that device, or uninstall and re-sideload to clear the registry.
 
 To change the compiled-in default, edit `ConfigDefaultBase()` in
 [`source/Config.brs`](source/Config.brs).

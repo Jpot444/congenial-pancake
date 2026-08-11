@@ -2,8 +2,15 @@
 ' Settings screen. Stored in the registry so a reinstall of the channel is the
 ' only thing that forgets them.
 
+' A LAN address, not the Tailscale name the web player uses. Roku has no
+' Tailscale client, so the TV cannot resolve kalshi.taila9b3f4.ts.net at all —
+' it fails at DNS before it ever reaches the Pi. That ties the channel to the
+' home network, which for a television is no great loss.
+'
+' Give the Pi a DHCP reservation on the router. This is a lease, and when it
+' moves the channel just stops finding the server.
 function ConfigDefaultBase() as String
-    return "http://kalshi.taila9b3f4.ts.net:8420"
+    return "http://192.168.1.15:8420"
 end function
 
 function ConfigSection() as Object
