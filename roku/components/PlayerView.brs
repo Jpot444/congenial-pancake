@@ -69,7 +69,10 @@ sub onStateChanged()
         ' The numeric code is what Roku's docs are indexed by, and it survives
         ' into the console even when errorMsg is vague.
         print "[player] error " + AsText(m.video.errorCode) + ": " + detail
-        m.top.playbackError = "Playback failed — " + detail
+        ' The code goes on screen as well as to the console — Roku's error
+        ' codes are documented by number, and it saves needing a laptop
+        ' attached to find out what the device objected to.
+        m.top.playbackError = "Playback failed (error " + AsText(m.video.errorCode) + ") — " + detail
         return
     end if
 
