@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Title search for one section, answered by /api/search out of the cache the
+     web player already built. The device never holds more than the matches. -->
+<component name="SearchTask" extends="Task">
+  <interface>
+    <field id="section" type="string" />
+    <field id="query" type="string" />
+
+    <field id="items" type="node" />
+    <field id="total" type="integer" value="0" />
+    <field id="errorMessage" type="string" />
+    <!-- Flips last, so observers see a complete result. -->
+    <field id="done" type="boolean" value="false" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/Api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Config.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Content.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Http.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/tasks/SearchTask.brs" />
+</component>

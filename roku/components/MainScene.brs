@@ -41,6 +41,7 @@ sub init()
     m.started = false
 
     m.catQuery = ""
+    m.titleQuery = ""
     m.categoryIds = []
     m.currentCategoryId = ""
 
@@ -153,6 +154,18 @@ sub savePrefs()
     }
     m.prefsSaveTask.observeField("response", "onPrefsSaved")
     m.prefsSaveTask.control = "RUN"
+end sub
+
+sub saveFilterSetting()
+    m.filterSaveTask = CreateObject("roSGNode", "RequestTask")
+    m.filterSaveTask.request = {
+        url: ApiUrl("/api/prefs", invalid),
+        method: "PUT",
+        body: FormatJson({ filtersEnabled: m.prefs.filtersEnabled }),
+        timeout: 20000
+    }
+    m.filterSaveTask.observeField("response", "onPrefsSaved")
+    m.filterSaveTask.control = "RUN"
 end sub
 
 sub onPrefsSaved(event as Object)
@@ -405,11 +418,16 @@ sub renderCategories()
     content = CreateObject("roSGNode", "ContentNode")
     m.categoryIds = []
 
-    ' The search row lives in the list itself. A dedicated remote key would be
+    ' Both searches live in the list itself. A dedicated remote key would be
     ' faster but nothing on screen would ever tell you it existed.
-    searchLabel = "Search categories"
-    if m.catQuery <> "" then searchLabel = "Search: " + m.catQuery
+    searchLabel = "Filter categories"
+    if m.catQuery <> "" then searchLabel = "Filter: " + m.catQuery
     content.appendChild(BuildCategoryProxy(searchLabel, "", 0, false, true))
+    m.categoryIds.Push("")
+
+    titleLabel = "Search all titles"
+    if m.titleQuery <> "" then titleLabel = "Search: " + m.titleQuery
+    content.appendChild(BuildCategoryProxy(titleLabel, "", 0, false, true))
     m.categoryIds.Push("")
 
     for each category in pinned
@@ -442,7 +460,7 @@ sub renderCategories()
     ' Keep the open category selected across a re-render (a pin toggle moves
     ' rows around); otherwise start on the first real one.
     target = indexOfCategory(m.currentCategoryId)
-    if target < 1 then target = 1
+    if target < 2 then target = 2
     m.categories.jumpToItem = target
 
     ' Only rebuild the grid if it is now showing the wrong category. Pinning,
@@ -468,6 +486,11 @@ sub onCategorySelected(event as Object)
 
     if index = 0 then
         openSearch()
+        return
+    end if
+
+    if index = 1 then
+        openTitleSearch()
         return
     end if
 
@@ -975,6 +998,60 @@ end sub
 
 '------------------------------------------------------------------ search
 
+sub openTitleSearch()
+    m.textEntryMode = "titles"
+    m.textEntry.promptText = "Search " + m.sectionTitle.text
+    m.textEntry.hintText = "Searches every title in this section, not just the open category."
+    m.textEntry.text = m.titleQuery
+    m.textEntry.visible = true
+    m.textEntry.callFunc("activate", invalid)
+    setZone("textEntry")
+end sub
+
+' Run when the keyboard closes rather than on each keystroke: every search is a
+' round trip, and a request per letter would hammer the Pi for results nobody
+' has read yet.
+sub runTitleSearch()
+    if Len(m.titleQuery) < 2 then
+        renderCategories()
+        return
+    end if
+
+    m.posterGrid.visible = false
+    m.liveGrid.visible = false
+    m.gridTitle.text = "Searching for “" + m.titleQuery + "”…"
+    m.gridEmpty.text = "The first search of a section can take a while — the Pi builds its catalogue once, then answers from memory."
+    m.gridEmpty.visible = true
+
+    m.searchTask = CreateObject("roSGNode", "SearchTask")
+    m.searchTask.section = m.section
+    m.searchTask.query = m.titleQuery
+    m.searchTask.observeField("done", "onSearchResults")
+    m.searchTask.control = "RUN"
+end sub
+
+sub onSearchResults(event as Object)
+    task = event.getRoSGNode()
+    if not event.getData() then return
+    if task.section <> m.section or task.query <> m.titleQuery then return
+
+    if task.errorMessage <> "" then
+        clearGrid("Couldn't search: " + task.errorMessage)
+        return
+    end if
+
+    shown = task.items.getChildCount()
+    label = "“" + m.titleQuery + "”"
+    if task.total > shown then
+        label = label + "  —  first " + shown.ToStr() + " of " + task.total.ToStr()
+    end if
+
+    ' Cleared so stepping back into a category reloads it rather than assuming
+    ' the grid already holds it.
+    m.currentCategoryId = ""
+    renderGrid(task.items, label)
+end sub
+
 sub openSearch()
     m.textEntryMode = "search"
     m.textEntry.promptText = "Search categories"
@@ -1004,6 +1081,11 @@ sub onTextEntryClosed()
             applyServerChange("Now pointing at " + ConfigBaseUrl() + ". Open a section to reload from it.")
         end if
         setZone("settings")
+    else if m.textEntryMode = "titles" then
+        m.titleQuery = m.textEntry.text
+        renderCategories()
+        runTitleSearch()
+        focusCategories()
     else
         focusCategories()
     end if
@@ -1024,39 +1106,32 @@ sub applyServerChange(note as String)
     loadPrefs()
 end sub
 
+' Row order is the contract between these two — renderSettings writes them
+' and onSettingsSelected reads the index back, so they change together.
 sub renderSettings()
     content = CreateObject("roSGNode", "ContentNode")
 
-    row = CreateObject("roSGNode", "ContentNode")
-    row.title = "Server address:  " + ConfigBaseUrl()
-    content.appendChild(row)
-
-    row = CreateObject("roSGNode", "ContentNode")
-    row.title = "Reset server address to this build's default  (" + ConfigDefaultBase() + ")"
-    content.appendChild(row)
-
-    row = CreateObject("roSGNode", "ContentNode")
-    state = "Off"
-    if ConfigNativeMkv() then state = "On"
-    row.title = "Play MKV without converting (experimental):  " + state
-    content.appendChild(row)
-
-    row = CreateObject("roSGNode", "ContentNode")
-    hidden = "Off"
-    if ConfigHideUnplayable() then hidden = "On"
-    row.title = "Hide titles that failed to play:  " + hidden
-    content.appendChild(row)
-
-    row = CreateObject("roSGNode", "ContentNode")
-    row.title = "Forget the " + UnplayableCount().ToStr() + " titles marked unplayable"
-    content.appendChild(row)
-
-    row = CreateObject("roSGNode", "ContentNode")
-    row.title = "Reload the library from the provider"
-    content.appendChild(row)
+    content.appendChild(SettingsRow("Server address:  " + ConfigBaseUrl()))
+    content.appendChild(SettingsRow("Reset server address to this build's default  (" + ConfigDefaultBase() + ")"))
+    content.appendChild(SettingsRow("Hide non-English categories:  " + OnOff(m.prefs.filtersEnabled)))
+    content.appendChild(SettingsRow("Hide titles that failed to play:  " + OnOff(ConfigHideUnplayable())))
+    content.appendChild(SettingsRow("Forget the " + UnplayableCount().ToStr() + " titles marked unplayable"))
+    content.appendChild(SettingsRow("Play MKV without converting (experimental):  " + OnOff(ConfigNativeMkv())))
+    content.appendChild(SettingsRow("Reload the category lists"))
 
     m.settingsList.content = content
 end sub
+
+function SettingsRow(title as String) as Object
+    row = CreateObject("roSGNode", "ContentNode")
+    row.title = title
+    return row
+end function
+
+function OnOff(enabled as Boolean) as String
+    if enabled then return "On"
+    return "Off"
+end function
 
 sub onSettingsSelected(event as Object)
     index = event.getData()
@@ -1069,17 +1144,25 @@ sub onSettingsSelected(event as Object)
         m.textEntry.visible = true
         m.textEntry.callFunc("activate", invalid)
         setZone("textEntry")
+
     else if index = 1 then
         ConfigClearBaseUrl()
         applyServerChange("Back to " + ConfigBaseUrl() + ". Open a section to load from it.")
+
     else if index = 2 then
-        ConfigSetNativeMkv(not ConfigNativeMkv())
+        ' This one is shared with the web player rather than local to the TV —
+        ' it is the same prefs.filtersEnabled the web player's own toggle
+        ' writes, and the same regexes decide it in both places.
+        m.prefs.filtersEnabled = not m.prefs.filtersEnabled
+        saveFilterSetting()
+        m.categoryLists = {}
         renderSettings()
-        if ConfigNativeMkv() then
-            m.settingsNote.text = "MKV files will be handed straight to the Video node. If one stalls or won't open, turn this back off — it will be converted through /api/remux instead."
+        if m.prefs.filtersEnabled then
+            m.settingsNote.text = "Categories are filtered to the English ones, using the patterns in prefs.json. This also applies in the web player — it is the same setting."
         else
-            m.settingsNote.text = "MKV files will be converted to HLS by the Pi before playing, the same way the web player does it."
+            m.settingsNote.text = "Every category the provider offers is listed, all 911 of Live TV among them. This also applies in the web player."
         end if
+
     else if index = 3 then
         ConfigSetHideUnplayable(not ConfigHideUnplayable())
         renderSettings()
@@ -1088,13 +1171,24 @@ sub onSettingsSelected(event as Object)
         else
             m.settingsNote.text = "Titles this Roku has failed to play stay in the grids, dimmed and labelled, so you can still try them."
         end if
+
     else if index = 4 then
         m.unplayable = {}
         ConfigSaveUnplayable(m.unplayable)
         renderSettings()
         refreshGridFavorites()
         m.settingsNote.text = "Cleared. Everything is worth trying again — anything that still fails will re-mark itself."
+
     else if index = 5 then
+        ConfigSetNativeMkv(not ConfigNativeMkv())
+        renderSettings()
+        if ConfigNativeMkv() then
+            m.settingsNote.text = "MKV files will be handed straight to the Video node. If one stalls or won't open, turn this back off — it will be converted through /api/remux instead."
+        else
+            m.settingsNote.text = "MKV files will be converted to HLS by the Pi before playing, the same way the web player does it."
+        end if
+
+    else if index = 6 then
         m.categoryLists = {}
         m.forceRefresh = true
         m.settingsNote.text = "Category lists will be re-read the next time you open a section."
@@ -1292,7 +1386,8 @@ end function
 
 sub togglePinAtFocus()
     index = m.categories.itemFocused
-    if index <= 0 or index >= m.categoryIds.Count() then return
+    ' The two standing rows at the top are not categories and cannot be pinned.
+    if index <= 1 or index >= m.categoryIds.Count() then return
     togglePin(m.categoryIds[index])
 end sub
 

@@ -2786,6 +2786,51 @@ async function handleApi(req, res, pathname, query) {
     }
   }
 
+  /* ---- Title search across one section ---- */
+
+  /* Built for the television. The Roku holds one category at a time — the
+   * whole of Live is 57,000 streams and it ran out of memory trying — so it
+   * has nothing local to search. This searches the same cached catalogue the
+   * web player already built, which costs the provider nothing and answers
+   * from memory, and hands back only the matches.
+   *
+   * Additive: no existing caller uses this path. */
+  if (pathname === '/api/search') {
+    const tab = query.get('tab');
+    if (!LIBRARY_ACTIONS[tab]) return json(res, 400, { error: 'Unknown tab' });
+    if (cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
+
+    const needle = (query.get('q') || '').trim().toLowerCase();
+    if (needle.length < 2) return json(res, 400, { error: 'Search for at least two characters' });
+
+    const limit = Math.min(Math.max(Number(query.get('limit')) || 100, 1), 300);
+
+    // Same cache key as /api/library, so a section already opened is searched
+    // without touching the provider at all.
+    const prefs = readPrefs();
+    const pattern = prefs.filtersEnabled ? prefs.filters[tab] : '';
+    const cacheKey = `v${LIBRARY_SHAPE}:${tab}:${pattern}`;
+
+    let payload = libraryCache.get(cacheKey)?.payload;
+    if (!payload) {
+      try {
+        payload = await rebuildLibrary(cfg, tab, pattern, cacheKey);
+      } catch (err) {
+        return json(res, 502, { error: err.message });
+      }
+    }
+
+    const hits = [];
+    let total = 0;
+    for (const item of payload.items || []) {
+      if (!String(item.name || '').toLowerCase().includes(needle)) continue;
+      total += 1;
+      if (hits.length < limit) hits.push(item);
+    }
+
+    return json(res, 200, { items: hits, total, truncated: total > hits.length });
+  }
+
   /* ---- Remux a non-native container into HLS ---- */
   if (pathname === '/api/remux') {
     if (!hasFfmpeg()) {

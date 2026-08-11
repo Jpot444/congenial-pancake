@@ -93,13 +93,28 @@ the category list on the left and the grid on the right.
 | **Back** | during a conversion | Cancel it |
 | **Up / OK / Info** | during playback | Show the title banner again |
 
-**Search** is the first row of the category list. Open it and the list filters
-as you type, exactly like the web player's category box; Back closes the
-keyboard and keeps the filter.
+**Two searches** sit at the top of the category list:
 
-**Settings** (last tab) holds the server address, the MKV switch described
-below, controls for titles that failed to play, and a *Reload the library*
-button that re-reads the category lists.
+- **Filter categories** narrows the category list as you type, exactly like the
+  web player's category box.
+- **Search all titles** searches every title in the section, not just the open
+  category — through `/api/search`, which reads the catalogue the Pi already
+  caches for the web player. It runs when you close the keyboard rather than on
+  each keystroke, since each search is a round trip. The first search of a cold
+  section makes the Pi build that catalogue and can take a while; after that it
+  answers from memory.
+
+Neither can be a dedicated remote key, because nothing on screen would ever
+tell you it existed.
+
+**Settings** (last tab), in order: the server address and a reset for it;
+*Hide non-English categories*; the two controls for titles that failed to play;
+the MKV switch described below; and *Reload the category lists*.
+
+*Hide non-English categories* is the only setting here that is **not** local to
+the television — it writes `filtersEnabled` to `/api/prefs`, the same flag the
+web player's own filter toggle uses, and the same patterns in `prefs.json`
+decide what counts. Turning it on here turns it on there.
 
 ---
 
