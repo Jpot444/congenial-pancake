@@ -17,7 +17,7 @@ sub onContentChanged()
     content.observeField("isFavorite", "onFavoriteChanged")
 
     m.name.text = content.title
-    m.logo.uri = content.posterUrl
+    m.logo.uri = ItemPoster(content)
     m.favMark.visible = content.isFavorite
 end sub
 

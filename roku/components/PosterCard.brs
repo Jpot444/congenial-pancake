@@ -19,8 +19,9 @@ sub onContentChanged()
 
     m.title.text = content.title
 
-    if content.posterUrl <> "" then
-        m.poster.uri = content.posterUrl
+    poster = ItemPoster(content)
+    if poster <> "" then
+        m.poster.uri = poster
         m.fallback.visible = false
     else
         m.poster.uri = ""

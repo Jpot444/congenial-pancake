@@ -9,9 +9,16 @@ sub execute()
     params = { "tab": section }
     if m.top.refresh then params.refresh = "1"
 
+    ' Timed and printed because this is the one slow step in the channel, and
+    ' when it is slow the only symptom on screen is an overlay that never goes
+    ' away. The console says which half — the Pi, or the node building here.
+    clock = CreateObject("roTimespan")
+
     ' A cold server has to pull the whole catalogue from the provider the first
     ' time; after that /api/library answers out of its cache in milliseconds.
     result = HttpRequest({ url: ApiUrl("/api/library", params), timeout: 120000 })
+    fetchMs = clock.TotalMilliseconds()
+    print "[library] " + section + ": fetch+parse " + fetchMs.ToStr() + "ms, " + Len(result.text).ToStr() + " bytes"
 
     if not result.ok then
         m.top.errorMessage = result.error
@@ -56,6 +63,8 @@ sub execute()
             root.appendChild(node)
         end if
     end for
+
+    print "[library] " + section + ": built " + kept.ToStr() + " items in " + root.getChildCount().ToStr() + " categories, " + clock.TotalMilliseconds().ToStr() + "ms total"
 
     m.top.itemTotal = kept
     m.top.catalog = root

@@ -20,7 +20,7 @@ sub onItemChanged()
     item = m.top.item
     if item = invalid then return
 
-    m.poster.uri = item.posterUrl
+    m.poster.uri = ItemPoster(item)
     m.title.text = item.title
 
     ' Everything the grid already knows, on screen straight away — the info
@@ -100,7 +100,7 @@ sub onInfoResponse(event as Object)
         m.synopsis.text = plot
     end if
 
-    if AsText(info.movie_image) <> "" and m.top.item.posterUrl = "" then
+    if AsText(info.movie_image) <> "" and m.top.item.logo = "" then
         m.poster.uri = ImageUrl(info.movie_image)
     end if
 

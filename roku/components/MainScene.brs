@@ -26,7 +26,6 @@ sub init()
 
     m.loading = m.top.findNode("loading")
     m.loadingText = m.top.findNode("loadingText")
-    m.loadingHint = m.top.findNode("loadingHint")
     m.progressTrack = m.top.findNode("progressTrack")
     m.progressFill = m.top.findNode("progressFill")
 
@@ -68,6 +67,15 @@ sub init()
     m.player.observeField("playbackError", "onPlaybackError")
     m.textEntry.observeField("text", "onTextEntryChanged")
     m.textEntry.observeField("closeCount", "onTextEntryClosed")
+
+    ' A load that never finishes used to leave the overlay up forever, and the
+    ' overlay swallows every key — so the remote went dead and the Roku
+    ' eventually exited the channel on its own. Give it a deadline.
+    m.loadWatchdog = CreateObject("roSGNode", "Timer")
+    m.loadWatchdog.duration = 150
+    m.loadWatchdog.repeat = false
+    m.loadWatchdog.observeField("fire", "onLoadTimedOut")
+    m.top.appendChild(m.loadWatchdog)
 
     renderSettings()
     loadPrefs()
@@ -174,7 +182,7 @@ end sub
 sub toggleFavorite(item as Object)
     if item = invalid then return
 
-    key = item.favKey
+    key = ItemFavKey(item)
     at = -1
     for i = 0 to m.prefs.favorites.Count() - 1
         if AsText(m.prefs.favorites[i].key) = key then
@@ -203,8 +211,8 @@ sub toggleFavorite(item as Object)
     ' Only the view actually showing this title: favoriting a grid item while
     ' a different one sits behind in detail must not relabel that one's button.
     nowFavorite = m.favKeys.DoesExist(key)
-    if m.detail.item <> invalid and m.detail.item.favKey = key then m.detail.isFavorite = nowFavorite
-    if m.series.item <> invalid and m.series.item.favKey = key then m.series.isFavorite = nowFavorite
+    if ItemFavKey(m.detail.item) = key then m.detail.isFavorite = nowFavorite
+    if ItemFavKey(m.series.item) = key then m.series.isFavorite = nowFavorite
 
     if m.section = "favorites" then renderFavorites()
 end sub
@@ -284,12 +292,25 @@ sub loadLibrary(section as String)
     m.gridEmpty.visible = false
 
     showLoading("Loading " + m.sectionTitle.text + "…", false)
+    m.loadWatchdog.control = "start"
 
     m.libraryTask = CreateObject("roSGNode", "LibraryTask")
     m.libraryTask.section = section
     m.libraryTask.refresh = m.forceRefresh
     m.libraryTask.observeField("done", "onLibraryDone")
     m.libraryTask.control = "RUN"
+end sub
+
+sub onLoadTimedOut()
+    if not m.loading.visible then return
+
+    hideLoading()
+    gap = Chr(10) + Chr(10)
+    detail = "The Pi hasn't answered in over two minutes." + gap
+    detail = detail + "Trying: " + ConfigBaseUrl() + gap
+    detail = detail + "It may still be building the catalogue from the provider — if so, opening the section again shortly will find it cached and instant."
+    showDialog("Still waiting on " + m.sectionTitle.text, detail)
+    setZone("nav")
 end sub
 
 sub onLibraryDone(event as Object)
@@ -299,7 +320,9 @@ sub onLibraryDone(event as Object)
     m.forceRefresh = false
 
     ' The user may have moved on while this was in flight. Nothing below should
-    ' put a dialog over, or a spinner under, a section they already left.
+    ' put a dialog over, or a spinner under, a section they already left — and
+    ' the watchdog now belongs to whatever load replaced this one, so stopping
+    ' it here would leave that one with no deadline.
     if task.section <> m.section then
         if task.errorMessage = "" then
             m.libraries[task.section] = task.catalog
@@ -308,6 +331,7 @@ sub onLibraryDone(event as Object)
         return
     end if
 
+    m.loadWatchdog.control = "stop"
     hideLoading()
 
     if task.errorMessage <> "" then
@@ -468,7 +492,7 @@ sub applyFavorites(container as Object)
     if container = invalid then return
     for i = 0 to container.getChildCount() - 1
         child = container.getChild(i)
-        child.isFavorite = m.favKeys.DoesExist(child.favKey)
+        child.isFavorite = m.favKeys.DoesExist(ItemFavKey(child))
     end for
 end sub
 
@@ -541,7 +565,7 @@ end sub
 '------------------------------------------------------------------ detail
 
 sub openDetail(item as Object)
-    m.detail.isFavorite = m.favKeys.DoesExist(item.favKey)
+    m.detail.isFavorite = m.favKeys.DoesExist(ItemFavKey(item))
     m.detail.item = item
     m.detail.visible = true
     m.detail.callFunc("activate", invalid)
@@ -575,7 +599,7 @@ end sub
 '------------------------------------------------------------------ series
 
 sub openSeries(item as Object)
-    m.series.isFavorite = m.favKeys.DoesExist(item.favKey)
+    m.series.isFavorite = m.favKeys.DoesExist(ItemFavKey(item))
     m.series.item = item
     m.series.visible = true
     m.series.callFunc("activate", invalid)
@@ -896,7 +920,6 @@ sub showLoading(message as String, withProgress as Boolean)
     m.progressFill.width = 0
     m.progressTrack.visible = withProgress
     m.progressFill.visible = withProgress
-    m.loadingHint.visible = withProgress
     m.loading.visible = true
 end sub
 
@@ -904,12 +927,16 @@ sub hideLoading()
     m.loading.visible = false
 end sub
 
+' Back always gets you out of the overlay, whatever it is waiting on. A library
+' fetch left running is harmless — it fills the cache and onLibraryDone drops
+' the result if you have moved on — and being unable to leave is much worse
+' than an abandoned request.
 sub cancelLoading()
-    ' Only a conversion is cancellable; the hint is hidden for anything else.
-    if not m.loadingHint.visible then return
     if m.remuxTask <> invalid then m.remuxTask.cancel = true
     m.pendingPlay = invalid
+    m.loadWatchdog.control = "stop"
     hideLoading()
+    setZone("nav")
 end sub
 
 sub showDialog(title as String, message as String)

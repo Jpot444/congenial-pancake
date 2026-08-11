@@ -31,7 +31,7 @@ sub onItemChanged()
     item = m.top.item
     if item = invalid then return
 
-    m.poster.uri = item.posterUrl
+    m.poster.uri = ItemPoster(item)
     m.title.text = item.title
     m.meta.text = item.genre
     m.synopsis.text = ""

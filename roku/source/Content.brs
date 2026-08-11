@@ -4,43 +4,46 @@
 
 ' One row of /api/library, projected onto a ContentNode. Field names mirror
 ' projectItem() in server.js so the two read side by side.
+'
+' This runs once per row in the catalogue — thousands of times for Movies — so
+' it stays as close to bare field assignment as it can. In particular it does
+' NOT build the proxied poster URL. Percent-encoding is a per-byte loop, and
+' paying it for every row cost far more than the whole rest of the load; the
+' cards do it for the dozen or so posters actually on screen instead.
 function BuildItemNode(row as Object) as Object
     node = CreateObject("roSGNode", "ContentNode")
+
+    ' addFields takes initial values, so declaring and populating is one call
+    ' into the node rather than ten. At this call count that is worth having.
+    ' logo is the provider's own URL, not the proxied one — it is what a
+    ' favorite stores, so the web player gets identical records back.
     node.addFields({
-        itemKind: "",
-        itemId: "",
-        catId: "",
-        ext: "",
-        rating: "",
-        genre: "",
-        epgId: "",
-        rawLogo: "",
-        posterUrl: "",
-        favKey: "",
+        itemKind: AsText(row.kind),
+        itemId: AsText(row.id),
+        catId: AsText(row.categoryId),
+        ext: AsText(row.ext),
+        rating: AsText(row.rating),
+        genre: AsText(row.genre),
+        epgId: AsText(row.epgId),
+        logo: AsText(row.logo),
         isFavorite: false
     })
-
-    kind = AsText(row.kind)
-    id = AsText(row.id)
-
     node.title = AsText(row.name)
-    node.itemKind = kind
-    node.itemId = id
-    node.catId = AsText(row.categoryId)
-    node.ext = AsText(row.ext)
-    node.rating = AsText(row.rating)
-    node.genre = AsText(row.genre)
-    node.epgId = AsText(row.epgId)
-    node.favKey = FavKey(kind, id)
-
-    ' The raw provider URL is kept as well as the proxied one: it is what goes
-    ' into a favorite, so the web player stores identical records.
-    node.rawLogo = AsText(row.logo)
-    poster = ImageUrl(row.logo)
-    node.posterUrl = poster
-    node.hdPosterUrl = poster
 
     return node
+end function
+
+' Derived rather than stored: one string join beats a field on every node in
+' the catalogue, and it is only ever needed for items on screen.
+function ItemFavKey(node as Object) as String
+    if node = invalid then return ""
+    return FavKey(node.itemKind, node.itemId)
+end function
+
+' The proxied poster, built at display time. Safe to call on the render thread.
+function ItemPoster(node as Object) as String
+    if node = invalid then return ""
+    return ImageUrl(node.logo)
 end function
 
 ' The inverse: a node turned back into the plain object /api/prefs stores, in
@@ -51,7 +54,7 @@ function ItemNodeToRecord(node as Object) as Object
         kind: node.itemKind,
         id: AsNumber(node.itemId),
         name: node.title,
-        logo: node.rawLogo,
+        logo: node.logo,
         categoryId: node.catId
     }
 
