@@ -228,19 +228,32 @@ refusal, the channel falls back once and says so on the console:
 Both kinds fall back the same way: **anything refused on direct play is
 retried through `/api/remux`**, which repackages it and normalises the audio.
 
-Live earns a note. A channel that failed as HLS was first retried as plain
-MPEG-TS, and it failed identically — which was the clue. `-c:v copy` into
-fragmented MP4 is what fixes it, and the reason is already written in
-`server.js`, in a comment about iOS:
+Live earns a note, and a correction. A channel reporting `error -5: malformed
+data` looks like a codec the box cannot decode, and the obvious suspect is
+HEVC — Roku, like iOS, will not demux HEVC inside MPEG-TS. That guess was
+wrong here. Probing the actual stream found:
 
-> Apple's HLS spec carries HEVC in fragmented MP4 only — HEVC inside MPEG-TS
-> will not play on iOS at all.
+```
+Video: h264 (High), 1920x1080, 59.94 fps
+Audio: aac (HE-AAC), 48000 Hz, stereo
+```
 
-Roku has the same restriction, and it surfaces confusingly: a player that
-cannot *demux* HEVC-in-TS reports corrupt data, not an unsupported codec. So
-"malformed data" on a stream that plays fine in a browser is the signature to
-look for. Repackaging costs no re-encoding — the video is copied — so a Pi
-handles it comfortably.
+Ordinary H.264, read at 28x realtime. The likely offender is the audio:
+**HE-AAC** (AAC+ with SBR) is unevenly supported across Roku models, and
+1080p59.94 H.264 additionally needs Level 4.2. Either shows up as a demux
+failure, which the device reports as corrupt data rather than as anything to
+do with codecs — so "malformed data" is a much weaker signal than it looks.
+
+The remuxer fixes it anyway, but by a different route than expected: with no
+`acodec` passed it re-encodes audio to plain stereo AAC-LC while copying the
+video, which is cheap and lands inside what every model supports.
+
+Two things follow for live conversions. They **skip the ffprobe step**: it
+costs a second connection to a provider that allows exactly one, and ffprobe
+is SIGKILLed if it runs long, a teardown that can leave ffmpeg locked out —
+which presents as a conversion that starts, prints nothing, and times out. And
+since the probe is what would have detected HEVC, live is assumed H.264 unless
+a caller passes `vcodec`; the codec only chooses TS versus fMP4 packaging.
 
 One retry, then the error is reported. `[player] error <code>: <message>` in
 the console is the device's own verdict, and Roku's error codes are documented

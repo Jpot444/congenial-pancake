@@ -2824,10 +2824,22 @@ async function handleApi(req, res, pathname, query) {
       input = buildStreamUrl(cfg, source, id, ext);
     }
 
+    // Probing costs a second connection to a provider that allows exactly one,
+    // and ffprobe is SIGKILLed if it runs long — a teardown that can leave
+    // ffmpeg unable to get in at all. That presents as a conversion which
+    // starts, says nothing, and times out. Measured: ffmpeg alone reads this
+    // provider's live streams at 28x realtime, so the probe is the only thing
+    // slow enough to explain a minute of silence.
+    //
+    // The codec decides one thing here — TS versus fragmented MP4 packaging —
+    // so assume h264 for live and let a caller that knows better say so.
+    let videoCodec = (query.get('vcodec') || '').toLowerCase();
+    if (isLive && !videoCodec) videoCodec = 'h264';
+
     try {
       const session = await startRemux(input, {
         fromProvider,
-        videoCodec: (query.get('vcodec') || '').toLowerCase(),
+        videoCodec,
         startSeconds: Math.max(0, Number(query.get('start') || 0)),
         audio: {
           codec: (query.get('acodec') || '').toLowerCase(),
