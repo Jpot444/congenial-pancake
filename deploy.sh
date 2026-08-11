@@ -39,6 +39,7 @@ rsync -avz --human-readable \
   --exclude 'library-cache.json' \
   --exclude 'downloads/' \
   --exclude 'hls/' \
+  --exclude 'roku/build/' \
   --exclude '.git/' \
   --exclude 'node_modules/' \
   --exclude '.DS_Store' \
