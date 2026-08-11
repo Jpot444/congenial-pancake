@@ -195,6 +195,42 @@ def routines_in(path):
     return names
 
 
+def shared_globals():
+    """name -> file, for every routine defined under source/ (bar main.brs)."""
+    found = {}
+    for base, _, names in os.walk(os.path.join(ROOT, "source")):
+        for name in sorted(names):
+            if not name.endswith(".brs") or name == "main.brs":
+                continue
+            path = os.path.join(base, name)
+            for routine in routines_in(path):
+                found[routine] = rel(path)
+    return found
+
+
+def check_shared_calls(component, scripts, defined):
+    """Every shared helper a component reaches for must be in its namespace.
+
+    This is transitive on purpose: it walks the included source files too, so a
+    component that pulls in Http.brs but not the Config.brs it depends on is
+    caught here rather than at runtime, several screens deep.
+    """
+    globals_by_name = shared_globals()
+
+    for script in scripts:
+        with open(script, encoding="utf-8") as handle:
+            for number, raw in enumerate(handle, start=1):
+                line = strip_comments(raw)
+                for called in re.findall(r"\b([A-Za-z_]\w*)\s*\(", line):
+                    name = called.lower()
+                    if name in globals_by_name and name not in defined:
+                        errors.append(
+                            "%s: calls %s() at %s:%d, but does not include %s"
+                            % (rel(component), called, rel(script), number,
+                               globals_by_name[name])
+                        )
+
+
 def check_handlers():
     """Every observeField target and XML onChange must exist in the same file."""
     for path in xml_files():
@@ -216,14 +252,14 @@ def check_handlers():
             else:
                 scripts.append(target)
 
-        # source/ is compiled into every component's scope.
+        # A component's namespace is exactly the scripts it includes — nothing
+        # more. pkg:/source is the main scope, which components do not share,
+        # so a helper only exists here if this XML pulled it in.
         defined = set()
         for script in scripts:
             defined |= routines_in(script)
-        for base, _, names in os.walk(os.path.join(ROOT, "source")):
-            for name in names:
-                if name.endswith(".brs"):
-                    defined |= routines_in(os.path.join(base, name))
+
+        check_shared_calls(path, scripts, defined)
 
         for element in root.iter():
             handler = element.get("onChange")

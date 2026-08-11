@@ -16,5 +16,16 @@
     <!-- Flips last, so observers see a complete result. -->
     <field id="done" type="boolean" value="false" />
   </interface>
+  <!-- pkg:/source is the main scope, which SceneGraph components do not
+       share. Shared helpers have to be pulled into each component's own
+       namespace explicitly or every call to one fails at runtime with
+       "Function is not defined in component's namespace". Included as a
+       set so adding a helper does not mean editing twelve files. -->
+  <script type="text/brightscript" uri="pkg:/source/Api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Config.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Content.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Http.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Util.brs" />
   <script type="text/brightscript" uri="pkg:/components/tasks/LibraryTask.brs" />
 </component>
