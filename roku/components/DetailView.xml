@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Movie detail: poster, synopsis, runtime, genre, and the two things you can
+     do with it. Pulls get_vod_info itself through /api/xtream. -->
+<component name="DetailView" extends="Group">
+  <interface>
+    <field id="item" type="node" onChange="onItemChanged" />
+    <field id="isFavorite" type="boolean" value="false" onChange="onFavoriteChanged" />
+
+    <!-- Counters rather than booleans: the scene can react to a second press
+         without having to reset a flag in between. -->
+    <field id="playPressed" type="integer" value="0" />
+    <field id="favPressed" type="integer" value="0" />
+
+    <!-- Codecs from get_vod_info, handed to /api/remux so the server can skip
+         its own ffprobe round trip against the provider. -->
+    <field id="playbackHints" type="assocarray" />
+
+    <function name="activate" />
+  </interface>
+
+  <children>
+    <Rectangle width="1920" height="1080" color="0x15100FFF" />
+
+    <Rectangle translation="[120,150]" width="308" height="462" color="0x241C1AFF" />
+    <Poster id="poster" translation="[124,154]" width="300" height="454" loadDisplayMode="scaleToFill" />
+
+    <Label id="title" translation="[480,150]" width="1300" height="64" wrap="false" ellipsisText="…"
+           color="0xF6F1EEFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="52" />
+    </Label>
+
+    <Label id="meta" translation="[480,226]" width="1300" height="40" color="0xA3928CFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="28" />
+    </Label>
+
+    <Label id="synopsisHeading" translation="[480,296]" width="400" height="36" text="SYNOPSIS"
+           color="0x705F5AFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="22" />
+    </Label>
+
+    <Label id="synopsis" translation="[480,340]" width="1300" height="260" wrap="true" maxLines="7"
+           color="0xA3928CFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="27" />
+    </Label>
+
+    <ButtonGroup id="actions" translation="[480,650]" minWidth="380" itemSpacings="[14]" />
+
+    <Label id="footer" translation="[480,800]" width="1300" height="36" color="0x705F5AFF"
+           text="OK to play  ·  * to favorite  ·  Back to the grid">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="22" />
+    </Label>
+  </children>
+  <!-- pkg:/source is the main scope, which SceneGraph components do not
+       share. Shared helpers have to be pulled into each component's own
+       namespace explicitly or every call to one fails at runtime with
+       "Function is not defined in component's namespace". Included as a
+       set so adding a helper does not mean editing twelve files. -->
+  <script type="text/brightscript" uri="pkg:/source/Api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Config.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Content.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Http.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/DetailView.brs" />
+</component>

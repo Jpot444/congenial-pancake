@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Series detail: seasons on the left, that season's episodes on the right.
+     Pulls get_series_info itself through /api/xtream. -->
+<component name="SeriesView" extends="Group">
+  <interface>
+    <field id="item" type="node" onChange="onItemChanged" />
+    <field id="isFavorite" type="boolean" value="false" onChange="onFavoriteChanged" />
+
+    <field id="favPressed" type="integer" value="0" />
+    <field id="episodePressed" type="integer" value="0" />
+    <!-- { id, ext, vcodec, acodec, achannels, label } for the episode just picked. -->
+    <field id="selectedEpisode" type="assocarray" />
+
+    <function name="activate" />
+  </interface>
+
+  <children>
+    <Rectangle width="1920" height="1080" color="0x15100FFF" />
+
+    <Rectangle translation="[100,110]" width="208" height="308" color="0x241C1AFF" />
+    <Poster id="poster" translation="[104,114]" width="200" height="300" loadDisplayMode="scaleToFill" />
+
+    <Label id="title" translation="[344,110]" width="1450" height="60" wrap="false" ellipsisText="…"
+           color="0xF6F1EEFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="48" />
+    </Label>
+
+    <Label id="meta" translation="[344,182]" width="1450" height="36" color="0xA3928CFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="26" />
+    </Label>
+
+    <Label id="synopsis" translation="[344,230]" width="1450" height="150" wrap="true" maxLines="4"
+           color="0x705F5AFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="25" />
+    </Label>
+
+    <Label id="seasonsHeading" translation="[100,450]" width="240" height="34" text="SEASONS"
+           color="0x705F5AFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="22" />
+    </Label>
+
+    <LabelList id="seasons" translation="[100,496]" itemSize="[230,56]" numRows="9"
+               color="0xA3928CFF" focusedColor="0xF6F1EEFF" vertFocusAnimationStyle="fixedFocusWrap">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="26" />
+      <Font role="focusedFont" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="26" />
+    </LabelList>
+
+    <Label id="episodesHeading" translation="[380,450]" width="1000" height="34" text="EPISODES"
+           color="0x705F5AFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="22" />
+    </Label>
+
+    <MarkupList id="episodes" translation="[380,496]" itemSize="[1000,76]" numRows="7"
+                itemComponentName="EpisodeRow" vertFocusAnimationStyle="fixedFocusWrap"
+                drawFocusFeedback="false" />
+
+    <Label id="status" translation="[380,496]" width="1000" height="60" color="0xA3928CFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="28" />
+    </Label>
+
+    <Label id="footer" translation="[100,1010]" width="1720" height="36" color="0x705F5AFF"
+           text="OK to play an episode  ·  * to favorite the show  ·  Back to the grid">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="22" />
+    </Label>
+  </children>
+  <!-- pkg:/source is the main scope, which SceneGraph components do not
+       share. Shared helpers have to be pulled into each component's own
+       namespace explicitly or every call to one fails at runtime with
+       "Function is not defined in component's namespace". Included as a
+       set so adding a helper does not mean editing twelve files. -->
+  <script type="text/brightscript" uri="pkg:/source/Api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Config.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Content.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Http.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/SeriesView.brs" />
+</component>

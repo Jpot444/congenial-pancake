@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Movie / series tile: poster, title, and a heart when it's a favorite.
+     scaleToFit rather than scaleToFill because the Favorites grid mixes in
+     live channel logos, which are wide and would otherwise be stretched. -->
+<component name="PosterCard" extends="Group">
+  <interface>
+    <field id="itemContent" type="node" onChange="onContentChanged" />
+    <field id="focusPercent" type="float" onChange="onFocusChanged" />
+  </interface>
+
+  <children>
+    <Rectangle id="frame" width="228" height="338" color="0x241C1AFF" translation="[-4,-4]" />
+    <Rectangle width="220" height="330" color="0x1D1715FF" />
+
+    <Poster id="poster" width="220" height="330" loadDisplayMode="scaleToFit" />
+
+    <!-- Providers routinely ship rows with no artwork; the name has to stand
+         in for the poster rather than leaving a hole in the grid. -->
+    <Label id="fallback" translation="[14,115]" width="192" height="120" wrap="true"
+           horizAlign="center" color="0x705F5AFF" visible="false">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="24" />
+    </Label>
+
+    <!-- A drawn corner tab rather than a ♥ glyph: Roku's system font can't be
+         relied on for symbols, and a missing one renders as an empty box. -->
+    <Rectangle id="favBadge" width="52" height="10" color="0xA21F24FF" translation="[168,0]"
+               visible="false" />
+
+    <!-- Shown on anything this box has already failed to play. -->
+    <Rectangle id="blockedBar" width="220" height="30" translation="[0,300]" color="0x0B0807E6"
+               visible="false">
+      <Label text="WON'T PLAY HERE" width="220" height="30" horizAlign="center" vertAlign="center"
+             color="0xFF6B5EFF">
+        <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="17" />
+      </Label>
+    </Rectangle>
+
+    <Label id="title" translation="[0,342]" width="220" height="34" wrap="false" ellipsisText="…"
+           color="0xA3928CFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="22" />
+    </Label>
+  </children>
+  <!-- pkg:/source is the main scope, which SceneGraph components do not
+       share. Shared helpers have to be pulled into each component's own
+       namespace explicitly or every call to one fails at runtime with
+       "Function is not defined in component's namespace". Included as a
+       set so adding a helper does not mean editing twelve files. -->
+  <script type="text/brightscript" uri="pkg:/source/Api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Config.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Content.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Http.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/PosterCard.brs" />
+</component>

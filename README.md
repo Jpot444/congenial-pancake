@@ -573,4 +573,13 @@ config.json          created at setup (gitignored)
 public/index.html    markup
 public/styles.css    dark theme
 public/app.js        routing, library loading, player
+roku/                native Roku channel — see roku/README.md
 ```
+
+## On the TV
+
+`roku/` is a sideloadable Roku channel that browses the same Live TV, Movies
+and Series catalogue from the same Pi, with pins and favorites shared through
+`/api/prefs`. It's a client only — nothing in `server.js` changes for it.
+[`roku/README.md`](roku/README.md) covers enabling Developer Mode, building the
+package and sideloading it.

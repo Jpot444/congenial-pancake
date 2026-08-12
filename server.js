@@ -1426,7 +1426,7 @@ function probeSource(input) {
   });
 }
 
-function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audio = {}) {
+function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audio = {}, live = false) {
   const args = [];
   if (/^https?:/i.test(input)) {
     // This provider paces VOD at barely above realtime and drops the socket
@@ -1496,14 +1496,23 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audio = {}) {
     args.push('-hls_segment_filename', path.join(outDir, 'seg%05d.ts'));
   }
 
-  args.push(
-    '-f', 'hls',
-    '-hls_time', '6',
-    '-hls_list_size', '0',
-    '-hls_playlist_type', 'event',
-    '-hls_flags', 'independent_segments',
-    path.join(outDir, 'index.m3u8')
-  );
+  args.push('-f', 'hls', '-hls_time', '6');
+
+  if (live) {
+    // A channel never ends. Keeping every segment would write about 2GB an
+    // hour until the disk filled, so hold a rolling window and drop what
+    // falls off it. playlist_type has to stay unset — both event and vod
+    // promise the playlist only ever grows, which forbids the deletion.
+    args.push('-hls_list_size', '10', '-hls_flags', 'independent_segments+delete_segments');
+  } else {
+    args.push(
+      '-hls_list_size', '0',
+      '-hls_playlist_type', 'event',
+      '-hls_flags', 'independent_segments'
+    );
+  }
+
+  args.push(path.join(outDir, 'index.m3u8'));
   return args;
 }
 
@@ -1512,7 +1521,7 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audio = {}) {
  * provider-backed session runs at a time — the account allows a single
  * connection, so a second would just fail.
  */
-async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, audio = {} }) {
+async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, audio = {}, live = false }) {
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed on this machine');
 
   // One viewer, one session: whatever was running is now abandoned, and an
@@ -1540,7 +1549,7 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, a
 
   const proc = spawn(
     'ffmpeg',
-    ['-v', 'error', '-y', ...ffmpegArgs(input, dir, codec, startSeconds, audio)],
+    ['-v', 'error', '-y', ...ffmpegArgs(input, dir, codec, startSeconds, audio, live)],
     { stdio: ['ignore', 'ignore', 'pipe'] }
   );
 
@@ -1561,7 +1570,13 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, a
     sourceDuration: probed.duration || 0,
     // A seek should feel responsive, so bank less than on a cold open — but
     // not 8s: at this provider's pacing that drains before the first drop.
-    prebuffer: startSeconds > 0 ? 45 : readPrefs().prebufferSeconds || DEFAULT_PREBUFFER,
+    // A channel has no backlog to bank: whatever ffmpeg has written is the
+    // live edge, and waiting for 45s of it would only sit 45s behind.
+    prebuffer: live
+      ? 0
+      : startSeconds > 0
+        ? 45
+        : readPrefs().prebufferSeconds || DEFAULT_PREBUFFER,
     stderr: () => stderr,
   };
   remuxSessions.set(id, session);
@@ -1572,13 +1587,19 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, a
   });
 
   const playlist = path.join(dir, 'index.m3u8');
-  const deadline = Date.now() + 30000;
+
+  // A live source arrives at realtime, so two six-second segments is twelve
+  // seconds of waiting before anything can be returned — and ffmpeg's own
+  // reconnect flags mean a provider that is stalling shows up as silence
+  // rather than an error. One segment and a longer budget, for live only.
+  const needed = live ? 1 : 2;
+  const deadline = Date.now() + (live ? 60000 : 30000);
 
   while (Date.now() < deadline) {
     if (fs.existsSync(playlist)) {
       const text = fs.readFileSync(playlist, 'utf8');
-      // Wait for a couple of segments so playback doesn't start and stall.
-      if ((text.match(/\.(ts|m4s)/g) || []).length >= 2) return session;
+      // Wait for enough segments that playback doesn't start and stall.
+      if ((text.match(/\.(ts|m4s)/g) || []).length >= needed) return session;
     }
     if (session.exited && session.exitCode !== 0) {
       const detail = stderr.split('\n').filter(Boolean).pop() || `exit ${session.exitCode}`;
@@ -1588,8 +1609,14 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, a
     await new Promise((r) => setTimeout(r, 300));
   }
 
+  // Carry ffmpeg's own last words out with the failure. Without them a
+  // timeout says only that nothing happened, which is the least useful thing
+  // a conversion can report.
+  const stalled = stderr.split('\n').filter(Boolean).pop() || '';
   killSession(id);
-  throw new Error('Remux timed out starting up');
+  throw new Error(
+    'Remux timed out starting up' + (stalled ? `: ${stalled}` : ' (ffmpeg said nothing)')
+  );
 }
 
 /** Reap sessions nothing has fetched from in a while. */
@@ -2759,6 +2786,51 @@ async function handleApi(req, res, pathname, query) {
     }
   }
 
+  /* ---- Title search across one section ---- */
+
+  /* Built for the television. The Roku holds one category at a time — the
+   * whole of Live is 57,000 streams and it ran out of memory trying — so it
+   * has nothing local to search. This searches the same cached catalogue the
+   * web player already built, which costs the provider nothing and answers
+   * from memory, and hands back only the matches.
+   *
+   * Additive: no existing caller uses this path. */
+  if (pathname === '/api/search') {
+    const tab = query.get('tab');
+    if (!LIBRARY_ACTIONS[tab]) return json(res, 400, { error: 'Unknown tab' });
+    if (cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
+
+    const needle = (query.get('q') || '').trim().toLowerCase();
+    if (needle.length < 2) return json(res, 400, { error: 'Search for at least two characters' });
+
+    const limit = Math.min(Math.max(Number(query.get('limit')) || 100, 1), 300);
+
+    // Same cache key as /api/library, so a section already opened is searched
+    // without touching the provider at all.
+    const prefs = readPrefs();
+    const pattern = prefs.filtersEnabled ? prefs.filters[tab] : '';
+    const cacheKey = `v${LIBRARY_SHAPE}:${tab}:${pattern}`;
+
+    let payload = libraryCache.get(cacheKey)?.payload;
+    if (!payload) {
+      try {
+        payload = await rebuildLibrary(cfg, tab, pattern, cacheKey);
+      } catch (err) {
+        return json(res, 502, { error: err.message });
+      }
+    }
+
+    const hits = [];
+    let total = 0;
+    for (const item of payload.items || []) {
+      if (!String(item.name || '').toLowerCase().includes(needle)) continue;
+      total += 1;
+      if (hits.length < limit) hits.push(item);
+    }
+
+    return json(res, 200, { items: hits, total, truncated: total > hits.length });
+  }
+
   /* ---- Remux a non-native container into HLS ---- */
   if (pathname === '/api/remux') {
     if (!hasFfmpeg()) {
@@ -2771,6 +2843,7 @@ async function handleApi(req, res, pathname, query) {
     const downloadId = query.get('download');
     let input;
     let fromProvider = true;
+    let isLive = false;
 
     if (downloadId) {
       // Local file: no provider connection burned, and much faster.
@@ -2781,21 +2854,43 @@ async function handleApi(req, res, pathname, query) {
     } else {
       const kind = query.get('kind');
       const id = query.get('id');
-      const ext = query.get('ext') || 'mkv';
       if (!kind || !id) return json(res, 400, { error: 'kind and id are required' });
       if (cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
-      input = buildStreamUrl(cfg, kind === 'series' ? 'series' : 'movie', id, ext);
+
+      // Live is here for the same reason iOS needed fMP4: a player that will
+      // not demux HEVC inside MPEG-TS reports it as corrupt data rather than
+      // as an unsupported codec. Repackaging fixes it without re-encoding —
+      // the video is copied, exactly as it is for a film.
+      isLive = kind === 'live';
+      // No container to convert away from, so no default extension: let
+      // buildStreamUrl fall through to the configured preferredFormat.
+      const ext = query.get('ext') || (isLive ? '' : 'mkv');
+      const source = isLive ? 'live' : kind === 'series' ? 'series' : 'movie';
+      input = buildStreamUrl(cfg, source, id, ext);
     }
+
+    // Probing costs a second connection to a provider that allows exactly one,
+    // and ffprobe is SIGKILLed if it runs long — a teardown that can leave
+    // ffmpeg unable to get in at all. That presents as a conversion which
+    // starts, says nothing, and times out. Measured: ffmpeg alone reads this
+    // provider's live streams at 28x realtime, so the probe is the only thing
+    // slow enough to explain a minute of silence.
+    //
+    // The codec decides one thing here — TS versus fragmented MP4 packaging —
+    // so assume h264 for live and let a caller that knows better say so.
+    let videoCodec = (query.get('vcodec') || '').toLowerCase();
+    if (isLive && !videoCodec) videoCodec = 'h264';
 
     try {
       const session = await startRemux(input, {
         fromProvider,
-        videoCodec: (query.get('vcodec') || '').toLowerCase(),
+        videoCodec,
         startSeconds: Math.max(0, Number(query.get('start') || 0)),
         audio: {
           codec: (query.get('acodec') || '').toLowerCase(),
           channels: Number(query.get('achannels') || 0),
         },
+        live: isLive,
       });
       return json(res, 200, {
         url: `/hls/${session.id}/index.m3u8`,

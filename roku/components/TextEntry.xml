@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- A full-screen on-screen keyboard, used for category search and for the
+     server address in Settings. Back commits and closes: on a remote that is
+     what "done" means, and both callers apply the text as it is typed anyway. -->
+<component name="TextEntry" extends="Group">
+  <interface>
+    <field id="promptText" type="string" onChange="onPromptChanged" />
+    <field id="hintText" type="string" onChange="onHintChanged" />
+    <!-- Mirrored to and from the keyboard, so callers can both seed the field
+         and observe every keystroke. -->
+    <field id="text" type="string" onChange="onTextSet" />
+    <!-- Bumped when the user backs out, rather than a boolean that would need
+         resetting before the overlay could be reused. -->
+    <field id="closeCount" type="integer" value="0" />
+    <function name="activate" />
+  </interface>
+
+  <children>
+    <Rectangle width="1920" height="1080" color="0x0B0807E6" />
+
+    <Label id="prompt" translation="[480,180]" width="960" height="52" color="0xF6F1EEFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="40" />
+    </Label>
+
+    <Label id="hint" translation="[480,240]" width="960" height="40" color="0xA3928CFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="24" />
+    </Label>
+
+    <Keyboard id="keyboard" translation="[480,320]" showTextEditBox="true" />
+
+    <Label translation="[480,760]" width="960" height="40" color="0x705F5AFF"
+           text="Press Back when you're done.">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="24" />
+    </Label>
+  </children>
+  <!-- pkg:/source is the main scope, which SceneGraph components do not
+       share. Shared helpers have to be pulled into each component's own
+       namespace explicitly or every call to one fails at runtime with
+       "Function is not defined in component's namespace". Included as a
+       set so adding a helper does not mean editing twelve files. -->
+  <script type="text/brightscript" uri="pkg:/source/Api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Config.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Content.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Http.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/TextEntry.brs" />
+</component>

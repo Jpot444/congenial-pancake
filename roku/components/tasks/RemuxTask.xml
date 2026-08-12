@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Starts a /api/remux conversion and waits for it to bank enough of a head
+     start that playback runs through without stalling, reporting progress as
+     it goes. Same handshake the web player does in waitForPrebuffer(). -->
+<component name="RemuxTask" extends="Task">
+  <interface>
+    <!-- { kind, id, ext, vcodec, acodec, achannels } -->
+    <field id="params" type="assocarray" />
+    <!-- { ready, target, message } — updated about once a second. -->
+    <field id="progress" type="assocarray" />
+    <!-- { ok, url, session, duration, error } -->
+    <field id="result" type="assocarray" />
+    <!-- Live has no backlog to bank: whatever ffmpeg has written is the live
+         edge. /api/remux already waits for two segments before answering, so
+         there is nothing further to wait for. -->
+    <field id="skipPrebuffer" type="boolean" value="false" />
+    <!-- Set by the player when the user backs out mid-conversion. -->
+    <field id="cancel" type="boolean" value="false" />
+  </interface>
+  <!-- pkg:/source is the main scope, which SceneGraph components do not
+       share. Shared helpers have to be pulled into each component's own
+       namespace explicitly or every call to one fails at runtime with
+       "Function is not defined in component's namespace". Included as a
+       set so adding a helper does not mean editing twelve files. -->
+  <script type="text/brightscript" uri="pkg:/source/Api.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Config.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Content.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Http.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/Util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/tasks/RemuxTask.brs" />
+</component>
