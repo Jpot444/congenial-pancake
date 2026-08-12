@@ -1186,12 +1186,32 @@ svg {
 /* ============================================================ shelves === */
 .rows { display: flex; flex-direction: column; gap: 34px; }
 
+/* The header is the control that opens the row out into a full list, so it is
+   a button. Everything here is undoing what a button brings with it. */
 .shelf-head {
   display: flex;
   align-items: baseline;
   gap: 12px;
   margin-bottom: 14px;
+  padding: 2px 4px 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
+
+.shelf-more {
+  align-self: center;
+  display: inline-flex;
+  color: var(--muted-dim);
+  transition: transform .18s var(--ease), color .18s var(--ease);
+}
+
+.shelf-more svg { width: 18px; height: 18px; }
+.shelf-head:hover .shelf-title { color: #fff; }
+.shelf-head:hover .shelf-more { color: var(--text); transform: translateX(3px); }
 
 .shelf-title {
   margin: 0;

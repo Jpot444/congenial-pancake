@@ -217,6 +217,25 @@ Other endpoints: `GET/POST /api/profiles`, `PATCH/DELETE /api/profiles/:id`,
 `GET/PUT /api/profiles/:id/prefs`, `POST /api/profiles/:id/history`,
 `POST /api/profiles/:id/rating`.
 
+## Row headers open the whole row
+
+Movies and Series browse as named rows — New Releases, IMDB Top 250 and the
+rest, defined by `MOVIE_ROWS` and `SERIES_ROWS` in `public/app.js`. Each rail
+shows only the first 40 titles, because a rail of several thousand is neither
+scrollable nor useful.
+
+**The header is a button.** Tapping it drops the rails and lays that row out as
+a full grid, paged 60 at a time by the existing Load more, with an **All
+movies** / **All series** button back to the rows. Before this, everything past
+the fortieth title in a row could only be reached by knowing what to search for.
+
+A row is not the same thing as a provider category — one row can pull from
+several, or from per-title genre metadata — so this rides on its own bit of
+state rather than the sidebar's category filter. Changing tab clears it, and a
+row that stops existing (a changed filter, a category the provider dropped)
+falls back to the rows rather than showing an empty page under a title that is
+no longer there.
+
 ## Library filtering
 
 This provider sells everything it has to everyone: **57,046 live channels,

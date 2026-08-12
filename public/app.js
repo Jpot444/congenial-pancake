@@ -29,6 +29,8 @@ const state = {
   category: null,
   query: '',
   catQuery: '',
+  /** Title of the shelf opened out into a full list, or null on the rows. */
+  shelf: null,
   /** Per-tab cache: { categories: [], items: [] } */
   library: { live: null, movies: null, series: null },
   visible: PAGE_SIZE,
@@ -825,12 +827,24 @@ function renderRows() {
     total += row.items.length;
     const section = el('section', 'shelf');
 
-    const head = el('div', 'shelf-head');
+    // A button, not a heading: the rail only ever shows the first slice of a
+    // row, and this is the way through to the rest of it.
+    const head = el('button', 'shelf-head');
+    head.type = 'button';
+    head.title = `Show all of ${row.title}`;
     const title = el('h2', 'shelf-title');
     title.textContent = row.title;
     const count = el('span', 'shelf-count');
     count.textContent = row.items.length.toLocaleString();
-    head.append(title, count);
+    const more = el('span', 'shelf-more');
+    more.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>';
+    head.append(title, count, more);
+    head.addEventListener('click', () => {
+      state.shelf = row.title;
+      state.visible = PAGE_SIZE;
+      render();
+      window.scrollTo({ top: 0 });
+    });
 
     const rail = el('div', 'rail');
     const track = el('div', 'rail-track');
@@ -886,6 +900,55 @@ function renderRows() {
 
   wrap.append(frag);
   $('#contentMeta').textContent = `${rows.length} rows · ${total.toLocaleString()} titles`;
+}
+
+/**
+ * One shelf opened out into the full scrollable list. The rails are capped, so
+ * for a big row like New Releases most of it was previously only reachable by
+ * knowing what to search for.
+ */
+function renderShelf() {
+  const row = buildShelves(state.tab).find((r) => r.title === state.shelf);
+
+  // The shelves are rebuilt from the library every time, so a row can stop
+  // existing — a changed filter, a provider that dropped a category. Fall back
+  // rather than showing an empty page for a title that is gone.
+  if (!row) {
+    state.shelf = null;
+    return renderRows();
+  }
+
+  $('#rowsView').hidden = true;
+  const grid = $('#grid');
+  grid.hidden = false;
+  grid.className = 'grid';
+  grid.innerHTML = '';
+
+  const back = el('button', 'btn btn-ghost folder-back');
+  back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
+  back.append(document.createTextNode(state.tab === 'series' ? ' All series' : ' All movies'));
+  back.addEventListener('click', () => {
+    state.shelf = null;
+    state.visible = PAGE_SIZE;
+    render();
+  });
+  grid.before(back);
+
+  // The row's own name replaces the tab's, since the back button already says
+  // which tab this is and the shelf is what you are actually looking at.
+  $('#contentTitle').textContent = row.title;
+
+  const slice = row.items.slice(0, state.visible);
+  state.filtered = row.items;
+
+  const frag = document.createDocumentFragment();
+  for (const item of slice) frag.append(cardFor(item));
+  grid.append(frag);
+
+  $('#emptyState').hidden = true;
+  $('#contentMeta').textContent =
+    `${slice.length.toLocaleString()} of ${row.items.length.toLocaleString()}`;
+  $('#loadMore').hidden = row.items.length <= state.visible;
 }
 
 /* ------------------------------------------------------------- rendering */
@@ -1211,7 +1274,9 @@ function render() {
   document.querySelector('.app-shell')
     .classList.toggle('no-sidebar', isFavorites || rowsMode || liveCatsMode);
 
-  if (rowsMode && state.library[state.tab]) return renderRows();
+  if (rowsMode && state.library[state.tab]) {
+    return state.shelf ? renderShelf() : renderRows();
+  }
   if (liveCatsMode && state.library.live) return renderLiveCategories();
 
   const source = isFavorites
@@ -1757,6 +1822,7 @@ async function requestDownload(item, episode, { quiet = false } = {}) {
 async function goTo(tab) {
   state.tab = tab;
   state.category = null;
+  state.shelf = null;
   state.visible = PAGE_SIZE;
   state.catQuery = '';
   state.query = '';
