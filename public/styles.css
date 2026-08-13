@@ -1382,6 +1382,11 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .grid.is-cats { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
 .grid.is-cats .card-art { aspect-ratio: 1 / 1; }
 
+/* The bin tile is a marker, not artwork — the icon sits in the middle at a
+   size that reads as a label rather than a poster. */
+.cat-card-bin .card-art .fallback svg { width: 30px; height: 30px; color: var(--muted-dim); }
+.cat-card-bin:hover .card-art .fallback svg { color: var(--text); }
+
 /* One station logo stands in for the category. contain, not cover: a logo
    cropped to fill a square is unreadable, which is the same reason the channel
    grid contains rather than covers. Padding in percent so the logo keeps its

@@ -232,8 +232,14 @@ Hidden, not deleted: the provider still carries the title and will keep sending
 it, so this is a list of things not to show. It is kept per profile, since one
 person's junk is another's watchlist.
 
-They collect under **Deleted**, at the foot of the category list, which only
-appears once something is in it. In there the button turns into a restore arrow
+Live TV has the same thing, at both levels. A bin on a **category tile** hides
+that whole category from the grid, with a **Deleted** tile at the end of the
+grid to get them back; a bin on a **station card** hides that one channel. The
+two are stored separately, since one is keyed by kind and id and the other by
+category.
+
+Hidden titles and channels collect under **Deleted**, at the foot of the
+category list, which only appears once something is in it. In there the button turns into a restore arrow
 and is always visible rather than hover-revealed — it is the only way back, and
 hover is not a gesture a phone has.
 

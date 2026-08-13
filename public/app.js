@@ -196,12 +196,28 @@ const profiles = {
   },
   /** Everything hidden in this section, newest first. */
   deletedItems(tab) {
-    const kind = tab === 'series' ? 'series' : 'movie';
     const keys = this.data.deletedItems || [];
     const lib = state.library[tab];
     if (!lib) return [];
     const byKey = new Map(lib.items.map((i) => [this.favKey(i), i]));
     return keys.map((key) => byKey.get(key)).filter(Boolean);
+  },
+
+  /* -- hidden live categories --
+   *
+   * Separate from deletedItems: that list is keyed by kind and id and holds
+   * titles and channels, while this one hides a whole category of them.
+   */
+  isDeletedCategory(id) {
+    return (this.data.deletedCategories || []).includes(String(id));
+  },
+  toggleDeletedCategory(id) {
+    const list = (this.data.deletedCategories ||= []);
+    const at = list.indexOf(String(id));
+    if (at >= 0) list.splice(at, 1);
+    else list.unshift(String(id));
+    this.save();
+    return at < 0;
   },
 
   /* -- favorites -- */
@@ -1297,9 +1313,11 @@ function watchedProgress(item) {
   return 0;
 }
 
-/** Films and shows can be hidden; channels and downloads are left alone. */
+/** Anything from the provider can be hidden; downloads are left alone. */
 const DELETED_CATEGORY = '__deleted__';
-const canDelete = (tab) => tab === 'movies' || tab === 'series';
+/** The tile grid, showing the categories that have been hidden. */
+const DELETED_CATS = '__deletedcats__';
+const canDelete = (tab) => tab === 'movies' || tab === 'series' || tab === 'live';
 
 function cardFor(item) {
   const card = el('button', 'card');
@@ -1623,31 +1641,74 @@ function renderLiveCategories() {
 
   // Providers ship plenty of categories with nothing in them.
   const stocked = source.categories.filter((cat) => counts.get(String(cat.id)));
+  const hidden = stocked.filter((cat) => profiles.isDeletedCategory(cat.id));
+  const showingHidden = state.category === DELETED_CATS;
+
+  const live = showingHidden
+    ? hidden
+    : stocked.filter((cat) => !profiles.isDeletedCategory(cat.id));
 
   // Pins lead, and in the order they were dragged into — the same sequence the
   // sidebar shows. Taking them in the provider's order instead meant dragging a
   // pin rearranged the list but left these tiles exactly where they were.
   const order = profiles.pinOrder('live');
   const ordered = [
-    ...stocked
+    ...live
       .filter((cat) => profiles.isPinned('live', cat.id))
       .sort((a, b) => order.indexOf(String(a.id)) - order.indexOf(String(b.id))),
-    ...stocked.filter((cat) => !profiles.isPinned('live', cat.id)),
+    ...live.filter((cat) => !profiles.isPinned('live', cat.id)),
   ];
+
+  // In the hidden view, a way back out — the tiles here are the only place the
+  // hidden ones can be restored from.
+  if (showingHidden) {
+    const back = el('button', 'btn btn-ghost folder-back');
+    back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
+    back.append(document.createTextNode(' All categories'));
+    back.addEventListener('click', () => {
+      state.category = null;
+      render();
+    });
+    grid.before(back);
+  }
 
   const frag = document.createDocumentFragment();
   for (const cat of ordered) {
     const id = String(cat.id);
     frag.append(liveCategoryCard(cat, counts.get(id) || 0, covers.get(id) || ''));
   }
+
+  // A way in to the hidden ones, at the end and only once there are some.
+  if (!showingHidden && hidden.length) {
+    const tile = el('button', 'card cat-card cat-card-bin');
+    const art = el('div', 'card-art');
+    const mark = el('div', 'fallback');
+    mark.innerHTML =
+      '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>';
+    art.append(mark);
+    const title = el('h3', 'card-title');
+    title.textContent = 'Deleted';
+    const sub = el('p', 'card-sub');
+    sub.textContent = `${hidden.length.toLocaleString()} categor${hidden.length === 1 ? 'y' : 'ies'}`;
+    tile.append(art, title, sub);
+    tile.addEventListener('click', () => {
+      state.category = DELETED_CATS;
+      render();
+    });
+    frag.append(tile);
+  }
+
   grid.append(frag);
 
   const empty = $('#emptyState');
   empty.hidden = ordered.length > 0;
-  if (!ordered.length) empty.textContent = 'No live categories.';
+  if (!ordered.length) {
+    empty.textContent = showingHidden ? 'Nothing hidden.' : 'No live categories.';
+  }
 
   $('#contentMeta').textContent = ordered.length
-    ? `${ordered.length.toLocaleString()} categor${ordered.length === 1 ? 'y' : 'ies'}`
+    ? `${ordered.length.toLocaleString()} categor${ordered.length === 1 ? 'y' : 'ies'}` +
+      (showingHidden ? ' hidden' : '')
     : '';
   $('#loadMore').hidden = true;
 }
@@ -1679,11 +1740,29 @@ function liveCategoryCard(cat, count, cover) {
     nameOnly();
   }
 
+  // Hides the whole category from this grid. The channels inside keep their
+  // own bins, and are still reachable by search either way.
+  const gone = profiles.isDeletedCategory(cat.id);
+  const bin = el('button', `icon-btn card-bin${gone ? ' is-restore' : ''}`);
+  bin.title = gone ? 'Put this category back' : 'Hide this category';
+  bin.setAttribute('aria-label', bin.title);
+  bin.innerHTML = gone
+    ? '<svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M3 4v5h5"/></svg>'
+    : '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>';
+  bin.addEventListener('click', (event) => {
+    // The tile underneath opens the category.
+    event.stopPropagation();
+    const nowGone = profiles.toggleDeletedCategory(cat.id);
+    toast(nowGone ? `Hid “${cat.name}”.` : `Restored “${cat.name}”.`);
+    render();
+  });
+  art.append(bin);
+
   const title = el('h3', 'card-title');
   title.textContent = cat.name;
 
-  // Under the title rather than badged over the art — the mosaic is the whole
-  // point of the tile, and a badge sits on top of one of the four logos.
+  // Under the title rather than badged over the art — the logo is the whole
+  // point of the tile, and a badge sits on top of it.
   const sub = el('p', 'card-sub');
   sub.textContent = `${count.toLocaleString()} channel${count === 1 ? '' : 's'}`;
 
@@ -1735,8 +1814,11 @@ function render() {
   // since rows make no sense when you're looking for one specific title.
   const rowsMode =
     (state.tab === 'movies' || state.tab === 'series') && !state.query && state.category === null;
-  // Live opens on its categories rather than every station at once.
-  const liveCatsMode = state.tab === 'live' && !state.query && state.category === null;
+  // Live opens on its categories rather than every station at once. The hidden
+  // ones are the same grid with a different set in it.
+  const liveCatsMode =
+    state.tab === 'live' && !state.query &&
+    (state.category === null || state.category === DELETED_CATS);
   const isFavorites = state.tab === 'favorites' || state.tab === 'favlive';
   document.querySelector('.app-shell')
     .classList.toggle('no-sidebar', isFavorites || rowsMode || liveCatsMode);
