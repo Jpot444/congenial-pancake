@@ -1110,22 +1110,27 @@ function makePinDraggable(row) {
       row.classList.add('is-dragging');
     }
 
-    // Move past a neighbour only once its midpoint is crossed. Comparing
-    // against edges instead makes rows flicker back and forth on the boundary.
-    for (const other of siblings()) {
-      if (other === row) continue;
-      const box = other.getBoundingClientRect();
-      const middle = box.top + box.height / 2;
-      const rowIsBefore = other.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_PRECEDING;
+    // Put the row where the pointer actually is, in one move. Stepping it past
+    // a single neighbour per event meant a quick drag — which delivers only a
+    // handful of moves — dropped the row one place from where it started and
+    // stopped, however far the finger had travelled.
+    const others = siblings().filter((r) => r !== row);
+    if (!others.length) return;
 
-      if (event.clientY > middle && rowIsBefore) {
-        other.after(row);
-        break;
-      }
-      if (event.clientY < middle && !rowIsBefore) {
-        other.before(row);
-        break;
-      }
+    // Midpoints rather than edges, so a row settles instead of flickering while
+    // the pointer rests on a boundary.
+    let target = others.findIndex((other) => {
+      const box = other.getBoundingClientRect();
+      return event.clientY < box.top + box.height / 2;
+    });
+    if (target === -1) target = others.length;
+
+    const before = others[target] || null;
+    if (before) {
+      if (row.nextElementSibling !== before) before.before(row);
+    } else {
+      const last = others[others.length - 1];
+      if (last.nextElementSibling !== row) last.after(row);
     }
   });
 
