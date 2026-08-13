@@ -1148,29 +1148,30 @@ function makePinDraggable(row) {
   let startY = 0;
   let dragging = false;
   let heldPointer = null;
+  let draggedAt = 0;
   const siblings = () => [...row.parentElement.querySelectorAll('.cat-row-pinned')];
 
-  pin.addEventListener('pointerdown', (event) => {
-    heldPointer = event.pointerId;
-    startY = event.clientY;
-    dragging = false;
-    // Capture so the moves keep arriving once the finger is over a different
-    // row, which is most of the gesture. Tracked by id as well, so a refused
-    // capture degrades to a working drag rather than no drag at all.
-    try {
-      pin.setPointerCapture(event.pointerId);
-    } catch {
-      /* capture is a convenience, not the mechanism */
-    }
-  });
+  /**
+   * Letting go can still fire a click on the pin, which would unpin the row
+   * just moved. A one-shot listener is not enough: the click only fires at all
+   * when the release lands back on the pin, and a drag usually ends somewhere
+   * else — so the unused listener sat waiting and ate the next genuine tap.
+   * A timestamp expires on its own instead.
+   */
+  pin.addEventListener('click', (click) => {
+    if (Date.now() - draggedAt > 300) return; // an ordinary tap: let it unpin
+    click.preventDefault();
+    click.stopPropagation();
+  }, true);
 
-  pin.addEventListener('pointermove', (event) => {
+  const onMove = (event) => {
     if (heldPointer !== event.pointerId) return;
 
     if (!dragging) {
       if (Math.abs(event.clientY - startY) < 6) return;
       dragging = true;
       row.classList.add('is-dragging');
+      document.body.classList.add('is-reordering');
     }
 
     // Put the row where the pointer actually is, in one move. Stepping it past
@@ -1195,32 +1196,36 @@ function makePinDraggable(row) {
       const last = others[others.length - 1];
       if (last.nextElementSibling !== row) last.after(row);
     }
-  });
+  };
 
   const finish = (event) => {
     if (heldPointer !== event.pointerId) return;
     heldPointer = null;
-    try {
-      pin.releasePointerCapture(event.pointerId);
-    } catch {
-      /* never captured, or already released */
-    }
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', finish);
+    window.removeEventListener('pointercancel', finish);
+
     if (!dragging) return; // a tap: leave it to the unpin handler
     dragging = false;
     row.classList.remove('is-dragging');
-
-    // Letting go still fires a click on the pin, which would unpin the row that
-    // was just moved. Swallow that one.
-    pin.addEventListener('click', (click) => {
-      click.preventDefault();
-      click.stopPropagation();
-    }, { once: true, capture: true });
+    document.body.classList.remove('is-reordering');
+    draggedAt = Date.now();
 
     profiles.setPinOrder(state.tab, siblings().map((r) => r.dataset.catId));
   };
 
-  pin.addEventListener('pointerup', finish);
-  pin.addEventListener('pointercancel', finish);
+  pin.addEventListener('pointerdown', (event) => {
+    heldPointer = event.pointerId;
+    startY = event.clientY;
+    dragging = false;
+    // On the window, not on the pin. The first swap moves the row — and the
+    // pin with it — out from under the cursor, and setPointerCapture was not
+    // keeping the stream alive, so every later move was delivered somewhere
+    // else and the drag stopped one place from where it began.
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+  });
 }
 
 /**

@@ -1250,6 +1250,9 @@ body.has-tabbar #rowsView {
   opacity: .92;
 }
 .cat-row-pinned.is-dragging .cat { background: transparent; }
+
+/* A drag across a list otherwise selects the text on the way past. */
+body.is-reordering { user-select: none; -webkit-user-select: none; }
 .pin-btn:hover { color: var(--text); }
 .pin-btn.is-on { opacity: 1; color: var(--text); }
 .pin-btn.is-on svg { fill: currentColor; }
