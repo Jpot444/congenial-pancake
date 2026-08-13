@@ -1939,11 +1939,6 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   background: #000;
 }
 
-/* A series opens with nothing playing — don't make the user scroll past an
-   empty 16:9 box to reach the episode list. */
-.player-shell.awaiting-pick .video-frame { display: none; }
-.player-shell.awaiting-pick .player-detail { max-height: none; }
-
 .video-frame video { width: 100%; height: 100%; display: block; }
 
 .video-status {
@@ -1991,21 +1986,6 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 /* The details panel belongs to the windowed player. The action buttons stay —
    float them top-right so favorite, download and close remain reachable. */
 .cinema .player-detail { display: none; }
-
-/* Except while picking an episode: the season/episode list rides over the
-   full-screen backdrop as a bottom sheet instead of a windowed page. */
-.cinema .player-shell.awaiting-pick .player-detail {
-  display: block;
-  position: absolute;
-  left: 0; right: 0; bottom: 0;
-  z-index: 5;
-  max-height: 64vh;
-  overflow-y: auto;
-  padding: 26px clamp(18px, 4vw, 44px) 34px;
-  border-top: 0;
-  background: linear-gradient(180deg, rgba(12, 8, 8, .6) 0%, rgba(12, 8, 8, .95) 26%);
-  backdrop-filter: blur(10px);
-}
 
 .cinema .player-bar {
   position: absolute;
@@ -2359,6 +2339,90 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 /* Always-visible speed warning — deliberately outside .vod-bar so it does not
    fade with the rest of the chrome. */
+/* ---- one show's own page ---- */
+
+.show-view { display: block; }
+
+.show-card {
+  display: grid;
+  /* Poster left, everything else right. minmax(0,…) on the second column
+     because a long episode title would otherwise refuse to shrink and push the
+     page sideways — the same trap the home screen hit. */
+  grid-template-columns: minmax(200px, 300px) minmax(0, 1fr);
+  gap: clamp(20px, 3vw, 36px);
+  padding: clamp(18px, 2.5vw, 30px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+
+.show-poster {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-sunk, rgba(0, 0, 0, .3));
+}
+
+.show-poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.show-poster .fallback {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 14px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--muted-dim);
+}
+
+.show-body { display: flex; flex-direction: column; min-width: 0; }
+
+.show-title {
+  margin: 0 0 6px;
+  font-family: var(--display);
+  font-size: clamp(22px, 2.4vw, 30px);
+  font-weight: 400;
+  letter-spacing: .02em;
+  color: var(--text);
+}
+
+.show-meta { margin: 0 0 10px; font-size: 13px; color: var(--muted-dim); }
+
+.show-plot {
+  margin: 0 0 14px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  /* Four lines is enough to know what it is; more and the episode list is
+     pushed off the bottom of the screen, which is what you came for. */
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.show-fav { align-self: flex-start; margin: 0 0 16px; }
+
+/* The list scrolls inside the card rather than running the page long, so the
+   poster and the seasons bar stay put while you look down a long season. */
+.show-episodes { min-width: 0; }
+.show-episodes .ep-list { max-height: min(46vh, 460px); overflow-y: auto; }
+
+.show-note { margin: 0; font-size: 14px; color: var(--muted); }
+
+/* Stacked where there is no room for two columns — a phone, or a narrow
+   window. The poster comes down to a strip so the episodes stay in reach. */
+@media (max-width: 720px) {
+  .show-card { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .show-poster { max-width: 180px; }
+  .show-episodes .ep-list { max-height: none; }
+}
+
+.touch .show-card { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.touch .show-poster { max-width: 180px; }
+.touch .show-episodes .ep-list { max-height: none; }
+
 /* ---- manual audio offset ---- */
 
 .av-badge {

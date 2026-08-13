@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '14.5';
+const VERSION = '15';
 
 const PAGE_SIZE = 60;
 
@@ -45,6 +45,10 @@ const state = {
   catQuery: '',
   /** Title of the shelf opened out into a full list, or null on the rows. */
   shelf: null,
+  /** Which show's card is open, from `#/series/<id>`, or '' on the grid. */
+  seriesId: '',
+  /** Episode lists already fetched, so leaving the player is instant. */
+  seriesCache: {},
   /** Per-tab cache: { categories: [], items: [] } */
   library: { live: null, movies: null, series: null },
   visible: PAGE_SIZE,
@@ -1472,8 +1476,19 @@ function cardFor(item) {
     card.append(sub);
   }
 
-  card.addEventListener('click', () => openPlayer(item));
+  card.addEventListener('click', () =>
+    (item.kind === 'series' ? openSeries(item) : openPlayer(item)));
   return card;
+}
+
+/**
+ * Open a show's own page.
+ *
+ * Through the hash rather than by rendering directly, so the back button
+ * works and so the player has a named place to return to.
+ */
+function openSeries(item) {
+  location.hash = `#/series/${item.id}`;
 }
 
 /* ----------------------------------------------------------------- home ---
@@ -1501,6 +1516,7 @@ async function playFromHistory(row) {
   const wantId = String(row.kind === 'series' ? row.seriesId ?? row.id : row.id);
   const item = (state.library[tab]?.items || []).find((i) => String(i.id) === wantId);
   if (!item) return toast('That title is no longer in the library.');
+  if (item.kind === 'series') return openSeries(item);
   openPlayer(item);
 }
 
@@ -1674,6 +1690,100 @@ function renderHome() {
   view.append(stamp);
 
   $('#contentMeta').textContent = profiles.current ? profiles.current.name : '';
+}
+
+/* --------------------------------------------------------- one show ---
+ *
+ * A show's own page: the poster on the left, the seasons across the top of the
+ * episode list on the right.
+ *
+ * Picking an episode used to happen inside the player, which meant opening a
+ * series put an empty video frame on screen with a list underneath it — the
+ * player pressed into service as a browser. The list belongs out here with the
+ * rest of the library, and the player is left to do the one thing it is for.
+ */
+function renderShowCard() {
+  $('#grid').hidden = true;
+  $('#rowsView').hidden = true;
+  $('#downloadList').hidden = true;
+  $('#emptyState').hidden = true;
+  $('#loadMore').hidden = true;
+  $('#homeView').hidden = true;
+  document.querySelectorAll('.folder-back').forEach((b) => b.remove());
+
+  const view = $('#seriesView');
+  view.hidden = false;
+  view.innerHTML = '';
+
+  const item = (state.library.series?.items || [])
+    .find((i) => String(i.id) === String(state.seriesId));
+  if (!item) {
+    const note = el('p', 'show-note');
+    note.textContent = 'That show is no longer in the library.';
+    view.append(note);
+    return;
+  }
+
+  // The card carries the show's name; repeating it in the section heading
+  // just prints it twice down the left of the page.
+  $('#contentTitle').textContent = 'Series';
+  $('#contentMeta').textContent = '';
+
+  const back = el('button', 'btn btn-ghost folder-back show-back');
+  back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
+  const backLabel = el('span');
+  backLabel.textContent = 'All series';
+  back.append(backLabel);
+  back.addEventListener('click', () => { location.hash = '#/series'; });
+
+  const card = el('div', 'show-card');
+  const posterWrap = el('div', 'show-poster');
+  if (item.logo) {
+    const image = el('img');
+    image.alt = '';
+    image.src = img(item.logo);
+    image.addEventListener('error', () => {
+      image.remove();
+      const fb = el('div', 'fallback');
+      fb.textContent = item.name;
+      posterWrap.append(fb);
+    });
+    posterWrap.append(image);
+  } else {
+    const fb = el('div', 'fallback');
+    fb.textContent = item.name;
+    posterWrap.append(fb);
+  }
+
+  const body = el('div', 'show-body');
+  const heading = el('h2', 'show-title');
+  heading.textContent = item.name;
+  const meta = el('p', 'show-meta');
+  const plot = el('p', 'show-plot');
+  plot.hidden = true;
+  const mount = el('div', 'show-episodes');
+  body.append(heading, meta, plot, mount);
+
+  card.append(posterWrap, body);
+  view.append(back, card);
+
+  const fav = el('button', 'btn btn-ghost btn-sm show-fav');
+  fav.textContent = profiles.hasFav(item) ? 'In favorites' : 'Add to favorites';
+  fav.addEventListener('click', () => {
+    const added = profiles.toggleFav(item);
+    fav.textContent = added ? 'In favorites' : 'Add to favorites';
+    toast(added ? 'Added to favorites.' : 'Removed from favorites.');
+  });
+  body.insertBefore(fav, mount);
+
+  renderSeries(item, mount, (info) => {
+    meta.textContent = [info.releaseDate, info.genre, item.rating ? `★ ${item.rating}` : '']
+      .filter(Boolean).join(' · ');
+    if (info.plot) {
+      plot.textContent = info.plot;
+      plot.hidden = false;
+    }
+  });
 }
 
 /* ------------------------------------------------------ live categories ---
@@ -1885,7 +1995,9 @@ function render() {
 
   if (state.tab === 'downloads') return renderDownloads();
   if (state.tab === 'home') return renderHome();
+  if (state.tab === 'series' && state.seriesId) return renderShowCard();
   $('#homeView').hidden = true;
+  $('#seriesView').hidden = true;
 
   $('#downloadList').hidden = true;
   $('#rowsView').hidden = true;
@@ -2515,6 +2627,7 @@ async function goTo(tab) {
   // drawn. A tab whose library fails to load returns before render() ever
   // runs, which left the whole home screen sitting there underneath the error.
   if (tab !== 'home') $('#homeView').hidden = true;
+  if (tab !== 'series') $('#seriesView').hidden = true;
   state.category = null;
   state.shelf = null;
   state.visible = PAGE_SIZE;
@@ -2559,16 +2672,31 @@ async function goTo(tab) {
   render();
 }
 
+const TABS = ['home', 'live', 'movies', 'series', 'favorites', 'favlive', 'downloads'];
+
+/**
+ * The tab, and for a series the show that is open.
+ *
+ * `#/series/1234` is a real route rather than internal state so the browser's
+ * own back button leaves a show the way you would expect, and so the player
+ * has somewhere to return to by name.
+ *
+ * Home is the landing page and the badge is the way back to it, but it is
+ * deliberately not a tab — favlive is likewise reachable only from there.
+ */
 function routeFromHash() {
-  // Home is the landing page and the badge is the way back to it, but it is
-  // deliberately not a tab — favlive is likewise reachable only from there.
-  const tab = (location.hash.replace('#/', '') || 'home').toLowerCase();
-  return ['home', 'live', 'movies', 'series', 'favorites', 'favlive', 'downloads'].includes(tab)
-    ? tab
-    : 'home';
+  const raw = (location.hash.replace(/^#\/?/, '') || 'home').toLowerCase();
+  const [tab, param] = raw.split('/');
+  return { tab: TABS.includes(tab) ? tab : 'home', param: param || '' };
 }
 
-window.addEventListener('hashchange', () => goTo(routeFromHash()));
+function applyRoute() {
+  const { tab, param } = routeFromHash();
+  state.seriesId = tab === 'series' ? param : '';
+  return goTo(tab);
+}
+
+window.addEventListener('hashchange', applyRoute);
 
 /* ---------------------------------------------------------------- player */
 
@@ -3727,7 +3855,8 @@ function enterCinema(item) {
   const labels = { series: 'Series', live: 'Live TV', movie: 'Movies' };
   cinemaReturnHash = fromDownloads
     ? '#/downloads'
-    : item.kind === 'series' ? '#/series' : item.kind === 'live' ? '#/live' : '#/movies';
+    : item.kind === 'series' ? `#/series/${item.id}`
+      : item.kind === 'live' ? '#/live' : '#/movies';
 
   $('#cinemaTop').hidden = false;
   $('#cinemaTitle').textContent = item.name || '';
@@ -4492,10 +4621,19 @@ function updateFavButton(item) {
  */
 let playToken = 0;
 
-async function openPlayer(item) {
+/**
+ * Everything the player needs on screen before a source is resolved: the
+ * overlay itself, the title, the buttons that belong to this title, and a
+ * fresh token so anything still buffering for the last one gives up.
+ *
+ * Shared with the episode path, which comes in from a show's card rather than
+ * through openPlayer and would otherwise have to keep its own copy of this in
+ * step — an episode used to be picked from inside an already-open player, so
+ * it never had to raise the overlay at all.
+ */
+function preparePlayer(item) {
   const myToken = ++playToken;
-  const overlay = $('#playerOverlay');
-  overlay.hidden = false;
+  $('#playerOverlay').hidden = false;
   // Whatever was queued up behind the last title is not what follows this one,
   // and the previous title's playback evidence is not about this one either.
   upNext.clear();
@@ -4506,7 +4644,6 @@ async function openPlayer(item) {
   // for the whole buffering wait before cinema mode finally engaged.
   enterCinema(item);
 
-  document.querySelector('.player-shell').classList.remove('awaiting-pick');
   $('#playerTitle').textContent = item.name;
   $('#playerSub').textContent = '';
   $('#playerDetail').hidden = true;
@@ -4531,18 +4668,23 @@ async function openPlayer(item) {
     downloadBtn.title = 'Download for offline';
   }
 
-  if (item.kind === 'series') {
-    document.querySelector('.player-shell').classList.add('awaiting-pick');
-    await renderSeries(item);
-    return;
-  }
-
-  currentLiveItem = item.kind === 'live' ? item : null;
-  $('#latencyMode').value = prefs.data.liveLatency || 'balanced';
-
   // A previous title's remux must not leak its duration into this one — that
   // put the wrong runtime on the scrubber for anything that plays natively.
   lastRemux = {};
+  currentLiveItem = null;
+  return myToken;
+}
+
+async function openPlayer(item) {
+  // A show is browsed on its own card now, not inside the player. Anything
+  // still asking the player to open one — an old bookmark, a stale history
+  // row — is sent there rather than left looking at an empty picture.
+  if (item.kind === 'series') return openSeries(item);
+
+  const myToken = preparePlayer(item);
+
+  currentLiveItem = item.kind === 'live' ? item : null;
+  $('#latencyMode').value = prefs.data.liveLatency || 'balanced';
 
   // Know what's on disk before deciding how to play it. Live never has a
   // local copy, so don't spend a round trip on it before tuning the channel.
@@ -4690,38 +4832,51 @@ function applyVodInfo(info) {
 }
 
 
-async function renderSeries(item) {
-  const detail = $('#playerDetail');
-  detail.hidden = false;
-  detail.innerHTML = '<h3>Loading episodes…</h3>';
+/**
+ * The seasons bar and episode list for one show, mounted wherever it is asked
+ * for.
+ *
+ * This used to render straight into the player's detail pane, because picking
+ * an episode happened inside the player. It now belongs to the show's own card
+ * instead, so the mount is a parameter and everything player-shaped is left to
+ * the caller.
+ */
+async function renderSeries(item, mount, onInfo) {
+  mount.innerHTML = '';
+  const loading = el('p', 'show-note');
+  loading.textContent = 'Loading episodes…';
+  mount.append(loading);
 
-  let data;
-  try {
-    data = await api('/api/xtream', { action: 'get_series_info', series_id: item.id });
-  } catch (err) {
-    detail.innerHTML = '';
-    const heading = el('h3');
-    heading.textContent = `Couldn't load episodes: ${err.message}`;
-    detail.append(heading);
-    return;
+  let data = state.seriesCache[item.id];
+  if (!data) {
+    try {
+      data = await api('/api/xtream', { action: 'get_series_info', series_id: item.id });
+      state.seriesCache[item.id] = data;
+    } catch (err) {
+      mount.innerHTML = '';
+      const note = el('p', 'show-note');
+      note.textContent = `Couldn't load episodes: ${err.message}`;
+      mount.append(note);
+      return;
+    }
   }
 
   const episodes = data.episodes || {};
   const seasons = Object.keys(episodes).sort((a, b) => Number(a) - Number(b));
   if (!seasons.length) {
-    detail.innerHTML = '<h3>No episodes listed for this series.</h3>';
+    mount.innerHTML = '';
+    const note = el('p', 'show-note');
+    note.textContent = 'No episodes listed for this series.';
+    mount.append(note);
     return;
   }
 
-  const info = data.info || {};
-  if (info.genre || info.releaseDate) {
-    $('#playerSub').textContent = [info.releaseDate, info.genre].filter(Boolean).join(' · ');
-  }
+  onInfo?.(data.info || {});
 
-  detail.innerHTML = '';
+  mount.innerHTML = '';
   const picker = el('div', 'season-picker');
   const list = el('div', 'ep-list');
-  detail.append(picker, list);
+  mount.append(picker, list);
 
   /** What follows an episode, rolling into the next season at the end of one. */
   const episodeAfter = (season, index) => {
@@ -4743,7 +4898,11 @@ async function renderSeries(item) {
   const startEpisode = async (season, index) => {
     const episode = (episodes[season] || [])[index];
     if (!episode) return;
-    const myToken = playToken; // closing the player invalidates this pick
+
+    // Raise the player before anything is fetched. This used to be picking an
+    // episode from inside an already-open player, so nothing here opened it —
+    // the episode played into a hidden overlay, correctly and invisibly.
+    const myToken = preparePlayer(item);
 
     // Offer to pick up where this episode was left, before converting.
     let startAt = 0;
@@ -4761,14 +4920,9 @@ async function renderSeries(item) {
     rows.forEach((r) => r.classList.remove('is-playing'));
     rows[index]?.classList.add('is-playing');
 
-    document.querySelector('.player-shell').classList.remove('awaiting-pick');
     const sub = episodeLabel(season, episode);
     $('#playerSub').textContent = sub;
     $('#cinemaSub').textContent = sub;
-    // Drop the previous episode's offer now rather than when the new one is
-    // playing, or it hangs on screen through the whole conversion wait.
-    upNext.clear();
-    playback.resetViewing();
 
     const override = {
       kind: 'series',
@@ -5222,7 +5376,7 @@ async function startApp() {
   $('#profileGate').hidden = true;
   $('#filterToggle').checked = prefs.data.filtersEnabled !== false;
   await refreshDownloads();
-  await goTo(routeFromHash());
+  await applyRoute();
 
   // Keep the progress bars and the nav badge honest while anything is running.
   setInterval(() => {

@@ -960,6 +960,31 @@ which is what pointed at the packaging above. The re-encode stays because
 pinning the format is worth having regardless, and because it ruled the
 encoder out.
 
+## A show has its own page
+
+Clicking a series opens `#/series/<id>`: the poster on the left, the seasons
+across the top of the episode list on the right, and the synopsis and favorite
+button in between. Picking an episode opens the player over it, and the
+player's back button — which already reads **Series** — lands back on that
+card rather than on the grid.
+
+Episodes used to be picked inside the player. Opening a show put an empty video
+frame on screen with a list of episodes underneath, the player pressed into
+service as a browser because that was where the season data had been fetched.
+The list belongs out with the rest of the library, and the player is left to do
+the one thing it is for.
+
+Two things follow from making it a real route rather than internal state: the
+browser's back button leaves a show the way anyone would expect, and the player
+has somewhere to return to **by name** instead of by guessing which grid the
+title came from.
+
+The fetched episode list is cached per show, so coming back out of the player
+is instant rather than another round trip to the provider.
+
+Narrow windows and phones stack it — poster above, episodes below — since two
+columns need width that is not there.
+
 ## Playing movies and series (.mkv remuxing)
 
 **The live format setting does not apply to VOD.** Movies and episodes are
