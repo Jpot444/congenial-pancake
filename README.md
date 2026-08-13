@@ -220,6 +220,29 @@ Other endpoints: `GET/POST /api/profiles`, `PATCH/DELETE /api/profiles/:id`,
 `GET/PUT /api/profiles/:id/prefs`, `POST /api/profiles/:id/history`,
 `POST /api/profiles/:id/rating`.
 
+## Two layouts, not one that stretches
+
+The phone button in the header opens **This device**, which chooses between a
+phone layout and a desktop one and remembers it in `localStorage` — the same
+profile is used from both, and only one of them wants any of this.
+
+Phone layout is a different shape, not a scaled-down desktop:
+
+- **The sections move to a bottom bar.** Live, Movies, Series, Favorites and
+  Saved sit where a thumb reaches, the way a native app puts them, and the
+  hamburger and its dropdown are hidden — two routes to the same five places is
+  one too many. The bar clears the home indicator with
+  `env(safe-area-inset-bottom)`, and the page ends above it rather than
+  scrolling underneath.
+- **A fixed number of posters to a row**, 2, 3 or 4, set in the same panel.
+  Desktop keeps `auto-fill` and takes as many as the width allows, so the
+  choice only appears in phone layout.
+
+The class behind it is still `.touch`, because every sizing rule in the
+stylesheet already hangs off that name and phone layout is what it has always
+meant. It auto-enables on a coarse pointer, so a phone and an iPad get it
+without being asked; the panel overrides that either way.
+
 ## Reordering pins uses pointer events, not drag-and-drop
 
 HTML5 drag-and-drop is the obvious way to build this and it does not work on

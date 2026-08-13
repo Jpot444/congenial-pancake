@@ -523,6 +523,108 @@ svg {
 .touch .cinema.chrome-hidden .cinema-top,
 .touch .cinema.chrome-hidden .player-bar { opacity: 0; }
 
+/* ========================================================== tab bar ===
+
+ * Phone layout only. The sections sit along the bottom where a thumb reaches,
+ * instead of behind a hamburger that puts every one of them two taps away.
+ */
+.tabbar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 90;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: 6px 4px 0;
+  /* Clear of the home indicator, which sits inside the viewport. */
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
+  background: rgba(14, 10, 10, .94);
+  backdrop-filter: blur(18px);
+  border-top: 1px solid var(--line);
+}
+
+.tabbar a {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 7px 2px 9px;
+  border-radius: var(--radius-sm);
+  font-size: 10.5px;
+  letter-spacing: .02em;
+  color: var(--muted-dim);
+  transition: color .16s var(--ease);
+}
+
+.tabbar a svg { width: 22px; height: 22px; }
+.tabbar a.is-active { color: #fff; }
+.tabbar a.is-active svg { color: var(--brand-red); }
+
+.tab-count {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  margin-left: 6px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--brand-red);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* The bar floats over the page, so the page has to end above it. */
+body.has-tabbar .app-shell,
+body.has-tabbar .setup,
+body.has-tabbar #rowsView {
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+}
+
+/* Phone layout navigates from the bar, so the hamburger and its dropdown are
+   redundant — two ways to the same five places is one too many. */
+.touch .nav-toggle,
+.touch .nav { display: none; }
+
+/* A fixed number of posters to a row, chosen per device. The desktop keeps
+   auto-fill, which fits as many as the width allows. */
+.touch .grid,
+.touch .grid.is-live,
+.touch .grid.is-cats {
+  grid-template-columns: repeat(var(--poster-cols, 2), minmax(0, 1fr));
+}
+
+/* ---- the device settings sheet ---- */
+.device-card { width: min(420px, 100%); }
+.device-note { margin: 0 0 18px; font-size: 13px; line-height: 1.55; color: var(--muted); }
+
+.seg {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-raised);
+}
+
+.seg button {
+  flex: 1;
+  height: 38px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background .16s var(--ease), color .16s var(--ease);
+}
+
+.seg button:hover { color: var(--text); }
+.seg button.is-on { background: var(--text); color: #08080a; font-weight: 600; }
+.touch .seg button { height: 44px; }
+
 /* ============================================================ header === */
 /* The whole bar carries the brand red — the badge no longer floats on black. */
 .site-header {

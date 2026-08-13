@@ -207,40 +207,103 @@ async function api(path, params) {
 
 const img = (src) => (src ? `/img?u=${encodeURIComponent(src)}` : '');
 
-/* ------------------------------------------------------------ touch mode
+/* ----------------------------------------------------------- this device
 
+ * A phone and a desktop are far enough apart to be two layouts rather than one
+ * that stretches between them. Phone gets the sections as a bottom bar and a
+ * fixed number of posters to a row; desktop keeps the hamburger and fits as
+ * many as there is room for.
+ *
  * Kept per-device in localStorage rather than in the profile: the same profile
- * is used from a phone and a laptop, and only one of them wants fat controls.
+ * is used from both, and only one of them wants any of this.
  */
 
-const touchMode = {
-  on: false,
+const device = {
+  phone: false,
+  cols: 2,
 
   init() {
     const saved = localStorage.getItem('portal.touch');
     // No stored choice? Take the hint from the hardware — a coarse pointer
     // means a finger, which is every iPhone and iPad.
     const coarse = window.matchMedia?.('(pointer: coarse)').matches;
-    this.apply(saved === null ? Boolean(coarse) : saved === '1', { silent: true });
+    this.phone = saved === null ? Boolean(coarse) : saved === '1';
+
+    const cols = Number(localStorage.getItem('portal.cols'));
+    this.cols = [2, 3, 4].includes(cols) ? cols : 2;
+    this.apply();
   },
 
-  apply(on, { silent = false } = {}) {
-    this.on = on;
-    document.documentElement.classList.toggle('touch', on);
+  apply() {
+    const root = document.documentElement;
+    // Still called `touch`: every sizing rule in the stylesheet hangs off it,
+    // and phone layout is what it has always meant.
+    root.classList.toggle('touch', this.phone);
+    root.style.setProperty('--poster-cols', String(this.cols));
+
     const btn = $('#touchToggle');
-    btn.classList.toggle('is-on', on);
-    btn.setAttribute('aria-pressed', String(on));
-    if (!silent) toast(on ? 'Touch mode on — larger tap targets.' : 'Touch mode off.');
+    btn.classList.toggle('is-on', this.phone);
+    btn.setAttribute('aria-pressed', String(this.phone));
+
+    $('#tabBar').hidden = !this.phone;
+    // The bar covers the foot of the page, so the page has to stop above it.
+    document.body.classList.toggle('has-tabbar', this.phone);
+
+    for (const b of document.querySelectorAll('#layoutSeg button')) {
+      b.classList.toggle('is-on', (b.dataset.phone === '1') === this.phone);
+    }
+    for (const b of document.querySelectorAll('#colsSeg button')) {
+      b.classList.toggle('is-on', Number(b.dataset.cols) === this.cols);
+    }
+    // Nothing to choose on a desktop, where the grid fits what it can.
+    $('#colsField').hidden = !this.phone;
+
+    syncTabs();
   },
 
-  toggle() {
-    const next = !this.on;
-    localStorage.setItem('portal.touch', next ? '1' : '0');
-    this.apply(next);
+  setPhone(on) {
+    this.phone = on;
+    localStorage.setItem('portal.touch', on ? '1' : '0');
+    this.apply();
+  },
+
+  setCols(n) {
+    this.cols = n;
+    localStorage.setItem('portal.cols', String(n));
+    this.apply();
   },
 };
 
-$('#touchToggle').addEventListener('click', () => touchMode.toggle());
+/** Mark the open section on whichever nav is showing. */
+function syncTabs() {
+  for (const link of document.querySelectorAll('.nav a, .tabbar a')) {
+    link.classList.toggle('is-active', link.dataset.tab === state.tab);
+  }
+}
+
+$('#touchToggle').addEventListener('click', () => {
+  $('#deviceModal').hidden = false;
+});
+$('#deviceClose').addEventListener('click', () => {
+  $('#deviceModal').hidden = true;
+});
+$('#deviceModal').addEventListener('click', (event) => {
+  if (event.target.id === 'deviceModal') $('#deviceModal').hidden = true;
+});
+
+$('#layoutSeg').addEventListener('click', (event) => {
+  const button = event.target.closest('button');
+  if (!button) return;
+  device.setPhone(button.dataset.phone === '1');
+  // The sidebar and the rails lay out differently between the two.
+  if (state.config) render();
+});
+
+$('#colsSeg').addEventListener('click', (event) => {
+  const button = event.target.closest('button');
+  if (!button) return;
+  device.setCols(Number(button.dataset.cols));
+});
 
 /* ----------------------------------------------------------- pi health */
 
@@ -1373,9 +1436,7 @@ function render() {
   };
   $('#contentTitle').textContent = titles[state.tab];
 
-  document.querySelectorAll('.nav a').forEach((a) => {
-    a.classList.toggle('is-active', a.dataset.tab === state.tab);
-  });
+  syncTabs();
 
   if (state.tab === 'downloads') return renderDownloads();
 
@@ -1476,9 +1537,11 @@ async function refreshDownloads({ rerender = false } = {}) {
   const busy = state.downloads.items.filter(
     (j) => j.status === 'downloading' || j.status === 'queued'
   ).length;
-  const badge = $('#dlCount');
-  badge.textContent = busy;
-  badge.hidden = !busy;
+  // Both navs carry the badge; only one of them is on screen at a time.
+  for (const badge of [$('#dlCount'), $('#tabDlCount')]) {
+    badge.textContent = busy;
+    badge.hidden = !busy;
+  }
 
   // Only rebuild the grid when the data actually moved. The 2s poll used to
   // recreate every card each tick — flickering posters and yanking buttons
@@ -2289,7 +2352,7 @@ function showChrome() {
     () => {
       if (!$('#video').paused && !film.seeking) overlay.classList.add('chrome-hidden');
     },
-    touchMode.on ? CHROME_IDLE_TOUCH : CHROME_IDLE
+    device.phone ? CHROME_IDLE_TOUCH : CHROME_IDLE
   );
 }
 
@@ -3378,6 +3441,10 @@ $('#playerOverlay').addEventListener('click', (event) => {
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !$('#healthModal').hidden) return health.close();
+  if (event.key === 'Escape' && !$('#deviceModal').hidden) {
+    $('#deviceModal').hidden = true;
+    return;
+  }
   if (event.key === 'Escape' && !$('#playerOverlay').hidden) closePlayer();
 });
 
@@ -3741,7 +3808,7 @@ async function startApp() {
 
 (async function boot() {
   // Before anything renders, so controls are the right size on first paint.
-  touchMode.init();
+  device.init();
   try {
     const config = await api('/api/config');
     if (!config.configured) return showSetup();
