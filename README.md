@@ -418,7 +418,11 @@ keeps its controls up.
 - **Back** (top left) returns to Movies or Series, matching what was playing.
 - **Skip ±10s**, play/pause, mute and fullscreen on the bottom bar.
 - Keyboard: space or `k` to pause, `←`/`→` for ±10s, `f` for fullscreen.
-- Favorite, download and close stay reachable in the top right.
+- Favorite, download and close stay reachable in the top right, alongside a
+  **reload** button that throws the current connection away and rebuilds it
+  from the same spot — a new remux session for a converted film, a re-resolve
+  for live, a re-attach for a file on disk. It is there for playback that has
+  gone wrong in a way pausing will not clear.
 
 Live TV keeps the old windowed player; the cinema layout is only for VOD.
 

@@ -2653,6 +2653,57 @@ function stopLiveTracking() {
   $('#latencyMode').hidden = true;
 }
 
+/**
+ * Rebuild whatever is playing, from where it currently is.
+ *
+ * Playback can end up wrong in ways that pausing will not clear — a stream
+ * running at a fraction of speed after a seek is the one that prompted this.
+ * Rather than guess at the cause from a phone, this throws the current
+ * connection away and starts a fresh one at the same spot: a new remux session
+ * for a converted film, a re-resolve for live, a re-attach for a local file.
+ */
+async function reloadStream() {
+  const video = $('#video');
+  const button = $('#reloadBtn');
+  if (button.disabled) return;
+  button.disabled = true;
+
+  try {
+    // Live has no film bar and nothing to seek back to; re-resolving is the
+    // whole job, and it lands at the live edge by design.
+    if (!film.active) {
+      if (!currentLiveItem) return toast('Nothing to reload.');
+      toast('Reloading the channel…');
+      const { url, format } = await resolveStream(currentLiveItem);
+      attach(url, format);
+      return;
+    }
+
+    const at = filmPosition();
+
+    // Playing straight from a file — there is no remux to restart, so re-attach
+    // the same source and drop back to where it was.
+    if (!lastRemux.session) {
+      const src = video.currentSrc || video.src;
+      if (!src) return toast('Nothing to reload.');
+      toast(`Reloading from ${hms(at)}…`);
+      attach(src, 'file', { seekTo: at });
+      return;
+    }
+
+    toast(`Reloading from ${hms(at)}…`);
+    // force, or a position already inside the converted window would be treated
+    // as an ordinary seek and reuse the very session being reloaded.
+    await seekFilm(at, { force: true });
+  } catch (err) {
+    toast(`Couldn't reload: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+$('#reloadBtn').addEventListener('click', reloadStream);
+
 /** Manual catch-up. Deliberately never automatic — surprise seeks are the bug. */
 $('#livePill').addEventListener('click', () => {
   const video = $('#video');
@@ -2885,7 +2936,7 @@ function paintFilmBar() {
 }
 
 /** Seek to an absolute point in the film, remuxing again if we must. */
-async function seekFilm(target) {
+async function seekFilm(target, { force = false } = {}) {
   if (!film.active || film.seeking) return;
   const video = $('#video');
 
@@ -2900,7 +2951,7 @@ async function seekFilm(target) {
   // A title playing natively (mp4, or a local file) has a real duration and
   // Range support — an ordinary seek works. Restarting a remux for it would
   // spend a provider connection to do what the video element does for free.
-  if (!lastRemux.session && Number.isFinite(video.duration) && clamped < video.duration) {
+  if (!force && !lastRemux.session && Number.isFinite(video.duration) && clamped < video.duration) {
     video.currentTime = clamped;
     paintFilmBar();
     return;
@@ -2909,7 +2960,7 @@ async function seekFilm(target) {
   // Inside the current session's remuxed span? Then it's just a normal seek.
   const withinStart = film.offset;
   const withinEnd = film.offset + film.ready;
-  if (clamped >= withinStart && clamped < withinEnd - 1) {
+  if (!force && clamped >= withinStart && clamped < withinEnd - 1) {
     video.currentTime = clamped - film.offset;
     paintFilmBar();
     return;
