@@ -257,9 +257,18 @@ function writePrefs(prefs) {
 
  * Netflix-style personas: each one carries its own favorites, pinned
  * categories, watch history and ratings. They are NOT security boundaries —
- * the password gates creating and deleting a profile, but switching between
- * existing ones is open, exactly like a TV app. The server has no auth of its
- * own, so the network it sits on is the real perimeter.
+ * switching between existing ones is open, exactly like a TV app. The server
+ * has no auth of its own, so the network it sits on is the real perimeter.
+ *
+ * Creating and deleting used to demand a password always. It is now optional
+ * and off by default: `profileLock` says whether the gate is engaged, and the
+ * password itself stays stored either way so turning the lock back on does not
+ * mean picking a new one. Since the lock was never a security boundary — the
+ * network is — asking for a password on a box only close friends can reach was
+ * friction spent for nothing.
+ *
+ * Toggling the lock needs the password in BOTH directions. Off→on without it
+ * would let anyone lock everyone else out of a control they could not undo.
  */
 
 const PROFILE_SEED_PASSWORD = 'Little9';
@@ -287,6 +296,9 @@ function readProfiles() {
   if (!Array.isArray(data.profiles)) data.profiles = [];
   // Seed the gate on first run rather than storing the password in the clear.
   if (!data.auth) data.auth = hashPassword(PROFILE_SEED_PASSWORD);
+  // Off unless someone deliberately turned it on — including on the boxes that
+  // already had a password, where it was never a choice anyone made.
+  if (typeof data.profileLock !== 'boolean') data.profileLock = false;
   return data;
 }
 
@@ -2624,11 +2636,37 @@ async function handleApi(req, res, pathname, query) {
   }
 
   /* ---- Profiles ---- */
+  /* ---- The lock itself, on or off ---- */
+  if (pathname === '/api/profiles/lock') {
+    if (req.method !== 'PUT') return json(res, 405, { error: 'Method not allowed' });
+    if (!attemptAllowed(req)) {
+      return json(res, 429, { error: 'Too many attempts. Wait a minute and try again.' });
+    }
+    let incoming;
+    try {
+      incoming = JSON.parse(await collectRequestBody(req));
+    } catch {
+      return json(res, 400, { error: 'Invalid JSON' });
+    }
+    const data = readProfiles();
+    const ok = verifyPassword(incoming.password, data.auth);
+    noteAttempt(req, ok);
+    if (!ok) return json(res, 401, { error: 'That password is not correct.' });
+
+    data.profileLock = incoming.locked === true;
+    writeProfiles(data);
+    return json(res, 200, { locked: data.profileLock });
+  }
+
   if (pathname === '/api/profiles') {
     const data = readProfiles();
 
     if (req.method === 'GET') {
-      return json(res, 200, { profiles: data.profiles.map(publicProfile) });
+      return json(res, 200, {
+        profiles: data.profiles.map(publicProfile),
+        // So the browser knows whether to ask for a password before it does.
+        locked: data.profileLock,
+      });
     }
 
     if (req.method === 'POST') {
@@ -2642,9 +2680,11 @@ async function handleApi(req, res, pathname, query) {
         return json(res, 400, { error: 'Invalid JSON' });
       }
 
-      const ok = verifyPassword(incoming.password, data.auth);
-      noteAttempt(req, ok);
-      if (!ok) return json(res, 401, { error: 'That password is not correct.' });
+      if (data.profileLock) {
+        const ok = verifyPassword(incoming.password, data.auth);
+        noteAttempt(req, ok);
+        if (!ok) return json(res, 401, { error: 'That password is not correct.' });
+      }
 
       const name = String(incoming.name || '').trim().slice(0, 40);
       if (!name) return json(res, 400, { error: 'A profile name is required.' });
@@ -2699,6 +2739,15 @@ async function handleApi(req, res, pathname, query) {
           // basics. Only genuinely new ones get the tour.
           tourDone: profile.tourDone
             ?? ((profile.history || []).length > 0 || (profile.favorites || []).length > 0),
+          // The Live TV note is separate, and shown the first time Live is
+          // opened rather than in the opening tour. A profile that has already
+          // pinned something has plainly worked pinning out on its own.
+          liveTourDone: profile.liveTourDone
+            ?? (profile.pinnedCategories || []).some((key) => key.startsWith('live:')),
+          // Whether the starter pins have been laid down. Kept apart from the
+          // note above so clearing one does not silently re-run the other.
+          livePinsSeeded: profile.livePinsSeeded
+            ?? (profile.pinnedCategories || []).some((key) => key.startsWith('live:')),
           // Everyone but Hunter has a download allowance. Sent so the UI can
           // show what is left rather than only finding out by being refused.
           downloadLimit: downloadLimitFor(profile),
@@ -2736,6 +2785,10 @@ async function handleApi(req, res, pathname, query) {
           profile.deletedCategories = incoming.deletedCategories.slice(0, 500);
         }
         if (typeof incoming.tourDone === 'boolean') profile.tourDone = incoming.tourDone;
+        if (typeof incoming.liveTourDone === 'boolean') profile.liveTourDone = incoming.liveTourDone;
+        if (typeof incoming.livePinsSeeded === 'boolean') {
+          profile.livePinsSeeded = incoming.livePinsSeeded;
+        }
         writeProfiles(data);
         return json(res, 200, { ok: true });
       }
@@ -2859,11 +2912,13 @@ async function handleApi(req, res, pathname, query) {
       try {
         incoming = JSON.parse(await collectRequestBody(req));
       } catch {
-        /* body optional; password check below will fail anyway */
+        /* body is optional — with the lock off there is nothing to send */
       }
-      const ok = verifyPassword(incoming.password, data.auth);
-      noteAttempt(req, ok);
-      if (!ok) return json(res, 401, { error: 'That password is not correct.' });
+      if (data.profileLock) {
+        const ok = verifyPassword(incoming.password, data.auth);
+        noteAttempt(req, ok);
+        if (!ok) return json(res, 401, { error: 'That password is not correct.' });
+      }
 
       data.profiles = data.profiles.filter((p) => p.id !== profile.id);
       writeProfiles(data);

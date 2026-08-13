@@ -211,16 +211,26 @@ Netflix-style personas. Each carries its own favorites, pinned categories,
 watch history and ratings, all stored server-side in `profiles.json` so a
 profile is the same on every device.
 
-**Creating and deleting a profile requires the password.** Switching between
-existing ones does not — that is deliberate, and matches how a TV app behaves.
-Editing a name or icon is open too; only the destructive and additive actions
-are gated.
+**The password is optional, and off by default.** Creating, deleting, renaming
+and switching are all open unless the **profile lock** is turned on, which is
+done from the link under *Manage profiles*. With the lock on, adding and
+deleting ask for the password again; editing a name or icon stays open either
+way.
+
+Turning the lock on needs the password too, not just turning it off. Off→on
+being free would let anyone lock everyone else out of a switch they had no way
+to flip back.
+
+The password itself is kept whether the lock is on or not, so switching it back
+on does not mean choosing a new one.
 
 Be clear-eyed about what that password is and isn't. It stops someone casually
 adding a profile or wiping another's history. It is **not** access control for
 the server, which still has no authentication of its own — anyone who can reach
 the port can browse the library and switch into any existing profile. The
-network is the perimeter.
+network is the perimeter. That is most of why the lock is off by default:
+demanding a password to add a profile on a box only close friends can reach was
+friction spent on a boundary that was never there.
 
 The password is never written to disk in the clear: `profiles.json` holds a
 scrypt salt and hash, seeded on first run, compared in constant time, and the
@@ -275,6 +285,37 @@ The Downloads step reads the profile's own allowance rather than a fixed
 sentence, so `hunter` is told there is no limit and everyone else is told the
 number they have.
 
+### Starter pins, and the one note that is not in the tour
+
+Every profile starts with Hunter's Live TV categories already pinned — the
+networks and the PPV feeds — so nobody's first visit is four hundred categories
+deep with the game somewhere in the middle. A separate one-step note explains
+them, shown **the first time that profile opens Live TV** rather than during
+the opening tour: the pins are three clicks from where that tour runs, and a
+step pointing at a screen you are not on explains nothing. It is tracked by its
+own `liveTourDone`, so ending the opening tour early does not skip it.
+
+The pins are stored by the provider's category **id**, but the starter list is
+written as **names**, because ids mean nothing outside one provider's account.
+Names are resolved to ids once, when a profile first reaches Live TV — the
+first moment the categories exist at all.
+
+Matching them is less trivial than it looks. The provider dresses names in
+quality tags built from unicode superscripts — `US| NBC ᴴᴰ/ᴿᴬᵂ ⁶⁰ᶠᵖˢ` — which
+read as letters and digits to a human and as nothing at all to `a-z0-9`.
+Stripping them is the point, so a channel still matches when its tag changes.
+
+But stripping alone is wrong, and the real list proves it: it contains both
+`US| PPV EVENT` and `US| PPV EVENT ⁽ᴮᴷ⁾`, which strip to the same string. Going
+stripped-first pinned one of them twice and lost the other. So the full name is
+tried first, and the stripped form only as a fallback — and only when it picks
+out exactly one category, since guessing between two that differ by a tag gets
+it wrong half the time.
+
+A name that matches nothing is skipped. The seeding is marked done either way:
+a provider that renamed everything will not have renamed it back by the next
+visit, and re-running would fight anyone who unpinned what it left.
+
 ## Personalization API
 
 The watch history exists to feed recommendations. Every play reports against
@@ -307,7 +348,8 @@ Two things that matter if you extend the scoring:
 - **History is capped** at 600 rows, newest first, so the file can't grow
   without bound.
 
-Other endpoints: `GET/POST /api/profiles`, `PATCH/DELETE /api/profiles/:id`,
+Other endpoints: `GET/POST /api/profiles`, `PUT /api/profiles/lock`,
+`PATCH/DELETE /api/profiles/:id`,
 `GET/PUT /api/profiles/:id/prefs`, `POST /api/profiles/:id/history`,
 `POST /api/profiles/:id/rating`.
 

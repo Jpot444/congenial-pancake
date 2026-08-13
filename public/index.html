@@ -19,6 +19,9 @@
     <p class="profiles-sub">Treasure Theater</p>
     <div class="profile-grid" id="profileGrid"></div>
     <button class="btn btn-ghost btn-manage" id="manageBtn" hidden>Manage profiles</button>
+    <!-- The password is optional now. This is where it is turned on or off,
+         shown only while managing so it is not the first thing anyone sees. -->
+    <button class="btn-lock" id="lockBtn" hidden></button>
   </div>
 </div>
 
@@ -90,7 +93,7 @@
     <label class="field" id="passwordField">
       <span>Profile password</span>
       <input name="password" type="password" placeholder="••••••••" />
-      <small class="hint">Required to create or delete a profile.</small>
+      <small class="hint">The profile lock is on, so adding one needs it.</small>
     </label>
 
     <p class="form-error" id="profileError" hidden></p>

@@ -190,6 +190,23 @@ svg {
 .btn-manage { color: rgba(255, 255, 255, .8); border-color: rgba(255, 255, 255, .34); }
 .btn-manage:hover { color: #fff; border-color: #fff; }
 
+/* The password switch, under Manage profiles. Deliberately quiet — it is a
+   setting you go looking for, not one that competes with the profiles. */
+.btn-lock {
+  display: block;
+  margin: 12px auto 0;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: .82rem;
+  color: rgba(255, 255, 255, .5);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.btn-lock:hover { color: rgba(255, 255, 255, .85); }
+
 /* ---- header chip ---- */
 .profile-chip {
   display: flex;

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '17';
+const VERSION = '18';
 
 const PAGE_SIZE = 60;
 
@@ -113,11 +113,15 @@ const SWATCHES = ['#A21F24', '#6E1418', '#2F5D50', '#2B4C7E', '#7A4E1D', '#4A3A6
 const profiles = {
   all: [],
   current: null,
+  locked: false,
   data: { favorites: [], pinnedCategories: [] },
 
   async load() {
     const res = await api('/api/profiles');
     this.all = res.profiles || [];
+    // Whether adding or removing a profile needs the password. Off unless
+    // somebody deliberately turned it on.
+    this.locked = res.locked === true;
     const lastId = localStorage.getItem('portal.profile');
     const match = this.all.find((p) => p.id === lastId);
     if (match) await this.select(match, { silent: true });
@@ -771,27 +775,154 @@ const TOUR = [
   },
 ];
 
+/**
+ * The one note the opening tour does not carry, because it is about something
+ * that is not on screen when the tour runs. Shown the first time a profile
+ * opens Live TV, where the starter pins it is explaining are visible.
+ */
+const LIVE_TOUR = [
+  {
+    // Every pinned tile, boxed together — one tile with the others spilling
+    // out beside it would not read as "this row is yours".
+    target: '#grid .cat-card.is-pinned',
+    all: true,
+    title: 'These are Hunter\'s, now they\'re yours',
+    body: 'Every channel worth a shit is pinned up here already — the networks, '
+      + 'the PPV feeds, all of it — so you are not hunting through four hundred '
+      + 'categories to find the game. Hit the pin on any category in the sidebar '
+      + 'to add your own, drag them to reorder, and pin one off again when you '
+      + 'realise you are never going to watch curling.',
+  },
+];
+
+/**
+ * What every profile starts with pinned in Live TV — Hunter's own set, so
+ * nobody's first visit is four hundred categories deep in religious networks
+ * with the game somewhere in the middle.
+ *
+ * Named rather than keyed by id because ids are the provider's and mean
+ * nothing here; the names are matched against whatever the provider actually
+ * sends, once, when a profile first opens Live TV. A category that has since
+ * been renamed simply does not match and is skipped — a starter pin is a
+ * courtesy, not something worth failing over.
+ */
+const STARTER_LIVE_PINS = [
+  'US| NFL PPV',
+  'US| NCAAF PPV',
+  'US| MLB PPV',
+  'US| NCAAB PPV',
+  'US| NBC ᴴᴰ/ᴿᴬᵂ ⁶⁰ᶠᵖˢ',
+  'US| CBS ᴴᴰ/ᴿᴬᵂ ⁶⁰ᶠᵖˢ',
+  'US| ABC ᴴᴰ/ᴿᴬᵂ ⁶⁰ᶠᵖˢ',
+  'US| FOX ᴴᴰ/ᴿᴬᵂ ⁶⁰ᶠᵖˢ',
+  'US| UFC PPV',
+  'US| DAZN PPV',
+  'US| NETFLIX PPV',
+  'US| BALLY SPORTS PPV',
+  'US| NBA TEAM PPV',
+  'US| SOCCER PPV',
+  'US| BTN+ PPV',
+  'US| APPLE TV F1 PPV',
+  'US| NHL PPV',
+  'US| MLB TEAM PPV',
+  'US| PPV EVENT ⁽ᴮᴷ⁾',
+  'US| PPV EVENT',
+  'US| THE MASTERS PPV',
+  'US| PARAMOUNT+ ORIGINAL ᴿᴬᵂ ⁶⁰ᶠᵖˢ',
+  'US| MOVIES ᴴᴰ/ᴿᴬᵂ ⁶⁰ᶠᵖˢ',
+  'US| PEACOCK ᴿᴬᵂ ⁶⁰ᶠᵖˢ',
+  'US| DIREC TV ᴿᴬᵂ ⁶⁰ᶠᵖˢ',
+  'US| SPECTRUM NETWORK ᴴᴰ/ᴿᴬᵂ ⁶⁰ᶠᵖˢ',
+];
+
+/**
+ * A category name reduced to the part that identifies it. The provider dresses
+ * every name in quality tags built from unicode superscripts — ᴴᴰ, ᴿᴬᵂ, ⁶⁰ᶠᵖˢ —
+ * which are letters and digits to a human and nothing to `a-z0-9`. Stripping
+ * them is the point: a channel is the same channel when the tag changes.
+ */
+function catKey(name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Lay down the starter pins, once, the first time a profile reaches Live TV.
+ *
+ * Done here rather than when the profile is created because ids only exist
+ * once the provider's categories have been fetched, and that is the first
+ * moment they have been. Returns whether anything was pinned, so the note that
+ * explains them is not shown over an empty row.
+ */
+function seedLivePins(categories) {
+  if (!profiles.current || profiles.data.livePinsSeeded) return false;
+
+  // Matched on the full name first, and only then on the stripped one. This
+  // list contains both "US| PPV EVENT" and "US| PPV EVENT ⁽ᴮᴷ⁾", which strip
+  // to the same thing — going stripped-first pinned the same category twice
+  // and lost the other one entirely.
+  const byName = new Map();
+  const byKey = new Map();
+  for (const cat of categories) {
+    const id = String(cat.id);
+    const name = String(cat.name || '').trim().toLowerCase();
+    if (!byName.has(name)) byName.set(name, id);
+    const key = catKey(cat.name);
+    byKey.set(key, byKey.has(key) ? null : id);   // null marks an ambiguous key
+  }
+
+  const ids = [];
+  const taken = new Set();
+  for (const wanted of STARTER_LIVE_PINS) {
+    // The loose match only when it picks out exactly one category. Guessing
+    // between two that differ by a quality tag gets it wrong half the time.
+    const id = byName.get(wanted.trim().toLowerCase()) || byKey.get(catKey(wanted));
+    if (!id || taken.has(id)) continue;
+    taken.add(id);
+    ids.push(id);
+  }
+
+  // Marked done either way. A provider that renamed everything is not going to
+  // have renamed it back by the next visit, and re-running this on every load
+  // would fight anyone who unpinned what it left.
+  profiles.data.livePinsSeeded = true;
+  if (!ids.length) {
+    profiles.save();
+    return false;
+  }
+
+  // Ahead of anything the profile pinned itself, which for a new one is
+  // nothing — but a profile seeded late should not have its own pins buried.
+  const own = profiles.pinOrder('live').filter((id) => !ids.includes(id));
+  profiles.setPinOrder('live', [...ids, ...own]);   // saves
+  return true;
+}
+
 const tour = {
   steps: [],
   at: 0,
+  doneKey: 'tourDone',
 
   /**
    * Only the steps whose target is actually on this screen — and for the ones
    * that name both a desktop and a phone control, the copy of it that is
    * showing. querySelector would hand back the desktop nav link on a phone,
    * where it is hidden, and the step would vanish.
+   *
+   * A step marked `all` keeps every match rather than the first, so the
+   * highlight can box a whole row of them together.
    */
-  visible() {
-    return TOUR.map((step) => ({
-      ...step,
-      node: [...document.querySelectorAll(step.target)]
-        .find((node) => node.getClientRects().length),
-    })).filter((step) => step.node);
+  visible(list) {
+    return list.map((step) => {
+      const shown = [...document.querySelectorAll(step.target)]
+        .filter((node) => node.getClientRects().length);
+      return { ...step, node: shown[0], nodes: step.all ? shown : shown.slice(0, 1) };
+    }).filter((step) => step.node);
   },
 
-  start() {
-    this.steps = this.visible();
+  start(list = TOUR, doneKey = 'tourDone') {
+    this.steps = this.visible(list);
     if (!this.steps.length) return;
+    this.doneKey = doneKey;
     this.at = 0;
     $('#tour').hidden = false;
     this.paint();
@@ -802,8 +933,8 @@ const tour = {
   async finish() {
     $('#tour').hidden = true;
     window.removeEventListener('resize', this.reposition);
-    if (profiles.current && !profiles.data.tourDone) {
-      profiles.data.tourDone = true;
+    if (profiles.current && !profiles.data[this.doneKey]) {
+      profiles.data[this.doneKey] = true;
       await profiles.save();
     }
   },
@@ -814,9 +945,25 @@ const tour = {
     this.paint();
   },
 
+  /** One rectangle around everything the step points at. */
+  boxFor(step) {
+    const rects = step.nodes.map((node) => node.getBoundingClientRect());
+    const box = {
+      top: Math.min(...rects.map((r) => r.top)),
+      left: Math.min(...rects.map((r) => r.left)),
+      bottom: Math.max(...rects.map((r) => r.bottom)),
+      right: Math.max(...rects.map((r) => r.right)),
+    };
+    // A row of tiles that wraps can span most of the page, and a hole that
+    // large stops being a highlight. Keep the rows that fit and drop the rest.
+    const cap = window.innerHeight * 0.55;
+    if (box.bottom - box.top > cap) box.bottom = box.top + cap;
+    return { ...box, width: box.right - box.left, height: box.bottom - box.top };
+  },
+
   paint() {
     const step = this.steps[this.at];
-    const box = step.node.getBoundingClientRect();
+    const box = this.boxFor(step);
     const pad = 8;
     const hole = $('#tourHole');
     hole.style.top = `${box.top - pad}px`;
@@ -2087,6 +2234,10 @@ function renderLiveCategories() {
     ? hidden
     : stocked.filter((cat) => !profiles.isDeletedCategory(cat.id));
 
+  // Before the order is worked out, not after: the starter pins are what the
+  // order is. Writing them is fire-and-forget, exactly as pinning by hand is.
+  if (!showingHidden) seedLivePins(stocked);
+
   // Pins lead, and in the order they were dragged into — the same sequence the
   // sidebar shows. Taking them in the provider's order instead meant dragging a
   // pin rearranged the list but left these tiles exactly where they were.
@@ -2114,7 +2265,10 @@ function renderLiveCategories() {
   const frag = document.createDocumentFragment();
   for (const cat of ordered) {
     const id = String(cat.id);
-    frag.append(liveCategoryCard(cat, counts.get(id) || 0, covers.get(id) || ''));
+    const card = liveCategoryCard(cat, counts.get(id) || 0, covers.get(id) || '');
+    // Marked so the note explaining the starter pins can box them as a group.
+    if (!showingHidden && profiles.isPinned('live', id)) card.classList.add('is-pinned');
+    frag.append(card);
   }
 
   // A way in to the hidden ones, at the end and only once there are some.
@@ -2150,6 +2304,26 @@ function renderLiveCategories() {
       (showingHidden ? ' hidden' : '')
     : '';
   $('#loadMore').hidden = true;
+
+  if (!showingHidden) maybeExplainLivePins();
+}
+
+/**
+ * The Live TV note, once per profile, and only with something to point at.
+ *
+ * Deliberately not part of the opening tour: the pins it is about are three
+ * clicks away from where that tour runs, and a step pointing at a screen you
+ * are not on explains nothing.
+ */
+function maybeExplainLivePins() {
+  if (!profiles.current || profiles.data.liveTourDone) return;
+  if (!$('#tour').hidden) return;   // the opening tour is still running
+  if (!$('#grid .cat-card.is-pinned')) return;
+  // After the tiles have been laid out, or the highlight is drawn around
+  // where they were about to be.
+  requestAnimationFrame(() => {
+    if ($('#tour').hidden) tour.start(LIVE_TOUR, 'liveTourDone');
+  });
 }
 
 /** One square standing for a category, opening its stations when tapped. */
@@ -5383,7 +5557,45 @@ function renderProfileGate() {
   $('#manageBtn').hidden = profiles.all.length === 0;
   $('#manageBtn').textContent = managing ? 'Done' : 'Manage profiles';
   $('#profileGate').classList.toggle('is-managing', managing);
+
+  const lock = $('#lockBtn');
+  lock.hidden = !managing;
+  lock.textContent = profiles.locked
+    ? 'Profile lock is on — a password is needed to add or remove one'
+    : 'Profile lock is off — anyone can add or remove a profile';
 }
+
+/**
+ * Turning the lock on or off, which needs the password either way.
+ *
+ * On→off obviously does. Off→on does too, or anyone could lock everyone else
+ * out of a switch they had no way to flip back.
+ */
+$('#lockBtn').addEventListener('click', async () => {
+  const wanted = !profiles.locked;
+  const password = prompt(
+    (wanted
+      ? 'Turn the profile lock ON? Adding or deleting a profile will need the password.'
+      : 'Turn the profile lock OFF? Anyone will be able to add or delete a profile.')
+    + '\n\nEnter the profile password:'
+  );
+  if (password === null) return;
+
+  try {
+    const res = await fetch('/api/profiles/lock', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ locked: wanted, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not change the lock.');
+    profiles.locked = data.locked;
+    renderProfileGate();
+    toast(profiles.locked ? 'Profile lock on.' : 'Profile lock off.');
+  } catch (err) {
+    alert(err.message);
+  }
+});
 
 function showProfileGate() {
   $('#setupView').hidden = true;
@@ -5457,8 +5669,9 @@ function openProfileModal(profile) {
   $('#profileModalTitle').textContent = profile ? 'Edit profile' : 'Add a profile';
   $('#profileSubmit').textContent = profile ? 'Save' : 'Create profile';
   form.elements.name.value = profile ? profile.name : '';
-  // Editing name and icon is open; creating and deleting need the password.
-  $('#passwordField').hidden = Boolean(profile);
+  // Editing name and icon is always open. Creating asks for the password only
+  // when the lock has been turned on, which by default it has not.
+  $('#passwordField').hidden = Boolean(profile) || !profiles.locked;
   $('#profileDelete').hidden = !profile;
 
   pickers = buildPickers(profile ? profile.emoji : AVATARS[0], profile ? profile.color : SWATCHES[0]);
@@ -5499,7 +5712,7 @@ $('#profileForm').addEventListener('submit', async (event) => {
         body: JSON.stringify(body),
       });
     } else {
-      body.password = form.elements.password.value;
+      if (profiles.locked) body.password = form.elements.password.value;
       res = await fetch('/api/profiles', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -5527,10 +5740,17 @@ $('#profileForm').addEventListener('submit', async (event) => {
 
 $('#profileDelete').addEventListener('click', async () => {
   if (!editingProfile) return;
-  const password = prompt(
-    `Delete “${editingProfile.name}”? This removes its favorites and watch history.\n\nEnter the profile password:`
-  );
-  if (password === null) return;
+  const warning =
+    `Delete “${editingProfile.name}”? This removes its favorites and watch history.`;
+  // With the lock off this is one confirmation rather than a password. It is
+  // still a confirmation: the history it takes with it does not come back.
+  let password = '';
+  if (profiles.locked) {
+    password = prompt(`${warning}\n\nEnter the profile password:`);
+    if (password === null) return;
+  } else if (!confirm(warning)) {
+    return;
+  }
 
   try {
     const res = await fetch(`/api/profiles/${editingProfile.id}`, {
