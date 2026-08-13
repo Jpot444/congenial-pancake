@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '19.5';
+const VERSION = '19.6';
 
 const PAGE_SIZE = 60;
 
@@ -4406,14 +4406,19 @@ const playback = {
       `  a/v start     video ${Number.isFinite(p.start?.video) ? p.start.video.toFixed(3) : '?'}s, ` +
         `audio ${Number.isFinite(p.start?.audio) ? p.start.audio.toFixed(3) : '?'}s  → offset ` +
         `${Number.isFinite(p.start?.sync) ? `${(p.start.sync * 1000).toFixed(0)}ms` : 'n/a'}`,
-      `  a/v drift     video ends ${Number.isFinite(p.drift?.video) ? p.drift.video.toFixed(3) : '?'}s, ` +
+      `  a/v gap       video ends ${Number.isFinite(p.drift?.video) ? p.drift.video.toFixed(3) : '?'}s, ` +
         `audio ends ${Number.isFinite(p.drift?.audio) ? p.drift.audio.toFixed(3) : '?'}s  → ` +
         `${Number.isFinite(p.drift?.gap) ? `${(p.drift.gap * 1000).toFixed(0)}ms apart` : 'n/a'}`,
-      // The rate, spelled out. A gap is ambiguous — one lost second looks the
-      // same as a slow leak until you divide by how long it took.
+      // Both gaps, because one of them means nothing on its own. Some gap at
+      // the end of a segment is normal — the muxer cuts on a video keyframe
+      // and the audio frames do not land there. Only the CHANGE is drift.
+      `  the same gap  ${Number.isFinite(p.drift?.firstGap)
+        ? `${(p.drift.firstGap * 1000).toFixed(0)}ms in the first segment`
+        : 'not measured — only one segment so far'}`,
       `  drift rate    ${Number.isFinite(p.drift?.rate)
         ? `${(p.drift.rate * 1000).toFixed(1)}ms per second (${(p.drift.rate * 100).toFixed(2)}%)`
-        : 'n/a'}`,
+          + ` measured over ${Number(p.drift.span || 0).toFixed(1)}s`
+        : 'not enough apart to divide yet'}`,
       `  video         ${p.video?.codec || '?'} ${p.video?.fps || '?'}fps tb ${p.video?.timeBase || '?'}`,
       `  audio         ${p.audio?.codec || '?'} ${p.audio?.profile || 'profile?'} ` +
         `${p.audio?.sampleRate || '?'}Hz ${p.audio?.channels || '?'}ch tb ${p.audio?.timeBase || '?'}`,

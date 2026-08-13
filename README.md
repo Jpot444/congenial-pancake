@@ -1107,12 +1107,28 @@ fixed by padding the head (above).
 head and unwatchable a few minutes in, which is exactly the "worse the deeper
 you go" symptom that took several rounds to pin down.
 
-The report used to give drift as a raw gap — "977ms apart" — which is
-ambiguous: one lost second reads identically to a slow leak until it is divided
-by how long it took. It now carries the **rate**, in ms per second and as a
-percentage, measured from where the two streams started so a session that
-opened misaligned is not charged for that offset a second time. 22ms/s is
-unmistakably a rate; 977ms is not.
+The report gives the gap at the **end of the opening segment** and at the end
+of a **recent** one, and the rate is the difference between them over the time
+between them.
+
+That took two goes to get right, and the wrong one shipped. The first version
+reported the gap in a *single* segment divided by how long the session had been
+running — which assumes the gap grew from zero without ever checking. Some gap
+at the end of a segment is entirely normal: the muxer cuts on a video keyframe
+and the audio frames do not land on that instant, so the two tracks end at
+slightly different places every time. Dividing that standing gap by elapsed
+time reports a constant as a runaway, and worse, one that appears to get worse
+the longer you watch — because the divisor is the only thing changing.
+
+A real report made that unmistakable: a 5.115s gap at 54s into a session came
+out as **−94.8ms per second**, or 9.5%, which would be inaudible for about four
+seconds and then unwatchable. The same numbers with the gap measured at both
+ends give a rate of **zero**. The probe test now carries that exact case, and
+run against the old arithmetic it reproduces −9.48% from a gap that never
+moved.
+
+A span under ten seconds is refused rather than divided by — two nearby
+segments turn a few milliseconds of noise into a percentage.
 
 ### Audio starts where the video starts
 

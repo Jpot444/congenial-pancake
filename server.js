@@ -1595,29 +1595,47 @@ function probeOutput(session) {
     const aStart = Number(streamOf(head, 'audio').start_time);
     const sync = Number.isFinite(vStart) && Number.isFinite(aStart) ? aStart - vStart : null;
 
-    // Where each track has reached by the recent segment. Starting together
-    // and ending apart is drift accumulating inside the session, which is a
-    // different fault from the two simply starting at different points — and
-    // the reported symptom gets worse the deeper the seek, which is what drift
-    // looks like.
+    // How far apart the two tracks END, inside one segment.
+    //
+    // Note what this is and is not. It is a property of that segment: the
+    // muxer cuts on a video keyframe and the audio frames do not land on the
+    // same instant, so some gap here is normal and constant. It is NOT, on
+    // its own, drift.
     const endOf = (st) => {
       const from = Number(st.start_time);
       const len = Number(st.duration);
       return Number.isFinite(from) && Number.isFinite(len) ? from + len : null;
     };
-    const vEnd = endOf(video);
-    const aEnd = endOf(audio);
-    const drift = vEnd !== null && aEnd !== null ? aEnd - vEnd : null;
+    const gapOf = (parsed) => {
+      const v = endOf(streamOf(parsed, 'video'));
+      const a = endOf(streamOf(parsed, 'audio'));
+      return { vEnd: v, aEnd: a, gap: v !== null && a !== null ? a - v : null };
+    };
+    const late = gapOf(now);
+    const early = opening ? gapOf(opening) : null;
+    const vEnd = late.vEnd;
+    const aEnd = late.aEnd;
+    const drift = late.gap;
 
-    // The rate is what makes the number mean anything. "977ms apart" reads as
-    // a one-off loss; "22ms per second" is unmistakably a rate, and a rate is
-    // a different fault with a different cause. Measured from the point the
-    // two streams started apart, so a session that opened with an offset is
-    // not charged for it twice.
-    const spanned = Number.isFinite(vEnd) && vEnd > 1 ? vEnd : null;
-    const driftRate = drift !== null && spanned !== null && Number.isFinite(sync)
-      ? (drift - sync) / spanned
-      : null;
+    // Drift is the gap CHANGING, so it takes two measurements.
+    //
+    // This used to be one segment's gap divided by how long the session had
+    // been running, which assumed the gap had grown from zero without ever
+    // checking — and so reported a constant per-segment ragged edge as a
+    // runaway rate that got worse the longer you watched. It is now the
+    // difference between the opening segment's gap and a recent one's, over
+    // the time between them. A short span is refused rather than divided by:
+    // two nearby segments turn a few milliseconds of noise into a percentage.
+    let driftRate = null;
+    let driftSpan = null;
+    if (early && early.gap !== null && late.gap !== null
+        && Number.isFinite(early.vEnd) && Number.isFinite(late.vEnd)) {
+      const span = late.vEnd - early.vEnd;
+      if (span >= 10) {
+        driftSpan = span;
+        driftRate = (late.gap - early.gap) / span;
+      }
+    }
 
     return {
       declaredTotal,
@@ -1629,7 +1647,14 @@ function probeOutput(session) {
         ratio: real && recent.declared ? recent.declared / real : 0,
       },
       start: { video: vStart, audio: aStart, sync, segment: head === now ? recent.name : first.name },
-      drift: { video: vEnd, audio: aEnd, gap: drift, rate: driftRate },
+      drift: {
+        video: vEnd,
+        audio: aEnd,
+        gap: drift,
+        firstGap: early ? early.gap : null,
+        rate: driftRate,
+        span: driftSpan,
+      },
       video: {
         codec: video.codec_name || '',
         fps: video.avg_frame_rate || '',
