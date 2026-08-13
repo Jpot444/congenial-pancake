@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '13.3';
+const VERSION = '13.4';
 
 const PAGE_SIZE = 60;
 
@@ -3077,6 +3077,7 @@ const playback = {
     }
     const lines = [
       `when            ${new Date().toISOString()}`,
+      `version         v${VERSION}`,
       `measured rate   ${rate === null ? 'n/a' : `${rate.toFixed(3)}x over ${this.span().toFixed(0)}s`}`,
       `worst measured  ${this.worstRate === null ? 'n/a' : `${this.worstRate.toFixed(3)}x`}`,
       `playbackRate    ${video.playbackRate}`,
@@ -3120,6 +3121,8 @@ const playback = {
     const seg = p.segment || {};
     const age = Math.round((Date.now() - this.probedAt) / 1000);
     return [
+      // Redacted server-side — the provider embeds the account in the URL and
+      // these reports get pasted into chats.
       ...(p.input || []).map((line, i) =>
         `${i === 0 ? 'source' : ''}`.padEnd(16) + line),
       `conversion      wrote ${Number(p.declaredTotal || 0).toFixed(1)}s across the playlist ` +
@@ -3133,6 +3136,7 @@ const playback = {
       `  audio         ${p.audio?.codec || '?'} ${p.audio?.profile || 'profile?'} ` +
         `${p.audio?.sampleRate || '?'}Hz ${p.audio?.channels || '?'}ch tb ${p.audio?.timeBase || '?'}`,
       `  ffmpeg        exited ${p.exited} code ${p.exitCode}${p.lastError ? ` — ${p.lastError}` : ''}`,
+      `  command       ${p.args || 'unknown'}`,
     ];
   },
 

@@ -662,6 +662,18 @@ player — by the time anyone looks, the session in question is usually gone. It
 reads only files already on disk, so it costs no provider connection and is
 safe while a film is playing.
 
+**Provider credentials are stripped before any of this is shown.** This
+provider puts the account in the URL path — `/series/<user>/<pass>/id.mkv` —
+and ffmpeg prints the URL it opened, so the report would otherwise hand out the
+subscription to whoever it was pasted to. Host and filename survive, which is
+enough to tell what was playing. It applies to the source lines, the ffmpeg
+command and any error text, and covers credentials in userinfo as well as in
+the path.
+
+The report also carries **the version that produced it** and **the ffmpeg
+command as it was actually run**. Two rounds of this were spent unable to tell
+whether a fix had reached the box yet; the flags themselves settle it.
+
 It also reports **what ffmpeg found in the source** — codec, sample rate,
 channel layout — taken from the header ffmpeg prints before it starts work.
 That is the only description of the provider's audio obtainable without

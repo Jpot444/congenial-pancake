@@ -1374,6 +1374,28 @@ function remuxReadySeconds(session) {
  * Reads only files already on disk, so it costs no provider connection and is
  * safe to run while a film is playing.
  */
+/**
+ * Strip the credentials out of a provider URL.
+ *
+ * These reports get copied out of the health panel and pasted into a chat, and
+ * the provider embeds the account in the path — `/series/<user>/<pass>/id.mkv`.
+ * ffmpeg prints the URL it opened, so without this the report hands out the
+ * subscription to anyone it is shown to. Host and filename are enough to tell
+ * what was playing.
+ */
+function redactUrl(text) {
+  return String(text).replace(/https?:\/\/[^\s'"]+/g, (url) => {
+    try {
+      const u = new URL(url);
+      const parts = u.pathname.split('/').filter(Boolean);
+      const tail = parts.length ? parts[parts.length - 1] : '';
+      return `${u.protocol}//${u.host}/…/${tail}`;
+    } catch {
+      return '<url>';
+    }
+  });
+}
+
 function probeOutput(session) {
   // Probed per segment, deliberately, rather than by handing ffprobe the
   // playlist. Asked about an HLS playlist ffprobe reports the duration the
@@ -1764,12 +1786,9 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0 })
   // profile — and that is the only description of the provider's audio we can
   // get without spending the single connection playback needs on a second
   // probe. `-nostats` keeps the per-frame progress spew out of it.
-  const proc = spawn(
-    'ffmpeg',
-    ['-v', 'info', '-nostats', '-hide_banner', '-y',
-      ...ffmpegArgs(input, dir, codec, startSeconds)],
-    { stdio: ['ignore', 'ignore', 'pipe'] }
-  );
+  const args = ['-v', 'info', '-nostats', '-hide_banner', '-y',
+    ...ffmpegArgs(input, dir, codec, startSeconds)];
+  const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
   let stderr = '';
   let stderrHead = '';
@@ -1796,6 +1815,10 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0 })
     prebuffer: startSeconds > 0 ? 45 : readPrefs().prebufferSeconds || DEFAULT_PREBUFFER,
     stderr: () => stderr,
     stderrHead: () => stderrHead,
+    // The command as it was actually run. Two rounds of this have been spent
+    // unable to tell whether a fix was deployed yet; the flags themselves
+    // settle it.
+    args: redactUrl(args.join(' ')),
   };
   remuxSessions.set(id, session);
 
@@ -3064,16 +3087,18 @@ async function handleApi(req, res, pathname, query) {
       offset: session.offset,
       exited: Boolean(session.exited),
       exitCode: session.exitCode ?? null,
-      lastError: session.exited && session.exitCode !== 0 ? session.stderr().split('\n').pop() : '',
+      lastError: session.exited && session.exitCode !== 0
+        ? redactUrl(session.stderr().split('\n').pop()) : '',
       declaredSeconds: seconds,
       complete,
       // ffmpeg's own reading of the source, straight from its header. The only
       // view of the provider's audio that costs nothing to obtain.
-      input: (session.stderrHead() || '')
+      input: redactUrl(session.stderrHead() || '')
         .split('\n')
         .filter((line) => /^\s*(Input #0|Stream #0:|Output #0)/.test(line))
         .map((line) => line.trim())
         .slice(0, 8),
+      args: session.args,
       ...probe,
     });
   }
