@@ -169,7 +169,8 @@
 <!-- ───────────────────────────────────────────────────── header ─── -->
 <header class="site-header" id="siteHeader" hidden>
   <div class="wrap header-inner">
-    <a class="brand" href="#/live">
+    <!-- The badge is how you get home; there is deliberately no tab for it. -->
+    <a class="brand" href="#/home" title="Home">
       <img class="brand-bison" src="/bison.png" alt="" />
       <span class="brand-words">
         <span class="brand-title">Treasure Theater</span>
@@ -326,6 +327,7 @@
 
       <div class="grid" id="grid"></div>
       <div class="rows" id="rowsView" hidden></div>
+      <div class="home" id="homeView" hidden></div>
       <div class="downloads" id="downloadList" hidden></div>
       <div class="empty" id="emptyState" hidden></div>
       <button class="btn btn-ghost btn-more" id="loadMore" hidden>Show more</button>

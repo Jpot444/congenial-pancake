@@ -1300,6 +1300,199 @@ function cardFor(item) {
   return card;
 }
 
+/* ----------------------------------------------------------------- home ---
+
+ * Reached from the badge rather than a tab. Built entirely from watch history
+ * and favorites, so it renders without waiting on a library fetch — which is
+ * the point of a landing page.
+ */
+
+/**
+ * A history row carries its own name and poster, so it can be drawn before any
+ * library has loaded. Playing it needs the real record, which is fetched on
+ * the way into the player rather than up front.
+ */
+async function playFromHistory(row) {
+  const tab = row.kind === 'series' ? 'series' : row.kind === 'live' ? 'live' : 'movies';
+  try {
+    if (!state.library[tab]) await loadTab(tab);
+  } catch {
+    return toast(`Couldn't load ${tab}.`);
+  } finally {
+    loader.hide();
+  }
+
+  const wantId = String(row.kind === 'series' ? row.seriesId ?? row.id : row.id);
+  const item = (state.library[tab]?.items || []).find((i) => String(i.id) === wantId);
+  if (!item) return toast('That title is no longer in the library.');
+  openPlayer(item);
+}
+
+/** One poster on the home screen, from a history row rather than a library item. */
+function homeCard(row, className) {
+  const card = el('button', `card ${className}`);
+  const art = el('div', 'card-art');
+
+  if (row.poster) {
+    const image = el('img');
+    image.loading = 'lazy';
+    image.alt = '';
+    image.src = row.poster;
+    image.addEventListener('error', () => {
+      image.remove();
+      const fb = el('div', 'fallback');
+      fb.textContent = row.name || '';
+      art.append(fb);
+    });
+    art.append(image);
+  } else {
+    const fb = el('div', 'fallback');
+    fb.textContent = row.name || '';
+    art.append(fb);
+  }
+
+  // Same stripe the grids use, so a part-watched title reads the same here.
+  const ratio = row.duration && row.position ? row.position / row.duration : 0;
+  if (ratio > 0.01 && ratio < RESUME_MAX_RATIO && !row.completed) {
+    const bar = el('div', 'card-progress');
+    const fill = el('i');
+    fill.style.width = `${Math.min(100, ratio * 100)}%`;
+    bar.append(fill);
+    art.append(bar);
+  }
+
+  const title = el('h3', 'card-title');
+  title.textContent = row.seriesName || row.name || '';
+  card.append(art, title);
+
+  if (row.season && row.episode) {
+    const sub = el('p', 'card-sub');
+    sub.textContent = `S${row.season}·E${row.episode}`;
+    card.append(sub);
+  }
+
+  card.addEventListener('click', () => playFromHistory(row));
+  return card;
+}
+
+/** One of the two favorite boxes, previewing what is inside it. */
+function homeBox({ title, empty, items, hash, kind }) {
+  const box = el('button', `home-box home-box-${kind}`);
+
+  const head = el('div', 'home-box-head');
+  const heading = el('h3');
+  heading.textContent = title;
+  const count = el('span', 'home-box-count');
+  count.textContent = items.length ? items.length.toLocaleString() : '';
+  head.append(heading, count);
+
+  const art = el('div', 'home-box-art');
+  if (items.length) {
+    for (const item of items.slice(0, 4)) {
+      const cell = el('div', 'home-box-cell');
+      if (item.logo) {
+        const image = el('img');
+        image.loading = 'lazy';
+        image.alt = '';
+        image.src = item.logo;
+        image.addEventListener('error', () => image.remove());
+        cell.append(image);
+      } else {
+        const fb = el('div', 'fallback');
+        fb.textContent = item.name || '';
+        cell.append(fb);
+      }
+      art.append(cell);
+    }
+  } else {
+    const none = el('p', 'home-box-empty');
+    none.textContent = empty;
+    art.append(none);
+  }
+
+  box.append(head, art);
+  box.addEventListener('click', () => {
+    location.hash = hash;
+  });
+  return box;
+}
+
+function renderHome() {
+  $('#grid').hidden = true;
+  $('#rowsView').hidden = true;
+  $('#downloadList').hidden = true;
+  $('#emptyState').hidden = true;
+  $('#loadMore').hidden = true;
+  document.querySelectorAll('.folder-back').forEach((b) => b.remove());
+  document.querySelector('.app-shell').classList.add('no-sidebar');
+
+  const view = $('#homeView');
+  view.hidden = false;
+  view.innerHTML = '';
+
+  // One row per title: series history is per-episode, and five cards of the
+  // same show is not a landing page.
+  const seen = new Set();
+  const recent = [];
+  for (const row of state.recentlyWatched || []) {
+    const key = `${row.kind}:${row.seriesId ?? row.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    recent.push(row);
+    if (recent.length === 5) break;
+  }
+
+  if (recent.length) {
+    const section = el('section', 'home-recent');
+    const label = el('h2', 'home-label');
+    label.textContent = 'Continue watching';
+    section.append(label);
+
+    const layout = el('div', 'home-recent-layout');
+    layout.append(homeCard(recent[0], 'home-hero'));
+
+    // The four alongside stay a 2×2 even with fewer than four to show, so the
+    // hero keeps its proportions instead of stretching to fill the row.
+    const quad = el('div', 'home-quad');
+    for (const row of recent.slice(1, 5)) quad.append(homeCard(row, 'home-quad-card'));
+    layout.append(quad);
+
+    section.append(layout);
+    view.append(section);
+  }
+
+  const favs = profiles.favItems();
+  const channels = favs.filter((i) => i.kind === 'live');
+  const titles = favs.filter((i) => i.kind !== 'live');
+
+  const boxes = el('section', 'home-boxes');
+  boxes.append(
+    homeBox({
+      title: 'Favorite channels',
+      empty: 'No favorite channels yet — tap the heart while watching one.',
+      items: channels,
+      hash: '#/favlive',
+      kind: 'live',
+    }),
+    homeBox({
+      title: 'Favorite movies & shows',
+      empty: 'No favorites yet — tap the heart while watching something.',
+      items: titles,
+      hash: '#/favorites',
+      kind: 'vod',
+    })
+  );
+  view.append(boxes);
+
+  if (!recent.length && !favs.length) {
+    $('#emptyState').hidden = false;
+    $('#emptyState').textContent =
+      'Nothing here yet. Watch something and it will show up on this page.';
+  }
+
+  $('#contentMeta').textContent = profiles.current ? profiles.current.name : '';
+}
+
 /* ------------------------------------------------------ live categories ---
 
  * Live opens on its categories rather than every station at once. A provider
@@ -1428,10 +1621,12 @@ function renderSkeletons() {
 
 function render() {
   const titles = {
+    home: 'Home',
     live: 'Live TV',
     movies: 'Movies',
     series: 'Series',
     favorites: 'Favorites',
+    favlive: 'Favorite channels',
     downloads: 'Downloads',
   };
   $('#contentTitle').textContent = titles[state.tab];
@@ -1439,6 +1634,8 @@ function render() {
   syncTabs();
 
   if (state.tab === 'downloads') return renderDownloads();
+  if (state.tab === 'home') return renderHome();
+  $('#homeView').hidden = true;
 
   $('#downloadList').hidden = true;
   $('#rowsView').hidden = true;
@@ -1453,7 +1650,7 @@ function render() {
     (state.tab === 'movies' || state.tab === 'series') && !state.query && state.category === null;
   // Live opens on its categories rather than every station at once.
   const liveCatsMode = state.tab === 'live' && !state.query && state.category === null;
-  const isFavorites = state.tab === 'favorites';
+  const isFavorites = state.tab === 'favorites' || state.tab === 'favlive';
   document.querySelector('.app-shell')
     .classList.toggle('no-sidebar', isFavorites || rowsMode || liveCatsMode);
 
@@ -1463,7 +1660,13 @@ function render() {
   if (liveCatsMode && state.library.live) return renderLiveCategories();
 
   const source = isFavorites
-    ? { categories: [], items: profiles.favItems() }
+    ? {
+        categories: [],
+        // favlive is the channels on their own; favorites stays everything.
+        items: state.tab === 'favlive'
+          ? profiles.favItems().filter((i) => i.kind === 'live')
+          : profiles.favItems(),
+      }
     : state.library[state.tab] || { categories: [], items: [] };
 
   if (!isFavorites) renderCategories(source.categories, source.items);
@@ -2018,7 +2221,13 @@ async function goTo(tab) {
     await refreshDownloads();
     return render();
   }
-  if (tab === 'favorites') return render();
+  if (tab === 'home') {
+    // Built from watch history and favorites, neither of which needs a library
+    // fetch — so the badge always lands somewhere instantly.
+    await profiles.loadTaste();
+    return render();
+  }
+  if (tab === 'favorites' || tab === 'favlive') return render();
 
   // For You reflects what's been watched since the page was last opened.
   if (tab === 'movies' || tab === 'series') await profiles.loadTaste();
@@ -2041,8 +2250,12 @@ async function goTo(tab) {
 }
 
 function routeFromHash() {
-  const tab = (location.hash.replace('#/', '') || 'live').toLowerCase();
-  return ['live', 'movies', 'series', 'favorites', 'downloads'].includes(tab) ? tab : 'live';
+  // Home is the landing page and the badge is the way back to it, but it is
+  // deliberately not a tab — favlive is likewise reachable only from there.
+  const tab = (location.hash.replace('#/', '') || 'home').toLowerCase();
+  return ['home', 'live', 'movies', 'series', 'favorites', 'favlive', 'downloads'].includes(tab)
+    ? tab
+    : 'home';
 }
 
 window.addEventListener('hashchange', () => goTo(routeFromHash()));

@@ -220,6 +220,37 @@ Other endpoints: `GET/POST /api/profiles`, `PATCH/DELETE /api/profiles/:id`,
 `GET/PUT /api/profiles/:id/prefs`, `POST /api/profiles/:id/history`,
 `POST /api/profiles/:id/rating`.
 
+## The home screen
+
+`#/home` is the landing page, and **the badge in the top left is the way back
+to it**. It is deliberately not a tab — it is in neither the desktop nav nor the
+phone tab bar, because it is where you already are when you open the app.
+
+On a desktop it is one large poster of the last thing watched, a 2×2 of the four
+before it alongside, and two boxes underneath:
+
+- **Favorite channels** — the actual channels, not their categories. Opens
+  `#/favlive`, which is the favorites list narrowed to live.
+- **Favorite movies & shows** — opens `#/favorites`, the ordinary favorites
+  list, unchanged and still carrying everything.
+
+On a phone the whole thing stacks; a hero beside a 2×2 leaves both unreadable at
+390px.
+
+Two things make it worth having:
+
+- **It needs no library fetch.** Everything on the page comes from watch history
+  and favorites, both of which are already loaded — so the badge always lands
+  somewhere instantly, even on a cold start where Movies would sit on a
+  skeleton. A history row carries its own name and poster for exactly this
+  reason; the real library record is only fetched on the way into the player.
+- **Series collapse to one card.** History is recorded per episode, and five
+  cards of the same show is not a landing page.
+
+The grid tracks are all `minmax(0, 1fr)` rather than `1fr`. A plain `fr` track
+will not shrink below its content's min-content width, and one long film title
+was enough to push the page 146px wider than the phone.
+
 ## Two layouts, not one that stretches
 
 The phone button in the header opens **This device**, which chooses between a
