@@ -2063,6 +2063,79 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   text-shadow: 0 2px 8px rgba(0, 0, 0, .7);
 }
 
+/* Invisible to layout on a desktop — the three buttons sit in the bar exactly
+   as they did before the wrapper existed. */
+.vod-transport { display: contents; }
+
+/* ---- the phone player ----
+ *
+ * A phone is held in one hand and watched at arm's length, so it gets a
+ * different player rather than a squeezed desktop one: the transport comes off
+ * the bar and out over the picture where a thumb reaches, the scrubber and the
+ * clock keep the bar to themselves, and the title stays one line so it cannot
+ * push the controls around.
+ */
+/* Keyed off phone layout, not a width. A phone held sideways is 844px wide, so
+   a width query misses landscape — which is the orientation people watch in. */
+.touch .cinema .vod-transport {
+  display: flex;
+  position: absolute;
+  left: 0; right: 0;
+  /* Directly above the bar rather than dead centre: low on the screen is
+     where a thumb already is. */
+  bottom: 100%;
+  justify-content: center;
+  align-items: center;
+  gap: 30px;
+  padding-bottom: 20px;
+  /* Taps meant for the picture — which is what brings the chrome back —
+     should not be caught by the empty space around the buttons. */
+  pointer-events: none;
+}
+
+.touch .cinema .vod-transport .vod-btn {
+  pointer-events: auto;
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, .46);
+  backdrop-filter: blur(6px);
+}
+.touch .cinema .vod-transport .vod-btn svg { width: 26px; height: 26px; }
+.touch .cinema .vod-transport .vod-btn-lg { width: 68px; height: 68px; }
+.touch .cinema .vod-transport .vod-btn-lg svg { width: 34px; height: 34px; }
+
+/* What is left in the bar is the clock and the scrubber. Elapsed and total sit
+   together on the left as a clock; fullscreen goes to the far edge. */
+.touch .cinema .vod-bar { padding-top: 18px; }
+.touch .cinema .vod-bar #vodFull { margin-left: auto; }
+.touch .cinema .vod-bar .vod-time { min-width: 0; }
+
+/* One line, always. A wrapped title used to shove the transport down the
+   screen, so the controls moved depending on the length of the name. */
+.touch .cinema .cinema-titles { flex-basis: 100%; min-width: 0; }
+.touch .cinema .cinema-titles h2 {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.touch .cinema .cinema-titles p { font-size: 11.5px; }
+
+/* Download and reload are not phone gestures mid-film; favourite and close
+   are. The other two are still on the title's row on a tablet or a desktop. */
+.touch .cinema .player-bar #downloadBtn,
+.touch .cinema .player-bar #reloadBtn { display: none; }
+
+/* Held sideways there is far less height to give away, so the same controls
+   come down a size rather than crowding the picture. */
+@media (max-height: 460px) {
+  .touch .cinema .vod-transport { gap: 22px; padding-bottom: 12px; }
+  .touch .cinema .vod-transport .vod-btn { width: 44px; height: 44px; }
+  .touch .cinema .vod-transport .vod-btn svg { width: 22px; height: 22px; }
+  .touch .cinema .vod-transport .vod-btn-lg { width: 56px; height: 56px; }
+  .touch .cinema .vod-transport .vod-btn-lg svg { width: 28px; height: 28px; }
+}
+
 /* Bottom bar spans the screen and floats over the picture. */
 .cinema .vod-bar {
   position: absolute;

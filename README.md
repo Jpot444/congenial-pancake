@@ -443,6 +443,27 @@ Touch mode does not scale the playback controls. It still enlarges tap targets
 for browsing — category lists, episode rows, nav, chips — where a fingertip is
 still aiming at cursor-sized targets.
 
+### The phone player is a different player
+
+A phone is held in one hand and watched at arm's length, so phone layout gets
+its own arrangement rather than a squeezed desktop one:
+
+- **The transport comes off the bar** and sits centred over the picture just
+  above it — low on the screen, where a thumb already is, rather than dead
+  centre. The buttons are 52px, and 68px for play.
+- **The bar keeps the scrubber and the clock**, with fullscreen at the far edge.
+- **The title is one line**, ellipsised, with the season and episode beneath. A
+  wrapped title used to shove the controls down the screen, so where they sat
+  depended on how long the name was.
+- **Download and reload are hidden** mid-film. Neither is a thing you reach for
+  on a phone, and favourite and close are.
+
+The wrapper around the three transport buttons is `display: contents` on a
+desktop, so it does not exist for layout there; phone layout turns it into a
+real box and positions it. And the whole thing keys off phone layout rather
+than a width, because a phone held sideways is 844px wide and a width query
+misses the orientation people actually watch in.
+
 ### Why the player uses dvh, not vh
 
 Safari counts its own collapsible toolbars inside `100vh`. The cinema shell was

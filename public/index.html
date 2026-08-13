@@ -414,25 +414,30 @@
     <!-- Shown instead of the native controls for a remuxed film, because the
          native scrubber can only ever be as long as what's been remuxed. -->
     <div class="vod-bar" id="vodBar" hidden>
-      <button class="vod-btn" id="vodBack10" title="Back 10 seconds" aria-label="Back 10 seconds">
-        <svg viewBox="0 0 24 24">
-          <path d="M12 5a8 8 0 108 8" />
-          <path d="M12 2L8.5 5 12 8" />
-          <text class="skip-num" x="12.5" y="15.5">10</text>
-        </svg>
-      </button>
+      <!-- `display: contents` on a desktop, so these three sit in the bar as
+           they always have. On a phone the wrapper becomes a real box and
+           carries them out over the picture, where a thumb reaches. -->
+      <div class="vod-transport">
+        <button class="vod-btn" id="vodBack10" title="Back 10 seconds" aria-label="Back 10 seconds">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 5a8 8 0 108 8" />
+            <path d="M12 2L8.5 5 12 8" />
+            <text class="skip-num" x="12.5" y="15.5">10</text>
+          </svg>
+        </button>
 
-      <button class="vod-btn vod-btn-lg" id="vodPlay" aria-label="Play or pause">
-        <svg viewBox="0 0 24 24" id="vodPlayIcon"><path d="M7 5l12 7-12 7z"/></svg>
-      </button>
+        <button class="vod-btn vod-btn-lg" id="vodPlay" aria-label="Play or pause">
+          <svg viewBox="0 0 24 24" id="vodPlayIcon"><path d="M7 5l12 7-12 7z"/></svg>
+        </button>
 
-      <button class="vod-btn" id="vodFwd10" title="Forward 10 seconds" aria-label="Forward 10 seconds">
-        <svg viewBox="0 0 24 24">
-          <path d="M12 5a8 8 0 11-8 8" />
-          <path d="M12 2l3.5 3L12 8" />
-          <text class="skip-num" x="11.5" y="15.5">10</text>
-        </svg>
-      </button>
+        <button class="vod-btn" id="vodFwd10" title="Forward 10 seconds" aria-label="Forward 10 seconds">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 5a8 8 0 11-8 8" />
+            <path d="M12 2l3.5 3L12 8" />
+            <text class="skip-num" x="11.5" y="15.5">10</text>
+          </svg>
+        </button>
+      </div>
 
       <span class="vod-time" id="vodElapsed">0:00</span>
 
