@@ -552,6 +552,21 @@ Keep the ffprobe call cheap (`-select_streams v:0`, small probe window). A
 heavy probe holds the single provider connection long enough that the remux
 queued behind it times out.
 
+### A seek stops the stream it is leaving
+
+Nothing replaces the video source until the new conversion has banked enough to
+play through, which is tens of seconds. Left alone, the outgoing stream carries
+on for all of it — a loading screen with the previous scene still talking
+behind it, from a part of the film you have already decided to leave.
+
+So a seek that restarts the conversion pauses the player before the loading
+screen goes up, and `attach` starts the new stream when it arrives. A jump that
+fails puts the old one back rather than leaving the film silently stopped
+somewhere nobody asked for.
+
+Only seeks that restart the conversion. A jump inside the window already
+converted is instant, with nothing to wait through.
+
 ### A seek swaps sessions all at once
 
 `film.offset` and `film.ready` describe whichever conversion is on screen, and

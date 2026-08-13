@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '14.4';
+const VERSION = '14.5';
 
 const PAGE_SIZE = 60;
 
@@ -3879,6 +3879,17 @@ async function seekFilm(target, { force = false } = {}) {
 
   film.seeking = true;
   stopLeadWatch();
+
+  // Stop the outgoing stream before the loading screen goes up.
+  //
+  // Nothing here replaces the source until the new conversion has banked
+  // enough to play through, which is tens of seconds. Left alone the old
+  // stream carries on for all of it — a black loading screen with the previous
+  // scene still talking behind it, from a part of the film you have already
+  // decided to leave.
+  const resumeOnFailure = !video.paused;
+  video.pause();
+
   loader.show(`Jumping to ${hms(clamped)}…`, '');
 
   try {
@@ -3918,6 +3929,10 @@ async function seekFilm(target, { force = false } = {}) {
     startLeadWatch();
   } catch (err) {
     toast(`Couldn't jump there: ${err.message}`);
+    // The jump failed, so the old stream is still the one loaded and still
+    // where it was. Put it back the way it was found rather than leaving the
+    // film silently stopped somewhere nobody asked for.
+    if (resumeOnFailure) video.play().catch(() => {});
   } finally {
     film.seeking = false;
     loader.hide();
