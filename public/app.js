@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '13.5';
+const VERSION = '14';
 
 const PAGE_SIZE = 60;
 
@@ -3167,6 +3167,9 @@ const playback = {
       `  a/v start     video ${Number.isFinite(p.start?.video) ? p.start.video.toFixed(3) : '?'}s, ` +
         `audio ${Number.isFinite(p.start?.audio) ? p.start.audio.toFixed(3) : '?'}s  → offset ` +
         `${Number.isFinite(p.start?.sync) ? `${(p.start.sync * 1000).toFixed(0)}ms` : 'n/a'}`,
+      `  a/v drift     video ends ${Number.isFinite(p.drift?.video) ? p.drift.video.toFixed(3) : '?'}s, ` +
+        `audio ends ${Number.isFinite(p.drift?.audio) ? p.drift.audio.toFixed(3) : '?'}s  → ` +
+        `${Number.isFinite(p.drift?.gap) ? `${(p.drift.gap * 1000).toFixed(0)}ms apart` : 'n/a'}`,
       `  video         ${p.video?.codec || '?'} ${p.video?.fps || '?'}fps tb ${p.video?.timeBase || '?'}`,
       `  audio         ${p.audio?.codec || '?'} ${p.audio?.profile || 'profile?'} ` +
         `${p.audio?.sampleRate || '?'}Hz ${p.audio?.channels || '?'}ch tb ${p.audio?.timeBase || '?'}`,
@@ -3419,6 +3422,79 @@ async function reloadStream() {
 
 $('#reloadBtn').addEventListener('click', reloadStream);
 
+/* ------------------------------------------------------- audio sync ---
+ *
+ * A manual offset between sound and picture, applied by the conversion.
+ *
+ * Everything upstream of this assumes the source is internally consistent, and
+ * some of this library is not: the two tracks were mastered apart, and no
+ * conversion setting puts that right. Desktop players have carried this control
+ * for decades for the same reason.
+ *
+ * Offered as a short list rather than a nudge at a time because each change
+ * restarts the conversion from the current position — stepping towards the
+ * right value ten milliseconds at a time would mean sitting through a rebuild
+ * for every press.
+ */
+const AV_STEPS = [-600, -400, -250, -150, 0, 150, 250, 400, 600];
+
+function paintAvSync() {
+  const badge = $('#avSyncBadge');
+  const ms = film.audioDelay || 0;
+  badge.hidden = ms === 0;
+  badge.textContent = ms > 0 ? `+${ms / 1000}` : `${ms / 1000}`;
+  $('#avSyncRow').querySelectorAll('.av-step').forEach((b) => {
+    b.classList.toggle('is-on', Number(b.dataset.ms) === ms);
+  });
+}
+
+/**
+ * Built on first open rather than at load. This sits above `film` in the file
+ * and painting it reads `film.audioDelay`, which at load time is still in its
+ * temporal dead zone — doing it eagerly threw before the rest of the script
+ * had run, taking the whole app down with it.
+ */
+function buildAvSync() {
+  const row = $('#avSyncRow');
+  if (row.children.length) return;
+  for (const ms of AV_STEPS) {
+    const button = el('button', 'av-step');
+    button.type = 'button';
+    button.dataset.ms = String(ms);
+    button.textContent = ms === 0 ? 'None' : `${ms > 0 ? '+' : ''}${ms} ms`;
+    button.addEventListener('click', async () => {
+      $('#avSyncPanel').hidden = true;
+      if ((film.audioDelay || 0) === ms) return;
+      film.audioDelay = ms;
+      paintAvSync();
+      if (!film.active) return;
+      toast(ms === 0 ? 'Audio offset cleared — rebuilding…' : `Audio offset ${ms}ms — rebuilding…`);
+      // Straight through the reload path, which already knows how to rebuild
+      // from the current position and to force a fresh session rather than
+      // reuse the one being replaced.
+      await reloadStream();
+    });
+    row.append(button);
+  }
+}
+
+$('#avSyncBtn').addEventListener('click', () => {
+  if (!film.active) return toast('Audio sync applies to films and episodes.');
+  buildAvSync();
+  const panel = $('#avSyncPanel');
+  panel.hidden = !panel.hidden;
+  paintAvSync();
+  showChrome();
+});
+
+// Anywhere else on the picture closes it, the way the other overlays behave.
+$('#playerOverlay').addEventListener('click', (event) => {
+  const panel = $('#avSyncPanel');
+  if (panel.hidden) return;
+  if (panel.contains(event.target) || $('#avSyncBtn').contains(event.target)) return;
+  panel.hidden = true;
+});
+
 /** Manual catch-up. Deliberately never automatic — surprise seeks are the bug. */
 $('#livePill').addEventListener('click', () => {
   const video = $('#video');
@@ -3464,6 +3540,10 @@ const film = {
   item: null,
   override: null,
   seeking: false,
+  // Manual audio offset in milliseconds, applied by the conversion. Kept for
+  // the title being watched and reapplied to every seek within it, since a
+  // source whose audio was mastered adrift needs the same nudge throughout.
+  audioDelay: 0,
 };
 
 /**
@@ -3609,6 +3689,8 @@ function showFilmBar(item, duration, override) {
   film.ready = 0;
   film.item = item;
   film.override = override || null;
+  film.audioDelay = 0;
+  paintAvSync();
 
   const video = $('#video');
   video.controls = false;           // ours replaces it
@@ -3700,13 +3782,21 @@ async function seekFilm(target, { force = false } = {}) {
     const remux = await api(
       '/api/remux',
       film.item?.downloadId
-        ? { download: film.item.downloadId, start: Math.floor(clamped) }
+        ? {
+            download: film.item.downloadId,
+            start: Math.floor(clamped),
+            adelay: film.audioDelay || '',
+          }
         : {
             kind: film.override?.kind || (film.item.kind === 'movie' ? 'movie' : film.item.kind),
             id: film.override?.id ?? film.item.id,
             ext: film.override?.ext ?? film.item.ext ?? '',
             vcodec: film.override?.vcodec || film.item.vcodec || '',
             start: Math.floor(clamped),
+            // Carried on every seek, not just the first: an offset that fell
+            // off at the next jump would look like the control had stopped
+            // working.
+            adelay: film.audioDelay || '',
           }
     );
     lastRemux = remux;
@@ -4177,6 +4267,7 @@ async function playLocalCopy(job, startAt = 0) {
     const remuxed = await api('/api/remux', {
       download: job.id,
       start: startAt || '',
+      adelay: film.audioDelay || '',
     });
     lastRemux = remuxed;
     film.offset = remuxed.offset || 0;
@@ -4203,7 +4294,10 @@ async function resolveStream(item, override) {
     // A downloaded .mkv is just as unplayable as a streamed one. Remux it from
     // local disk, which is fast and costs no provider connection.
     if (item.localOnly && item.downloadId && needsRemux(localExt)) {
-      const data = await api('/api/remux', { download: item.downloadId });
+      const data = await api('/api/remux', {
+        download: item.downloadId,
+        adelay: film.audioDelay || '',
+      });
       // Keep the response — sourceDuration is the scrubber's runtime, and
       // session is what marks this as remux-backed for seeking.
       lastRemux = data;
@@ -4239,6 +4333,7 @@ async function resolveStream(item, override) {
       ext,
       vcodec: override?.vcodec || item.vcodec || '',
       start: startAt || '',
+      adelay: film.audioDelay || '',
     });
     lastRemux = remuxed;
     film.offset = remuxed.offset || 0;

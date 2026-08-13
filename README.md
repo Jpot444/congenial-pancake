@@ -750,6 +750,30 @@ and are passed to the browser essentially untouched, which takes that
 reconstruction out of the path. It also leaves one packaging format instead of
 two.
 
+### Audio sync, by hand
+
+The player carries a manual audio offset, reached from the speaker icon beside
+the reload button. Negative pulls the sound earlier, positive pushes it later;
+the choice sticks for the title being watched and is reapplied to every seek
+within it.
+
+It exists because not every desync is the conversion's fault. Some of this
+library was mastered with the two tracks adrift, and nothing done to a copy of
+it will put that right — the same reason desktop players have carried this
+control for decades. Offered as a short list of steps rather than a nudge at a
+time because each change restarts the conversion from the current position, so
+walking towards the right value ten milliseconds at a time would mean sitting
+through a rebuild for every press.
+
+### `async=1` was doing nothing
+
+`aresample`'s `async` is the number of samples per second the filter may add or
+drop to pull audio back onto its own timestamps. It was set to **1** — one
+sample a second, about 0.002% — which reads like "on" and is in practice off.
+Any real drift outruns it in the first minute. It is now 1000, roughly 2%,
+which is the usual working figure: enough to correct a source whose audio and
+video disagree, not enough to be audible.
+
 ### Audio starts where the video starts
 
 `-ss` ahead of `-i` seeks the container, which is what makes a seek fast — but

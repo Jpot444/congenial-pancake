@@ -2359,6 +2359,66 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 /* Always-visible speed warning — deliberately outside .vod-bar so it does not
    fade with the rest of the chrome. */
+/* ---- manual audio offset ---- */
+
+.av-badge {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  min-width: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--brand-red);
+  color: #fff;
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.av-sync {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 9;
+  width: min(420px, calc(100% - 32px));
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(18, 12, 12, .97);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
+}
+
+.av-sync-title {
+  margin: 0 0 6px;
+  font-family: var(--display);
+  font-size: 14px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.av-sync-hint { margin: 0 0 14px; font-size: 12px; line-height: 1.5; color: var(--muted-dim); }
+
+.av-sync-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.av-step {
+  flex: 1 1 auto;
+  min-width: 62px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .16s var(--ease), color .16s var(--ease);
+}
+
+.av-step:hover { background: rgba(255, 255, 255, .07); color: var(--text); }
+.av-step.is-on { background: var(--brand-red); border-color: transparent; color: #fff; }
+
 /* ---- next episode, once the credits start ---- */
 
 .up-next {

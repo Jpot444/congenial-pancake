@@ -388,6 +388,14 @@
                 title="Reload the video from this spot" aria-label="Reload the video from this spot">
           <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 3v5h-5"/></svg>
         </button>
+        <!-- Manual audio offset. Some of this library was mastered with the
+             two tracks adrift, which no conversion setting can put right —
+             this is the same nudge a desktop player offers. -->
+        <button class="icon-btn" id="avSyncBtn"
+                title="Audio sync" aria-label="Audio sync">
+          <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 8v8"/><path d="M20 6v12"/></svg>
+          <span class="av-badge" id="avSyncBadge" hidden></span>
+        </button>
         <button class="icon-btn" id="favBtn" title="Favorite" aria-label="Favorite">
           <svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.9-9.3-9.2C1.3 8.4 3.2 5 6.6 5c2 0 3.5 1.2 4.4 2.4l1 1.3 1-1.3C13.9 6.2 15.4 5 17.4 5c3.4 0 5.3 3.4 3.9 6.8C19.5 16.1 12 21 12 21z"/></svg>
         </button>
@@ -407,6 +415,16 @@
     <button class="speed-warn" id="speedWarn" hidden>
       <span id="speedWarnLabel"></span>
     </button>
+
+    <!-- Picked from a short list rather than nudged a step at a time: each
+         change restarts the conversion, so trial-and-error by increments would
+         mean waiting through a rebuild for every press. -->
+    <div class="av-sync" id="avSyncPanel" hidden>
+      <p class="av-sync-title">Audio sync</p>
+      <p class="av-sync-hint">Negative pulls the sound earlier, positive pushes it later.
+        Applies from where you are now.</p>
+      <div class="av-sync-row" id="avSyncRow"></div>
+    </div>
 
     <!-- Offered when this profile has an unfinished position for the title. -->
     <div class="resume-ask" id="resumeAsk" hidden>

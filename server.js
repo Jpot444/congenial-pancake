@@ -1524,6 +1524,20 @@ function probeOutput(session) {
     const aStart = Number(streamOf(head, 'audio').start_time);
     const sync = Number.isFinite(vStart) && Number.isFinite(aStart) ? aStart - vStart : null;
 
+    // Where each track has reached by the recent segment. Starting together
+    // and ending apart is drift accumulating inside the session, which is a
+    // different fault from the two simply starting at different points — and
+    // the reported symptom gets worse the deeper the seek, which is what drift
+    // looks like.
+    const endOf = (st) => {
+      const from = Number(st.start_time);
+      const len = Number(st.duration);
+      return Number.isFinite(from) && Number.isFinite(len) ? from + len : null;
+    };
+    const vEnd = endOf(video);
+    const aEnd = endOf(audio);
+    const drift = vEnd !== null && aEnd !== null ? aEnd - vEnd : null;
+
     return {
       declaredTotal,
       segment: {
@@ -1534,6 +1548,7 @@ function probeOutput(session) {
         ratio: real && recent.declared ? recent.declared / real : 0,
       },
       start: { video: vStart, audio: aStart, sync, segment: head === now ? recent.name : first.name },
+      drift: { video: vEnd, audio: aEnd, gap: drift },
       video: {
         codec: video.codec_name || '',
         fps: video.avg_frame_rate || '',
@@ -1622,7 +1637,31 @@ function probeSource(input) {
   });
 }
 
-function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0) {
+/**
+ * The audio filter chain.
+ *
+ * `async` is the number of samples per second aresample may add or drop to pull
+ * audio back onto its own timestamps. It was set to 1 — one sample a second,
+ * about 0.002% — which reads like "on" and is in practice off: any real drift
+ * outruns it immediately. 1000 is the usual working figure, roughly 2%, enough
+ * to correct a source whose audio and video disagree without being audible.
+ *
+ * `first_pts=0` pads the head so the track starts at zero rather than wherever
+ * the seek left it.
+ *
+ * `delayMs` is the manual override, because none of this can fix a source whose
+ * own audio and video were mastered apart. Positive delays the audio with
+ * silence; negative trims the front off so it plays earlier.
+ */
+function audioFilter(delayMs = 0) {
+  const chain = ['aresample=async=1000:first_pts=0'];
+  const ms = Math.max(-5000, Math.min(5000, Math.round(Number(delayMs) || 0)));
+  if (ms > 0) chain.push(`adelay=${ms}:all=1`);
+  else if (ms < 0) chain.push(`atrim=start=${(-ms / 1000).toFixed(3)}`, 'asetpts=PTS-STARTPTS');
+  return chain.join(',');
+}
+
+function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 0) {
   const args = [];
   if (/^https?:/i.test(input)) {
     // This provider paces VOD at barely above realtime and drops the socket
@@ -1699,18 +1738,7 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0) {
     '-ac', '2',
     '-ar', '48000',
     '-b:a', '160k',
-    // async=1 guards audio against drifting away from video over a long
-    // playback. first_pts=0 is the seek fix.
-    //
-    // `-ss` ahead of `-i` seeks the container, and with `-c:v copy` the video
-    // can only begin at the keyframe at or before the mark, while the audio
-    // begins at the mark itself. The two streams therefore start at different
-    // points, and a browser handed a track that starts late does not
-    // necessarily wait for it — it plays what it has, which is heard as the
-    // audio running ahead of the picture. first_pts=0 pads the difference with
-    // silence so the audio track starts where the video does and nothing has
-    // to guess.
-    '-af', 'aresample=async=1:first_pts=0'
+    '-af', audioFilter(audioDelayMs)
   );
 
   // Fragmented MP4 for everything, not just HEVC.
@@ -1755,7 +1783,7 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0) {
  * provider-backed session runs at a time — the account allows a single
  * connection, so a second would just fail.
  */
-async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0 }) {
+async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, audioDelayMs = 0 }) {
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed on this machine');
 
   // One viewer, one session: whatever was running is now abandoned, and an
@@ -1787,7 +1815,7 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0 })
   // get without spending the single connection playback needs on a second
   // probe. `-nostats` keeps the per-frame progress spew out of it.
   const args = ['-v', 'info', '-nostats', '-hide_banner', '-y',
-    ...ffmpegArgs(input, dir, codec, startSeconds)];
+    ...ffmpegArgs(input, dir, codec, startSeconds, audioDelayMs)];
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
   let stderr = '';
@@ -3048,6 +3076,7 @@ async function handleApi(req, res, pathname, query) {
         fromProvider,
         videoCodec: (query.get('vcodec') || '').toLowerCase(),
         startSeconds: Math.max(0, Number(query.get('start') || 0)),
+        audioDelayMs: Number(query.get('adelay') || 0),
       });
       return json(res, 200, {
         url: `/hls/${session.id}/index.m3u8`,
