@@ -421,9 +421,15 @@
          mean waiting through a rebuild for every press. -->
     <div class="av-sync" id="avSyncPanel" hidden>
       <p class="av-sync-title">Audio sync</p>
-      <p class="av-sync-hint">Negative pulls the sound earlier, positive pushes it later.
-        Applies from where you are now.</p>
-      <div class="av-sync-row" id="avSyncRow"></div>
+      <output class="av-sync-value" id="avSyncValue">0 ms</output>
+      <input class="av-sync-slider" id="avSyncSlider" type="range"
+             min="-600" max="800" step="10" value="0"
+             aria-label="Audio offset in milliseconds" />
+      <p class="av-sync-hint" id="avSyncHint">
+        Drag until the voices land on the lips. Pushing the sound later takes
+        effect as you drag.
+      </p>
+      <button type="button" class="btn btn-ghost btn-sm" id="avSyncReset">Reset</button>
     </div>
 
     <!-- Offered when this profile has an unfinished position for the title. -->

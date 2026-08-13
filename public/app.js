@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '14.1';
+const VERSION = '14.2';
 
 const PAGE_SIZE = 60;
 
@@ -3033,6 +3033,9 @@ const playback = {
    * the setting without touching playback.
    */
   deviceSampleRate() {
+    // The sync control's context if it has one, rather than opening a second:
+    // two contexts is two audio devices woken up to answer one question.
+    if (avSync.ctx) return avSync.ctx.sampleRate;
     if (this.deviceRate !== undefined) return this.deviceRate;
     this.deviceRate = 0;
     try {
@@ -3128,6 +3131,8 @@ const playback = {
         `error ${this.events.error}, ratechange ${this.events.ratechange}, seeked ${this.events.seeked}`,
       `engine          ${engineKind || 'none'}`,
       `audio device    ${this.deviceSampleRate() || 'unknown'}Hz output`,
+      `audio offset    ${film.audioDelay || 0}ms chosen ` +
+        `(${Math.round(avSync.applied() * 1000)}ms live, ${film.serverDelay || 0}ms converted)`,
       ...this.buffers().map((line, i) => `${i === 0 ? 'buffers' : ''}`.padEnd(16) + line),
       `source          ${(video.currentSrc || '').slice(0, 120) || 'none'}`,
       `film            active ${film.active}, offset ${Math.round(film.offset)}, ` +
@@ -3424,63 +3429,132 @@ $('#reloadBtn').addEventListener('click', reloadStream);
 
 /* ------------------------------------------------------- audio sync ---
  *
- * A manual offset between sound and picture, applied by the conversion.
+ * A live offset between sound and picture.
  *
- * Everything upstream of this assumes the source is internally consistent, and
- * some of this library is not: the two tracks were mastered apart, and no
- * conversion setting puts that right. Desktop players have carried this control
- * for decades for the same reason.
+ * The first version of this restarted the conversion for every change, which
+ * made finding the right value a matter of waiting through a rebuild per guess
+ * — useless for the one job it has, which is nudging while you watch until the
+ * voices land on the lips.
  *
- * Offered as a short list rather than a nudge at a time because each change
- * restarts the conversion from the current position — stepping towards the
- * right value ten milliseconds at a time would mean sitting through a rebuild
- * for every press.
+ * Pushing the sound LATER needs nothing from the server: the audio goes
+ * through a Web Audio delay on its way to the speakers, and the value can move
+ * while you drag. That is the direction this fault actually takes.
+ *
+ * Pulling it EARLIER cannot be done in a browser. A media element has one
+ * clock, and the only lever on it is holding the audio back — there is no way
+ * to hold the picture back to match. So the negative half still goes to the
+ * conversion, which can trim the head off the audio track, and still costs a
+ * rebuild. The panel says which half you are in.
  */
-const AV_STEPS = [-600, -400, -250, -150, 0, 150, 250, 400, 600];
+const avSync = {
+  ctx: null,
+  node: null,
+  source: null,
+  broken: false,
+
+  /**
+   * Route the element's audio through a delay, once.
+   *
+   * Built on first use rather than at startup, and specifically from a click:
+   * `createMediaElementSource` takes the audio away from the element's own
+   * output and hands it to a context that starts suspended without a gesture,
+   * which would be silence rather than a delay. It also cannot be undone — the
+   * element stays routed through here for the life of the page — so it is not
+   * done until someone actually asks for an offset.
+   */
+  attach() {
+    if (this.node || this.broken) return this.node;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) throw new Error('no Web Audio');
+      this.ctx = new Ctx();
+      this.source = this.ctx.createMediaElementSource($('#video'));
+      this.node = this.ctx.createDelay(2);
+      this.source.connect(this.node);
+      this.node.connect(this.ctx.destination);
+      this.ctx.resume?.();
+    } catch {
+      this.broken = true;
+      this.node = null;
+    }
+    return this.node;
+  },
+
+  /** Seconds of delay currently applied on the way to the speakers. */
+  applied() {
+    return this.node ? this.node.delayTime.value : 0;
+  },
+
+  set(ms) {
+    if (ms <= 0) {
+      // Nothing to hold back. Leave any graph in place at zero rather than
+      // tearing it down, which is not something Web Audio allows anyway.
+      if (this.node) this.node.delayTime.value = 0;
+      return true;
+    }
+    if (!this.attach()) return false;
+    this.node.delayTime.value = Math.min(2, ms / 1000);
+    return true;
+  },
+};
 
 function paintAvSync() {
-  const badge = $('#avSyncBadge');
   const ms = film.audioDelay || 0;
+  const badge = $('#avSyncBadge');
   badge.hidden = ms === 0;
   badge.textContent = ms > 0 ? `+${ms / 1000}` : `${ms / 1000}`;
-  $('#avSyncRow').querySelectorAll('.av-step').forEach((b) => {
-    b.classList.toggle('is-on', Number(b.dataset.ms) === ms);
-  });
+  $('#avSyncSlider').value = String(ms);
+  $('#avSyncValue').textContent = `${ms > 0 ? '+' : ''}${ms} ms`;
+  $('#avSyncHint').textContent = ms < 0
+    ? 'Pulling the sound earlier has to be done by the conversion, so this one rebuilds when you let go.'
+    : 'Drag until the voices land on the lips. Pushing the sound later takes effect as you drag.';
 }
 
-/**
- * Built on first open rather than at load. This sits above `film` in the file
- * and painting it reads `film.audioDelay`, which at load time is still in its
- * temporal dead zone — doing it eagerly threw before the rest of the script
- * had run, taking the whole app down with it.
- */
-function buildAvSync() {
-  const row = $('#avSyncRow');
-  if (row.children.length) return;
-  for (const ms of AV_STEPS) {
-    const button = el('button', 'av-step');
-    button.type = 'button';
-    button.dataset.ms = String(ms);
-    button.textContent = ms === 0 ? 'None' : `${ms > 0 ? '+' : ''}${ms} ms`;
-    button.addEventListener('click', async () => {
-      $('#avSyncPanel').hidden = true;
-      if ((film.audioDelay || 0) === ms) return;
-      film.audioDelay = ms;
-      paintAvSync();
-      if (!film.active) return;
-      toast(ms === 0 ? 'Audio offset cleared — rebuilding…' : `Audio offset ${ms}ms — rebuilding…`);
-      // Straight through the reload path, which already knows how to rebuild
-      // from the current position and to force a fresh session rather than
-      // reuse the one being replaced.
-      await reloadStream();
-    });
-    row.append(button);
+/** What the conversion is being asked for: only the half a browser cannot do. */
+const serverOffset = (ms) => (ms < 0 ? ms : 0);
+
+$('#avSyncSlider').addEventListener('input', (event) => {
+  const ms = Number(event.target.value) || 0;
+  const was = serverOffset(film.audioDelay || 0);
+  film.audioDelay = ms;
+  paintAvSync();
+  // Only the live half moves while dragging; the rebuild waits for release.
+  if (ms >= 0 && was === 0 && !avSync.set(ms)) {
+    toast('This browser will not let the audio be delayed — rebuilding instead.');
   }
-}
+});
+
+$('#avSyncSlider').addEventListener('change', async (event) => {
+  const ms = Number(event.target.value) || 0;
+  const wanted = avSync.broken ? ms : serverOffset(ms);
+  const current = avSync.broken ? film.serverDelay ?? 0 : serverOffset(film.serverDelay ?? 0);
+  film.audioDelay = ms;
+  paintAvSync();
+  if (wanted === current) {
+    avSync.set(avSync.broken ? 0 : Math.max(0, ms));
+    return;
+  }
+  film.serverDelay = wanted;
+  if (!film.active) return;
+  avSync.set(0);   // the conversion is taking this one; don't double it up
+  toast('Rebuilding with the sound pulled earlier…');
+  await reloadStream();
+});
+
+$('#avSyncReset').addEventListener('click', async () => {
+  const hadServer = (film.serverDelay ?? 0) !== 0;
+  film.audioDelay = 0;
+  film.serverDelay = 0;
+  avSync.set(0);
+  paintAvSync();
+  if (hadServer && film.active) {
+    toast('Rebuilding without the offset…');
+    await reloadStream();
+  }
+});
 
 $('#avSyncBtn').addEventListener('click', () => {
   if (!film.active) return toast('Audio sync applies to films and episodes.');
-  buildAvSync();
   const panel = $('#avSyncPanel');
   panel.hidden = !panel.hidden;
   paintAvSync();
@@ -3540,10 +3614,12 @@ const film = {
   item: null,
   override: null,
   seeking: false,
-  // Manual audio offset in milliseconds, applied by the conversion. Kept for
-  // the title being watched and reapplied to every seek within it, since a
-  // source whose audio was mastered adrift needs the same nudge throughout.
+  // Manual audio offset in milliseconds, as chosen. `serverDelay` is the part
+  // of it the conversion has to do — only ever the negative half, since a
+  // browser can hold audio back but never the picture. Both are kept for the
+  // title being watched and reapplied to every seek within it.
   audioDelay: 0,
+  serverDelay: 0,
 };
 
 /**
@@ -3690,6 +3766,8 @@ function showFilmBar(item, duration, override) {
   film.item = item;
   film.override = override || null;
   film.audioDelay = 0;
+  film.serverDelay = 0;
+  avSync.set(0);
   paintAvSync();
 
   const video = $('#video');
@@ -3785,7 +3863,7 @@ async function seekFilm(target, { force = false } = {}) {
         ? {
             download: film.item.downloadId,
             start: Math.floor(clamped),
-            adelay: film.audioDelay || '',
+            adelay: film.serverDelay || '',
           }
         : {
             kind: film.override?.kind || (film.item.kind === 'movie' ? 'movie' : film.item.kind),
@@ -3796,7 +3874,7 @@ async function seekFilm(target, { force = false } = {}) {
             // Carried on every seek, not just the first: an offset that fell
             // off at the next jump would look like the control had stopped
             // working.
-            adelay: film.audioDelay || '',
+            adelay: film.serverDelay || '',
           }
     );
     lastRemux = remux;
@@ -4267,7 +4345,7 @@ async function playLocalCopy(job, startAt = 0) {
     const remuxed = await api('/api/remux', {
       download: job.id,
       start: startAt || '',
-      adelay: film.audioDelay || '',
+      adelay: film.serverDelay || '',
     });
     lastRemux = remuxed;
     film.offset = remuxed.offset || 0;
@@ -4296,7 +4374,7 @@ async function resolveStream(item, override) {
     if (item.localOnly && item.downloadId && needsRemux(localExt)) {
       const data = await api('/api/remux', {
         download: item.downloadId,
-        adelay: film.audioDelay || '',
+        adelay: film.serverDelay || '',
       });
       // Keep the response — sourceDuration is the scrubber's runtime, and
       // session is what marks this as remux-backed for seeking.
@@ -4333,7 +4411,7 @@ async function resolveStream(item, override) {
       ext,
       vcodec: override?.vcodec || item.vcodec || '',
       start: startAt || '',
-      adelay: film.audioDelay || '',
+      adelay: film.serverDelay || '',
     });
     lastRemux = remuxed;
     film.offset = remuxed.offset || 0;

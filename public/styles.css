@@ -2401,23 +2401,57 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 .av-sync-hint { margin: 0 0 14px; font-size: 12px; line-height: 1.5; color: var(--muted-dim); }
 
-.av-sync-row { display: flex; flex-wrap: wrap; gap: 8px; }
-
-.av-step {
-  flex: 1 1 auto;
-  min-width: 62px;
-  height: 40px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  cursor: pointer;
-  transition: background .16s var(--ease), color .16s var(--ease);
+.av-sync-value {
+  display: block;
+  margin: 0 0 10px;
+  font-family: var(--display);
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
 }
 
-.av-step:hover { background: rgba(255, 255, 255, .07); color: var(--text); }
-.av-step.is-on { background: var(--brand-red); border-color: transparent; color: #fff; }
+.av-sync-slider {
+  display: block;
+  width: 100%;
+  height: 34px;
+  margin: 0 0 12px;
+  background: transparent;
+  cursor: pointer;
+  /* Wide enough for a thumb, since this is dragged on a phone too. */
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.av-sync-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.av-sync-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.av-sync-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 26px; height: 26px;
+  margin-top: -11px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--brand-red);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .5);
+}
+
+.av-sync-slider::-moz-range-thumb {
+  width: 26px; height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--brand-red);
+}
+
 
 /* ---- next episode, once the credits start ---- */
 

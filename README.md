@@ -778,18 +778,36 @@ and a probe that fails leaves the first session playing untouched.
 
 ### Audio sync, by hand
 
-The player carries a manual audio offset, reached from the speaker icon beside
-the reload button. Negative pulls the sound earlier, positive pushes it later;
-the choice sticks for the title being watched and is reapplied to every seek
-within it.
+The player carries a manual audio offset — a slider behind the speaker icon
+beside the reload button, −600ms to +800ms in 10ms steps. The choice sticks for
+the title being watched and is reapplied to every seek within it.
 
 It exists because not every desync is the conversion's fault. Some of this
 library was mastered with the two tracks adrift, and nothing done to a copy of
 it will put that right — the same reason desktop players have carried this
-control for decades. Offered as a short list of steps rather than a nudge at a
-time because each change restarts the conversion from the current position, so
-walking towards the right value ten milliseconds at a time would mean sitting
-through a rebuild for every press.
+control for decades.
+
+**Pushing the sound later is live.** The element's audio goes through a Web
+Audio delay on its way to the speakers, so the value moves while you drag and
+nothing is rebuilt. That is the direction this fault actually takes, and it is
+the whole point of the control: nudging while you watch until the voices land
+on the lips.
+
+**Pulling it earlier cannot be done in a browser.** A media element has one
+clock, and the only lever on it is holding the audio back — there is no way to
+hold the picture back to match. So the negative half goes to the conversion,
+which trims the head off the audio track, and still costs a rebuild. The panel
+says which half you are in, and only rebuilds when you let go.
+
+The first version of this restarted the conversion for every change, including
+the live half. Finding a value meant waiting through a rebuild per guess, which
+is useless for the one job it has.
+
+The audio graph is built on first use and specifically from a click.
+`createMediaElementSource` takes the audio away from the element's own output
+and hands it to a context that starts suspended without a gesture — doing it
+eagerly would be silence rather than a delay. It also cannot be undone, so it
+is not done until someone asks for an offset.
 
 ### `async=1` was doing nothing
 
