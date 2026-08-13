@@ -1653,15 +1653,21 @@ function probeSource(input) {
  * own audio and video were mastered apart. Positive delays the audio with
  * silence; negative trims the front off so it plays earlier.
  */
-function audioFilter(delayMs = 0) {
-  const chain = ['aresample=async=1000:first_pts=0'];
+function audioFilter(delayMs = 0, padSeconds = 0) {
+  // first_pts is where the track is told to begin, in samples at the output
+  // rate. Zero means "start at the head of what I was given". A negative value
+  // says the track really begins that far EARLIER, so pad the difference with
+  // silence — which is how the audio is made to start alongside a video that
+  // began at a keyframe before the seek mark.
+  const pad = Math.round(Math.max(0, Math.min(30, Number(padSeconds) || 0)) * 48000);
+  const chain = [`aresample=async=1000:first_pts=${pad ? -pad : 0}`];
   const ms = Math.max(-5000, Math.min(5000, Math.round(Number(delayMs) || 0)));
   if (ms > 0) chain.push(`adelay=${ms}:all=1`);
   else if (ms < 0) chain.push(`atrim=start=${(-ms / 1000).toFixed(3)}`, 'asetpts=PTS-STARTPTS');
   return chain.join(',');
 }
 
-function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 0) {
+function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 0, audioPadSeconds = 0) {
   const args = [];
   if (/^https?:/i.test(input)) {
     // This provider paces VOD at barely above realtime and drops the socket
@@ -1738,7 +1744,7 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 
     '-ac', '2',
     '-ar', '48000',
     '-b:a', '160k',
-    '-af', audioFilter(audioDelayMs)
+    '-af', audioFilter(audioDelayMs, audioPadSeconds)
   );
 
   // Fragmented MP4 for everything, not just HEVC.
@@ -1783,7 +1789,9 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 
  * provider-backed session runs at a time — the account allows a single
  * connection, so a second would just fail.
  */
-async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, audioDelayMs = 0 }) {
+async function startRemux(input, opts) {
+  const { fromProvider, videoCodec, startSeconds = 0, audioDelayMs = 0,
+    audioPadSeconds = 0, aligned = false } = opts;
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed on this machine');
 
   // One viewer, one session: whatever was running is now abandoned, and an
@@ -1815,7 +1823,7 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, a
   // get without spending the single connection playback needs on a second
   // probe. `-nostats` keeps the per-frame progress spew out of it.
   const args = ['-v', 'info', '-nostats', '-hide_banner', '-y',
-    ...ffmpegArgs(input, dir, codec, startSeconds, audioDelayMs)];
+    ...ffmpegArgs(input, dir, codec, startSeconds, audioDelayMs, audioPadSeconds)];
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
   let stderr = '';
@@ -1862,7 +1870,9 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, a
     if (fs.existsSync(playlist)) {
       const text = fs.readFileSync(playlist, 'utf8');
       // Wait for a couple of segments so playback doesn't start and stall.
-      if ((text.match(/\.(ts|m4s)/g) || []).length >= 2) return session;
+      if ((text.match(/\.(ts|m4s)/g) || []).length >= 2) {
+        return aligned ? session : realign(session, input, opts);
+      }
     }
     if (session.exited && session.exitCode !== 0) {
       const detail = stderr.split('\n').filter(Boolean).pop() || `exit ${session.exitCode}`;
@@ -1874,6 +1884,40 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, a
 
   killSession(id);
   throw new Error('Remux timed out starting up');
+}
+
+/**
+ * Start over once, with the audio padded to meet the video.
+ *
+ * Seeking with `-c:v copy` cannot land on the mark: the video begins at the
+ * keyframe at or before it while the audio begins wherever the container's
+ * next audio packet falls, and on this provider's files the two are anywhere
+ * from nothing to three seconds apart, varying with where you seek. Nothing
+ * knows that distance before the conversion runs — but two segments in, it can
+ * simply be measured, and a second pass told to pad exactly that much silence
+ * onto the front of the audio.
+ *
+ * Done here rather than left to the player because a file whose tracks start
+ * apart is at the mercy of whatever the player decides to do about it, and the
+ * measurements say this one decides wrong.
+ *
+ * Costs the few seconds it takes to write two segments, once per seek, and
+ * only when there is a gap worth closing. Never recurses: the second pass is
+ * marked aligned whatever it measures, so a source this cannot fix wastes one
+ * restart rather than looping.
+ */
+async function realign(session, input, opts) {
+  let gap = null;
+  try {
+    const probe = await probeOutput(session);
+    gap = probe?.start?.sync ?? null;
+  } catch {
+    return session;   // measuring is a bonus; never fail the session over it
+  }
+  if (!Number.isFinite(gap) || gap <= 0.1) return session;
+
+  killSession(session.id);
+  return startRemux(input, { ...opts, audioPadSeconds: gap, aligned: true });
 }
 
 /** Reap sessions nothing has fetched from in a while. */

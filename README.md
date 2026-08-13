@@ -750,6 +750,32 @@ and are passed to the browser essentially untouched, which takes that
 reconstruction out of the path. It also leaves one packaging format instead of
 two.
 
+### The conversion measures its own alignment and starts over
+
+Seeking with `-c:v copy` cannot land on the mark. The video begins at the
+keyframe at or before it; the audio begins wherever the container's next audio
+packet falls. On this provider's files the two are anywhere from nothing to
+**three seconds** apart, varying with where you seek — `-ss 610` measured 0ms,
+`-ss 641` 1131ms, `-ss 1028` 2913ms, all on the same title. `-noaccurate_seek`
+does not close it; seeking a Matroska positions the file at a cluster, and the
+audio for that cluster can already be behind.
+
+Nothing knows that distance before the conversion runs. But two segments in it
+can simply be **measured**, so it is: the probe reads the first segment, and if
+the audio starts more than 100ms after the video, the session is thrown away
+and a second one started with exactly that much silence padded onto the front
+of the audio (`aresample`'s `first_pts`, in samples, negative).
+
+Left to the player, a file whose tracks start apart is at the mercy of whatever
+that player decides to do about it — and the measurements here say this one
+decides wrong. Costing the few seconds it takes to write two segments, once per
+seek and only when there is a gap worth closing, is the cheaper end of that
+trade.
+
+It never goes round twice. The second pass is marked aligned whatever it
+measures, so a source this cannot fix wastes one restart rather than looping,
+and a probe that fails leaves the first session playing untouched.
+
 ### Audio sync, by hand
 
 The player carries a manual audio offset, reached from the speaker icon beside
