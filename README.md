@@ -1340,8 +1340,43 @@ opened, so a beta screen cannot outlive the switch.
 
 ### Multi-view
 
-Up to four live channels on one screen, reached from a button that appears on
+Two to four live channels on one screen, reached from a button that appears on
 Live TV while beta is on.
+
+**How many is a choice**, and the layout follows it rather than the cells
+laying themselves out — so three is one large beside two stacked, not three
+across with a hole where the fourth would be. The count is kept per device.
+Dropping it stops the cells it removes rather than hiding them: a cell playing
+off-screen still holds whatever the provider gave it.
+
+**Each cell has its own transport** — pause, and ten seconds either way. Live
+is not a film, so the skip is clamped to what the element reports as
+`seekable`: back reaches as far as the buffer still holds (`backBufferLength`
+is 60s here, which is what sets that), and forward stops at the live edge.
+Pressing at the edge does nothing rather than throwing the position somewhere
+invalid.
+
+**The picker opens on categories**, then the channels inside one, with a way
+back up. A flat list of every channel this provider carries is thousands long
+and is not something anyone scrolls — the categories are the only usable way
+in, exactly as on the Live TV page, and pinned ones lead in the order they were
+dragged into. Typing cuts across every category, because a search that only
+looked inside the folder you happened to be in would be a worse search.
+
+**The bars get out of the way.** Cell chrome and the top bar fade after three
+seconds and return on any movement, pointer or touch — the same bargain the
+main player makes. Empty cells keep their prompt: there is no picture there to
+be in the way of. The fade is held off while the picker is open, since a menu
+being dismissed by a timer is not a thing anyone wants.
+
+**One cell can take the whole screen**, which also asks the browser for real
+fullscreen. Backing out by any route returns to the grid, never to Live TV:
+the expand button again, Escape, the browser's own control, or the cell being
+stopped while it is blown up. A `fullscreenchange` listener is what catches the
+routes that do not come through our own button, and Escape is intercepted so
+one press shrinks and only the second leaves. The other cells keep running
+underneath — tearing them down would mean re-asking the provider for all of
+them on the way back.
 
 **It works, and the prediction that it would not was wrong.** This was built
 expecting one cell to play and the rest to be refused, because the account

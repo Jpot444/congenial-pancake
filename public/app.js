@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '19.1';
+const VERSION = '19.2';
 
 const PAGE_SIZE = 60;
 
@@ -429,7 +429,7 @@ $('#multiviewBtn').addEventListener('click', () => multiview.open());
 /* ------------------------------------------------ multi-view (beta) --- */
 
 /**
- * Four live channels on one screen.
+ * Two to four live channels on one screen.
  *
  * Its own player, deliberately. The main one is built around there being
  * exactly one of everything — one video element, one engine, one film bar, one
@@ -437,66 +437,101 @@ $('#multiviewBtn').addEventListener('click', () => multiview.open());
  * being asked to be four things at once. Sharing it would have meant unpicking
  * every one of those globals for a feature behind a beta switch.
  *
- * What this is really for: **the account allows one connection at a time.** So
- * the expected result is that the first cell plays and the rest are refused.
- * Nothing here pretends otherwise — each cell reports what happened to it, in
- * its own words, because "which one failed and how" is the entire question.
+ * It was built expecting to fail: the account allows one connection at a time.
+ * It does not fail, because HLS holds no connection open — see the README. Each
+ * cell still reports its own outcome in the provider's words, because that is
+ * what made the answer legible and is what will make the MPEG-TS case legible
+ * when somebody tries it.
  */
-const MV_CELLS = 4;
+const MV_MAX = 4;
+const MV_SKIP = 10;          // seconds a skip button moves
+const MV_IDLE = 3000;        // how long the chrome stays up with nothing moving
 
 const multiview = {
   cells: [],
+  count: 4,
   picking: -1,
+  solo: -1,
+  idleTimer: null,
+  /** Which category the picker is inside, or null at the top level. */
+  browsing: null,
 
-  /** Cells are built once; opening and closing does not rebuild them. */
+  /* -- building ------------------------------------------------------- */
+
+  /** Cells are built once; opening, closing and resizing do not rebuild them. */
   build() {
     if (this.cells.length) return;
     const grid = $('#mvGrid');
-    for (let i = 0; i < MV_CELLS; i += 1) {
-      const box = el('div', 'mv-cell');
-      const video = el('video');
-      video.playsInline = true;
-      // Every cell starts silent. Four live channels all talking at once is
-      // not a feature, and a browser will refuse to autoplay with sound
-      // anyway — one cell can be unmuted at a time, below.
-      video.muted = true;
-      video.autoplay = true;
+    for (let i = 0; i < MV_MAX; i += 1) grid.append(this.cell(i));
 
-      const empty = el('button', 'mv-empty');
-      empty.innerHTML = '<span class="mv-plus">+</span><span>Add a channel</span>';
-      empty.addEventListener('click', () => this.pick(i));
-
-      const bar = el('div', 'mv-bar');
-      const name = el('span', 'mv-name');
-      // Which delivery each cell got. This is the answer to why four at once
-      // works at all, so it belongs on the screen rather than in a comment.
-      const tag = el('span', 'mv-tag');
-      const sound = el('button', 'mv-sound');
-      sound.title = 'Listen to this one';
-      sound.textContent = '🔇';
-      sound.addEventListener('click', () => this.listen(i));
-      const drop = el('button', 'mv-drop');
-      drop.title = 'Stop this channel';
-      drop.textContent = '✕';
-      drop.addEventListener('click', () => this.stop(i));
-      bar.append(name, tag, sound, drop);
-
-      const note = el('p', 'mv-status');
-      note.hidden = true;   // an empty one still paints as a grey strip
-
-      box.append(video, note, bar, empty);
-      grid.append(box);
-      this.cells.push({
-        box, video, empty, bar, name, tag, sound, note,
-        format: '',
-        engine: null,
-        item: null,
-        // Asked for is not the same as playing, and on this account it is
-        // usually not the same. Tracked separately so the count says which.
-        ok: false,
-      });
+    const saved = Number(localStorage.getItem('portal.mvCount'));
+    this.count = [2, 3, 4].includes(saved) ? saved : 4;
+    for (const button of document.querySelectorAll('#mvCountSeg button')) {
+      button.addEventListener('click', () => this.setCount(Number(button.dataset.count)));
     }
   },
+
+  cell(index) {
+    const box = el('div', 'mv-cell');
+    const video = el('video');
+    video.playsInline = true;
+    // Every cell starts silent. Four live channels all talking at once is not
+    // a feature, and a browser will refuse to autoplay with sound anyway —
+    // one cell can be unmuted at a time, below.
+    video.muted = true;
+    video.autoplay = true;
+
+    const empty = el('button', 'mv-empty');
+    empty.innerHTML = '<span class="mv-plus">+</span><span>Add a channel</span>';
+    empty.addEventListener('click', () => this.pick(index));
+
+    const button = (cls, label, title, onClick) => {
+      const b = el('button', cls);
+      b.innerHTML = label;
+      b.title = title;
+      b.setAttribute('aria-label', title);
+      b.addEventListener('click', (event) => {
+        event.stopPropagation();
+        onClick();
+        this.wake();          // pressing a control counts as being here
+      });
+      return b;
+    };
+
+    const bar = el('div', 'mv-bar');
+    const name = el('span', 'mv-name');
+    // Which delivery each cell got. This is the answer to why several at once
+    // works at all, so it belongs on the screen rather than in a comment.
+    const tag = el('span', 'mv-tag');
+
+    const back = button('mv-btn', '−10', `Back ${MV_SKIP} seconds`,
+      () => this.skip(index, -MV_SKIP));
+    const play = button('mv-btn mv-play', '❚❚', 'Pause', () => this.toggle(index));
+    const fwd = button('mv-btn', '+10', `Forward ${MV_SKIP} seconds`,
+      () => this.skip(index, MV_SKIP));
+    const sound = button('mv-btn mv-sound', '🔇', 'Listen to this one',
+      () => this.listen(index));
+    const grow = button('mv-btn mv-grow', '⤢', 'Full screen', () => this.expand(index));
+    const drop = button('mv-btn mv-drop', '✕', 'Stop this channel', () => this.stop(index));
+    bar.append(name, tag, back, play, fwd, sound, grow, drop);
+
+    const note = el('p', 'mv-status');
+    note.hidden = true;   // an empty one still paints as a grey strip
+
+    box.append(video, note, bar, empty);
+    this.cells[index] = {
+      box, video, empty, bar, name, tag, play, sound, note,
+      engine: null,
+      item: null,
+      format: '',
+      // Asked for is not the same as playing, and on this account it was
+      // expected not to be. Tracked separately so the count says which.
+      ok: false,
+    };
+    return box;
+  },
+
+  /* -- opening and closing --------------------------------------------- */
 
   open() {
     this.build();
@@ -507,19 +542,100 @@ const multiview = {
     $('#multiview').hidden = false;
     document.body.style.overflow = 'hidden';
     this.paint();
+    this.wake();
   },
 
   close() {
     if ($('#multiview').hidden) return;
+    this.unexpand({ silent: true });
     this.stopAll();
+    clearTimeout(this.idleTimer);
+    $('#multiview').classList.remove('is-idle');
     $('#multiview').hidden = true;
     $('#mvPicker').hidden = true;
     document.body.style.overflow = '';
   },
 
+  /* -- how many cells --------------------------------------------------- */
+
+  /**
+   * Two, three or four. The grid template comes from the count rather than the
+   * cells laying themselves out, so three is one large beside two stacked
+   * rather than three across with a hole where the fourth would be.
+   */
+  setCount(count) {
+    if (![2, 3, 4].includes(count)) return;
+    // Anything being dropped has to let go of its stream first, or it keeps
+    // playing off-screen and keeps whatever the provider gave it.
+    for (let i = count; i < MV_MAX; i += 1) this.stop(i);
+    this.count = count;
+    localStorage.setItem('portal.mvCount', String(count));
+    if (this.solo >= count) this.unexpand({ silent: true });
+    this.paint();
+  },
+
+  /* -- one cell filling the screen -------------------------------------- */
+
+  /**
+   * Blow one cell up to the whole screen, and ask the browser for real
+   * fullscreen while we are at it. Backing out of either returns to the grid
+   * rather than closing multi-view, which is the whole point of the button.
+   */
+  expand(index) {
+    const cell = this.cells[index];
+    if (!cell?.item) return;
+    if (this.solo === index) return this.unexpand();
+    this.solo = index;
+    this.paint();
+    const root = $('#multiview');
+    if (!document.fullscreenElement && root.requestFullscreen) {
+      root.requestFullscreen().catch(() => {
+        // Refused — the in-app blow-up above still stands on its own.
+      });
+    }
+  },
+
+  unexpand({ silent = false } = {}) {
+    if (this.solo < 0) return;
+    this.solo = -1;
+    if (!silent) this.paint();
+    if (document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    }
+  },
+
+  /* -- chrome that gets out of the way ---------------------------------- */
+
+  /**
+   * The bars sit on top of the picture, so they fade out when nothing is
+   * happening and come back on any movement — the same bargain the main
+   * player makes. A cell with nothing in it keeps its prompt: there is no
+   * picture there to be in the way of.
+   */
+  wake() {
+    const root = $('#multiview');
+    root.classList.remove('is-idle');
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      // Not while a menu is open over the top of it.
+      if ($('#mvPicker').hidden) root.classList.add('is-idle');
+    }, MV_IDLE);
+  },
+
+  /* -- painting --------------------------------------------------------- */
+
   paint() {
-    for (const cell of this.cells) {
+    const grid = $('#mvGrid');
+    grid.dataset.count = String(this.count);
+    grid.classList.toggle('is-solo', this.solo >= 0);
+
+    this.cells.forEach((cell, i) => {
+      const inUse = i < this.count;
       const live = Boolean(cell.item);
+      // Beyond the chosen count the cell is gone, not merely empty — a blank
+      // square is exactly what choosing a count is meant to avoid.
+      cell.box.hidden = !inUse || (this.solo >= 0 && this.solo !== i);
+      cell.box.classList.toggle('is-solo', this.solo === i);
       cell.empty.hidden = live;
       cell.bar.hidden = !live;
       cell.video.hidden = !live;
@@ -529,14 +645,22 @@ const multiview = {
       cell.tag.classList.toggle('is-held', cell.format === 'ts');
       cell.sound.textContent = cell.video.muted ? '🔇' : '🔊';
       cell.sound.classList.toggle('is-on', !cell.video.muted);
+      cell.play.textContent = cell.video.paused ? '▶' : '❚❚';
+      cell.play.title = cell.video.paused ? 'Play' : 'Pause';
+    });
+
+    for (const button of document.querySelectorAll('#mvCountSeg button')) {
+      button.classList.toggle('is-on', Number(button.dataset.count) === this.count);
     }
-    const asked = this.cells.filter((c) => c.item).length;
-    const playing = this.cells.filter((c) => c.ok).length;
+
+    const inUse = this.cells.slice(0, this.count);
+    const asked = inUse.filter((c) => c.item).length;
+    const playing = inUse.filter((c) => c.ok).length;
     // The one-connection limit bites on streams that hold a connection open.
     // HLS does not — it fetches a segment at a time — which is why four of
     // those run happily. MPEG-TS is one long GET per channel, and those will
     // contend. Said only when it applies.
-    const held = this.cells.filter((c) => c.item && c.format === 'ts').length;
+    const held = inUse.filter((c) => c.item && c.format === 'ts').length;
     $('#mvNote').textContent = asked
       ? `${playing} playing of ${asked} asked for`
         + (held > 1
@@ -545,6 +669,33 @@ const multiview = {
           : '')
       : 'Up to four at once. HLS channels fetch a segment at a time and hold '
         + 'no connection open; MPEG-TS holds one each, and this account allows one.';
+  },
+
+  /* -- transport -------------------------------------------------------- */
+
+  toggle(index) {
+    const cell = this.cells[index];
+    if (!cell?.item) return;
+    if (cell.video.paused) cell.video.play().catch(() => {});
+    else cell.video.pause();
+    this.paint();
+  },
+
+  /**
+   * Nudge one cell along its own timeline.
+   *
+   * Live is not a film: how far back you can go is however much of the stream
+   * the player still holds, and forward stops at the live edge. Clamped to
+   * what the element says is seekable rather than assumed, so pressing it at
+   * the edge does nothing instead of throwing the position somewhere invalid.
+   */
+  skip(index, seconds) {
+    const cell = this.cells[index];
+    const video = cell?.video;
+    if (!cell?.item || !video || !video.seekable?.length) return;
+    const first = video.seekable.start(0);
+    const last = video.seekable.end(video.seekable.length - 1);
+    video.currentTime = Math.max(first, Math.min(last, video.currentTime + seconds));
   },
 
   /** Exactly one cell may make a noise. */
@@ -561,25 +712,54 @@ const multiview = {
     this.paint();
   },
 
+  /* -- the picker ------------------------------------------------------- */
+
   pick(index) {
     this.picking = index;
+    this.browsing = null;
     $('#mvSearch').value = '';
     this.results('');
     $('#mvPicker').hidden = false;
     $('#mvSearch').focus();
   },
 
+  /**
+   * Categories first, then the channels inside one.
+   *
+   * A flat list of every channel the provider carries is thousands long and is
+   * not something anyone scrolls — the categories are the only usable way in,
+   * exactly as they are on the Live TV page. Typing cuts across all of them,
+   * because a search that only looked inside the folder you happened to be in
+   * would be a worse search.
+   */
   results(query) {
     const box = $('#mvResults');
     box.innerHTML = '';
-    const all = state.library.live?.items || [];
+    const library = state.library.live;
+    const all = library?.items || [];
     if (!all.length) {
       const note = el('p', 'health-note');
       note.textContent = 'No channels loaded yet — open Live TV once and come back.';
       return box.append(note);
     }
+
     const q = query.trim().toLowerCase();
-    const hits = (q ? all.filter((i) => i.name.toLowerCase().includes(q)) : all).slice(0, 60);
+    if (!q && !this.browsing) return this.categories(box, library, all);
+
+    const inside = this.browsing
+      ? all.filter((i) => String(i.categoryId) === String(this.browsing.id))
+      : all;
+    const hits = (q ? inside.filter((i) => i.name.toLowerCase().includes(q)) : inside).slice(0, 200);
+
+    if (this.browsing && !q) {
+      const back = el('button', 'mv-result mv-back');
+      back.textContent = '‹ All categories';
+      back.addEventListener('click', () => {
+        this.browsing = null;
+        this.results('');
+      });
+      box.append(back);
+    }
     for (const item of hits) {
       const row = el('button', 'mv-result');
       row.textContent = item.name;
@@ -595,6 +775,47 @@ const multiview = {
       box.append(note);
     }
   },
+
+  categories(box, library, all) {
+    const counts = new Map();
+    for (const item of all) {
+      const id = String(item.categoryId);
+      counts.set(id, (counts.get(id) || 0) + 1);
+    }
+    // Empty categories and hidden ones are left out, the same as the grid —
+    // a folder you cannot open anything in is not worth a row.
+    const cats = (library.categories || []).filter(
+      (cat) => counts.get(String(cat.id)) && !profiles.isDeletedCategory(cat.id)
+    );
+    // Pinned first, in the order they were dragged into, exactly as Live TV
+    // shows them. Somebody who pinned the sports feeds wants them here too.
+    const order = profiles.pinOrder('live');
+    const pinned = cats
+      .filter((c) => profiles.isPinned('live', c.id))
+      .sort((a, b) => order.indexOf(String(a.id)) - order.indexOf(String(b.id)));
+    const rest = cats.filter((c) => !profiles.isPinned('live', c.id));
+
+    for (const cat of [...pinned, ...rest]) {
+      const row = el('button', 'mv-result mv-cat');
+      const label = el('span');
+      label.textContent = cat.name;
+      const count = el('span', 'mv-count');
+      count.textContent = String(counts.get(String(cat.id)) || 0);
+      row.append(label, count);
+      row.addEventListener('click', () => {
+        this.browsing = cat;
+        this.results('');
+      });
+      box.append(row);
+    }
+    if (!cats.length) {
+      const note = el('p', 'health-note');
+      note.textContent = 'No live categories.';
+      box.append(note);
+    }
+  },
+
+  /* -- streams ---------------------------------------------------------- */
 
   async start(index, item) {
     const cell = this.cells[index];
@@ -637,6 +858,11 @@ const multiview = {
       cell.ok = true;
       this.paint();
     }, { once: true });
+    // So the play/pause button follows the element rather than only the
+    // button that was pressed — a stall or an ended stream moves it too.
+    for (const evt of ['play', 'pause']) {
+      video.addEventListener(evt, () => this.paint());
+    }
 
     if (format === 'ts' && window.mpegts && mpegts.isSupported()) {
       cell.engine = mpegts.createPlayer(
@@ -656,7 +882,9 @@ const multiview = {
     }
 
     if (format === 'm3u8' && window.Hls && Hls.isSupported()) {
-      cell.engine = new Hls({ lowLatencyMode: true, backBufferLength: 30 });
+      // backBufferLength is what the −10 button has to work with: it is how
+      // much of the stream stays seekable behind the playhead.
+      cell.engine = new Hls({ lowLatencyMode: true, backBufferLength: 60 });
       cell.engine.loadSource(url);
       cell.engine.attachMedia(video);
       cell.engine.on(Hls.Events.ERROR, (_, data) => {
@@ -665,9 +893,9 @@ const multiview = {
         cell.note.textContent = `Stream failed — ${data.details}`;
         cell.ok = false;
         this.paint();
-        // No retry loop here on purpose. The single connection is the thing
-        // being tested, and a cell that quietly reconnected would take the
-        // connection off whichever cell currently has it.
+        // No retry loop here on purpose. On MPEG-TS a quiet reconnect would
+        // take the connection off whichever cell currently has it, and the
+        // order of who held it when is the thing being watched.
         cell.engine?.destroy();
         cell.engine = null;
       });
@@ -697,6 +925,7 @@ const multiview = {
     cell.format = '';
     cell.note.hidden = true;
     cell.note.textContent = '';
+    if (this.solo === index) this.unexpand({ silent: true });
     this.paint();
   },
 
@@ -707,8 +936,27 @@ const multiview = {
 
 $('#mvClose').addEventListener('click', () => multiview.close());
 $('#mvStopAll').addEventListener('click', () => multiview.stopAll());
-$('#mvPickerCancel').addEventListener('click', () => { $('#mvPicker').hidden = true; });
+$('#mvPickerCancel').addEventListener('click', () => {
+  $('#mvPicker').hidden = true;
+  multiview.wake();
+});
 $('#mvSearch').addEventListener('input', (event) => multiview.results(event.target.value));
+
+// Any sign of life brings the chrome back. Pointer and touch both, since the
+// phone has no mouse to move.
+for (const evt of ['mousemove', 'pointerdown', 'touchstart', 'keydown']) {
+  $('#multiview').addEventListener(evt, () => multiview.wake());
+}
+
+// Leaving browser fullscreen by any route — Escape, the browser's own control,
+// swiping down — has to put the grid back rather than leave one cell blown up
+// over an empty screen.
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && multiview.solo >= 0) {
+    multiview.solo = -1;
+    multiview.paint();
+  }
+});
 
 /* ----------------------------------------------------------- pi health */
 
@@ -5873,6 +6121,13 @@ document.addEventListener('keydown', (event) => {
   // The picker sits over multi-view, so it goes first.
   if (event.key === 'Escape' && !$('#mvPicker').hidden) {
     $('#mvPicker').hidden = true;
+    return;
+  }
+  // Backing out of a blown-up cell returns to the grid. Only the second
+  // Escape leaves multi-view — otherwise pressing it once to shrink a cell
+  // would take the whole screen down with it.
+  if (event.key === 'Escape' && multiview.solo >= 0) {
+    multiview.unexpand();
     return;
   }
   if (event.key === 'Escape' && !$('#multiview').hidden) multiview.close();
