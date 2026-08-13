@@ -573,26 +573,16 @@ svg {
 
 /* ============================================================= home ===
 
- * Reached from the badge, not a tab. Rows of posters: what you were watching,
- * then your channels, then your films and shows — every one of them the thing
- * itself rather than a preview of a page that contains it.
+ * Reached from the badge, not a tab. One large poster of the last thing
+ * watched with a 2x2 of the four before it alongside, and underneath, the two
+ * favorite sets side by side.
  *
- * There used to be one large hero, a 2x2 beside it, and two boxes underneath
- * whose four thumbnails opened the favorites list. That meant five different
- * artwork sizes on one page and two clicks to reach anything you had starred.
- * Now every tile is the same tile, sized so the page fits without scrolling,
- * and pressing one opens what is on it.
+ * The whole page is sized to fit the window rather than scroll. That is the
+ * only thing that changed from the first version of it: the shape is the same,
+ * the pieces are smaller, and the favorites are the posters themselves rather
+ * than four thumbnails on a box that opened a list.
  */
-.home { display: flex; flex-direction: column; gap: 22px; }
-
-/* One number decides the whole page, and the viewport height is the term that
-   usually wins it. Three rows of 2:3 posters plus their headings is roughly
-   5.5 tile-widths of height, so the vh figure is what keeps the page from
-   scrolling — the width only matters on a screen short enough not to be the
-   constraint. Deliberately small: fitting was the ask. */
-.home {
-  --home-tile: clamp(80px, min(9vw, 9.5vh), 130px);
-}
+.home { display: flex; flex-direction: column; gap: 18px; }
 
 /* Fixed to the corner rather than placed after the content, which would put it
    somewhere different depending on how much you have watched. It only exists
@@ -616,24 +606,89 @@ body.has-tabbar .home-version {
   bottom: calc(72px + max(10px, env(safe-area-inset-bottom)));
 }
 
-.home-row-head {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
 .home-label {
-  margin: 0;
+  margin: 0 0 10px;
   font-family: var(--display);
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 400;
   letter-spacing: .04em;
   color: var(--text);
 }
 
-/* Only appears when the row is showing fewer than there are, so it is never a
-   link to a page that holds exactly what is already on screen. */
+/* ---- the hero and its 2x2 ---- */
+
+/* Equal columns so the hero and the 2x2 end level: two rows of half-width
+   posters come to the same height as one full-width one. */
+.home-recent-layout {
+  display: grid;
+  /* minmax(0,…) not 1fr: a plain fr track will not shrink below its content's
+     min-content width, and one long film title is enough to push the whole
+     grid wider than the screen. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* The row track matters as much as the height: a height alone leaves the row
+     `auto`, which sizes to the hero's artwork and overflows the box it was
+     given — the favorites then drew straight over the posters. */
+  grid-template-rows: minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+  /* THE number for this page. Viewport height rather than width, because with
+     the favorites underneath it is the height that runs out first — and the
+     whole point of this revision is that nothing scrolls. */
+  height: clamp(180px, 34vh, 330px);
+}
+
+/* Same reason — a flex/grid child holds its content width without this. */
+.home .card { min-width: 0; }
+.home .card-title { overflow-wrap: anywhere; }
+
+.home-quad {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  height: 100%;
+}
+
+/* The art takes whatever is left after the title rather than carrying its own
+   ratio, so a card always fills its share of the block exactly and the two
+   columns end level. min-height:0 because a flex child will not shrink past
+   its content without it. */
+.home-hero,
+.home-quad-card { min-height: 0; }
+
+.home-hero .card-art,
+.home-quad-card .card-art {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  aspect-ratio: auto;
+}
+
+.home-hero .card-title { font-size: 15px; margin-top: 8px; }
+.home-quad-card .card-title {
+  margin-top: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.home-quad-card .card-sub { font-size: 11px; }
+
+/* ---- the two favorite sets, side by side ---- */
+
+/* Side by side, as they were as boxes. Stacked, the second one lands below the
+   fold, which is the one thing this layout exists to prevent. */
+.home-favs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.home-row-head { display: flex; align-items: baseline; gap: 10px; }
+
+/* Only appears when the column is showing fewer than there are, so it is never
+   a link to a page holding exactly what is already on screen. */
 .home-more {
   border: 0;
   background: none;
@@ -647,24 +702,19 @@ body.has-tabbar .home-version {
 
 .home-empty { margin: 0; font-size: 13px; color: var(--muted-dim); }
 
-/* auto-fill rather than a fixed count: the row takes as many as the width
-   allows and wraps the rest, so it works the same at 1280 and at 2560 without
-   anything counting columns. minmax(0,…) on the track so one long title cannot
-   push a tile wider than its share. */
+/* Six across a half-width column. A fixed count rather than auto-fill: these
+   sit in a known half of the page, and letting them wrap would put the second
+   line below the fold. */
 .home-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--home-tile), 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
 }
 
-/* Every tile on the page is this tile. The art carries the ratio rather than a
-   height, which is what "full size, just smaller" means: the poster is never
-   cropped to fit a box, the box is the poster's shape. */
+/* The favorites are the posters themselves now — press one and it opens, where
+   before it took a box, then a list, then the thing. */
 .home-tile { min-width: 0; }
-.home-tile .card-art {
-  height: auto;
-  overflow: hidden;
-}
+.home-tile .card-art { height: auto; overflow: hidden; }
 .home-tile.is-poster .card-art { aspect-ratio: 2 / 3; }
 .home-tile.is-poster .card-art img { width: 100%; height: 100%; object-fit: cover; }
 
@@ -678,40 +728,44 @@ body.has-tabbar .home-version {
   padding: 12%;
 }
 
+/* One line. The artwork is what identifies a favorite, and a second line on
+   every tile costs more height than the names are worth. */
 .home-tile .card-title {
-  margin-top: 8px;
-  font-size: 12px;
-  line-height: 1.35;
-  /* Two lines at most: a wrapped title is fine, a title that pushes its
-     neighbours down the page is not. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.home-tile .card-sub { font-size: 11px; }
-
-/* Favorites get one line. The poster is what identifies them, and a second
-   line on every tile costs more height than the names are worth — while the
-   Continue watching row keeps two, since that is the row you are reading. */
-.home-row:not(.is-recent) .home-tile .card-title {
-  -webkit-line-clamp: 1;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.3;
   white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* The last thing watched is the reason the page exists, so its row is bigger
-   than the two under it — the only size difference left. */
-.home-row.is-recent { --home-tile: clamp(96px, min(11vw, 12vh), 165px); }
-
-/* On a phone the tiles shrink rather than the layout changing: the rows
-   already stack, so there is nothing to undo. */
+/* On a phone the whole thing stacks: a hero beside a 2x2 leaves both too
+   small to read at 390px, and two favorite columns even more so. */
 @media (max-width: 700px) {
-  .home { gap: 20px; --home-tile: clamp(84px, 26vw, 120px); }
-  .home-row.is-recent { --home-tile: clamp(104px, 32vw, 150px); }
-  .home-tiles { gap: 10px; }
-  .home-label { font-size: 17px; }
-  .home-tile .card-title { font-size: 11px; }
+  .home { gap: 22px; }
+  /* Stacked, so the desktop's fixed block height and the flex sizing that
+     hangs off it both have to be undone. */
+  .home-recent-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    gap: 14px;
+    height: auto;
+  }
+  .home-hero .card-art,
+  .home-quad-card .card-art { flex: none; }
+  .home-hero .card-art { height: auto; aspect-ratio: 16 / 10; }
+  /* One row of four under the hero rather than a 2x2 — it keeps the favorites
+     nearer the fold on a phone. */
+  .home-quad {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: auto;
+    gap: 8px;
+    height: auto;
+  }
+  .home-quad-card .card-art { height: auto; aspect-ratio: 2 / 3; }
+  .home-quad .card-sub { display: none; }
+  .home-favs { grid-template-columns: minmax(0, 1fr); }
+  .home-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 }
 
 /* ========================================================== tab bar ===

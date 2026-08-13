@@ -393,49 +393,46 @@ memory. The server now persists every key it is sent, and returns them all.
 to it**. It is deliberately not a tab — it is in neither the desktop nav nor the
 phone tab bar, because it is where you already are when you open the app.
 
-It is three rows of posters — what you were watching, your channels, then your
-films and shows — and every tile is the thing itself rather than a preview of a
-page containing it.
+On a desktop it is one large poster of the last thing watched, a 2×2 of the
+four before it alongside, and the two favorite sets side by side underneath.
 
-It used to be one large hero, a 2×2 beside it, and two boxes underneath whose
-four thumbnails opened the **favorites list**. That was five different artwork
-sizes on one page, and reaching anything you had starred took two clicks where
-the first was never the one you wanted. Now every tile is the same tile,
-pressing one opens what is on it, and the row heading carries an *All 40 ›*
-link only when the row is showing fewer than there are.
+Only two things changed from the first version of that layout, and neither is
+the shape:
 
-**The page is sized to fit the window, and that is the constraint everything
-else bends to.** One custom property, `--home-tile`, decides every tile on the
-page, and the term that usually wins its `clamp()` is the *viewport height*
-rather than the width: three rows of 2:3 posters plus their headings come to
-roughly five and a half tile-widths of height, so height is what decides how
-big a poster can be. Two things had to give for it to fit a 1280×800 laptop —
-the app shell's 80px of run-off padding, which home does not want because it is
-not meant to scroll, and a second line of title on the favourite rows, where
-the artwork is what identifies a thing anyway. Continue watching keeps two
-lines, since that is the row you are actually reading.
+**The favorites are the posters themselves.** They used to be four thumbnails
+on a box that opened the favorites *list*, so reaching anything you had starred
+took two clicks and the first was never the one you wanted. Now pressing a
+poster opens it — a channel tunes in, a film or a show opens its page, the same
+rule the grids follow. The column heading carries an *All 40 ›* link only when
+it is showing fewer than there are.
 
-The art carries its own ratio rather than a fixed height, which is what "full
-size, just smaller" means: a poster is never cropped to fit a box, the box is
-the poster's shape. **Channels are the exception** — a channel ident is wide
-and has writing on it, so those get a 16:10 plate with the logo contained
-rather than a 2:3 crop that cuts the name in half.
+**The whole page fits the window.** That is the constraint the sizes bend to.
+`.home-recent-layout` has an explicit height in `vh` rather than letting the
+hero's artwork decide, because with the favorites underneath it is the height
+that runs out first. Two other things had to give: the app shell's 80px of
+run-off padding, which home does not want because it is not meant to scroll,
+and the second line of title under a favorite, where the artwork identifies the
+thing anyway.
 
-Rows use `auto-fill`, not `auto-fit`. `auto-fit` collapses the empty tracks and
-lets five posters stretch to fill a 1440px row, which is the opposite of the
-point; `auto-fill` keeps them the size they were meant to be and leaves the
-space.
+The favorite tiles are a fixed six across rather than `auto-fill`. They sit in
+a known half of the page, and letting them wrap would put the second line below
+the fold — which is the one thing this is for.
 
-On a phone the tiles shrink and wrap rather than the layout changing — the
-rows already stack, so there is nothing to undo.
+Favorite films keep a 2:3 poster. **Channels do not**: an ident is wide and has
+writing on it, so those get a 16:10 plate with the logo contained rather than a
+2:3 crop that cuts the name in half.
+
+On a phone it all stacks — a hero beside a 2×2 leaves both unreadable at 390px,
+and two favorite columns more so — and the four under the hero become one row
+rather than a 2×2.
 
 Two things make the page worth having at all:
 
 - **It needs no library fetch.** Everything on it comes from watch history and
   favorites, both already loaded, so the badge always lands somewhere instantly
   even on a cold start where Movies would sit on a skeleton.
-- **Series collapse to one tile.** History is recorded per episode, and five
-  tiles of the same show is not a landing page.
+- **Series collapse to one card.** History is recorded per episode, and five
+  cards of the same show is not a landing page.
 
 **Continue watching plays; it does not browse.** Clicking a show here starts
 the episode that was left off. It used to open the show's page, which is the

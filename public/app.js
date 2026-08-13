@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '19.3';
+const VERSION = '19.4';
 
 const PAGE_SIZE = 60;
 
@@ -2449,10 +2449,7 @@ async function playFromHistory(row) {
 
 /** One poster on the home screen, from a history row rather than a library item. */
 function homeCard(row, className) {
-  // Live is a logo on a plate, everything else is a poster. Cropping a wide
-  // channel ident into a 2:3 tile cuts the name off it.
-  const shape = row.kind === 'live' ? 'is-logo' : 'is-poster';
-  const card = el('button', `card home-tile ${shape} ${className}`);
+  const card = el('button', `card ${className}`);
   const art = el('div', 'card-art');
 
   if (row.poster) {
@@ -2535,37 +2532,39 @@ function homeFavTile(item) {
 }
 
 /**
- * A titled row of tiles, with a way through to the full list when there are
- * more than fit on a landing page.
+ * One favorites column: a heading, a row of tiles, and a way through to the
+ * full list when there are more than fit.
+ *
+ * A column rather than a row of its own, because the two of them sit side by
+ * side — stacked, they push the page past the bottom of the screen, which is
+ * the one thing this layout is for.
  */
-function homeRow({ title, tiles, hash, total, empty, kind }) {
-  // Named rather than positional: the styling used to hang off :first-child,
-  // which is one new row away from silently applying to the wrong one.
-  const section = el('section', `home-row is-${kind}`);
+function homeFavColumn({ title, items, hash, empty, shown }) {
+  const col = el('section', 'home-fav-col');
 
   const head = el('div', 'home-row-head');
   const label = el('h2', 'home-label');
   label.textContent = title;
   head.append(label);
-  if (hash && total > tiles.length) {
+  if (items.length > shown) {
     const more = el('button', 'home-more');
-    more.textContent = `All ${total.toLocaleString()} ›`;
+    more.textContent = `All ${items.length.toLocaleString()} ›`;
     more.addEventListener('click', () => { location.hash = hash; });
     head.append(more);
   }
-  section.append(head);
+  col.append(head);
 
-  if (!tiles.length) {
+  if (!items.length) {
     const none = el('p', 'home-empty');
     none.textContent = empty;
-    section.append(none);
-    return section;
+    col.append(none);
+    return col;
   }
 
   const grid = el('div', 'home-tiles');
-  for (const tile of tiles) grid.append(tile);
-  section.append(grid);
-  return section;
+  for (const item of items.slice(0, shown)) grid.append(homeFavTile(item));
+  col.append(grid);
+  return col;
 }
 
 function renderHome() {
@@ -2598,38 +2597,49 @@ function renderHome() {
   }
 
   if (recent.length) {
-    view.append(homeRow({
-      kind: 'recent',
-      title: 'Continue watching',
-      tiles: recent.map((row) => homeCard(row, 'home-recent-tile')),
-    }));
+    const section = el('section', 'home-recent');
+    const label = el('h2', 'home-label');
+    label.textContent = 'Continue watching';
+    section.append(label);
+
+    const layout = el('div', 'home-recent-layout');
+    layout.append(homeCard(recent[0], 'home-hero'));
+
+    // The four alongside stay a 2×2 even with fewer than four to show, so the
+    // hero keeps its proportions instead of stretching to fill the row.
+    const quad = el('div', 'home-quad');
+    for (const row of recent.slice(1, 5)) quad.append(homeCard(row, 'home-quad-card'));
+    layout.append(quad);
+
+    section.append(layout);
+    view.append(section);
   }
 
   const favs = profiles.favItems();
   const channels = favs.filter((i) => i.kind === 'live');
   const titles = favs.filter((i) => i.kind !== 'live');
 
-  // Capped at a row's worth rather than everything: this is a landing page,
-  // and forty posters is the favorites list, which is one press away.
-  const SHOWN = 12;
-  if (channels.length) {
-    view.append(homeRow({
-      kind: 'favlive',
+  // Side by side, and capped at what one line of a column holds: this is a
+  // landing page, and the full list is one press away.
+  const SHOWN = 6;
+  const favRow = el('section', 'home-favs');
+  favRow.append(
+    homeFavColumn({
       title: 'Favorite channels',
-      tiles: channels.slice(0, SHOWN).map(homeFavTile),
+      items: channels,
       hash: '#/favlive',
-      total: channels.length,
-    }));
-  }
-  if (titles.length) {
-    view.append(homeRow({
-      kind: 'favvod',
+      empty: 'No favorite channels yet — tap the heart while watching one.',
+      shown: SHOWN,
+    }),
+    homeFavColumn({
       title: 'Favorite movies & shows',
-      tiles: titles.slice(0, SHOWN).map(homeFavTile),
+      items: titles,
       hash: '#/favorites',
-      total: titles.length,
-    }));
-  }
+      empty: 'No favorites yet — tap the heart while watching something.',
+      shown: SHOWN,
+    })
+  );
+  view.append(favRow);
 
   if (!recent.length && !favs.length) {
     $('#emptyState').hidden = false;
