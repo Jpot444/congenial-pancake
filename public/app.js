@@ -1623,9 +1623,15 @@ function renderLiveCategories() {
 
   // Providers ship plenty of categories with nothing in them.
   const stocked = source.categories.filter((cat) => counts.get(String(cat.id)));
-  // Pins already mean "put this first" in the sidebar; honour them here too.
+
+  // Pins lead, and in the order they were dragged into — the same sequence the
+  // sidebar shows. Taking them in the provider's order instead meant dragging a
+  // pin rearranged the list but left these tiles exactly where they were.
+  const order = profiles.pinOrder('live');
   const ordered = [
-    ...stocked.filter((cat) => profiles.isPinned('live', cat.id)),
+    ...stocked
+      .filter((cat) => profiles.isPinned('live', cat.id))
+      .sort((a, b) => order.indexOf(String(a.id)) - order.indexOf(String(b.id))),
     ...stocked.filter((cat) => !profiles.isPinned('live', cat.id)),
   ];
 
