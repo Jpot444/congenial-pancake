@@ -1609,6 +1609,16 @@ function probeOutput(session) {
     const aEnd = endOf(audio);
     const drift = vEnd !== null && aEnd !== null ? aEnd - vEnd : null;
 
+    // The rate is what makes the number mean anything. "977ms apart" reads as
+    // a one-off loss; "22ms per second" is unmistakably a rate, and a rate is
+    // a different fault with a different cause. Measured from the point the
+    // two streams started apart, so a session that opened with an offset is
+    // not charged for it twice.
+    const spanned = Number.isFinite(vEnd) && vEnd > 1 ? vEnd : null;
+    const driftRate = drift !== null && spanned !== null && Number.isFinite(sync)
+      ? (drift - sync) / spanned
+      : null;
+
     return {
       declaredTotal,
       segment: {
@@ -1619,7 +1629,7 @@ function probeOutput(session) {
         ratio: real && recent.declared ? recent.declared / real : 0,
       },
       start: { video: vStart, audio: aStart, sync, segment: head === now ? recent.name : first.name },
-      drift: { video: vEnd, audio: aEnd, gap: drift },
+      drift: { video: vEnd, audio: aEnd, gap: drift, rate: driftRate },
       video: {
         codec: video.codec_name || '',
         fps: video.avg_frame_rate || '',
@@ -1731,7 +1741,13 @@ function audioFilter(delayMs = 0, padSeconds = 0) {
   // silence — which is how the audio is made to start alongside a video that
   // began at a keyframe before the seek mark.
   const pad = Math.round(Math.max(0, Math.min(30, Number(padSeconds) || 0)) * 48000);
-  const chain = [`aresample=async=1000:first_pts=${pad ? -pad : 0}`];
+  // async=1 is a MODE, not a rate: it turns on filling and trimming — silence
+  // inserted, samples dropped — and leaves the tempo alone. Anything above 1
+  // additionally licenses stretching and squeezing by that many samples per
+  // second, and a remux must never do that. See the README.
+  const chain = [
+    `aresample=async=1:min_hard_comp=0.100:first_pts=${pad ? -pad : 0}`,
+  ];
   const ms = Math.max(-5000, Math.min(5000, Math.round(Number(delayMs) || 0)));
   if (ms > 0) chain.push(`adelay=${ms}:all=1`);
   else if (ms < 0) chain.push(`atrim=start=${(-ms / 1000).toFixed(3)}`, 'asetpts=PTS-STARTPTS');

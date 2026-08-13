@@ -982,14 +982,72 @@ and hands it to a context that starts suspended without a gesture — doing it
 eagerly would be silence rather than a delay. It also cannot be undone, so it
 is not done until someone asks for an offset.
 
-### `async=1` was doing nothing
+### `async` is a mode, not a rate — and the 1000 was wrong
 
-`aresample`'s `async` is the number of samples per second the filter may add or
-drop to pull audio back onto its own timestamps. It was set to **1** — one
-sample a second, about 0.002% — which reads like "on" and is in practice off.
-Any real drift outruns it in the first minute. It is now 1000, roughly 2%,
-which is the usual working figure: enough to correct a source whose audio and
-video disagree, not enough to be audible.
+This section previously said `async=1` meant "one sample a second, about
+0.002%, which reads like on and is in practice off", and that raising it to
+1000 armed the correction properly. **That reading was wrong**, and the
+correction it justified is what this section is now about.
+
+ffmpeg's own words:
+
+> Setting this to 1 will enable filling and trimming, larger values represent
+> the maximum amount in samples that the data may be stretched or squeezed for
+> each second.
+
+and in `swr_init`:
+
+```c
+if (s->async) {
+    if (s->min_compensation >= FLT_MAX/2) s->min_compensation = 0.001;
+    if (s->async > 1.0001) s->max_soft_compensation = s->async / (double) s->in_sample_rate;
+}
+```
+
+So `async=1` is a **mode**: it turns on hard compensation — real silence
+inserted, real samples dropped — and leaves `max_soft_compensation` at zero, so
+the soft branch never runs and the tempo is never touched. It was never "off".
+
+Anything above 1 additionally switches on **soft** compensation: stretching and
+squeezing, bounded by `async / sample_rate`. At the 1000 this was set to, and
+48kHz, that is a standing licence to alter the audio's tempo by **2.08% per
+second** — which is both audible and, over a few minutes, seconds of lip-sync.
+
+It is now `async=1:min_hard_comp=0.100`. A remux must never change tempo: if
+audio and its timestamps disagree, the honest repair is to insert silence or
+drop samples, which is a click at worst, not to run the whole track fast.
+`min_hard_comp` is the threshold between the two paths and is stated rather
+than left to its default, because that value *is* the behaviour.
+
+**What this does and does not explain.** A report came in with audio ending
+977ms short of video 44.8s into a session that started perfectly aligned — a
+drift of 2.18% per second, sitting right on the 2.08% ceiling that `async=1000`
+authorises. That is suggestive, not proof: `aresample` matches audio to the
+audio stream's *own* timestamps and knows nothing about the video, so a source
+whose audio genuinely drifts would produce the same reading with any setting.
+The change is worth making either way, and it is also a clean experiment — with
+soft compensation off, the next report separates the two. If the drift is gone
+it was the filter. If it is unchanged at 2.18%, the source drifts and
+`aresample` was faithfully reproducing it, and the fix belongs somewhere else.
+
+### Drift is not the same fault as an offset
+
+The probe reports both, and they need telling apart.
+
+An **offset** is the two streams starting at different points and staying that
+far apart — a seek landing video on a keyframe before the mark. Constant, and
+fixed by padding the head (above).
+
+**Drift** is them starting together and pulling apart. It is inaudible at the
+head and unwatchable a few minutes in, which is exactly the "worse the deeper
+you go" symptom that took several rounds to pin down.
+
+The report used to give drift as a raw gap — "977ms apart" — which is
+ambiguous: one lost second reads identically to a slow leak until it is divided
+by how long it took. It now carries the **rate**, in ms per second and as a
+percentage, measured from where the two streams started so a session that
+opened misaligned is not charged for that offset a second time. 22ms/s is
+unmistakably a rate; 977ms is not.
 
 ### Audio starts where the video starts
 

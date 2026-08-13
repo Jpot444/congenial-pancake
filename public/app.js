@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '18';
+const VERSION = '18.1';
 
 const PAGE_SIZE = 60;
 
@@ -3764,6 +3764,11 @@ const playback = {
       `  a/v drift     video ends ${Number.isFinite(p.drift?.video) ? p.drift.video.toFixed(3) : '?'}s, ` +
         `audio ends ${Number.isFinite(p.drift?.audio) ? p.drift.audio.toFixed(3) : '?'}s  → ` +
         `${Number.isFinite(p.drift?.gap) ? `${(p.drift.gap * 1000).toFixed(0)}ms apart` : 'n/a'}`,
+      // The rate, spelled out. A gap is ambiguous — one lost second looks the
+      // same as a slow leak until you divide by how long it took.
+      `  drift rate    ${Number.isFinite(p.drift?.rate)
+        ? `${(p.drift.rate * 1000).toFixed(1)}ms per second (${(p.drift.rate * 100).toFixed(2)}%)`
+        : 'n/a'}`,
       `  video         ${p.video?.codec || '?'} ${p.video?.fps || '?'}fps tb ${p.video?.timeBase || '?'}`,
       `  audio         ${p.audio?.codec || '?'} ${p.audio?.profile || 'profile?'} ` +
         `${p.audio?.sampleRate || '?'}Hz ${p.audio?.channels || '?'}ch tb ${p.audio?.timeBase || '?'}`,
@@ -3805,8 +3810,23 @@ const playback = {
     const sync = p && !p.error ? p.start?.sync : null;
     if (Number.isFinite(sync) && Math.abs(sync) > 0.12) {
       return `Audio and video start ${Math.abs(sync * 1000).toFixed(0)}ms apart — the audio ` +
-        `begins ${sync > 0 ? 'after' : 'before'} the picture, which is heard as lip-sync drift.`;
+        `begins ${sync > 0 ? 'after' : 'before'} the picture. A fixed offset, the same at the ` +
+        'end as at the start, as opposed to drift that grows as it plays.';
     }
+    // Drift, as opposed to a fixed offset. The two start together and pull
+    // apart, so it is inaudible at the head and unwatchable a few minutes in —
+    // which is exactly the "worse the deeper you go" symptom. 5ms per second
+    // is a second of lip-sync every three minutes.
+    const driftRate = p && !p.error ? p.drift?.rate : null;
+    if (Number.isFinite(driftRate) && Math.abs(driftRate) > 0.005) {
+      const ms = Math.abs(driftRate * 1000);
+      return `Audio is DRIFTING, not merely offset: ${ms.toFixed(0)}ms per second ` +
+        `(${Math.abs(driftRate * 100).toFixed(1)}%), the audio falling ` +
+        `${driftRate < 0 ? 'behind' : 'ahead of'} the picture as it goes. ` +
+        `That is a full second of lip-sync every ${(1000 / ms).toFixed(0)}s of playback, ` +
+        'so it is fine at the start and wrong later.';
+    }
+
     const ratio = p && !p.error ? p.segment?.ratio : 0;
     if (ratio && (ratio > 1.2 || ratio < 0.85)) {
       return `The CONVERSION is out of step: a segment claims ${p.segment.declared.toFixed(2)}s ` +
