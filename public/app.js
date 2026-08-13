@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '18.1';
+const VERSION = '18.2';
 
 const PAGE_SIZE = 60;
 
@@ -60,6 +60,9 @@ const state = {
   filtered: [],
   downloads: { items: [], active: null, queued: 0 },
   recentlyWatched: [],
+  /** An episode Continue watching asked for, waiting on the list that can
+      turn its number into an index. `{ seriesId, season, episode }`. */
+  resumeEpisode: null,
 };
 
 /* ------------------------------------------------------- prefs (server) */
@@ -1848,8 +1851,27 @@ async function playFromHistory(row) {
   const wantId = String(row.kind === 'series' ? row.seriesId ?? row.id : row.id);
   const item = (state.library[tab]?.items || []).find((i) => String(i.id) === wantId);
   if (!item) return toast('That title is no longer in the library.');
-  if (item.kind === 'series') return openSeries(item);
-  openPlayer(item);
+  if (item.kind !== 'series') return openPlayer(item);
+
+  // A show resumes into the episode itself. Landing on the show's page and
+  // making someone find their place again is the exact work Continue watching
+  // exists to skip.
+  //
+  // It still goes through the show's page to get there, for two reasons: the
+  // episode list is the only thing that can turn a history row's episode
+  // NUMBER into the index everything downstream wants, and it leaves the page
+  // genuinely rendered underneath, so the player's Series button lands on it
+  // with nothing further to load. The player is raised first so the page does
+  // not flash past behind it while the episodes are fetched.
+  const season = String(row.season || '');
+  const episode = Number(row.episode) || 0;
+  if (season && episode) {
+    state.resumeEpisode = { seriesId: String(item.id), season, episode };
+    preparePlayer(item);
+    $('#cinemaSub').textContent = `S${season}E${episode}`;
+    status('Finding the episode…');
+  }
+  openSeries(item);
 }
 
 /** One poster on the home screen, from a history row rather than a library item. */
@@ -5308,6 +5330,20 @@ async function renderSeries(item, mount, onInfo) {
   loading.textContent = 'Loading episodes…';
   mount.append(loading);
 
+  // Claimed up front and cleared immediately: a request that cannot be met
+  // must not sit in the state waiting to fire at the next show someone opens.
+  const resume = state.resumeEpisode
+    && String(state.resumeEpisode.seriesId) === String(item.id)
+    ? state.resumeEpisode
+    : null;
+  if (resume) state.resumeEpisode = null;
+  /** Nothing to resume into — take the empty player back off the page. */
+  const giveUp = (why) => {
+    if (!resume) return;
+    closePlayer();
+    toast(why);
+  };
+
   let data = state.seriesCache[item.id];
   if (!data) {
     try {
@@ -5318,7 +5354,7 @@ async function renderSeries(item, mount, onInfo) {
       const note = el('p', 'show-note');
       note.textContent = `Couldn't load episodes: ${err.message}`;
       mount.append(note);
-      return;
+      return giveUp(`Couldn't load episodes: ${err.message}`);
     }
   }
 
@@ -5329,7 +5365,7 @@ async function renderSeries(item, mount, onInfo) {
     const note = el('p', 'show-note');
     note.textContent = 'No episodes listed for this series.';
     mount.append(note);
-    return;
+    return giveUp('No episodes listed for this series.');
   }
 
   onInfo?.(data.info || {});
@@ -5456,6 +5492,19 @@ async function renderSeries(item, mount, onInfo) {
   });
 
   showSeason(seasons[0]);
+
+  // The Continue watching hand-off. It has to be here, at the bottom of the
+  // one function that has both the episode list and the machinery to play
+  // from it — resume prompt, next-episode arming, the playing row — none of
+  // which is worth duplicating for one entry point.
+  if (resume) {
+    const list = episodes[resume.season] || [];
+    const index = list.findIndex((ep) => Number(ep.episode_num) === Number(resume.episode));
+    if (index >= 0) return startEpisode(resume.season, index);
+    // The provider has stopped listing it. The show's page is right here and
+    // already drawn, so drop onto that rather than an error.
+    giveUp(`S${resume.season}E${resume.episode} is no longer listed — here is the show.`);
+  }
 }
 
 function closePlayer() {

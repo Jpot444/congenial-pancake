@@ -414,6 +414,30 @@ Two things make it worth having:
 - **Series collapse to one card.** History is recorded per episode, and five
   cards of the same show is not a landing page.
 
+**Continue watching plays; it does not browse.** Clicking a show here starts
+the episode that was left off. It used to open the show's page, which is the
+exact work the row exists to skip.
+
+It still routes *through* the show's page to get there, and that is the
+interesting part. A history row knows the episode **number**; everything
+downstream wants its **index** in the season, and the episode list is the only
+thing that can turn one into the other. So the click records what it wants in
+`state.resumeEpisode`, navigates to the show, and the render picks the request
+up once the list exists — reusing the resume prompt, the next-episode arming
+and the playing-row marker rather than duplicating them for one entry point.
+
+Two consequences worth stating. The player is raised **before** the navigation,
+so the show's page does not flash past behind it while the episodes are
+fetched. And because the page is genuinely built underneath, the player's
+**Series** button lands on it with nothing left to load — which is the other
+half of what this is for.
+
+The request is claimed and cleared the moment a render sees it, so a request
+that cannot be met — the provider dropped that episode — does not sit in the
+state waiting to fire at the next show someone opens. When it cannot be met the
+empty player is taken back off the screen and the show's page, already drawn,
+is what is left.
+
 The grid tracks are all `minmax(0, 1fr)` rather than `1fr`. A plain `fr` track
 will not shrink below its content's min-content width, and one long film title
 was enough to push the page 146px wider than the phone.
