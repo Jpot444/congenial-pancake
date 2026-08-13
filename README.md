@@ -605,6 +605,31 @@ reset with the session would be wiped by the very act of reacting to the
 problem and the report would describe the recovery every time. Only opening a
 different title clears it.
 
+#### A row a second, because averages hide things
+
+The figures above are averages over ten seconds, and an average is exactly the
+wrong instrument for a fault that lasts four. Worse, a worst-case reading is
+only recorded once six seconds of window have built up behind it — and seeking
+clears that window. Someone whose playback has gone wrong seeks again to shake
+it off, and again, which keeps resetting the very measurement meant to catch
+it. Both of the first two real reports came back reading a flat 1.000×.
+
+So the watchdog also keeps a plain log: one row per second for the last two
+minutes, held across reloads and seeks, with every relevant player event
+written onto the row it happened in.
+
+    timeline  (film position, rate, readyState/networkState, buffered to)
+      +  3s      5.3   0.10x  rs4/1 buf 120
+      +  4s     20.0       -  rs4/1 buf 120  seeking waiting seeked canplay
+      +  5s     20.1   0.09x  rs4/1 buf 120
+
+A seek shows as `-` rather than a rate collapse, since the media clock jumps
+there for an honest reason. Stretches where the clock fell behind for two
+seconds or more are pulled out as **slow spells** and summarised above the log,
+and the verdict reports them even when every average has gone back to saying
+everything is fine — which is the state things are usually in by the time
+anyone can open the panel.
+
 #### The half the browser cannot see
 
 Every number above describes the timeline the player was handed. If the

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '12';
+const VERSION = '12.1';
 
 const PAGE_SIZE = 60;
 
@@ -2822,9 +2822,15 @@ const playback = {
   // player: hit the bug, close the player, open the panel, and the numbers
   // from a second ago are still there.
   last: null,
-  // What the server says about the conversion feeding this playback, fetched
-  // once per session — see the note above.
+  // A row a second for the last two minutes — see record().
+  history: [],
+  pendingNotes: [],
+  // What the server says about the conversion feeding this playback — see the
+  // note above. Timestamped, because it describes the moment it was taken and
+  // an hour-old reading of how much had been written reads as alarming next to
+  // a current one.
   probe: null,
+  probedAt: 0,
   probedSession: '',
 
   /** New title: throw away the previous one's evidence, worst moment included. */
@@ -2834,7 +2840,10 @@ const playback = {
     this.worstAt = 0;
     this.worstReport = '';
     this.last = null;
+    this.history = [];
+    this.pendingNotes = [];
     this.probe = null;
+    this.probedAt = 0;
     this.probedSession = '';
   },
 
@@ -2846,10 +2855,95 @@ const playback = {
 
   /** One second of the watchdog: measure, then bank a readable snapshot. */
   tick() {
+    this.record();
     this.sample();
     this.askServer();
     if ($('#video').paused || !$('#video').currentSrc) return;
     this.last = { at: Date.now(), verdict: this.verdict(), report: this.reportWithWorst() };
+  },
+
+  /**
+   * One row per second of wall clock, kept for two minutes.
+   *
+   * Averages hide short faults. A ten-second window that includes four bad
+   * seconds and six good ones reads as mildly slow, and `worst measured` will
+   * not record it at all until the window has six seconds of history behind
+   * it — which is precisely the moment after a seek, where the fault being
+   * chased is reported to start. A row a second hides nothing: whatever
+   * happened is in here with its shape and its position intact.
+   *
+   * Kept across reset() for the same reason the worst moment is: seeking and
+   * reloading are what we most need to see either side of.
+   */
+  record() {
+    const video = $('#video');
+    const now = performance.now();
+    const prev = this.history[this.history.length - 1];
+    const q = this.quality();
+    const notes = this.pendingNotes.join(' ');
+    this.pendingNotes = [];
+
+    // Media seconds per wall second since the row before. Skipped across a
+    // pause, a seek or a gap, where the media clock jumps for honest reasons
+    // and the difference would be meaningless.
+    let step = null;
+    const continuous = prev && !prev.paused && !prev.seeking && !video.paused && !video.seeking
+      && !/seek|loadstart/.test(notes);
+    if (continuous) {
+      const wall = (now - prev.at) / 1000;
+      if (wall > 0.2 && wall < 4) step = (video.currentTime - prev.t) / wall;
+    }
+
+    this.history.push({
+      at: now,
+      t: video.currentTime,
+      pos: filmPosition(),
+      step,
+      paused: video.paused,
+      seeking: video.seeking,
+      rs: video.readyState,
+      nw: video.networkState,
+      buf: video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0,
+      f: q ? q.total : 0,
+      notes,
+    });
+    if (this.history.length > 120) this.history.shift();
+  },
+
+  /**
+   * Stretches in the timeline where the media clock fell behind for at least
+   * two seconds running. This is what catches a fault too short for the
+   * ten-second average to admit to.
+   */
+  slowSpells() {
+    const spells = [];
+    let run = null;
+    for (const row of this.history) {
+      if (row.step !== null && row.step < 0.6) {
+        if (!run) run = { start: row, end: row, worst: row.step };
+        else { run.end = row; run.worst = Math.min(run.worst, row.step); }
+      } else if (run) {
+        if (run.end.at - run.start.at >= 1500) spells.push(run);
+        run = null;
+      }
+    }
+    if (run && run.end.at - run.start.at >= 1500) spells.push(run);
+    return spells;
+  },
+
+  /** The rolling log itself, laid out to be read down a column. */
+  timelineLines() {
+    if (this.history.length < 2) return [];
+    const base = this.history[0].at;
+    const rows = this.history.slice(-90).map((r) => {
+      const secs = Math.round((r.at - base) / 1000);
+      const rate = r.step !== null ? `${r.step.toFixed(2)}x`
+        : r.paused ? 'paused' : r.seeking ? 'seeking' : '-';
+      return `  +${String(secs).padStart(3)}s ${r.pos.toFixed(1).padStart(8)} ` +
+        `${rate.padStart(7)}  rs${r.rs}/${r.nw} buf${String(Math.round(r.buf)).padStart(4)}` +
+        (r.notes ? `  ${r.notes}` : '');
+    });
+    return ['', 'timeline  (film position, rate, readyState/networkState, buffered to)', ...rows];
   },
 
   sample() {
@@ -2882,11 +2976,16 @@ const playback = {
    */
   askServer() {
     const session = lastRemux.session;
-    if (!session || session === this.probedSession) return;
-    if (Date.now() - this.startedAt < 12_000) return;
+    if (!session) return;
+    // Re-asked as the session grows. The first answer is taken twelve seconds
+    // in, when only a few segments exist, and how much had been written by
+    // then reads as alarmingly little beside a figure from a minute later.
+    const fresh = session === this.probedSession && Date.now() - this.probedAt < 60_000;
+    if (fresh || Date.now() - this.startedAt < 12_000) return;
     this.probedSession = session;
+    this.probedAt = Date.now();
     api('/api/remux/probe', { id: session })
-      .then((data) => { this.probe = data; })
+      .then((data) => { this.probe = data; this.probedAt = Date.now(); })
       .catch((err) => { this.probe = { error: err.message }; });
   },
 
@@ -2946,6 +3045,7 @@ const playback = {
     const rate = this.measuredRate();
     const q = this.quality();
     const fps = this.frameRate();
+    const spells = this.slowSpells();
     const buffered = [];
     for (let i = 0; i < video.buffered.length; i += 1) {
       buffered.push(`${video.buffered.start(i).toFixed(1)}-${video.buffered.end(i).toFixed(1)}`);
@@ -2972,7 +3072,12 @@ const playback = {
         `ready ${Math.round(film.ready)}, duration ${film.duration}`,
       `remux session   ${lastRemux.session || 'none (playing directly)'}`,
       `watching since  ${Math.round((Date.now() - this.startedAt) / 1000)}s ago`,
+      `slow spells     ${spells.length
+        ? spells.map((sp) => `${Math.round((sp.end.at - sp.start.at) / 1000) + 1}s from ` +
+            `${sp.start.pos.toFixed(0)}, down to ${sp.worst.toFixed(2)}x`).join('; ')
+        : `none in the last ${this.history.length}s`}`,
       ...this.serverLines(),
+      ...this.timelineLines(),
     ];
     return lines.join('\n');
   },
@@ -2987,8 +3092,10 @@ const playback = {
     if (!p) return ['conversion      not asked yet'];
     if (p.error) return [`conversion      couldn't check — ${p.error}`];
     const seg = p.segment || {};
+    const age = Math.round((Date.now() - this.probedAt) / 1000);
     return [
-      `conversion      wrote ${Number(p.declaredTotal || 0).toFixed(1)}s across the playlist`,
+      `conversion      wrote ${Number(p.declaredTotal || 0).toFixed(1)}s across the playlist ` +
+        `(measured ${age}s ago)`,
       `  a segment     claims ${Number(seg.declared || 0).toFixed(3)}s, holds ` +
         `${Number(seg.real || 0).toFixed(3)}s  → timeline ${seg.ratio ? seg.ratio.toFixed(3) : 'n/a'}`,
       `  video         ${p.video?.codec || '?'} ${p.video?.fps || '?'}fps tb ${p.video?.timeBase || '?'}`,
@@ -3031,27 +3138,54 @@ const playback = {
         `but holds ${p.segment.real.toFixed(2)}s of content (${ratio.toFixed(2)}×). ` +
         'That plays at the wrong speed however healthy the player looks.';
     }
+
     const rate = this.worstRate ?? this.measuredRate();
+    if (rate !== null && rate <= 0.9) {
+      if (Math.abs(video.playbackRate - rate) < 0.15 && video.playbackRate < 0.9) {
+        return `Playback RATE is ${video.playbackRate}× — something set it, this is not the stream.`;
+      }
+      if (this.events.waiting > 3) {
+        return `Running at ${rate.toFixed(2)}× with ${this.events.waiting} stalls — the stream is not arriving fast enough.`;
+      }
+      return `Running at ${rate.toFixed(2)}× with the rate at ${video.playbackRate} and few stalls — ` +
+        'the media itself is decoding slowly, which points at the conversion rather than the network.';
+    }
+
+    // Before the all-clear, and before giving up for want of a window.
+    //
+    // Seeking clears the sample window, and a worst reading is only recorded
+    // once six seconds have rebuilt behind it — so someone seeking repeatedly
+    // to shake off bad playback keeps resetting the very measurement meant to
+    // catch it, and the averages above have nothing to say. The timeline is
+    // recorded a row a second regardless, so it still does.
+    const spells = this.slowSpells();
+    if (spells.length) {
+      const worst = spells.reduce((a, b) => (a.worst < b.worst ? a : b));
+      return `The averages ${rate === null ? 'have no window to work with' : 'look fine'}, but ` +
+        `the clock fell behind ${spells.length} time${spells.length === 1 ? '' : 's'} — worst ` +
+        `${worst.worst.toFixed(2)}× for about ${Math.round((worst.end.at - worst.start.at) / 1000) + 1}s ` +
+        `at ${worst.start.pos.toFixed(0)}s into the film. See the timeline below.`;
+    }
+
     if (rate === null) return 'Not enough playback yet to judge.';
-    if (rate > 0.9) {
-      return 'Normal from the player\'s side — the media clock keeps up, nothing stalls, ' +
-        'no frames dropped. If it still looked or sounded wrong, the fault is in what the ' +
-        'conversion produced rather than in how it is being played.';
-    }
-    if (Math.abs(video.playbackRate - rate) < 0.15 && video.playbackRate < 0.9) {
-      return `Playback RATE is ${video.playbackRate}× — something set it, this is not the stream.`;
-    }
-    if (this.events.waiting > 3) {
-      return `Running at ${rate.toFixed(2)}× with ${this.events.waiting} stalls — the stream is not arriving fast enough.`;
-    }
-    return `Running at ${rate.toFixed(2)}× with the rate at ${video.playbackRate} and few stalls — ` +
-      'the media itself is decoding slowly, which points at the conversion rather than the network.';
+    return 'Normal from the player\'s side — the media clock keeps up, nothing stalls, ' +
+      'no frames dropped. If it still looked or sounded wrong, the fault is in what the ' +
+      'conversion produced rather than in how it is being played.';
   },
 };
 
 for (const name of ['waiting', 'stalled', 'error', 'ratechange', 'seeked']) {
   $('#video').addEventListener(name, () => {
     playback.events[name] += 1;
+  });
+}
+// Everything that could explain a kink in the timeline gets written onto the
+// row it happened in, so the log reads as a story rather than a column of
+// numbers with no cause attached.
+for (const name of ['waiting', 'stalled', 'error', 'seeking', 'seeked', 'loadstart',
+  'ratechange', 'play', 'pause', 'canplay']) {
+  $('#video').addEventListener(name, () => {
+    if (playback.pendingNotes.length < 6) playback.pendingNotes.push(name);
   });
 }
 $('#video').addEventListener('loadstart', () => playback.reset());
