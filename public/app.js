@@ -398,7 +398,7 @@ const health = {
       ? 'Live — updating every second.'
       : `From the last thing that played, ${age < 60 ? `${age}s` : `${Math.round(age / 60)}m`} ago.`;
     $('#playbackVerdict').textContent = live ? playback.verdict() : snap.verdict;
-    $('#playbackReport').textContent = live ? playback.report() : snap.report;
+    $('#playbackReport').textContent = live ? playback.reportWithWorst() : snap.report;
   },
 
   close() {
@@ -655,7 +655,9 @@ $('#speedTest').addEventListener('click', async () => {
 });
 
 $('#copyPlayback').addEventListener('click', async () => {
-  const text = `${playback.verdict()}\n\n${playback.report()}`;
+  // Whatever is on screen, which may be a snapshot from a session that has
+  // already ended — regenerating it here would copy the empty state instead.
+  const text = `${$('#playbackVerdict').textContent}\n\n${$('#playbackReport').textContent}`;
   try {
     await navigator.clipboard.writeText(text);
     toast('Report copied — paste it into the chat.');
@@ -2769,38 +2771,68 @@ function stopLiveTracking() {
  * Sampling runs whenever something is playing, so the report covers the minute
  * before the problem was noticed rather than starting when someone thinks to
  * look.
+ *
+ * There is a half of this it cannot reach. Every number below describes the
+ * timeline the player was handed. If the conversion wrote a timeline that does
+ * not match its own contents, all of them read as perfectly healthy while what
+ * you watch is wrong — so the server is asked to inspect its own output too,
+ * and the answer is folded into the report.
  */
 const playback = {
   samples: [],
   events: { waiting: 0, stalled: 0, error: 0, ratechange: 0, seeked: 0 },
-  worstRate: null,
   startedAt: 0,
+  // The low point of this viewing, kept with the full report from that moment.
+  //
+  // Held across reset(), unlike everything above it. Reloading the stream or
+  // seeking starts a fresh session, and the first thing anyone does about bad
+  // playback is reload — so a record that reset with the session would be
+  // wiped by the very act of reacting to the problem, and the report would
+  // describe the recovery every time.
+  worstRate: null,
+  worstAt: 0,
+  worstReport: '',
   // The last report rendered while something was actually playing. The health
   // panel sits behind the player overlay, so the report has to outlive the
   // player: hit the bug, close the player, open the panel, and the numbers
-  // from a second ago are still there. Deliberately kept across reset() — a
-  // new video overwrites it within a second anyway.
+  // from a second ago are still there.
   last: null,
+  // What the server says about the conversion feeding this playback, fetched
+  // once per session — see the note above.
+  probe: null,
+  probedSession: '',
+
+  /** New title: throw away the previous one's evidence, worst moment included. */
+  resetViewing() {
+    this.reset();
+    this.worstRate = null;
+    this.worstAt = 0;
+    this.worstReport = '';
+    this.last = null;
+    this.probe = null;
+    this.probedSession = '';
+  },
 
   reset() {
     this.samples = [];
     this.events = { waiting: 0, stalled: 0, error: 0, ratechange: 0, seeked: 0 };
-    this.worstRate = null;
     this.startedAt = Date.now();
   },
 
   /** One second of the watchdog: measure, then bank a readable snapshot. */
   tick() {
     this.sample();
+    this.askServer();
     if ($('#video').paused || !$('#video').currentSrc) return;
-    this.last = { at: Date.now(), verdict: this.verdict(), report: this.report() };
+    this.last = { at: Date.now(), verdict: this.verdict(), report: this.reportWithWorst() };
   },
 
   sample() {
     const video = $('#video');
     if (video.paused || video.seeking) return;
+    const q = this.quality();
     // performance.now() rather than Date.now(): immune to the clock being set.
-    this.samples.push({ at: performance.now(), t: video.currentTime });
+    this.samples.push({ at: performance.now(), t: video.currentTime, f: q ? q.total : 0 });
     if (this.samples.length > 20) this.samples.shift();
 
     const rate = this.measuredRate();
@@ -2808,7 +2840,42 @@ const playback = {
     // of start-up reads as a stall.
     if (rate !== null && this.span() > 6 && (this.worstRate === null || rate < this.worstRate)) {
       this.worstRate = rate;
+      this.worstAt = Date.now();
+      // Captured now, in full. By the time anyone reads it the session that
+      // produced it may be long gone.
+      this.worstReport = this.report();
     }
+  },
+
+  /**
+   * Ask the server what its conversion actually wrote, once per session.
+   *
+   * Done unprompted rather than when the panel is opened, because the panel
+   * cannot be reached from inside the player — by the time anyone looks, the
+   * session in question has usually been closed or replaced. Held back for a
+   * few seconds so there is enough written to be worth measuring.
+   */
+  askServer() {
+    const session = lastRemux.session;
+    if (!session || session === this.probedSession) return;
+    if (Date.now() - this.startedAt < 12_000) return;
+    this.probedSession = session;
+    api('/api/remux/probe', { id: session })
+      .then((data) => { this.probe = data; })
+      .catch((err) => { this.probe = { error: err.message }; });
+  },
+
+  /** Frames actually put on screen, per wall second and per media second. */
+  frameRate() {
+    const w = this.window();
+    if (w.length < 2) return null;
+    const first = w[0];
+    const last = w[w.length - 1];
+    const wall = (last.at - first.at) / 1000;
+    const media = last.t - first.t;
+    const frames = last.f - first.f;
+    if (wall < 1 || frames <= 0) return null;
+    return { perWall: frames / wall, perMedia: media > 0.5 ? frames / media : null };
   },
 
   /**
@@ -2853,6 +2920,7 @@ const playback = {
     const video = $('#video');
     const rate = this.measuredRate();
     const q = this.quality();
+    const fps = this.frameRate();
     const buffered = [];
     for (let i = 0; i < video.buffered.length; i += 1) {
       buffered.push(`${video.buffered.start(i).toFixed(1)}-${video.buffered.end(i).toFixed(1)}`);
@@ -2867,6 +2935,10 @@ const playback = {
       `currentTime     ${video.currentTime.toFixed(2)} of ${Number.isFinite(video.duration) ? video.duration.toFixed(2) : 'unknown'}`,
       `buffered        ${buffered.join(', ') || 'none'}`,
       `frames          ${q ? `${q.dropped} dropped of ${q.total}` : 'n/a'}`,
+      `frame rate      ${fps
+        ? `${fps.perWall.toFixed(1)}/s on screen` +
+          (fps.perMedia ? `, ${fps.perMedia.toFixed(1)} per media second` : '')
+        : 'n/a'}`,
       `events          waiting ${this.events.waiting}, stalled ${this.events.stalled}, ` +
         `error ${this.events.error}, ratechange ${this.events.ratechange}, seeked ${this.events.seeked}`,
       `engine          ${engineKind || 'none'}`,
@@ -2875,16 +2947,72 @@ const playback = {
         `ready ${Math.round(film.ready)}, duration ${film.duration}`,
       `remux session   ${lastRemux.session || 'none (playing directly)'}`,
       `watching since  ${Math.round((Date.now() - this.startedAt) / 1000)}s ago`,
+      ...this.serverLines(),
     ];
     return lines.join('\n');
+  },
+
+  /**
+   * What the conversion actually wrote, as opposed to what it told the player.
+   * `timeline` is the one that matters: the playlist's claimed running time
+   * divided by the running time the segments really hold. 1.00 is honest.
+   */
+  serverLines() {
+    const p = this.probe;
+    if (!p) return ['conversion      not asked yet'];
+    if (p.error) return [`conversion      couldn't check — ${p.error}`];
+    const seg = p.segment || {};
+    return [
+      `conversion      wrote ${Number(p.declaredTotal || 0).toFixed(1)}s across the playlist`,
+      `  a segment     claims ${Number(seg.declared || 0).toFixed(3)}s, holds ` +
+        `${Number(seg.real || 0).toFixed(3)}s  → timeline ${seg.ratio ? seg.ratio.toFixed(3) : 'n/a'}`,
+      `  video         ${p.video?.codec || '?'} ${p.video?.fps || '?'}fps tb ${p.video?.timeBase || '?'}`,
+      `  audio         ${p.audio?.codec || '?'} ${p.audio?.sampleRate || '?'}Hz ` +
+        `${p.audio?.channels || '?'}ch tb ${p.audio?.timeBase || '?'}`,
+      `  ffmpeg        exited ${p.exited} code ${p.exitCode}${p.lastError ? ` — ${p.lastError}` : ''}`,
+    ];
+  },
+
+  /**
+   * The current report, followed by the worst moment of this viewing when that
+   * was worse than now — which is the usual case by the time anyone looks,
+   * since the reflex on bad playback is to reload it away.
+   */
+  reportWithWorst() {
+    const now = this.report();
+    const worthKeeping = this.worstRate !== null && this.worstRate < 0.9
+      && this.worstReport && this.worstReport !== now;
+    if (!worthKeeping) return now;
+    const ago = Math.round((Date.now() - this.worstAt) / 1000);
+    return `${now}\n\n--- worst moment of this viewing, ${ago}s ago ---\n${this.worstReport}`;
+  },
+
+  /** Verdict and report as one block, for the clipboard. */
+  fullText() {
+    return `${this.verdict()}\n\n${this.reportWithWorst()}`;
   },
 
   /** The one-line read on what the numbers mean, so the report needs no expert. */
   verdict() {
     const video = $('#video');
+    const p = this.probe;
+    // Checked before anything else. A conversion that wrote a timeline out of
+    // step with its own contents looks flawless from in here — 1x, no stalls,
+    // nothing dropped — and wrong on the screen, so every measurement below
+    // would agree that all is well.
+    const ratio = p && !p.error ? p.segment?.ratio : 0;
+    if (ratio && (ratio > 1.2 || ratio < 0.85)) {
+      return `The CONVERSION is out of step: a segment claims ${p.segment.declared.toFixed(2)}s ` +
+        `but holds ${p.segment.real.toFixed(2)}s of content (${ratio.toFixed(2)}×). ` +
+        'That plays at the wrong speed however healthy the player looks.';
+    }
     const rate = this.worstRate ?? this.measuredRate();
     if (rate === null) return 'Not enough playback yet to judge.';
-    if (rate > 0.9) return 'Normal — the media clock is keeping up with the wall clock.';
+    if (rate > 0.9) {
+      return 'Normal from the player\'s side — the media clock keeps up, nothing stalls, ' +
+        'no frames dropped. If it still looked or sounded wrong, the fault is in what the ' +
+        'conversion produced rather than in how it is being played.';
+    }
     if (Math.abs(video.playbackRate - rate) < 0.15 && video.playbackRate < 0.9) {
       return `Playback RATE is ${video.playbackRate}× — something set it, this is not the stream.`;
     }
@@ -4008,8 +4136,10 @@ async function openPlayer(item) {
   const myToken = ++playToken;
   const overlay = $('#playerOverlay');
   overlay.hidden = false;
-  // Whatever was queued up behind the last title is not what follows this one.
+  // Whatever was queued up behind the last title is not what follows this one,
+  // and the previous title's playback evidence is not about this one either.
   upNext.clear();
+  playback.resetViewing();
   document.body.style.overflow = 'hidden';
 
   // Full screen from the first frame — the windowed shell used to flash up
@@ -4278,6 +4408,7 @@ async function renderSeries(item) {
     // Drop the previous episode's offer now rather than when the new one is
     // playing, or it hangs on screen through the whole conversion wait.
     upNext.clear();
+    playback.resetViewing();
 
     const override = {
       kind: 'series',

@@ -1357,6 +1357,144 @@ function remuxReadySeconds(session) {
   }
 }
 
+/**
+ * Inspect what a remux session has actually written.
+ *
+ * The browser can only report on the timeline it was handed. If the conversion
+ * itself produced a stream whose timestamps disagree with its contents, every
+ * client-side number reads as perfectly healthy — the media clock advances at
+ * 1x, no frames drop, nothing stalls — while what you watch and hear is wrong.
+ * Nothing in a browser can see past that, so the check has to happen here.
+ *
+ * The decisive comparison is the playlist's declared running time against the
+ * running time the segments really contain. They should agree. A large ratio
+ * between them is a conversion writing a timeline it cannot honour.
+ *
+ * Reads only files already on disk, so it costs no provider connection and is
+ * safe to run while a film is playing.
+ */
+function probeOutput(session) {
+  // Probed per segment, deliberately, rather than by handing ffprobe the
+  // playlist. Asked about an HLS playlist ffprobe reports the duration the
+  // playlist *claims* — it adds up the EXTINF lines — so the two sides of the
+  // comparison would come from the same source and the check could never fail.
+  // A segment file is the content itself, timestamps and all.
+  let target;
+  let declared = 0;
+  let total = 0;
+  try {
+    const text = fs.readFileSync(path.join(session.dir, 'index.m3u8'), 'utf8');
+    const segments = [];
+    let pending = 0;
+    for (const line of text.split('\n')) {
+      const inf = /^#EXTINF:([\d.]+)/.exec(line.trim());
+      if (inf) {
+        pending = Number(inf[1]) || 0;
+        total += pending;
+        continue;
+      }
+      const name = line.trim();
+      if (name && !name.startsWith('#')) segments.push({ name, declared: pending });
+    }
+    // The newest is very likely still being written, so take the one behind it.
+    const pick = segments[segments.length - (segments.length > 1 ? 2 : 1)];
+    if (!pick) return Promise.resolve({ error: 'nothing written yet' });
+    declared = pick.declared;
+    target = path.join(session.dir, pick.name);
+  } catch (err) {
+    return Promise.resolve({ error: `couldn't read the playlist — ${err.message}` });
+  }
+
+  // A fragmented-MP4 segment carries no headers of its own, so on its own it is
+  // unreadable. Stitching the init segment in front of it makes a valid file.
+  let temp = '';
+  const init = path.join(session.dir, 'init.mp4');
+  if (target.endsWith('.m4s') && fs.existsSync(init)) {
+    try {
+      temp = path.join(session.dir, 'probe-tmp.mp4');
+      fs.writeFileSync(temp, Buffer.concat([fs.readFileSync(init), fs.readFileSync(target)]));
+      target = temp;
+    } catch {
+      temp = '';   // fall through and probe the bare segment; it may still parse
+    }
+  }
+
+  const declaredTotal = total;
+  return new Promise((resolve) => {
+    const proc = spawn(
+      'ffprobe',
+      [
+        '-v', 'error',
+        '-show_entries',
+        'stream=codec_type,codec_name,avg_frame_rate,r_frame_rate,time_base,sample_rate,channels',
+        '-show_entries', 'format=duration',
+        '-of', 'json',
+        target,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+
+    let out = '';
+    const timer = setTimeout(() => proc.kill('SIGKILL'), 25000);
+    timer.unref?.();
+    proc.stdout.on('data', (d) => (out += d));
+
+    const dropTemp = () => {
+      // Synchronous on purpose: this file sits in the directory the segments
+      // are served from, and an asynchronous unlink leaves it there for an
+      // unbounded window after the probe has already reported.
+      if (!temp) return;
+      try {
+        fs.rmSync(temp, { force: true });
+      } catch {
+        /* best effort */
+      }
+    };
+
+    const finish = () => {
+      clearTimeout(timer);
+      dropTemp();
+      let parsed = {};
+      try {
+        parsed = JSON.parse(out);
+      } catch {
+        return resolve({ error: 'ffprobe returned nothing readable' });
+      }
+      const streams = parsed.streams || [];
+      const video = streams.find((s) => s.codec_type === 'video') || {};
+      const audio = streams.find((s) => s.codec_type === 'audio') || {};
+      const real = Number(parsed.format?.duration) || 0;
+      resolve({
+        declaredTotal,
+        segment: {
+          declared,
+          real,
+          // 1.0 is honest. Far from it is a conversion writing a timeline that
+          // does not match the content it put in the segment.
+          ratio: real && declared ? declared / real : 0,
+        },
+        video: {
+          codec: video.codec_name || '',
+          fps: video.avg_frame_rate || '',
+          rawFps: video.r_frame_rate || '',
+          timeBase: video.time_base || '',
+        },
+        audio: {
+          codec: audio.codec_name || '',
+          sampleRate: Number(audio.sample_rate) || 0,
+          channels: Number(audio.channels) || 0,
+          timeBase: audio.time_base || '',
+        },
+      });
+    };
+    proc.on('close', finish);
+    proc.on('error', () => {
+      dropTemp();
+      resolve({ error: 'ffprobe is not available' });
+    });
+  });
+}
+
 function killSession(id) {
   const session = remuxSessions.get(id);
   if (!session) return;
@@ -2821,6 +2959,24 @@ async function handleApi(req, res, pathname, query) {
       target: session.prebuffer,
       failed: Boolean(session.exited && session.exitCode !== 0 && !complete),
       error: session.exited && session.exitCode !== 0 ? session.stderr().split('\n').pop() : '',
+    });
+  }
+
+  if (pathname === '/api/remux/probe') {
+    const session = remuxSessions.get(query.get('id'));
+    if (!session) return json(res, 404, { error: 'Session expired' });
+    if (!hasFfmpeg()) return json(res, 501, { error: 'ffprobe is not installed' });
+    const { seconds, complete } = remuxReadySeconds(session);
+    const probe = await probeOutput(session);
+    return json(res, 200, {
+      session: session.id,
+      offset: session.offset,
+      exited: Boolean(session.exited),
+      exitCode: session.exitCode ?? null,
+      lastError: session.exited && session.exitCode !== 0 ? session.stderr().split('\n').pop() : '',
+      declaredSeconds: seconds,
+      complete,
+      ...probe,
     });
   }
 

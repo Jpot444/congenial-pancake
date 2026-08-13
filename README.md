@@ -598,7 +598,38 @@ empty by the time anyone read it. The panel says how old the reading is.
 
 `worst measured` matters more than the current rate — a slowdown that recovered
 still leaves its mark, and the first six seconds are ignored because start-up
-reads as a stall.
+reads as a stall. **The worst moment survives a reload**, kept with the full
+report from when it happened. It has to: the first thing anyone does about bad
+playback is rebuild the stream, which starts a fresh session, so a record that
+reset with the session would be wiped by the very act of reacting to the
+problem and the report would describe the recovery every time. Only opening a
+different title clears it.
+
+#### The half the browser cannot see
+
+Every number above describes the timeline the player was handed. If the
+conversion wrote a timeline that disagrees with its own contents, all of them
+read as perfectly healthy — media clock at 1×, nothing stalling, no frames
+dropped — while what you watch and hear is wrong. No measurement available
+inside a browser can see past that.
+
+So the server inspects its own output. `/api/remux/probe` reads the playlist,
+picks a segment that has finished being written, and ffprobes the file itself:
+
+    a segment     claims 6.000s, holds 6.000s  → timeline 1.000
+
+Deliberately per segment, not per playlist. Asked about an HLS playlist ffprobe
+reports the duration the playlist *claims* — it adds the EXTINF lines up — so
+both sides of the comparison would come from the same source and the check
+could never fail. A segment file is the content itself. Fragmented output has
+its init segment stitched on first, since an fMP4 segment alone carries no
+headers and will not parse.
+
+The probe runs unprompted about twelve seconds into each session rather than
+when the panel is opened, because the panel cannot be reached from inside the
+player — by the time anyone looks, the session in question is usually gone. It
+reads only files already on disk, so it costs no provider connection and is
+safe while a film is playing.
 
 ### Next episode, when the credits start
 
