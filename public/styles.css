@@ -573,10 +573,26 @@ svg {
 
 /* ============================================================= home ===
 
- * Reached from the badge, not a tab. One large poster for the last thing
- * watched, a 2x2 of the four before it, and the two favorite boxes underneath.
+ * Reached from the badge, not a tab. Rows of posters: what you were watching,
+ * then your channels, then your films and shows — every one of them the thing
+ * itself rather than a preview of a page that contains it.
+ *
+ * There used to be one large hero, a 2x2 beside it, and two boxes underneath
+ * whose four thumbnails opened the favorites list. That meant five different
+ * artwork sizes on one page and two clicks to reach anything you had starred.
+ * Now every tile is the same tile, sized so the page fits without scrolling,
+ * and pressing one opens what is on it.
  */
-.home { display: flex; flex-direction: column; gap: 24px; }
+.home { display: flex; flex-direction: column; gap: 22px; }
+
+/* One number decides the whole page, and the viewport height is the term that
+   usually wins it. Three rows of 2:3 posters plus their headings is roughly
+   5.5 tile-widths of height, so the vh figure is what keeps the page from
+   scrolling — the width only matters on a screen short enough not to be the
+   constraint. Deliberately small: fitting was the ask. */
+.home {
+  --home-tile: clamp(80px, min(9vw, 9.5vh), 130px);
+}
 
 /* Fixed to the corner rather than placed after the content, which would put it
    somewhere different depending on how much you have watched. It only exists
@@ -600,8 +616,15 @@ body.has-tabbar .home-version {
   bottom: calc(72px + max(10px, env(safe-area-inset-bottom)));
 }
 
+.home-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 .home-label {
-  margin: 0 0 12px;
+  margin: 0;
   font-family: var(--display);
   font-size: 20px;
   font-weight: 400;
@@ -609,165 +632,86 @@ body.has-tabbar .home-version {
   color: var(--text);
 }
 
-/* Equal columns so the hero and the 2x2 end level: two rows of half-width
-   posters come to the same height as one full-width one. */
-.home-recent-layout {
-  display: grid;
-  /* minmax(0,…) not 1fr: a plain fr track will not shrink below its content's
-     min-content width, and one long film title is enough to push the whole
-     grid wider than the screen. */
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  /* The row track matters as much as the height: a height alone leaves the row
-     `auto`, which sizes to the hero's artwork and overflows the box it was
-     given — the favorite boxes then drew straight over the posters. */
-  grid-template-rows: minmax(0, 1fr);
-  gap: 16px;
-  align-items: stretch;
-  /* Otherwise the hero's own artwork decides how tall this is, and at half the
-     width of a desktop that pushes the favorite boxes off the screen. */
-  height: clamp(220px, 32vh, 300px);
-}
-
-/* Same reason — a flex/grid child holds its content width without this. */
-.home .card { min-width: 0; }
-.home .card-title { overflow-wrap: anywhere; }
-
-.home-quad {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px;
-}
-
-/* The art takes whatever is left after the title rather than carrying its own
-   ratio, so a card always fills its share of the block exactly and the two
-   columns end level. min-height:0 because a flex child will not shrink past
-   its content without it. */
-.home-quad { height: 100%; }
-.home-hero,
-.home-quad-card { min-height: 0; }
-
-.home-hero .card-art,
-.home-quad-card .card-art {
-  flex: 1;
-  min-height: 0;
-  height: auto;
-  aspect-ratio: auto;
-}
-
-.home-hero .card-title { font-size: 16px; margin-top: 10px; }
-
-/* ---- the two favorite boxes ---- */
-.home-boxes {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px;
-}
-
-.home-box {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 18px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-card);
-  text-align: left;
+/* Only appears when the row is showing fewer than there are, so it is never a
+   link to a page that holds exactly what is already on screen. */
+.home-more {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted-dim);
   cursor: pointer;
-  transition: border-color .18s var(--ease), transform .18s var(--ease);
 }
+.home-more:hover { color: var(--text); }
 
-.home-box:hover { border-color: #35353f; transform: translateY(-3px); }
+.home-empty { margin: 0; font-size: 13px; color: var(--muted-dim); }
 
-.home-box-head { display: flex; align-items: baseline; gap: 10px; }
-
-.home-box-head h3 {
-  margin: 0;
-  font-family: var(--display);
-  font-size: 17px;
-  font-weight: 400;
-  letter-spacing: .03em;
-  color: var(--text);
-}
-
-.home-box-count { font-size: 12px; color: var(--muted-dim); font-variant-numeric: tabular-nums; }
-
-.home-box-art {
+/* auto-fill rather than a fixed count: the row takes as many as the width
+   allows and wraps the rest, so it works the same at 1280 and at 2560 without
+   anything counting columns. minmax(0,…) on the track so one long title cannot
+   push a tile wider than its share. */
+.home-tiles {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--home-tile), 1fr));
+  gap: 14px;
 }
 
-.home-box-cell {
-  position: relative;
-  /* A height rather than a ratio, for the same reason: a 2:3 poster four
-     across a wide box is taller than the rest of the page put together. */
-  height: clamp(64px, 9vh, 96px);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line-soft);
-  background: var(--bg-raised);
+/* Every tile on the page is this tile. The art carries the ratio rather than a
+   height, which is what "full size, just smaller" means: the poster is never
+   cropped to fit a box, the box is the poster's shape. */
+.home-tile { min-width: 0; }
+.home-tile .card-art {
+  height: auto;
   overflow: hidden;
 }
+.home-tile.is-poster .card-art { aspect-ratio: 2 / 3; }
+.home-tile.is-poster .card-art img { width: 100%; height: 100%; object-fit: cover; }
 
-/* Channels are logos on a plate, films are posters that fill it. */
-.home-box-live .home-box-cell img { width: 100%; height: 100%; object-fit: contain; padding: 10%; }
-.home-box-vod .home-box-cell img { width: 100%; height: 100%; object-fit: cover; }
-
-.home-box-cell .fallback {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 6px;
-  font-size: 10px;
-  line-height: 1.3;
-  text-align: center;
-  color: var(--muted-dim);
+/* A channel ident is wide and has writing on it. Contained on a plate, not
+   cropped into a poster that cuts the name in half. */
+.home-tile.is-logo .card-art { aspect-ratio: 16 / 10; background: var(--bg-raised); }
+.home-tile.is-logo .card-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 12%;
 }
 
-.home-box-empty {
-  grid-column: 1 / -1;
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--muted-dim);
+.home-tile .card-title {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  /* Two lines at most: a wrapped title is fine, a title that pushes its
+     neighbours down the page is not. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.home-tile .card-sub { font-size: 11px; }
+
+/* Favorites get one line. The poster is what identifies them, and a second
+   line on every tile costs more height than the names are worth — while the
+   Continue watching row keeps two, since that is the row you are reading. */
+.home-row:not(.is-recent) .home-tile .card-title {
+  -webkit-line-clamp: 1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-/* On a phone the whole thing stacks: a hero beside a 2x2 leaves both too
-   small to read at 390px. */
+/* The last thing watched is the reason the page exists, so its row is bigger
+   than the two under it — the only size difference left. */
+.home-row.is-recent { --home-tile: clamp(96px, min(11vw, 12vh), 165px); }
+
+/* On a phone the tiles shrink rather than the layout changing: the rows
+   already stack, so there is nothing to undo. */
 @media (max-width: 700px) {
-  .home { gap: 26px; }
-  /* Stacked, so the desktop's fixed block height and the flex sizing that
-     hangs off it both have to be undone. */
-  .home-recent-layout {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto;
-    gap: 14px;
-    height: auto;
-  }
-  .home-hero .card-art,
-  .home-quad-card .card-art { flex: none; }
-  .home-hero .card-art { height: auto; aspect-ratio: 16 / 10; }
-  /* One row of four under the hero, rather than a 2x2 — asked for, and it
-     keeps the two favorite boxes above the fold on a phone. */
-  .home-quad {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-template-rows: auto;
-    gap: 8px;
-  }
-  .home-quad-card .card-art { height: auto; aspect-ratio: 2 / 3; }
-  /* A quarter of a phone's width is no place for a wrapped title. */
-  .home-quad .card-title {
-    margin-top: 6px;
-    font-size: 11px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .home-quad .card-sub { display: none; }
-  .home-box-cell { height: clamp(56px, 8vh, 76px); }
-  .home-boxes { grid-template-columns: minmax(0, 1fr); }
-  .home-box-art { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .home { gap: 20px; --home-tile: clamp(84px, 26vw, 120px); }
+  .home-row.is-recent { --home-tile: clamp(104px, 32vw, 150px); }
+  .home-tiles { gap: 10px; }
+  .home-label { font-size: 17px; }
+  .home-tile .card-title { font-size: 11px; }
 }
 
 /* ========================================================== tab bar ===
@@ -1218,6 +1162,10 @@ body.has-tabbar #rowsView {
 
 /* Views without categories (Favorites, Downloads) drop the column entirely.
    Hiding just the sidebar would let .content auto-place into column one. */
+/* Home is laid out to fit the window rather than scroll, so the run-off room
+   every other view is padded for is exactly what pushes it over. */
+.app-shell.is-home { padding-bottom: 24px; }
+
 .app-shell.no-sidebar { grid-template-columns: minmax(0, 1fr); gap: 0; }
 .app-shell.no-sidebar .sidebar { display: none; }
 .app-shell.no-sidebar .cat-toggle { display: none; }

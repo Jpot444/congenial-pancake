@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '19.2';
+const VERSION = '19.3';
 
 const PAGE_SIZE = 60;
 
@@ -2449,7 +2449,10 @@ async function playFromHistory(row) {
 
 /** One poster on the home screen, from a history row rather than a library item. */
 function homeCard(row, className) {
-  const card = el('button', `card ${className}`);
+  // Live is a logo on a plate, everything else is a poster. Cropping a wide
+  // channel ident into a 2:3 tile cuts the name off it.
+  const shape = row.kind === 'live' ? 'is-logo' : 'is-poster';
+  const card = el('button', `card home-tile ${shape} ${className}`);
   const art = el('div', 'card-art');
 
   if (row.poster) {
@@ -2494,46 +2497,75 @@ function homeCard(row, className) {
   return card;
 }
 
-/** One of the two favorite boxes, previewing what is inside it. */
-function homeBox({ title, empty, items, hash, kind }) {
-  const box = el('button', `home-box home-box-${kind}`);
+/**
+ * One favorite, as a tile you press to open it.
+ *
+ * These used to be four thumbnails inside a box that opened the favorites
+ * list — a preview of a page rather than the things themselves, so getting to
+ * anything took two clicks and the first one was never the one you wanted.
+ */
+function homeFavTile(item) {
+  const shape = item.kind === 'live' ? 'is-logo' : 'is-poster';
+  const card = el('button', `card home-tile ${shape}`);
+  const art = el('div', 'card-art');
 
-  const head = el('div', 'home-box-head');
-  const heading = el('h3');
-  heading.textContent = title;
-  const count = el('span', 'home-box-count');
-  count.textContent = items.length ? items.length.toLocaleString() : '';
-  head.append(heading, count);
-
-  const art = el('div', 'home-box-art');
-  if (items.length) {
-    for (const item of items.slice(0, 4)) {
-      const cell = el('div', 'home-box-cell');
-      if (item.logo) {
-        const image = el('img');
-        image.loading = 'lazy';
-        image.alt = '';
-        image.src = item.logo;
-        image.addEventListener('error', () => image.remove());
-        cell.append(image);
-      } else {
-        const fb = el('div', 'fallback');
-        fb.textContent = item.name || '';
-        cell.append(fb);
-      }
-      art.append(cell);
-    }
+  const fallback = () => {
+    const fb = el('div', 'fallback');
+    fb.textContent = item.name || '';
+    art.append(fb);
+  };
+  if (item.logo) {
+    const image = el('img');
+    image.loading = 'lazy';
+    image.alt = '';
+    image.src = item.logo;
+    image.addEventListener('error', () => { image.remove(); fallback(); });
+    art.append(image);
   } else {
-    const none = el('p', 'home-box-empty');
-    none.textContent = empty;
-    art.append(none);
+    fallback();
   }
 
-  box.append(head, art);
-  box.addEventListener('click', () => {
-    location.hash = hash;
-  });
-  return box;
+  const title = el('h3', 'card-title');
+  title.textContent = item.name || '';
+  card.append(art, title);
+  // A channel tunes in, a film or a show opens its page — the same rule the
+  // grids follow, so a poster does the same thing wherever it is pressed.
+  card.addEventListener('click', () => openTitle(item));
+  return card;
+}
+
+/**
+ * A titled row of tiles, with a way through to the full list when there are
+ * more than fit on a landing page.
+ */
+function homeRow({ title, tiles, hash, total, empty, kind }) {
+  // Named rather than positional: the styling used to hang off :first-child,
+  // which is one new row away from silently applying to the wrong one.
+  const section = el('section', `home-row is-${kind}`);
+
+  const head = el('div', 'home-row-head');
+  const label = el('h2', 'home-label');
+  label.textContent = title;
+  head.append(label);
+  if (hash && total > tiles.length) {
+    const more = el('button', 'home-more');
+    more.textContent = `All ${total.toLocaleString()} ›`;
+    more.addEventListener('click', () => { location.hash = hash; });
+    head.append(more);
+  }
+  section.append(head);
+
+  if (!tiles.length) {
+    const none = el('p', 'home-empty');
+    none.textContent = empty;
+    section.append(none);
+    return section;
+  }
+
+  const grid = el('div', 'home-tiles');
+  for (const tile of tiles) grid.append(tile);
+  section.append(grid);
+  return section;
 }
 
 function renderHome() {
@@ -2543,7 +2575,11 @@ function renderHome() {
   $('#emptyState').hidden = true;
   $('#loadMore').hidden = true;
   document.querySelectorAll('.folder-back').forEach((b) => b.remove());
-  document.querySelector('.app-shell').classList.add('no-sidebar');
+  const shell = document.querySelector('.app-shell');
+  shell.classList.add('no-sidebar');
+  // This is the one page built to fit the window rather than scroll, so it
+  // does not want the run-off room every other view is padded for.
+  shell.classList.add('is-home');
 
   const view = $('#homeView');
   view.hidden = false;
@@ -2562,46 +2598,38 @@ function renderHome() {
   }
 
   if (recent.length) {
-    const section = el('section', 'home-recent');
-    const label = el('h2', 'home-label');
-    label.textContent = 'Continue watching';
-    section.append(label);
-
-    const layout = el('div', 'home-recent-layout');
-    layout.append(homeCard(recent[0], 'home-hero'));
-
-    // The four alongside stay a 2×2 even with fewer than four to show, so the
-    // hero keeps its proportions instead of stretching to fill the row.
-    const quad = el('div', 'home-quad');
-    for (const row of recent.slice(1, 5)) quad.append(homeCard(row, 'home-quad-card'));
-    layout.append(quad);
-
-    section.append(layout);
-    view.append(section);
+    view.append(homeRow({
+      kind: 'recent',
+      title: 'Continue watching',
+      tiles: recent.map((row) => homeCard(row, 'home-recent-tile')),
+    }));
   }
 
   const favs = profiles.favItems();
   const channels = favs.filter((i) => i.kind === 'live');
   const titles = favs.filter((i) => i.kind !== 'live');
 
-  const boxes = el('section', 'home-boxes');
-  boxes.append(
-    homeBox({
+  // Capped at a row's worth rather than everything: this is a landing page,
+  // and forty posters is the favorites list, which is one press away.
+  const SHOWN = 12;
+  if (channels.length) {
+    view.append(homeRow({
+      kind: 'favlive',
       title: 'Favorite channels',
-      empty: 'No favorite channels yet — tap the heart while watching one.',
-      items: channels,
+      tiles: channels.slice(0, SHOWN).map(homeFavTile),
       hash: '#/favlive',
-      kind: 'live',
-    }),
-    homeBox({
+      total: channels.length,
+    }));
+  }
+  if (titles.length) {
+    view.append(homeRow({
+      kind: 'favvod',
       title: 'Favorite movies & shows',
-      empty: 'No favorites yet — tap the heart while watching something.',
-      items: titles,
+      tiles: titles.slice(0, SHOWN).map(homeFavTile),
       hash: '#/favorites',
-      kind: 'vod',
-    })
-  );
-  view.append(boxes);
+      total: titles.length,
+    }));
+  }
 
   if (!recent.length && !favs.length) {
     $('#emptyState').hidden = false;
@@ -3004,6 +3032,10 @@ function render() {
     downloads: 'Downloads',
   };
   $('#contentTitle').textContent = titles[state.tab];
+  // Cleared here and set again by renderHome alone. render() returns early for
+  // several tabs, so a removal per branch would be a branch waiting to be
+  // forgotten.
+  document.querySelector('.app-shell').classList.remove('is-home');
 
   syncTabs();
   // The multi-view button belongs to Live TV, so it is settled per render

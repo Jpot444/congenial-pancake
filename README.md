@@ -393,26 +393,49 @@ memory. The server now persists every key it is sent, and returns them all.
 to it**. It is deliberately not a tab — it is in neither the desktop nav nor the
 phone tab bar, because it is where you already are when you open the app.
 
-On a desktop it is one large poster of the last thing watched, a 2×2 of the four
-before it alongside, and two boxes underneath:
+It is three rows of posters — what you were watching, your channels, then your
+films and shows — and every tile is the thing itself rather than a preview of a
+page containing it.
 
-- **Favorite channels** — the actual channels, not their categories. Opens
-  `#/favlive`, which is the favorites list narrowed to live.
-- **Favorite movies & shows** — opens `#/favorites`, the ordinary favorites
-  list, unchanged and still carrying everything.
+It used to be one large hero, a 2×2 beside it, and two boxes underneath whose
+four thumbnails opened the **favorites list**. That was five different artwork
+sizes on one page, and reaching anything you had starred took two clicks where
+the first was never the one you wanted. Now every tile is the same tile,
+pressing one opens what is on it, and the row heading carries an *All 40 ›*
+link only when the row is showing fewer than there are.
 
-On a phone the whole thing stacks; a hero beside a 2×2 leaves both unreadable at
-390px.
+**The page is sized to fit the window, and that is the constraint everything
+else bends to.** One custom property, `--home-tile`, decides every tile on the
+page, and the term that usually wins its `clamp()` is the *viewport height*
+rather than the width: three rows of 2:3 posters plus their headings come to
+roughly five and a half tile-widths of height, so height is what decides how
+big a poster can be. Two things had to give for it to fit a 1280×800 laptop —
+the app shell's 80px of run-off padding, which home does not want because it is
+not meant to scroll, and a second line of title on the favourite rows, where
+the artwork is what identifies a thing anyway. Continue watching keeps two
+lines, since that is the row you are actually reading.
 
-Two things make it worth having:
+The art carries its own ratio rather than a fixed height, which is what "full
+size, just smaller" means: a poster is never cropped to fit a box, the box is
+the poster's shape. **Channels are the exception** — a channel ident is wide
+and has writing on it, so those get a 16:10 plate with the logo contained
+rather than a 2:3 crop that cuts the name in half.
 
-- **It needs no library fetch.** Everything on the page comes from watch history
-  and favorites, both of which are already loaded — so the badge always lands
-  somewhere instantly, even on a cold start where Movies would sit on a
-  skeleton. A history row carries its own name and poster for exactly this
-  reason; the real library record is only fetched on the way into the player.
-- **Series collapse to one card.** History is recorded per episode, and five
-  cards of the same show is not a landing page.
+Rows use `auto-fill`, not `auto-fit`. `auto-fit` collapses the empty tracks and
+lets five posters stretch to fill a 1440px row, which is the opposite of the
+point; `auto-fill` keeps them the size they were meant to be and leaves the
+space.
+
+On a phone the tiles shrink and wrap rather than the layout changing — the
+rows already stack, so there is nothing to undo.
+
+Two things make the page worth having at all:
+
+- **It needs no library fetch.** Everything on it comes from watch history and
+  favorites, both already loaded, so the badge always lands somewhere instantly
+  even on a cold start where Movies would sit on a skeleton.
+- **Series collapse to one tile.** History is recorded per episode, and five
+  tiles of the same show is not a landing page.
 
 **Continue watching plays; it does not browse.** Clicking a show here starts
 the episode that was left off. It used to open the show's page, which is the
@@ -438,9 +461,10 @@ state waiting to fire at the next show someone opens. When it cannot be met the
 empty player is taken back off the screen and the show's page, already drawn,
 is what is left.
 
-The grid tracks are all `minmax(0, 1fr)` rather than `1fr`. A plain `fr` track
-will not shrink below its content's min-content width, and one long film title
-was enough to push the page 146px wider than the phone.
+Tiles carry `min-width: 0`. A grid item's default `min-width: auto` is its
+min-content width, so without it one long film title is enough to push a tile
+past its track — and once the old home screen did exactly that, 146px wider
+than the phone it was on.
 
 ## Two layouts, not one that stretches
 
