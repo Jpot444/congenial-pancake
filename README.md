@@ -1127,8 +1127,43 @@ ends give a rate of **zero**. The probe test now carries that exact case, and
 run against the old arithmetic it reproduces −9.48% from a gap that never
 moved.
 
-A span under ten seconds is refused rather than divided by — two nearby
-segments turn a few milliseconds of noise into a percentage.
+A span under six seconds is refused rather than divided by — that is one
+segment apart, the soonest two distinct measurements exist, and anything
+shorter is two readings of the same moment.
+
+### The player rebuilds itself when the audio falls behind
+
+With the measurement trustworthy, a real fault showed up: resuming an episode
+sometimes produces a conversion whose audio runs slow — 0ms apart at the
+opening segment and **5.9 seconds** apart by 33 seconds in, about 22%. Backing
+out of the show and starting it again clears it, which says the source is fine
+and that particular ffmpeg run went wrong.
+
+So the player does that itself. The probe is asked every 20 seconds for the
+first two minutes of a conversion — rather than the usual 60 — and when it
+reports the audio falling behind, the stream is rebuilt from the current
+position: the same `reloadStream()` the reload button uses, which is the same
+thing as backing out and starting the episode again. It takes roughly half a
+minute to notice, since a rate needs two segments to exist before it means
+anything.
+
+Both the **rate** and the **standing gap** have to be past their thresholds —
+10ms/s and 0.5s. Either alone is a false positive waiting to happen: a rate on
+its own can be two close-together segments and a rounding error, and a gap on
+its own is the ragged edge where the muxer cut on a keyframe.
+
+Guarding the loop takes more than remembering the session, because **a rebuild
+creates a new session**, which would be eligible all over again. Twice per
+viewing, and never within 90 seconds of the last one. If a second rebuild has
+not fixed it, a third will not either, and restarting the picture over and over
+is worse than bad audio somebody can decide about for themselves.
+
+**What this does not do is explain the fault.** It is a recovery, not a
+diagnosis: something in that ffmpeg run drops roughly a fifth of the audio, and
+what remains unknown is whether it is the seek landing badly, the provider
+serving a bad range on the first request, or the encoder falling behind on a
+Pi that is also doing something else. The rebuild makes it survivable while
+that stays open.
 
 ### Audio starts where the video starts
 

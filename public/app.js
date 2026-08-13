@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '19.6';
+const VERSION = '19.7';
 
 const PAGE_SIZE = 60;
 
@@ -4052,6 +4052,8 @@ const playback = {
     this.probe = null;
     this.probedAt = 0;
     this.probedSession = '';
+    this.rescues = 0;
+    this.lastRescueAt = 0;
   },
 
   reset() {
@@ -4187,13 +4189,70 @@ const playback = {
     // Re-asked as the session grows. The first answer is taken twelve seconds
     // in, when only a few segments exist, and how much had been written by
     // then reads as alarmingly little beside a figure from a minute later.
-    const fresh = session === this.probedSession && Date.now() - this.probedAt < 60_000;
+    //
+    // Often at first, then rarely. The early answers are what audioRescue()
+    // acts on, and a minute of unwatchable audio before the first usable
+    // reading is a minute too long; after two minutes nothing new is being
+    // learned and this is ffprobe running twice on a Pi that is also encoding.
+    const young = Date.now() - this.startedAt < 120_000;
+    const every = young ? 20_000 : 60_000;
+    const fresh = session === this.probedSession && Date.now() - this.probedAt < every;
     if (fresh || Date.now() - this.startedAt < 12_000) return;
     this.probedSession = session;
     this.probedAt = Date.now();
     api('/api/remux/probe', { id: session })
-      .then((data) => { this.probe = data; this.probedAt = Date.now(); })
+      .then((data) => {
+        this.probe = data;
+        this.probedAt = Date.now();
+        this.audioRescue();
+      })
       .catch((err) => { this.probe = { error: err.message }; });
+  },
+
+  /** Sessions already rebuilt once, so a bad one cannot start a loop. */
+  rescued: new Set(),
+  rescues: 0,
+  lastRescueAt: 0,
+
+  /**
+   * Rebuild the stream when the audio has fallen behind the picture.
+   *
+   * This is the fix the user found by hand — back out of the show and start it
+   * again — done automatically, because by the time it is noticeable a scene
+   * has already been ruined and the alternative is asking someone to diagnose
+   * a conversion from the sofa.
+   *
+   * Once per session, and only on a real conversion. Both the rate AND the
+   * standing gap have to be past their thresholds: a rate on its own can be
+   * two close-together segments and a rounding error, and a gap on its own can
+   * be the ragged edge where the muxer cut on a keyframe.
+   */
+  audioRescue() {
+    const p = this.probe;
+    if (!p || p.error || !film.active) return;
+    const rate = p.drift?.rate;
+    const gap = p.drift?.gap;
+    if (!Number.isFinite(rate) || !Number.isFinite(gap)) return;
+    // 10ms per second is a second of lip-sync every minute and forty — well
+    // clear of anything a healthy conversion produces, and far below the 220
+    // that prompted this.
+    if (Math.abs(rate) < 0.01 || Math.abs(gap) < 0.5) return;
+
+    const session = lastRemux.session;
+    if (!session || this.rescued.has(session)) return;
+    // A rebuild makes a NEW session, which would be eligible all over again —
+    // so the session set alone cannot stop a loop. Twice per viewing, and not
+    // within ninety seconds of the last one: if a second rebuild has not fixed
+    // it, a third will not either, and repeatedly restarting the picture is
+    // worse than bad audio somebody can decide about themselves.
+    if (this.rescues >= 2 || Date.now() - this.lastRescueAt < 90_000) return;
+    this.rescued.add(session);
+    this.rescues += 1;
+    this.lastRescueAt = Date.now();
+
+    const behind = gap < 0 ? 'behind' : 'ahead of';
+    toast(`Audio ran ${Math.abs(gap).toFixed(1)}s ${behind} the picture — rebuilding.`);
+    reloadStream();
   },
 
   /**
@@ -4470,11 +4529,13 @@ const playback = {
     const driftRate = p && !p.error ? p.drift?.rate : null;
     if (Number.isFinite(driftRate) && Math.abs(driftRate) > 0.005) {
       const ms = Math.abs(driftRate * 1000);
+      const gap = Math.abs(p.drift?.gap || 0);
       return `Audio is DRIFTING, not merely offset: ${ms.toFixed(0)}ms per second ` +
         `(${Math.abs(driftRate * 100).toFixed(1)}%), the audio falling ` +
-        `${driftRate < 0 ? 'behind' : 'ahead of'} the picture as it goes. ` +
-        `That is a full second of lip-sync every ${(1000 / ms).toFixed(0)}s of playback, ` +
-        'so it is fine at the start and wrong later.';
+        `${driftRate < 0 ? 'behind' : 'ahead of'} the picture as it goes — ` +
+        `${gap.toFixed(1)}s apart by the last segment measured. ` +
+        'The player rebuilds the stream by itself when it sees this, which is ' +
+        'the same thing as backing out and starting the episode again.';
     }
 
     const ratio = p && !p.error ? p.segment?.ratio : 0;

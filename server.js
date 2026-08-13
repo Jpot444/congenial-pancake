@@ -1631,7 +1631,11 @@ function probeOutput(session) {
     if (early && early.gap !== null && late.gap !== null
         && Number.isFinite(early.vEnd) && Number.isFinite(late.vEnd)) {
       const span = late.vEnd - early.vEnd;
-      if (span >= 10) {
+      // Six seconds is one segment apart, which is the soonest two distinct
+      // measurements exist — and the sooner a rate is available, the sooner a
+      // conversion whose audio has gone wrong can be rebuilt instead of
+      // watched. Anything shorter is two readings of the same moment.
+      if (span >= 6) {
         driftSpan = span;
         driftRate = (late.gap - early.gap) / span;
       }
