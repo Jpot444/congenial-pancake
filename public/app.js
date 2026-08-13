@@ -151,6 +151,24 @@ const profiles = {
     this.save();
     return at < 0;
   },
+  /** The pinned ids for one tab, in the order they should be shown. */
+  pinOrder(tab) {
+    const prefix = `${tab}:`;
+    return (this.data.pinnedCategories || [])
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length));
+  },
+  /**
+   * Record the order a tab's pins were dragged into. Other tabs' pins are kept
+   * as they were — the list is shared, but the ordering only ever means
+   * anything within one tab.
+   */
+  setPinOrder(tab, ids) {
+    const prefix = `${tab}:`;
+    const others = (this.data.pinnedCategories || []).filter((key) => !key.startsWith(prefix));
+    this.data.pinnedCategories = [...ids.map((id) => this.pinKey(tab, id)), ...others];
+    this.save();
+  },
 
   /* -- favorites -- */
   favKey(item) {
@@ -1009,21 +1027,32 @@ function renderCategories(categories, items) {
     return !q || cat.name.toLowerCase().includes(q);
   });
 
-  const pinned = visible.filter((c) => profiles.isPinned(state.tab, c.id));
+  // Pins carry their own order so they can be dragged; everything else stays in
+  // the order the provider sent.
+  const order = profiles.pinOrder(state.tab);
+  const pinned = visible
+    .filter((c) => profiles.isPinned(state.tab, c.id))
+    .sort((a, b) => order.indexOf(String(a.id)) - order.indexOf(String(b.id)));
   const rest = visible.filter((c) => !profiles.isPinned(state.tab, c.id));
 
-  const section = (title, rows) => {
+  const section = (title, rows, { reorderable = false } = {}) => {
     if (!rows.length) return;
     const heading = el('div', 'cat-section');
     heading.textContent = title;
     list.append(heading);
     for (const cat of rows) {
-      list.append(makeRow(cat.id, cat.name, counts.get(String(cat.id)) || 0));
+      const row = makeRow(cat.id, cat.name, counts.get(String(cat.id)) || 0);
+      if (reorderable) {
+        row.classList.add('cat-row-pinned');
+        row.dataset.catId = String(cat.id);
+        makePinDraggable(row);
+      }
+      list.append(row);
     }
   };
 
   if (pinned.length) {
-    section('Pinned', pinned);
+    section('Pinned', pinned, { reorderable: true });
     section('All categories', rest);
   } else {
     for (const cat of rest) {
@@ -1036,6 +1065,94 @@ function renderCategories(categories, items) {
     none.textContent = `No category matches “${state.catQuery}”.`;
     list.append(none);
   }
+}
+
+/**
+ * Drag a pinned category by its pin to reorder it.
+ *
+ * Pointer events rather than HTML5 drag-and-drop, which iOS Safari does not
+ * implement — on the phone this is mostly used from, the whole feature would
+ * simply not exist. The drag only begins once the finger has moved past a
+ * threshold, so a plain tap still unpins.
+ */
+function makePinDraggable(row) {
+  const pin = row.querySelector('.pin-btn');
+  if (!pin) return;
+
+  pin.title = 'Unpin, or drag to reorder';
+  pin.setAttribute('aria-label', pin.title);
+
+  let startY = 0;
+  let dragging = false;
+  let heldPointer = null;
+  const siblings = () => [...row.parentElement.querySelectorAll('.cat-row-pinned')];
+
+  pin.addEventListener('pointerdown', (event) => {
+    heldPointer = event.pointerId;
+    startY = event.clientY;
+    dragging = false;
+    // Capture so the moves keep arriving once the finger is over a different
+    // row, which is most of the gesture. Tracked by id as well, so a refused
+    // capture degrades to a working drag rather than no drag at all.
+    try {
+      pin.setPointerCapture(event.pointerId);
+    } catch {
+      /* capture is a convenience, not the mechanism */
+    }
+  });
+
+  pin.addEventListener('pointermove', (event) => {
+    if (heldPointer !== event.pointerId) return;
+
+    if (!dragging) {
+      if (Math.abs(event.clientY - startY) < 6) return;
+      dragging = true;
+      row.classList.add('is-dragging');
+    }
+
+    // Move past a neighbour only once its midpoint is crossed. Comparing
+    // against edges instead makes rows flicker back and forth on the boundary.
+    for (const other of siblings()) {
+      if (other === row) continue;
+      const box = other.getBoundingClientRect();
+      const middle = box.top + box.height / 2;
+      const rowIsBefore = other.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_PRECEDING;
+
+      if (event.clientY > middle && rowIsBefore) {
+        other.after(row);
+        break;
+      }
+      if (event.clientY < middle && !rowIsBefore) {
+        other.before(row);
+        break;
+      }
+    }
+  });
+
+  const finish = (event) => {
+    if (heldPointer !== event.pointerId) return;
+    heldPointer = null;
+    try {
+      pin.releasePointerCapture(event.pointerId);
+    } catch {
+      /* never captured, or already released */
+    }
+    if (!dragging) return; // a tap: leave it to the unpin handler
+    dragging = false;
+    row.classList.remove('is-dragging');
+
+    // Letting go still fires a click on the pin, which would unpin the row that
+    // was just moved. Swallow that one.
+    pin.addEventListener('click', (click) => {
+      click.preventDefault();
+      click.stopPropagation();
+    }, { once: true, capture: true });
+
+    profiles.setPinOrder(state.tab, siblings().map((r) => r.dataset.catId));
+  };
+
+  pin.addEventListener('pointerup', finish);
+  pin.addEventListener('pointercancel', finish);
 }
 
 /**

@@ -1001,6 +1001,19 @@ svg {
 
 .pin-btn svg { width: 14px; height: 14px; }
 .cat-row:hover .pin-btn { opacity: 1; }
+
+/* Without this the browser claims the same gesture as a scroll and the row
+   never moves — on a phone the drag would appear not to work at all. */
+.cat-row-pinned .pin-btn { touch-action: none; cursor: grab; }
+.cat-row-pinned .pin-btn:active { cursor: grabbing; }
+
+/* Lifted off the list while it is being carried. */
+.cat-row-pinned.is-dragging {
+  background: var(--bg-raised);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .5);
+  opacity: .92;
+}
+.cat-row-pinned.is-dragging .cat { background: transparent; }
 .pin-btn:hover { color: var(--text); }
 .pin-btn.is-on { opacity: 1; color: var(--text); }
 .pin-btn.is-on svg { fill: currentColor; }

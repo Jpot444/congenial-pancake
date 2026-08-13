@@ -97,6 +97,9 @@ machines and out of version control. The gear icon in the header wipes it.
   provider hands you 900+ of them.
 - **Pinned categories** — the pin icon on any category hover-reveals; pinned
   ones collect in a "Pinned" section at the top of the list, per section.
+  **Drag a pin to reorder them**; the order is stored per profile and per
+  section. A tap still unpins — the drag only starts once the pointer has moved
+  past a few pixels, so the two gestures do not fight each other.
 - **Favorites** — heart anything from the player.
 - **Downloads** — pull a movie or episode to disk for offline viewing.
 - **Search** — filters the current section as you type.
@@ -216,6 +219,27 @@ Two things that matter if you extend the scoring:
 Other endpoints: `GET/POST /api/profiles`, `PATCH/DELETE /api/profiles/:id`,
 `GET/PUT /api/profiles/:id/prefs`, `POST /api/profiles/:id/history`,
 `POST /api/profiles/:id/rating`.
+
+## Reordering pins uses pointer events, not drag-and-drop
+
+HTML5 drag-and-drop is the obvious way to build this and it does not work on
+iOS Safari at all, which is where this gets used. So the pin is dragged with
+pointer events, which behave the same under a finger, a mouse and a trackpad.
+
+Three details carry it:
+
+- `touch-action: none` on a pinned pin. Without it the browser claims the
+  gesture as a page scroll and the row never moves — the feature would look
+  broken on a phone and fine on a laptop.
+- A **6px threshold** before a drag starts, so a tap still unpins. The click
+  that lands at the end of a drag is swallowed, or letting go would unpin the
+  row that was just moved.
+- Rows swap when the pointer crosses a **neighbour's midpoint**, not its edge.
+  Edges make rows flicker back and forth while the pointer sits on the
+  boundary.
+
+The pointer is tracked by id as well as captured, so a refused capture degrades
+to a working drag rather than no drag at all.
 
 ## Row headers open the whole row
 
