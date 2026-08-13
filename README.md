@@ -747,10 +747,26 @@ starting at different points, and a browser handed a track that starts late
 does not necessarily wait for it: it plays what it has, and the audio runs
 ahead of the picture.
 
-`aresample=async=1:first_pts=0` pads that difference with silence so the audio
-track starts where the video does and nothing has to guess. `async=1` stays for
-what it was always there for — keeping audio from drifting away from video over
-a long playback.
+`-noaccurate_seek` is what fixes it. Accurate seeking discards everything
+between the keyframe and the mark — but a copied video stream cannot be cut
+mid-GOP, so only the audio gets trimmed, and `-avoid_negative_ts make_zero`
+then slides both down by the same amount. The output opens with the video
+already running and the audio arriving a fraction of a second later; measured
+on this provider, **1184ms**. Turning accurate seeking off keeps that audio
+instead of discarding it, so both streams begin at the keyframe and land
+together.
+
+The cost is that playback starts up to one GOP before the spot you asked for,
+which puts the scrubber out by about a second. That is the better error of the
+two: an early start is barely noticeable, audio against the wrong picture is
+unwatchable.
+
+`aresample=async=1:first_pts=0` stays alongside it. `first_pts=0` pads any
+residual gap so the audio track still begins at zero, and `async=1` is there
+for what it always was — keeping audio from drifting away from video over a
+long playback. On its own it was not enough: the filter sees the audio already
+starting at zero and has nothing to pad, because the offset is introduced later
+by the muxer rebasing both streams.
 
 The playback report measures the result rather than assuming it. The probe
 reads the **first** segment of the session and reports where each stream

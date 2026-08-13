@@ -1624,7 +1624,27 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0) {
   // -ss ahead of -i is the fast seek: ffmpeg jumps in with Range requests
   // rather than decoding from the top. With -c copy it lands on the nearest
   // preceding keyframe, so the real start can be a second or two early.
-  if (startSeconds > 0) args.push('-ss', String(startSeconds));
+  //
+  // -noaccurate_seek is what keeps the two streams together across that.
+  //
+  // Accurate seeking discards everything between the keyframe and the mark —
+  // but a copied video stream cannot be cut mid-GOP, so only the audio gets
+  // trimmed. Video then begins at the keyframe and audio at the mark, and
+  // `-avoid_negative_ts make_zero` slides both down by the same amount, so the
+  // output opens with the video already running and the audio arriving a
+  // fraction of a second later. Measured on this provider: 1184ms. The file is
+  // arguably correct — that video really has no audio yet — but a browser
+  // handed a track that starts late plays it against the wrong picture, which
+  // is heard as lip-sync drift for the whole session rather than a moment of
+  // silence at the top.
+  //
+  // Turning accurate seeking off keeps the audio between the keyframe and the
+  // mark instead of discarding it, so both streams start at the keyframe and
+  // land aligned. The cost is that playback begins up to one GOP before the
+  // spot you asked for, which puts the scrubber out by about a second. That is
+  // the better error of the two: an early start is barely noticeable, and
+  // audio against the wrong picture is unwatchable.
+  if (startSeconds > 0) args.push('-ss', String(startSeconds), '-noaccurate_seek');
 
   args.push(
     '-i', input,
