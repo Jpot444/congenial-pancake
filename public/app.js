@@ -934,6 +934,15 @@ function buildShelves(tab) {
     if (def.sort === 'added') items = [...items].sort((a, b) => (b.added || 0) - (a.added || 0));
     if (items.length) rows.push({ title: def.title, items });
   }
+
+  // Every row above matches on the provider's category names, so renaming or
+  // re-prefixing them empties the entire page — a library of thousands behind a
+  // "No rows to show yet". One row of everything is a poor page; it is a far
+  // better one than none, and the header opens the full list.
+  if (!rows.length && pool.length) {
+    rows.push({ title: tab === 'series' ? 'All series' : 'All movies', items: pool });
+  }
+
   return rows;
 }
 
@@ -951,7 +960,13 @@ function renderRows() {
   if (!rows.length) {
     wrap.hidden = true;
     $('#emptyState').hidden = false;
-    $('#emptyState').textContent = 'No rows to show yet.';
+    // With the catch-all row above, reaching here means the library itself came
+    // back with nothing — so say that, rather than blaming the rows.
+    const held = state.library[state.tab];
+    const hidden = (held?.items || []).length && !buildShelves(state.tab).length;
+    $('#emptyState').textContent = hidden
+      ? 'Everything here is hidden. Open Deleted in the sidebar to put something back.'
+      : 'The library came back empty. If the English / US-only filter is on, try turning it off.';
     return;
   }
 
