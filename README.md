@@ -764,14 +764,21 @@ between the keyframe and the mark — but a copied video stream cannot be cut
 mid-GOP, so only the audio gets trimmed, and `-avoid_negative_ts make_zero`
 then slides both down by the same amount. The output opens with the video
 already running and the audio arriving a fraction of a second later; measured
-on this provider, **1184ms**. Turning accurate seeking off keeps that audio
+on this provider, **1184ms**, and 1904ms on a title with longer GOPs.
+Turning accurate seeking off keeps that audio
 instead of discarding it, so both streams begin at the keyframe and land
 together.
 
+Confirmed at **0ms** on the box, with the command in the same report showing
+`-ss 610 -noaccurate_seek` so there was no question of which build produced it.
+
 The cost is that playback starts up to one GOP before the spot you asked for,
-which puts the scrubber out by about a second. That is the better error of the
-two: an early start is barely noticeable, audio against the wrong picture is
-unwatchable.
+and the scrubber still reports the spot you asked for — so it reads early by
+that much. On a title with 11-second segments that is several seconds. It is
+the better error of the two: an early start is barely noticeable, audio against
+the wrong picture is unwatchable. Correcting it would mean learning where the
+keyframe actually landed, which is another probe against the provider's single
+connection, so it stays uncorrected until it annoys someone.
 
 `aresample=async=1:first_pts=0` stays alongside it. `first_pts=0` pads any
 residual gap so the audio track still begins at zero, and `async=1` is there
