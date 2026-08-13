@@ -769,8 +769,31 @@ Turning accurate seeking off keeps that audio
 instead of discarding it, so both streams begin at the keyframe and land
 together.
 
-Confirmed at **0ms** on the box, with the command in the same report showing
-`-ss 610 -noaccurate_seek` so there was no question of which build produced it.
+**This is not a complete fix.** It measured 0ms seeking to 610s and 1131ms
+seeking to 641s on the same title, with `-noaccurate_seek` present in the
+command both times — the first was a seek that happened to land on a keyframe,
+not a fix working. Seeking a Matroska positions the file at a cluster, and the
+first audio packet after that position can be most of a second behind the video
+keyframe, whatever accurate seeking is set to.
+
+The gap is inherent to copying the video: a copied stream can only begin at a
+keyframe, the audio can begin anywhere, and nothing can trim the video to meet
+it without re-encoding. Closing it properly means padding the audio with
+silence back to the video's start, which needs the keyframe position *before*
+the conversion runs — another probe against the provider's single connection.
+
+Before spending that, the report now measures **where the player put each
+track**: hls.js buffers audio and video separately and applies a
+`timestampOffset` to each, and if it slides the audio back to meet the video
+then the file being right is beside the point.
+
+    buffers         video: 0.00-157.00 (offset 0.000)
+                    audio: 1.13-157.00 (offset 0.000)
+
+Equal offsets with the audio range starting late means the player is honouring
+the file and the gap is only silence at the head. Different offsets, or both
+ranges starting together, means the audio has been dragged forward and
+everything after it plays against the wrong picture.
 
 The cost is that playback starts up to one GOP before the spot you asked for,
 and the scrubber still reports the spot you asked for — so it reads early by

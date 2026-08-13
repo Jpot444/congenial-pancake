@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '13.4';
+const VERSION = '13.5';
 
 const PAGE_SIZE = 60;
 
@@ -2990,6 +2990,40 @@ const playback = {
   },
 
   /**
+   * Where hls.js actually put each track.
+   *
+   * The conversion can hand over a file whose audio legitimately starts later
+   * than its video — after a seek the copied video begins at the keyframe
+   * before the mark while the audio begins at the mark — and the file is right
+   * to say so. What matters is whether the player honours it. hls.js buffers
+   * audio and video into separate SourceBuffers and applies a timestampOffset
+   * to each; if it slides the audio back to meet the video, every frame of
+   * sound plays against the wrong picture for the rest of the session, and
+   * nothing else in this report would show it.
+   *
+   * Internal API, so guarded and read-only. It tells us which of the two is
+   * true, which is the question five rounds of encoder changes could not
+   * answer.
+   */
+  buffers() {
+    try {
+      const sb = engine?.bufferController?.sourceBuffer;
+      if (!sb) return [];
+      return Object.keys(sb).map((kind) => {
+        const buf = sb[kind];
+        const ranges = [];
+        for (let i = 0; i < (buf?.buffered?.length || 0); i += 1) {
+          ranges.push(`${buf.buffered.start(i).toFixed(2)}-${buf.buffered.end(i).toFixed(2)}`);
+        }
+        return `${kind}: ${ranges.join(', ') || 'empty'}` +
+          ` (offset ${Number(buf?.timestampOffset ?? 0).toFixed(3)})`;
+      });
+    } catch {
+      return [];
+    }
+  },
+
+  /**
    * The sample rate this machine's audio hardware runs at.
    *
    * Worth having next to the rate in the file: a mismatch between the two has
@@ -3094,6 +3128,7 @@ const playback = {
         `error ${this.events.error}, ratechange ${this.events.ratechange}, seeked ${this.events.seeked}`,
       `engine          ${engineKind || 'none'}`,
       `audio device    ${this.deviceSampleRate() || 'unknown'}Hz output`,
+      ...this.buffers().map((line, i) => `${i === 0 ? 'buffers' : ''}`.padEnd(16) + line),
       `source          ${(video.currentSrc || '').slice(0, 120) || 'none'}`,
       `film            active ${film.active}, offset ${Math.round(film.offset)}, ` +
         `ready ${Math.round(film.ready)}, duration ${film.duration}`,
