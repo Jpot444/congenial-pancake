@@ -523,6 +523,32 @@ svg {
 .touch .cinema.chrome-hidden .cinema-top,
 .touch .cinema.chrome-hidden .player-bar { opacity: 0; }
 
+/* ---- hide a title from the lists ---- */
+
+/* Carries .card for weight: .icon-btn sets position: relative further down for
+   its notification dot, and at equal specificity the later rule would win and
+   drop this out of the corner. */
+.card .card-bin {
+  position: absolute;
+  top: 8px; right: 8px;
+  z-index: 3;
+  width: 30px; height: 30px;
+  background: rgba(0, 0, 0, .66);
+  border-color: rgba(255, 255, 255, .18);
+  color: rgba(255, 255, 255, .82);
+  opacity: 0;
+  transition: opacity .16s var(--ease), color .16s var(--ease), border-color .16s var(--ease);
+}
+
+.card .card-bin svg { width: 15px; height: 15px; }
+.card:hover .card-bin { opacity: 1; }
+.card .card-bin:hover { color: var(--live); border-color: var(--live); }
+
+/* In the bin it is the only way back, so it is not hidden behind a hover —
+   which on a phone is no gesture at all. */
+.card .card-bin.is-restore { opacity: 1; }
+.card .card-bin.is-restore:hover { color: #7FD4A0; border-color: #7FD4A0; }
+
 /* ============================================================= home ===
 
  * Reached from the badge, not a tab. One large poster for the last thing

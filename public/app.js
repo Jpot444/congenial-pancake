@@ -170,6 +170,34 @@ const profiles = {
     this.save();
   },
 
+  /* -- deleted titles --
+   *
+   * Hidden rather than removed: the provider still carries them and will keep
+   * sending them, so this is a list of things not to show. Kept per profile,
+   * since one person's junk is another's watchlist.
+   */
+  isDeleted(item) {
+    return (this.data.deletedItems || []).includes(this.favKey(item));
+  },
+  toggleDeleted(item) {
+    const key = this.favKey(item);
+    const list = (this.data.deletedItems ||= []);
+    const at = list.indexOf(key);
+    if (at >= 0) list.splice(at, 1);
+    else list.unshift(key);
+    this.save();
+    return at < 0;
+  },
+  /** Everything hidden in this section, newest first. */
+  deletedItems(tab) {
+    const kind = tab === 'series' ? 'series' : 'movie';
+    const keys = this.data.deletedItems || [];
+    const lib = state.library[tab];
+    if (!lib) return [];
+    const byKey = new Map(lib.items.map((i) => [this.favKey(i), i]));
+    return keys.map((key) => byKey.get(key)).filter(Boolean);
+  },
+
   /* -- favorites -- */
   favKey(item) {
     return `${item.kind}:${item.id}`;
@@ -835,7 +863,9 @@ const SHELF_DEFS = { movies: MOVIE_ROWS, series: SERIES_ROWS };
 function forYouItems(tab) {
   const lib = state.library[tab];
   if (!lib) return [];
-  const byId = new Map(lib.items.map((i) => [String(i.id), i]));
+  const byId = new Map(
+    lib.items.filter((i) => !profiles.isDeleted(i)).map((i) => [String(i.id), i])
+  );
   const seen = new Set();
   const out = [];
 
@@ -857,6 +887,8 @@ function buildShelves(tab) {
   const lib = state.library[tab];
   if (!lib) return [];
 
+  // Hidden titles are out of the rows too, not just the grids.
+  const pool = lib.items.filter((i) => !profiles.isDeleted(i));
   const rows = [];
   for (const def of SHELF_DEFS[tab] || []) {
     if (def.special === 'recent') {
@@ -871,8 +903,8 @@ function buildShelves(tab) {
     );
 
     let items = def.all
-      ? lib.items
-      : lib.items.filter(
+      ? pool
+      : pool.filter(
           (i) =>
             ids.has(String(i.categoryId)) ||
             (def.genre && def.genre.test(i.genre || ''))
@@ -1123,6 +1155,18 @@ function renderCategories(categories, items) {
     }
   }
 
+  // The bin sits at the very bottom, and only appears once there is something
+  // in it — an empty row would just be a permanent reminder of a feature.
+  if (canDelete(state.tab)) {
+    const binned = profiles.deletedItems(state.tab);
+    if (binned.length) {
+      const heading = el('div', 'cat-section');
+      heading.textContent = 'Hidden';
+      list.append(heading);
+      list.append(makeRow(DELETED_CATEGORY, 'Deleted', binned.length, { pinnable: false }));
+    }
+  }
+
   if (q && !visible.length) {
     const none = el('div', 'cat-empty');
     none.textContent = `No category matches “${state.catQuery}”.`;
@@ -1247,6 +1291,10 @@ function watchedProgress(item) {
   return 0;
 }
 
+/** Films and shows can be hidden; channels and downloads are left alone. */
+const DELETED_CATEGORY = '__deleted__';
+const canDelete = (tab) => tab === 'movies' || tab === 'series';
+
 function cardFor(item) {
   const card = el('button', 'card');
 
@@ -1289,6 +1337,28 @@ function cardFor(item) {
     fill.style.width = `${Math.min(100, watched * 100)}%`;
     bar.append(fill);
     art.append(bar);
+  }
+
+  // Hide a title you never want to see again, or put it back from the bin.
+  // Revealed on hover so it is not sitting on every poster; in the bin it is
+  // always there, since that is the only way back and hover is not a thing on
+  // a phone.
+  if (canDelete(state.tab)) {
+    const gone = profiles.isDeleted(item);
+    const bin = el('button', `icon-btn card-bin${gone ? ' is-restore' : ''}`);
+    bin.title = gone ? 'Put back' : 'Hide this — it stops showing in lists and search';
+    bin.setAttribute('aria-label', bin.title);
+    bin.innerHTML = gone
+      ? '<svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M3 4v5h5"/></svg>'
+      : '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>';
+    bin.addEventListener('click', (event) => {
+      // The poster underneath opens the player.
+      event.stopPropagation();
+      const nowGone = profiles.toggleDeleted(item);
+      toast(nowGone ? `Hid “${item.name}”. It's in Deleted.` : `Restored “${item.name}”.`);
+      render();
+    });
+    art.append(bin);
   }
 
   const title = el('h3', 'card-title');
@@ -1674,12 +1744,27 @@ function render() {
       }
     : state.library[state.tab] || { categories: [], items: [] };
 
-  if (!isFavorites) renderCategories(source.categories, source.items);
-
-  let items = source.items;
-  if (state.category !== null && !isFavorites) {
-    items = items.filter((i) => String(i.categoryId) === String(state.category));
+  if (!isFavorites) {
+    // Count what the grid will actually show. Leaving hidden titles in the
+    // tally means a category reads 6 and then opens with 5 in it.
+    renderCategories(
+      source.categories,
+      canDelete(state.tab) ? source.items.filter((i) => !profiles.isDeleted(i)) : source.items
+    );
   }
+
+  const inBin = state.category === DELETED_CATEGORY;
+  let items = inBin ? profiles.deletedItems(state.tab) : source.items;
+
+  if (!inBin) {
+    if (state.category !== null && !isFavorites) {
+      items = items.filter((i) => String(i.categoryId) === String(state.category));
+    }
+    // Deleted titles are gone from the grids and from search alike — hiding
+    // them from one and not the other is worse than not hiding them at all.
+    if (canDelete(state.tab)) items = items.filter((i) => !profiles.isDeleted(i));
+  }
+
   if (state.query) {
     const q = state.query.toLowerCase();
     items = items.filter((i) => i.name.toLowerCase().includes(q));

@@ -220,6 +220,26 @@ Other endpoints: `GET/POST /api/profiles`, `PATCH/DELETE /api/profiles/:id`,
 `GET/PUT /api/profiles/:id/prefs`, `POST /api/profiles/:id/history`,
 `POST /api/profiles/:id/rating`.
 
+## Hiding a title you never want to see
+
+Hover a film or show on the desktop and a bin appears in the corner of the
+poster — deliberately on hover, so it is not sitting on every poster in the
+library. It hides that title from the grids, from the named rows, from For You
+and from search. All four, because hiding it from some and not the others is
+worse than not hiding it at all.
+
+Hidden, not deleted: the provider still carries the title and will keep sending
+it, so this is a list of things not to show. It is kept per profile, since one
+person's junk is another's watchlist.
+
+They collect under **Deleted**, at the foot of the category list, which only
+appears once something is in it. In there the button turns into a restore arrow
+and is always visible rather than hover-revealed — it is the only way back, and
+hover is not a gesture a phone has.
+
+Category counts are taken after the hidden ones are removed, so a category that
+says 6 opens with 6 in it.
+
 ## The home screen
 
 `#/home` is the landing page, and **the badge in the top left is the way back
