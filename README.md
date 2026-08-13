@@ -656,6 +656,13 @@ player — by the time anyone looks, the session in question is usually gone. It
 reads only files already on disk, so it costs no provider connection and is
 safe while a film is playing.
 
+It also reports **what ffmpeg found in the source** — codec, sample rate,
+channel layout — taken from the header ffmpeg prints before it starts work.
+That is the only description of the provider's audio obtainable without
+spending the single connection playback needs on a second probe, which is why
+the remux runs at `-v info -nostats` and both ends of its stderr are kept: the
+head describes the input, the tail carries whatever went wrong.
+
 ### Next episode
 
 Series get a **Next episode** button in the player, offered 45 seconds before
@@ -706,6 +713,25 @@ what you wanted to know. Static files are served with real ETags, so a changed
 `app.js` is always picked up and the number cannot be stale in the other
 direction.
 
+### Everything is packaged as fragmented MP4
+
+Both HEVC and H.264 come out of the remux as fMP4 segments with an `init.mp4`.
+HEVC has to be — Apple's HLS spec carries it no other way. H.264 was left as
+MPEG-TS because it worked, and for the video it did.
+
+The audio is why it no longer is. An MPEG-TS segment reaches hls.js as a
+transport stream it has to demux and rebuild into MP4 for the browser itself,
+reconstructing every AAC frame's timing from ADTS headers as it goes. Get that
+spacing wrong and the samples are laid down at the wrong intervals, which is
+heard as a pitch shift — a deep, dragging voice — while the video, whose frames
+carry their own timestamps, stays perfectly in time. Every measurement a
+browser can make of that reads as healthy.
+
+fMP4 segments carry explicit sample counts and durations in their own headers
+and are passed to the browser essentially untouched, which takes that
+reconstruction out of the path. It also leaves one packaging format instead of
+two.
+
 ### Audio is always re-encoded, never copied
 
 The remux copies the video stream untouched and **re-encodes the audio every
@@ -728,7 +754,11 @@ running many times faster than playback, and it is what the download optimizer
 had been doing all along — the streaming path was the odd one out.
 
 The playback report names the profile of what came out, so the next report can
-confirm it rather than assume.
+confirm it rather than assume. **This did not fix the deep-voice fault** — the
+next report came back reading `aac LC 48000Hz` and sounding exactly the same,
+which is what pointed at the packaging above. The re-encode stays because
+pinning the format is worth having regardless, and because it ruled the
+encoder out.
 
 ## Playing movies and series (.mkv remuxing)
 

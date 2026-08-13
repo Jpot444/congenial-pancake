@@ -1632,18 +1632,31 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0) {
     '-af', 'aresample=async=1'
   );
 
-  // Apple's HLS spec carries HEVC in fragmented MP4 only — HEVC inside MPEG-TS
-  // will not play on iOS at all. It also insists on the hvc1 tag, not hev1.
-  if (isHevc) {
-    args.push(
-      '-tag:v', 'hvc1',
-      '-hls_segment_type', 'fmp4',
-      '-hls_fmp4_init_filename', 'init.mp4',
-      '-hls_segment_filename', path.join(outDir, 'seg%05d.m4s')
-    );
-  } else {
-    args.push('-hls_segment_filename', path.join(outDir, 'seg%05d.ts'));
-  }
+  // Fragmented MP4 for everything, not just HEVC.
+  //
+  // HEVC has to be fMP4 — Apple's HLS spec carries it no other way, and inside
+  // MPEG-TS it will not play on iOS at all. H.264 was left as TS because it
+  // works, and for the video it does.
+  //
+  // The audio is the reason it no longer is. An MPEG-TS segment reaches hls.js
+  // as a transport stream it has to demux and rebuild into MP4 for the browser
+  // itself, reconstructing every AAC frame's timing from ADTS headers as it
+  // goes. Get that timing wrong and the samples are laid down at the wrong
+  // spacing, which is heard as a pitch shift while the video, whose frames
+  // carry their own timestamps, stays perfectly in time. That is the shape of
+  // the fault reported here, and it survived pinning the encoder to AAC-LC at
+  // a fixed rate — so the file is right and something after it is not.
+  //
+  // fMP4 segments carry explicit sample counts and durations in their own
+  // headers and are handed to the browser essentially untouched, which takes
+  // that reconstruction out of the path entirely. It also leaves one packaging
+  // format instead of two.
+  if (isHevc) args.push('-tag:v', 'hvc1');
+  args.push(
+    '-hls_segment_type', 'fmp4',
+    '-hls_fmp4_init_filename', 'init.mp4',
+    '-hls_segment_filename', path.join(outDir, 'seg%05d.m4s')
+  );
 
   args.push(
     '-f', 'hls',
@@ -1687,15 +1700,26 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0 })
   const dir = path.join(HLS_DIR, id);
   fs.mkdirSync(dir, { recursive: true });
 
+  // `-v info` rather than `error`, for one reason: ffmpeg prints what it found
+  // in the source before it starts work — codec, sample rate, channel layout,
+  // profile — and that is the only description of the provider's audio we can
+  // get without spending the single connection playback needs on a second
+  // probe. `-nostats` keeps the per-frame progress spew out of it.
   const proc = spawn(
     'ffmpeg',
-    ['-v', 'error', '-y', ...ffmpegArgs(input, dir, codec, startSeconds)],
+    ['-v', 'info', '-nostats', '-hide_banner', '-y',
+      ...ffmpegArgs(input, dir, codec, startSeconds)],
     { stdio: ['ignore', 'ignore', 'pipe'] }
   );
 
   let stderr = '';
+  let stderrHead = '';
   proc.stderr.on('data', (d) => {
-    stderr = (stderr + d.toString()).slice(-2000);
+    const text = d.toString();
+    // Head and tail both: the header describes the input, the tail carries
+    // whatever went wrong. Keeping only one loses the half that matters.
+    if (stderrHead.length < 6000) stderrHead += text;
+    stderr = (stderr + text).slice(-2000);
   });
 
   const session = {
@@ -1712,6 +1736,7 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0 })
     // not 8s: at this provider's pacing that drains before the first drop.
     prebuffer: startSeconds > 0 ? 45 : readPrefs().prebufferSeconds || DEFAULT_PREBUFFER,
     stderr: () => stderr,
+    stderrHead: () => stderrHead,
   };
   remuxSessions.set(id, session);
 
@@ -2983,6 +3008,13 @@ async function handleApi(req, res, pathname, query) {
       lastError: session.exited && session.exitCode !== 0 ? session.stderr().split('\n').pop() : '',
       declaredSeconds: seconds,
       complete,
+      // ffmpeg's own reading of the source, straight from its header. The only
+      // view of the provider's audio that costs nothing to obtain.
+      input: (session.stderrHead() || '')
+        .split('\n')
+        .filter((line) => /^\s*(Input #0|Stream #0:|Output #0)/.test(line))
+        .map((line) => line.trim())
+        .slice(0, 8),
       ...probe,
     });
   }

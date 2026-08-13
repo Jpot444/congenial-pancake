@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '13';
+const VERSION = '13.1';
 
 const PAGE_SIZE = 60;
 
@@ -2989,6 +2989,31 @@ const playback = {
       .catch((err) => { this.probe = { error: err.message }; });
   },
 
+  /**
+   * The sample rate this machine's audio hardware runs at.
+   *
+   * Worth having next to the rate in the file: a mismatch between the two has
+   * to be resampled somewhere, and audio played at the wrong rate is heard as
+   * a pitch shift rather than as anything the video clock would notice. The
+   * context is created suspended and never connected to anything, so it reads
+   * the setting without touching playback.
+   */
+  deviceSampleRate() {
+    if (this.deviceRate !== undefined) return this.deviceRate;
+    this.deviceRate = 0;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) {
+        const ctx = new Ctx();
+        this.deviceRate = ctx.sampleRate;
+        ctx.close?.();
+      }
+    } catch {
+      /* not available; the line just reads unknown */
+    }
+    return this.deviceRate;
+  },
+
   /** Frames actually put on screen, per wall second and per media second. */
   frameRate() {
     const w = this.window();
@@ -3067,6 +3092,7 @@ const playback = {
       `events          waiting ${this.events.waiting}, stalled ${this.events.stalled}, ` +
         `error ${this.events.error}, ratechange ${this.events.ratechange}, seeked ${this.events.seeked}`,
       `engine          ${engineKind || 'none'}`,
+      `audio device    ${this.deviceSampleRate() || 'unknown'}Hz output`,
       `source          ${(video.currentSrc || '').slice(0, 120) || 'none'}`,
       `film            active ${film.active}, offset ${Math.round(film.offset)}, ` +
         `ready ${Math.round(film.ready)}, duration ${film.duration}`,
@@ -3094,6 +3120,8 @@ const playback = {
     const seg = p.segment || {};
     const age = Math.round((Date.now() - this.probedAt) / 1000);
     return [
+      ...(p.input || []).map((line, i) =>
+        `${i === 0 ? 'source' : ''}`.padEnd(16) + line),
       `conversion      wrote ${Number(p.declaredTotal || 0).toFixed(1)}s across the playlist ` +
         `(measured ${age}s ago)`,
       `  a segment     claims ${Number(seg.declared || 0).toFixed(3)}s, holds ` +
