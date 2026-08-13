@@ -2090,6 +2090,53 @@ function renderDownloads() {
   grid.append(frag);
 }
 
+/**
+ * Play a finished download, and line up whatever follows it.
+ *
+ * A downloaded episode opens as a plain local file — the provider is out of
+ * the loop entirely — so "next" here means the next episode of the same show
+ * that is also on disk, not the next one that exists. Offering an episode that
+ * has to be fetched would turn an offline watch into a stalled one.
+ */
+async function playDownload(job) {
+  const poster = downloadPoster(job);
+  await openPlayer({
+    kind: 'movie',
+    id: `dl-${job.id}`,
+    name: job.name,
+    logo: poster,
+    directUrl: `/api/downloads/${job.id}/file`,
+    sourceUrl: `x.${job.ext}`,
+    localOnly: true,
+    downloadId: job.id,
+    // Shares its watch position with the streamed version.
+    resumeKey: job.resumeKey || '',
+  });
+
+  // Closed, or moved on to something else, while this was buffering.
+  if ($('#playerOverlay').hidden || film.item?.downloadId !== job.id) return;
+
+  const after = nextDownloadedEpisode(job);
+  upNext.arm(after && {
+    label: after.season && after.episode
+      ? `S${after.season} · E${after.episode} — ${after.name}`
+      : after.name,
+    start: () => playDownload(after),
+  });
+}
+
+/** The next episode of the same show that is also finished downloading. */
+function nextDownloadedEpisode(job) {
+  const key = seriesKeyOf(job);
+  if (!key || !job.season || !job.episode) return null;
+  const order = (j) => Number(j.season) * 10000 + Number(j.episode);
+  const mine = order(job);
+  return (state.downloads.items || [])
+    .filter((j) => j.status === 'done' && seriesKeyOf(j) === key && j.season && j.episode)
+    .sort((a, b) => order(a) - order(b))
+    .find((j) => order(j) > mine) || null;
+}
+
 /** Identity a download groups under, or '' for anything that isn't an episode. */
 function seriesKeyOf(job) {
   if (job.kind !== 'series') return '';
@@ -2224,20 +2271,7 @@ function downloadCard(job) {
 
     if (job.status === 'done') {
       art.style.cursor = 'pointer';
-      art.addEventListener('click', () =>
-        openPlayer({
-          kind: 'movie',
-          id: `dl-${job.id}`,
-          name: job.name,
-          logo: poster,
-          directUrl: `/api/downloads/${job.id}/file`,
-          sourceUrl: `x.${job.ext}`,
-          localOnly: true,
-          downloadId: job.id,
-          // Shares its watch position with the streamed version.
-          resumeKey: job.resumeKey || '',
-        })
-      );
+      art.addEventListener('click', () => playDownload(job));
     }
 
     const title = el('h3', 'card-title');
@@ -2872,7 +2906,198 @@ $('#video').addEventListener('loadstart', () => playback.reset());
 $('#video').addEventListener('seeking', () => {
   playback.samples = [];
 });
-setInterval(() => playback.tick(), 1000);
+setInterval(() => {
+  playback.tick();
+  upNext.tick();
+}, 1000);
+
+/* --------------------------------------------------------------- up next ---
+ *
+ * A "Next episode" button that arrives when the credits start rather than when
+ * the file runs out.
+ *
+ * Nothing in the stream says where the credits are. This provider ships no
+ * chapters and no markers, so there is nothing to read — it has to be worked
+ * out from the picture, and the giveaway is that credits are dark and stay
+ * dark. The detector keeps a running mean brightness for the episode, and once
+ * inside the last fifth of the runtime looks for a stretch where the picture
+ * drops well below that average and holds there. Judging against the episode's
+ * own average rather than a fixed number is what stops a dark show from
+ * tripping it in every night scene, and holding for several seconds is what
+ * stops an ordinary cut to black doing the same.
+ *
+ * It is a guess, so it is never the only way through. Whatever the picture is
+ * doing, the button appears with 45 seconds left — which also covers the two
+ * cases where reading the picture is impossible: a browser that will not hand
+ * back frames, and an episode whose credits the provider already cut off.
+ */
+const CREDITS = {
+  minRuntime: 480,   // under 8 minutes there is nothing worth detecting
+  zone: 0.2,         // only look inside the last fifth
+  floor: 45,         // seconds left at which it appears regardless
+  hold: 8,           // consecutive dark seconds before we believe it
+  darkFrac: 0.8,     // share of the frame that has to be near black
+  relative: 0.45,    // how far below the episode's own average counts as dark
+  ceiling: 26,       // ...but never call a well-lit frame dark
+  sane: 12,          // brightest frame seen; below this we are not really reading frames
+};
+
+const upNext = {
+  candidate: null,   // { label, start() } for the episode after this one
+  shown: false,
+  dismissed: false,
+  lumaSum: 0,
+  lumaCount: 0,
+  peak: 0,
+  darkRun: 0,
+  blind: false,
+  canvas: null,
+  ctx: null,
+
+  /** Called when an episode starts, with whatever follows it. */
+  arm(candidate) {
+    this.clear();
+    this.candidate = candidate || null;
+  },
+
+  clear() {
+    this.candidate = null;
+    this.shown = false;
+    this.dismissed = false;
+    this.lumaSum = 0;
+    this.lumaCount = 0;
+    this.peak = 0;
+    this.darkRun = 0;
+    this.blind = false;
+    $('#upNext').hidden = true;
+  },
+
+  /**
+   * A runtime we can subtract from, or 0 when there isn't one.
+   *
+   * Metadata first. Failing that, the player's own duration — but only when
+   * nothing is being remuxed, because mid-remux it reports the length
+   * converted so far, which trails just behind the play head. Treating that as
+   * the runtime would put the button on screen in the opening titles. With
+   * neither, this stays quiet and the `ended` event is the only way through.
+   */
+  runtime() {
+    if (film.active && film.runtimeKnown) return film.duration;
+    if (lastRemux.session) return 0;
+    return $('#video').duration;
+  },
+
+  /** The episode's average brightness so far, or null before there is one. */
+  baseline() {
+    return this.lumaCount ? this.lumaSum / this.lumaCount : null;
+  },
+
+  /**
+   * Average brightness of the current frame and how much of it is near black,
+   * read from a 32×18 copy — small enough that doing it every second costs
+   * nothing. Returns null when the frame cannot be read at all, which is a
+   * browser refusing a cross-origin or protected surface rather than a dark
+   * picture, and must not be confused with one.
+   */
+  frame() {
+    const video = $('#video');
+    if (!video.videoWidth) return null;
+    if (!this.canvas) {
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = 32;
+      this.canvas.height = 18;
+      this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+    }
+    try {
+      this.ctx.drawImage(video, 0, 0, 32, 18);
+      const { data } = this.ctx.getImageData(0, 0, 32, 18);
+      let sum = 0;
+      let dark = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const y = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        sum += y;
+        if (y < 40) dark += 1;
+      }
+      const pixels = data.length / 4;
+      return { luma: sum / pixels, darkFrac: dark / pixels };
+    } catch {
+      return null;   // tainted canvas: nothing here will ever work, fall back
+    }
+  },
+
+  tick() {
+    if (!this.candidate || this.dismissed || this.shown) return;
+    const video = $('#video');
+    if (video.paused || video.seeking) return;
+
+    const total = this.runtime();
+    if (!Number.isFinite(total) || total < CREDITS.minRuntime) return;
+    const left = total - filmPosition();
+    if (!Number.isFinite(left) || left < 0) return;
+
+    // Whatever the picture says, offer it before the episode runs out.
+    if (left <= CREDITS.floor) return this.reveal();
+
+    const inZone = left <= total * CREDITS.zone;
+    if (this.blind) return;
+
+    const shot = this.frame();
+    if (shot === null) {
+      this.blind = true;
+      return;
+    }
+
+    if (!inZone) {
+      // Build the baseline from the body of the episode only. Kept frozen
+      // afterwards: averaged through the credits themselves it would sink to
+      // meet them, and the test would stop firing partway down.
+      this.lumaSum += shot.luma;
+      this.lumaCount += 1;
+      this.peak = Math.max(this.peak, shot.luma);
+      return;
+    }
+
+    const base = this.baseline();
+    // Never saw a lit frame all episode? Then the canvas is handing back black
+    // rather than the picture, and every reading below is meaningless.
+    if (base === null || this.peak < CREDITS.sane) {
+      this.blind = true;
+      return;
+    }
+
+    const threshold = Math.min(CREDITS.ceiling, base * CREDITS.relative);
+    const dark = shot.luma < threshold && shot.darkFrac >= CREDITS.darkFrac;
+    this.darkRun = dark ? this.darkRun + 1 : 0;
+    if (this.darkRun >= CREDITS.hold) this.reveal();
+  },
+
+  reveal() {
+    if (!this.candidate || this.shown || this.dismissed) return;
+    this.shown = true;
+    $('#upNextTitle').textContent = this.candidate.label;
+    $('#upNext').hidden = false;
+    // The card rides in the transport bar, which fades out once you stop
+    // moving. Bring the chrome back and hold it — an offer that vanished three
+    // seconds after appearing would be worse than no offer.
+    showChrome();
+  },
+};
+
+$('#upNextGo').addEventListener('click', () => {
+  const next = upNext.candidate;
+  if (!next) return;
+  $('#upNext').hidden = true;
+  next.start();
+});
+
+$('#upNextDismiss').addEventListener('click', () => {
+  upNext.dismissed = true;
+  $('#upNext').hidden = true;
+});
+
+// The end of the file is the one moment the offer is certainly wanted, and a
+// short episode or a stream with no usable runtime never reaches the floor.
+$('#video').addEventListener('ended', () => upNext.reveal());
 
 /**
  * Rebuild whatever is playing, from where it currently is.
@@ -2960,6 +3185,11 @@ let currentLiveItem = null;
 const film = {
   active: false,
   duration: 0,   // true runtime in seconds
+  // Whether that duration came from metadata or is just the high-water mark
+  // paintFilmBar keeps pushing up. Anything reasoning about how much is LEFT
+  // has to know the difference: the high-water mark is always about equal to
+  // the current position, so "seconds remaining" from it is always near zero.
+  runtimeKnown: false,
   offset: 0,     // where this remux session begins within the film
   ready: 0,      // seconds remuxed in this session
   item: null,
@@ -3023,6 +3253,9 @@ function showChrome() {
   // Only get out of the way while something is actually playing.
   chromeTimer = setTimeout(
     () => {
+      // An unanswered next-episode offer keeps the chrome up: it lives in the
+      // bar, and fading it out would hide the one control being waited on.
+      if (upNext.shown) return;
       if (!$('#video').paused && !film.seeking) overlay.classList.add('chrome-hidden');
     },
     device.phone ? CHROME_IDLE_TOUCH : CHROME_IDLE
@@ -3099,6 +3332,7 @@ document.addEventListener('keydown', (event) => {
 function showFilmBar(item, duration, override) {
   film.active = true;
   film.duration = duration || 0;
+  film.runtimeKnown = Boolean(duration);
   // Resuming starts the conversion partway into the title, and resolveStream
   // has already recorded where. Zeroing it here would make the scrubber read
   // session time instead of real running time.
@@ -3774,6 +4008,8 @@ async function openPlayer(item) {
   const myToken = ++playToken;
   const overlay = $('#playerOverlay');
   overlay.hidden = false;
+  // Whatever was queued up behind the last title is not what follows this one.
+  upNext.clear();
   document.body.style.overflow = 'hidden';
 
   // Full screen from the first frame — the windowed shell used to flash up
@@ -3997,6 +4233,87 @@ async function renderSeries(item) {
   const list = el('div', 'ep-list');
   detail.append(picker, list);
 
+  /** What follows an episode, rolling into the next season at the end of one. */
+  const episodeAfter = (season, index) => {
+    const here = episodes[season] || [];
+    if (index + 1 < here.length) return { season, index: index + 1, episode: here[index + 1] };
+    const later = seasons[seasons.indexOf(season) + 1];
+    const there = later ? episodes[later] || [] : [];
+    return there.length ? { season: later, index: 0, episode: there[0] } : null;
+  };
+
+  const episodeLabel = (season, episode) =>
+    `S${season} · E${episode.episode_num} — ${episode.title || `Episode ${episode.episode_num}`}`;
+
+  /**
+   * Play one episode of the open series. A named function rather than the
+   * click handler it used to be, because the up-next button has to start an
+   * episode nobody clicked on — including the first of the following season.
+   */
+  const startEpisode = async (season, index) => {
+    const episode = (episodes[season] || [])[index];
+    if (!episode) return;
+    const myToken = playToken; // closing the player invalidates this pick
+
+    // Offer to pick up where this episode was left, before converting.
+    let startAt = 0;
+    const saved = await fetchProgress(resumeKeyFor(item, episode, season));
+    if (saved) {
+      if (myToken !== playToken) return;
+      startAt = await askResume(`${item.name} — S${season}E${episode.episode_num}`, saved);
+      if (myToken !== playToken) return;
+    }
+
+    // Following on into another season leaves the wrong list on screen, so
+    // switch it before marking a row as playing.
+    if (!currentSeason || currentSeason.season !== season) showSeason(season);
+    const rows = [...list.querySelectorAll('.ep')];
+    rows.forEach((r) => r.classList.remove('is-playing'));
+    rows[index]?.classList.add('is-playing');
+
+    document.querySelector('.player-shell').classList.remove('awaiting-pick');
+    const sub = episodeLabel(season, episode);
+    $('#playerSub').textContent = sub;
+    $('#cinemaSub').textContent = sub;
+    // Drop the previous episode's offer now rather than when the new one is
+    // playing, or it hangs on screen through the whole conversion wait.
+    upNext.clear();
+
+    const override = {
+      kind: 'series',
+      id: episode.id,
+      ext: episode.container_extension || 'mp4',
+      vcodec: episode.info?.video?.codec_name || '',
+      acodec: episode.info?.audio?.codec_name || '',
+      achannels: episode.info?.audio?.channels || '',
+    };
+    try {
+      const { url, format, seekTo } = await resolveStream(item, { ...override, startAt });
+      if (myToken !== playToken) return;
+      attach(url, format, { seekTo });
+      showFilmBar(item, parseRuntime(episode.info), override);
+      // After showFilmBar — enterCinema clears the subtitle line.
+      $('#cinemaSub').textContent = sub;
+      startLeadWatch();
+      beginHistory(item, {
+        key: `series:${item.id}:s${season}e${episode.episode_num}`,
+        name: `${item.name} — S${season}E${episode.episode_num}`,
+        seriesId: item.id,
+        season: Number(season),
+        episode: Number(episode.episode_num),
+      });
+      // Armed only once this episode is really playing. Arming earlier would
+      // leave an offer up after a start that failed.
+      const after = episodeAfter(season, index);
+      upNext.arm(after && {
+        label: episodeLabel(after.season, after.episode),
+        start: () => startEpisode(after.season, after.index),
+      });
+    } catch (err) {
+      status(`Couldn't start episode: ${err.message}`);
+    }
+  };
+
   const showSeason = (season) => {
     // Remembered so the header download button knows which season to take.
     currentSeason = { item, season, episodes: episodes[season] || [] };
@@ -4004,7 +4321,7 @@ async function renderSeries(item) {
       chip.classList.toggle('is-active', chip.dataset.season === season);
     });
     list.innerHTML = '';
-    (episodes[season] || []).forEach((episode) => {
+    (episodes[season] || []).forEach((episode, index) => {
       const row = el('div', 'ep');
       const num = el('span', 'ep-num');
       num.textContent = String(episode.episode_num).padStart(2, '0');
@@ -4021,60 +4338,7 @@ async function renderSeries(item) {
       });
 
       row.append(num, name, grab);
-      row.addEventListener('click', async () => {
-        const myToken = playToken; // closing the player invalidates this pick
-
-        // Offer to pick up where this episode was left, before converting.
-        let startAt = 0;
-        const saved = await fetchProgress(resumeKeyFor(item, episode, season));
-        if (saved) {
-          if (myToken !== playToken) return;
-          startAt = await askResume(
-            `${item.name} — S${season}E${episode.episode_num}`,
-            saved
-          );
-          if (myToken !== playToken) return;
-        }
-
-        list.querySelectorAll('.ep').forEach((r) => r.classList.remove('is-playing'));
-        row.classList.add('is-playing');
-        document.querySelector('.player-shell').classList.remove('awaiting-pick');
-        $('#playerSub').textContent = `S${season} · E${episode.episode_num} — ${name.textContent}`;
-        $('#cinemaSub').textContent = `S${season} · E${episode.episode_num} — ${name.textContent}`;
-        try {
-          const { url, format, seekTo } = await resolveStream(item, {
-            kind: 'series',
-            id: episode.id,
-            ext: episode.container_extension || 'mp4',
-            vcodec: episode.info?.video?.codec_name || '',
-            acodec: episode.info?.audio?.codec_name || '',
-            achannels: episode.info?.audio?.channels || '',
-            startAt,
-          });
-          if (myToken !== playToken) return;
-          attach(url, format, { seekTo });
-          showFilmBar(item, parseRuntime(episode.info), {
-            kind: 'series',
-            id: episode.id,
-            ext: episode.container_extension || 'mp4',
-            vcodec: episode.info?.video?.codec_name || '',
-            acodec: episode.info?.audio?.codec_name || '',
-            achannels: episode.info?.audio?.channels || '',
-          });
-          // After showFilmBar — enterCinema clears the subtitle line.
-          $('#cinemaSub').textContent = `S${season} · E${episode.episode_num} — ${name.textContent}`;
-          startLeadWatch();
-          beginHistory(item, {
-            key: `series:${item.id}:s${season}e${episode.episode_num}`,
-            name: `${item.name} — S${season}E${episode.episode_num}`,
-            seriesId: item.id,
-            season: Number(season),
-            episode: Number(episode.episode_num),
-          });
-        } catch (err) {
-          status(`Couldn't start episode: ${err.message}`);
-        }
-      });
+      row.addEventListener('click', () => startEpisode(season, index));
       list.append(row);
     });
   };
@@ -4092,6 +4356,7 @@ async function renderSeries(item) {
 
 function closePlayer() {
   playToken += 1; // cancel any open/episode pick still awaiting its stream
+  upNext.clear();
   endHistory();
   hideFilmBar();
   exitCinema();

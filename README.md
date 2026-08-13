@@ -600,6 +600,56 @@ empty by the time anyone read it. The panel says how old the reading is.
 still leaves its mark, and the first six seconds are ignored because start-up
 reads as a stall.
 
+### Next episode, when the credits start
+
+Series get a **Next episode** button in the player. It is meant to arrive when
+the credits roll, not when the file runs out — by the time the last frame is
+gone you have already reached for the remote.
+
+Nothing in the stream says where the credits are. This provider ships no
+chapters and no markers, so there is nothing to read, and it has to be worked
+out from the picture. The giveaway is that credits are dark and *stay* dark:
+
+- Every second the player's current frame is copied into a 32×18 canvas and its
+  average brightness taken. At that size, once a second, it is free.
+- The average across the body of the episode becomes the baseline, and is then
+  frozen. Judged against the episode's own average rather than a fixed number,
+  a dark show does not trip it in every night scene. Averaging *through* the
+  credits would drag the baseline down to meet them and stop the test firing
+  partway down, which is why it stops accumulating at the boundary.
+- Inside the last fifth of the runtime, a frame counts as credits when it is
+  below 45% of that baseline (never above 26/255 outright) **and** at least 80%
+  of it is near black. Eight of those in a row is the trigger, so an ordinary
+  cut to black does not do it.
+
+It is a guess, so it is never the only way through. **The button appears with
+45 seconds left regardless**, and again when the file ends. That covers the two
+cases where the picture cannot be read at all: a browser that refuses to hand
+back frames from a video (the canvas throws, and rather than read every frame
+as black it stops looking), and an episode whose credits the provider already
+cut off. If the whole episode goes by without a single lit frame, that is taken
+as a broken canvas rather than a very dark episode, and the clock takes over.
+
+**A runtime that is still being converted is never used.** Mid-remux the
+player's own duration is only what ffmpeg has written so far, which trails just
+behind the play head — subtract that from the position and every moment looks
+like the last one. Only a runtime from metadata counts; failing that, the
+player's duration is used only when nothing is being remuxed. With neither, the
+end of the file is the only trigger.
+
+The card lives inside the transport bar rather than floating over the picture,
+because the bar is the only thing that knows how tall the controls are on each
+layout — on a phone the transport buttons float above it, and stacking off them
+is what keeps the card clear without an offset that goes stale. Revealing it
+pins the chrome up: an offer that faded out three seconds later would be worse
+than no offer.
+
+What counts as "next" depends on where the episode came from. Streamed, it is
+the next episode in the season and then the first of the season after it.
+Played from Downloads, it is the next episode of that show **that is also on
+disk** — offering one that has to be fetched would turn an offline watch into a
+stalled one.
+
 ## Playing movies and series (.mkv remuxing)
 
 **The live format setting does not apply to VOD.** Movies and episodes are

@@ -2337,6 +2337,124 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 /* Always-visible speed warning — deliberately outside .vod-bar so it does not
    fade with the rest of the chrome. */
+/* ---- next episode, once the credits start ---- */
+
+.up-next {
+  /* Anchored to whatever the transport resolves to on this layout — see the
+     note on the markup. Either way it lands above the controls without being
+     told how tall they are. */
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  z-index: 8;
+  /* The phone transport turns pointer events off for the empty space around
+     its buttons; this card is not empty space. */
+  pointer-events: auto;
+  display: flex;
+  align-items: stretch;
+  max-width: min(360px, calc(100% - 48px));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(18, 12, 12, .94);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, .6);
+  overflow: hidden;
+  animation: upNextIn .28s var(--ease);
+}
+
+@keyframes upNextIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+.up-next-go {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background .16s var(--ease);
+}
+
+.up-next-go:hover { background: rgba(255, 255, 255, .06); }
+
+.up-next-go svg {
+  width: 22px; height: 22px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.up-next-lines { display: grid; gap: 2px; min-width: 0; }
+
+.up-next-eyebrow {
+  font-family: var(--display);
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+
+.up-next-title {
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.up-next-x {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  flex-shrink: 0;
+  border: 0;
+  border-left: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--muted-dim);
+  cursor: pointer;
+}
+
+.up-next-x:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
+
+.up-next-x svg {
+  width: 14px; height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* The bar has a tall transparent gradient above its controls, so the card can
+   sit inside that and still read as floating over the picture. Absolute
+   positioning resolves against the padding box, so the inset has to be
+   restated here to line the card up with the controls rather than the screen
+   edge — and it matches the bar's own so a notch pushes both together. */
+.cinema .up-next {
+  margin-bottom: -46px;
+  right: max(32px, env(safe-area-inset-right));
+}
+
+/* Full width on a phone rather than tucked into a corner a thumb has to
+   stretch for. The transport's own bottom padding is already the gap. */
+.touch .cinema .up-next {
+  right: max(16px, env(safe-area-inset-right));
+  left: max(16px, env(safe-area-inset-left));
+  max-width: none;
+  /* No overlap here: on a phone the box above is the play buttons themselves,
+     not the bar's empty gradient. */
+  margin-bottom: 0;
+}
+
+.touch .cinema .up-next-go { padding: 14px; flex: 1; }
+.touch .cinema .up-next-x { width: 48px; }
+
 .speed-warn {
   position: absolute;
   top: 84px;

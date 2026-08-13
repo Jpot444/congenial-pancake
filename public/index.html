@@ -448,6 +448,27 @@
             <text class="skip-num" x="11.5" y="15.5">10</text>
           </svg>
         </button>
+
+        <!-- Arrives when the credits start rather than when the file runs out.
+             Inside the transport on purpose. On a phone that is a real box
+             floating above the bar, so `bottom: 100%` puts the card directly
+             on top of the play buttons' own height, whatever that height is
+             at this screen size. On a desktop the transport is
+             `display: contents` and generates no box at all, so the same rule
+             falls through to the bar and the card lands above it. One rule,
+             correct on both, with no offset to go stale. -->
+        <div class="up-next" id="upNext" hidden>
+          <button class="up-next-go" id="upNextGo">
+            <svg viewBox="0 0 24 24"><path d="M6 5l9 7-9 7z"/><path d="M18 5v14"/></svg>
+            <span class="up-next-lines">
+              <span class="up-next-eyebrow">Next episode</span>
+              <span class="up-next-title" id="upNextTitle"></span>
+            </span>
+          </button>
+          <button class="up-next-x" id="upNextDismiss" title="Not now" aria-label="Dismiss">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
       </div>
 
       <span class="vod-time" id="vodElapsed">0:00</span>
