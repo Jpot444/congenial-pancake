@@ -633,8 +633,11 @@ body.has-tabbar .home-version {
   align-items: stretch;
   /* THE number for this page. Viewport height rather than width, because with
      the favorites underneath it is the height that runs out first — and the
-     whole point of this revision is that nothing scrolls. */
-  height: clamp(180px, 34vh, 330px);
+     whole point of this revision is that nothing scrolls.
+     Set as tall as the budget allows rather than as short: the artwork is
+     contained, so a taller block is a box closer to the picture's own shape
+     and therefore less empty margin around it. */
+  height: clamp(200px, 42vh, 400px);
 }
 
 /* Same reason — a flex/grid child holds its content width without this. */
@@ -662,7 +665,18 @@ body.has-tabbar .home-version {
   min-height: 0;
   height: auto;
   aspect-ratio: auto;
+  background: var(--bg-raised);
 }
+
+/* Contained, not covered — the whole picture or nothing.
+   These boxes are sized by the layout, so their shape is whatever is left
+   after the block height is divided up; the artwork's shape is whatever the
+   provider sent, and it is not the same. `cover` fills the box by cutting off
+   whatever does not fit, which on a block wider than a 16:9 still means the
+   top and bottom of every one of them. The block above is as tall as the
+   page budget allows precisely so this leaves as little margin as possible. */
+.home-hero .card-art img,
+.home-quad-card .card-art img { object-fit: contain; }
 
 .home-hero .card-title { font-size: 15px; margin-top: 8px; }
 .home-quad-card .card-title {
@@ -716,7 +730,13 @@ body.has-tabbar .home-version {
 .home-tile { min-width: 0; }
 .home-tile .card-art { height: auto; overflow: hidden; }
 .home-tile.is-poster .card-art { aspect-ratio: 2 / 3; }
-.home-tile.is-poster .card-art img { width: 100%; height: 100%; object-fit: cover; }
+/* Same rule for the favorites. A 2:3 poster in a 2:3 tile is unaffected —
+   contain and cover are the same picture when the shapes match — and a wide
+   one is shown whole instead of having its sides taken off. */
+.home-tile.is-poster .card-art {
+  background: var(--bg-raised);
+}
+.home-tile.is-poster .card-art img { width: 100%; height: 100%; object-fit: contain; }
 
 /* A channel ident is wide and has writing on it. Contained on a plate, not
    cropped into a poster that cuts the name in half. */
@@ -762,7 +782,9 @@ body.has-tabbar .home-version {
     gap: 8px;
     height: auto;
   }
-  .home-quad-card .card-art { height: auto; aspect-ratio: 2 / 3; }
+  /* 16:10 rather than 2:3 — the artwork in this row is mostly wide, and a
+     tall box around a wide picture is margin, not poster. */
+  .home-quad-card .card-art { height: auto; aspect-ratio: 16 / 10; }
   .home-quad .card-sub { display: none; }
   .home-favs { grid-template-columns: minmax(0, 1fr); }
   .home-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }

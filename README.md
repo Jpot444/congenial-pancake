@@ -418,9 +418,21 @@ The favorite tiles are a fixed six across rather than `auto-fill`. They sit in
 a known half of the page, and letting them wrap would put the second line below
 the fold — which is the one thing this is for.
 
-Favorite films keep a 2:3 poster. **Channels do not**: an ident is wide and has
-writing on it, so those get a 16:10 plate with the logo contained rather than a
-2:3 crop that cuts the name in half.
+**Nothing on this page is cropped.** Every image is `object-fit: contain`, and
+that is not a detail — it is the difference between seeing a poster and seeing
+the middle of one. The boxes are sized by the layout, so their shape is
+whatever is left after the block height is divided up; the artwork's shape is
+whatever the provider sent, and the two are never the same. `cover` fills the
+box by throwing away the difference, which on a block wider than a 16:9 still
+means the top and bottom of every one of them — heads cut off, logos clipped.
+The recent block is deliberately as *tall* as the page budget allows for the
+same reason: a taller block is a box closer to the picture's own shape, and so
+less empty margin around it.
+
+Channels get a 16:10 plate rather than a 2:3 one — an ident is wide and has
+writing on it — and the four cards under the hero use 16:10 on a phone too,
+since the artwork in that row is mostly wide and a tall box around a wide
+picture is margin, not poster.
 
 On a phone it all stacks — a hero beside a 2×2 leaves both unreadable at 390px,
 and two favorite columns more so — and the four under the hero become one row
