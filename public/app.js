@@ -6,6 +6,20 @@
  *   /api/play     → resolves a proxied, playable stream URL
  */
 
+/**
+ * What has shipped. Bumped by hand on every deploy — minor for a change to
+ * something that already existed, whole number for a new feature.
+ *
+ * Shown in the corner of the home screen and nowhere else. Its whole purpose
+ * is to answer "did my push actually reach the Pi", so it is deliberately read
+ * from the client bundle rather than reported by the server: a stale number
+ * means the code running in front of you is stale, which is exactly the
+ * question being asked. Static files are served with real validators, so a
+ * changed app.js is always picked up and the number cannot lie in the other
+ * direction.
+ */
+const VERSION = '12';
+
 const PAGE_SIZE = 60;
 
 const $ = (sel) => document.querySelector(sel);
@@ -1652,6 +1666,13 @@ function renderHome() {
       'Nothing here yet. Watch something and it will show up on this page.';
   }
 
+  // Lives inside the home view rather than the page, so leaving home takes it
+  // away without anything having to remember to hide it.
+  const stamp = el('span', 'home-version');
+  stamp.textContent = `v${VERSION}`;
+  stamp.title = 'Version running in this browser';
+  view.append(stamp);
+
   $('#contentMeta').textContent = profiles.current ? profiles.current.name : '';
 }
 
@@ -2490,6 +2511,10 @@ async function requestDownload(item, episode, { quiet = false } = {}) {
 
 async function goTo(tab) {
   state.tab = tab;
+  // Leave home the moment the tab changes rather than once the new tab has
+  // drawn. A tab whose library fails to load returns before render() ever
+  // runs, which left the whole home screen sitting there underneath the error.
+  if (tab !== 'home') $('#homeView').hidden = true;
   state.category = null;
   state.shelf = null;
   state.visible = PAGE_SIZE;
@@ -3041,46 +3066,27 @@ setInterval(() => {
 
 /* --------------------------------------------------------------- up next ---
  *
- * A "Next episode" button that arrives when the credits start rather than when
- * the file runs out.
+ * A "Next episode" button, offered 45 seconds before an episode runs out.
  *
- * Nothing in the stream says where the credits are. This provider ships no
- * chapters and no markers, so there is nothing to read — it has to be worked
- * out from the picture, and the giveaway is that credits are dark and stay
- * dark. The detector keeps a running mean brightness for the episode, and once
- * inside the last fifth of the runtime looks for a stretch where the picture
- * drops well below that average and holds there. Judging against the episode's
- * own average rather than a fixed number is what stops a dark show from
- * tripping it in every night scene, and holding for several seconds is what
- * stops an ordinary cut to black doing the same.
+ * A fixed mark rather than anything cleverer. This started out reading the
+ * picture to find where the credits began — brightness against the episode's
+ * own average, held for several seconds — but a detector that fires on what is
+ * on screen fires at a different point in every episode, and sometimes during
+ * a dark scene that was not the credits at all. A mark you can predict is
+ * worth more than one that is occasionally earlier.
  *
- * It is a guess, so it is never the only way through. Whatever the picture is
- * doing, the button appears with 45 seconds left — which also covers the two
- * cases where reading the picture is impossible: a browser that will not hand
- * back frames, and an episode whose credits the provider already cut off.
+ * The end of the file is a second trigger, for anything whose runtime is not
+ * known well enough to count backwards from.
  */
-const CREDITS = {
-  minRuntime: 480,   // under 8 minutes there is nothing worth detecting
-  zone: 0.2,         // only look inside the last fifth
-  floor: 45,         // seconds left at which it appears regardless
-  hold: 8,           // consecutive dark seconds before we believe it
-  darkFrac: 0.8,     // share of the frame that has to be near black
-  relative: 0.45,    // how far below the episode's own average counts as dark
-  ceiling: 26,       // ...but never call a well-lit frame dark
-  sane: 12,          // brightest frame seen; below this we are not really reading frames
+const UP_NEXT = {
+  mark: 45,          // seconds left when the offer appears
+  minRuntime: 120,   // below this the mark would land almost immediately
 };
 
 const upNext = {
   candidate: null,   // { label, start() } for the episode after this one
   shown: false,
   dismissed: false,
-  lumaSum: 0,
-  lumaCount: 0,
-  peak: 0,
-  darkRun: 0,
-  blind: false,
-  canvas: null,
-  ctx: null,
 
   /** Called when an episode starts, with whatever follows it. */
   arm(candidate) {
@@ -3092,11 +3098,6 @@ const upNext = {
     this.candidate = null;
     this.shown = false;
     this.dismissed = false;
-    this.lumaSum = 0;
-    this.lumaCount = 0;
-    this.peak = 0;
-    this.darkRun = 0;
-    this.blind = false;
     $('#upNext').hidden = true;
   },
 
@@ -3115,88 +3116,16 @@ const upNext = {
     return $('#video').duration;
   },
 
-  /** The episode's average brightness so far, or null before there is one. */
-  baseline() {
-    return this.lumaCount ? this.lumaSum / this.lumaCount : null;
-  },
-
-  /**
-   * Average brightness of the current frame and how much of it is near black,
-   * read from a 32×18 copy — small enough that doing it every second costs
-   * nothing. Returns null when the frame cannot be read at all, which is a
-   * browser refusing a cross-origin or protected surface rather than a dark
-   * picture, and must not be confused with one.
-   */
-  frame() {
-    const video = $('#video');
-    if (!video.videoWidth) return null;
-    if (!this.canvas) {
-      this.canvas = document.createElement('canvas');
-      this.canvas.width = 32;
-      this.canvas.height = 18;
-      this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
-    }
-    try {
-      this.ctx.drawImage(video, 0, 0, 32, 18);
-      const { data } = this.ctx.getImageData(0, 0, 32, 18);
-      let sum = 0;
-      let dark = 0;
-      for (let i = 0; i < data.length; i += 4) {
-        const y = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-        sum += y;
-        if (y < 40) dark += 1;
-      }
-      const pixels = data.length / 4;
-      return { luma: sum / pixels, darkFrac: dark / pixels };
-    } catch {
-      return null;   // tainted canvas: nothing here will ever work, fall back
-    }
-  },
-
   tick() {
     if (!this.candidate || this.dismissed || this.shown) return;
     const video = $('#video');
     if (video.paused || video.seeking) return;
 
     const total = this.runtime();
-    if (!Number.isFinite(total) || total < CREDITS.minRuntime) return;
+    if (!Number.isFinite(total) || total < UP_NEXT.minRuntime) return;
     const left = total - filmPosition();
     if (!Number.isFinite(left) || left < 0) return;
-
-    // Whatever the picture says, offer it before the episode runs out.
-    if (left <= CREDITS.floor) return this.reveal();
-
-    const inZone = left <= total * CREDITS.zone;
-    if (this.blind) return;
-
-    const shot = this.frame();
-    if (shot === null) {
-      this.blind = true;
-      return;
-    }
-
-    if (!inZone) {
-      // Build the baseline from the body of the episode only. Kept frozen
-      // afterwards: averaged through the credits themselves it would sink to
-      // meet them, and the test would stop firing partway down.
-      this.lumaSum += shot.luma;
-      this.lumaCount += 1;
-      this.peak = Math.max(this.peak, shot.luma);
-      return;
-    }
-
-    const base = this.baseline();
-    // Never saw a lit frame all episode? Then the canvas is handing back black
-    // rather than the picture, and every reading below is meaningless.
-    if (base === null || this.peak < CREDITS.sane) {
-      this.blind = true;
-      return;
-    }
-
-    const threshold = Math.min(CREDITS.ceiling, base * CREDITS.relative);
-    const dark = shot.luma < threshold && shot.darkFrac >= CREDITS.darkFrac;
-    this.darkRun = dark ? this.darkRun + 1 : 0;
-    if (this.darkRun >= CREDITS.hold) this.reveal();
+    if (left <= UP_NEXT.mark) this.reveal();
   },
 
   reveal() {

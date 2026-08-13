@@ -631,35 +631,22 @@ player — by the time anyone looks, the session in question is usually gone. It
 reads only files already on disk, so it costs no provider connection and is
 safe while a film is playing.
 
-### Next episode, when the credits start
+### Next episode
 
-Series get a **Next episode** button in the player. It is meant to arrive when
-the credits roll, not when the file runs out — by the time the last frame is
-gone you have already reached for the remote.
+Series get a **Next episode** button in the player, offered 45 seconds before
+the episode runs out.
 
-Nothing in the stream says where the credits are. This provider ships no
-chapters and no markers, so there is nothing to read, and it has to be worked
-out from the picture. The giveaway is that credits are dark and *stay* dark:
+A fixed mark rather than anything cleverer. This started out reading the
+picture to find where the credits began — average brightness measured against
+the episode's own baseline, held for several seconds, since nothing in an
+Xtream stream marks the credits and there is no metadata to read. It worked,
+but a detector that fires on what is on screen fires at a different point in
+every episode, and sometimes in a dark scene that was not the credits at all. A
+mark you can predict is worth more than one that is occasionally earlier, so
+the detector is gone and the mark is the whole rule.
 
-- Every second the player's current frame is copied into a 32×18 canvas and its
-  average brightness taken. At that size, once a second, it is free.
-- The average across the body of the episode becomes the baseline, and is then
-  frozen. Judged against the episode's own average rather than a fixed number,
-  a dark show does not trip it in every night scene. Averaging *through* the
-  credits would drag the baseline down to meet them and stop the test firing
-  partway down, which is why it stops accumulating at the boundary.
-- Inside the last fifth of the runtime, a frame counts as credits when it is
-  below 45% of that baseline (never above 26/255 outright) **and** at least 80%
-  of it is near black. Eight of those in a row is the trigger, so an ordinary
-  cut to black does not do it.
-
-It is a guess, so it is never the only way through. **The button appears with
-45 seconds left regardless**, and again when the file ends. That covers the two
-cases where the picture cannot be read at all: a browser that refuses to hand
-back frames from a video (the canvas throws, and rather than read every frame
-as black it stops looking), and an episode whose credits the provider already
-cut off. If the whole episode goes by without a single lit frame, that is taken
-as a broken canvas rather than a very dark episode, and the clock takes over.
+The end of the file is a second trigger, for an episode whose runtime is not
+known well enough to count backwards from.
 
 **A runtime that is still being converted is never used.** Mid-remux the
 player's own duration is only what ffmpeg has written so far, which trails just
@@ -680,6 +667,19 @@ the next episode in the season and then the first of the season after it.
 Played from Downloads, it is the next episode of that show **that is also on
 disk** — offering one that has to be fetched would turn an offline watch into a
 stalled one.
+
+## Version number
+
+`VERSION` at the top of `public/app.js`, shown in the bottom-left corner of the
+home screen and nowhere else. Bump it on every deploy: a minor step for a
+change to something that already existed, a whole number for a new feature.
+
+It is read from the client bundle rather than reported by the server on
+purpose. The question it answers is "did my push actually reach the Pi", and a
+stale number means the code running in front of you is stale — which is exactly
+what you wanted to know. Static files are served with real ETags, so a changed
+`app.js` is always picked up and the number cannot be stale in the other
+direction.
 
 ## Playing movies and series (.mkv remuxing)
 
