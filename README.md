@@ -552,6 +552,23 @@ Keep the ffprobe call cheap (`-select_streams v:0`, small probe window). A
 heavy probe holds the single provider connection long enough that the remux
 queued behind it times out.
 
+### A seek swaps sessions all at once
+
+`film.offset` and `film.ready` describe whichever conversion is on screen, and
+they are applied at the moment the new stream attaches — not when the remux
+request comes back.
+
+The difference is the buffering wait, which for a seek is tens of seconds. Set
+early, the offset described the incoming session while the outgoing one played
+on: the scrubber jumped forward by the distance of the seek several seconds
+before the picture did, and any position saved in that window was wrong by the
+same amount. It showed up in a playback report as the film position moving
+fifteen seconds in one tick with the measured rate still reading 1.00×.
+
+`waitForPrebuffer` therefore does not touch `film` at all — it is watching the
+incoming session, and the loader has its own progress. The caller owns the
+swap.
+
 ### Why films must be pinned to position zero
 
 A remux that is still running has no `#EXT-X-ENDLIST`, so hls.js reads the

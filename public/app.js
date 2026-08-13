@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '14.3';
+const VERSION = '14.4';
 
 const PAGE_SIZE = 60;
 
@@ -3906,9 +3906,14 @@ async function seekFilm(target, { force = false } = {}) {
     );
     lastRemux = remux;
 
+    await waitForPrebuffer(remux);
+    // Swapped in together, and not before now. Setting the offset when the
+    // request came back left it describing the incoming session while the
+    // outgoing one played on through the whole buffering wait — the scrubber
+    // jumped forward by the distance of the seek several seconds early, and
+    // any position saved in that window was wrong by the same amount.
     film.offset = remux.offset || 0;
     film.ready = 0;
-    await waitForPrebuffer(remux);
     attach(remux.url, 'm3u8');
     startLeadWatch();
   } catch (err) {
@@ -4264,7 +4269,10 @@ async function waitForPrebuffer(remux) {
 
     if (status.failed) throw new Error(status.error || 'Conversion failed');
 
-    film.ready = status.seconds;
+    // Deliberately does not touch `film`. This is the INCOMING session's
+    // progress, and during a seek the outgoing one is still on screen — writing
+    // it here made the scrubber and the saved position describe a stream that
+    // was not playing yet. The caller applies it at the moment it attaches.
     if (firstSeconds === null) firstSeconds = status.seconds;
     const ready = Math.min(status.seconds, target);
     const elapsed = (Date.now() - startedAt) / 1000;
@@ -4375,8 +4383,8 @@ async function playLocalCopy(job, startAt = 0) {
       adelay: film.serverDelay || '',
     });
     lastRemux = remuxed;
-    film.offset = remuxed.offset || 0;
     await waitForPrebuffer(remuxed);
+    film.offset = remuxed.offset || 0;
     return { url: remuxed.url, format: 'm3u8', local: true };
   }
   lastRemux = {};
@@ -4441,8 +4449,8 @@ async function resolveStream(item, override) {
       adelay: film.serverDelay || '',
     });
     lastRemux = remuxed;
-    film.offset = remuxed.offset || 0;
     await waitForPrebuffer(remuxed);
+    film.offset = remuxed.offset || 0;
     return { url: remuxed.url, format: 'm3u8' };
   }
 
