@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '15.1';
+const VERSION = '16';
 
 const PAGE_SIZE = 60;
 
@@ -47,8 +47,13 @@ const state = {
   shelf: null,
   /** Which show's card is open, from `#/series/<id>`, or '' on the grid. */
   seriesId: '',
+  /** Which film's card is open, from `#/movies/<id>`, or '' on the grid. */
+  movieId: '',
   /** Episode lists already fetched, so leaving the player is instant. */
   seriesCache: {},
+  /** Film details already fetched. Keyed by id; null means the provider had
+      nothing, which is worth remembering so it is not asked twice. */
+  vodCache: {},
   /** Per-tab cache: { categories: [], items: [] } */
   library: { live: null, movies: null, series: null },
   visible: PAGE_SIZE,
@@ -1476,17 +1481,23 @@ function cardFor(item) {
     card.append(sub);
   }
 
-  card.addEventListener('click', () =>
-    (item.kind === 'series' ? openSeries(item) : openPlayer(item)));
+  card.addEventListener('click', () => openTitle(item));
   return card;
 }
 
 /**
- * Open a show's own page.
+ * Open a title's own page.
  *
- * Through the hash rather than by rendering directly, so the back button
- * works and so the player has a named place to return to.
+ * Through the hash rather than by rendering directly, so the back button works
+ * and so the player has a named place to return to. Live TV has no page —
+ * there is nothing to decide about a channel, so it tunes straight in.
  */
+function openTitle(item) {
+  if (item.kind === 'live') return openPlayer(item);
+  location.hash = `#/${item.kind === 'series' ? 'series' : 'movies'}/${item.id}`;
+}
+
+/** Kept for the places that specifically mean a show. */
 function openSeries(item) {
   location.hash = `#/series/${item.id}`;
 }
@@ -1692,17 +1703,18 @@ function renderHome() {
   $('#contentMeta').textContent = profiles.current ? profiles.current.name : '';
 }
 
-/* --------------------------------------------------------- one show ---
+/* ------------------------------------------------------- one title ---
  *
- * A show's own page: the poster on the left, the seasons across the top of the
- * episode list on the right.
+ * A show or a film gets its own page: the poster on the left, everything known
+ * about it on the right, and whatever you do with it — pick an episode, press
+ * play — underneath.
  *
- * Picking an episode used to happen inside the player, which meant opening a
- * series put an empty video frame on screen with a list underneath it — the
- * player pressed into service as a browser. The list belongs out here with the
- * rest of the library, and the player is left to do the one thing it is for.
+ * Both used to happen inside the player. Opening a series put an empty video
+ * frame on screen with a list of episodes below it, and a film's synopsis was
+ * only readable once it was already playing. The player is left to do the one
+ * thing it is for, and the library keeps the browsing.
  */
-function renderShowCard() {
+function detailCard(item, backHash, backLabel) {
   $('#grid').hidden = true;
   $('#rowsView').hidden = true;
   $('#downloadList').hidden = true;
@@ -1714,27 +1726,12 @@ function renderShowCard() {
   const view = $('#seriesView');
   view.hidden = false;
   view.innerHTML = '';
-
-  const item = (state.library.series?.items || [])
-    .find((i) => String(i.id) === String(state.seriesId));
-  if (!item) {
-    const note = el('p', 'show-note');
-    note.textContent = 'That show is no longer in the library.';
-    view.append(note);
-    return;
-  }
-
-  // The card carries the show's name; repeating it in the section heading
-  // just prints it twice down the left of the page.
-  $('#contentTitle').textContent = 'Series';
   $('#contentMeta').textContent = '';
 
   const back = el('button', 'btn btn-ghost folder-back show-back');
   back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
-  const backLabel = el('span');
-  backLabel.textContent = 'All series';
-  back.append(backLabel);
-  back.addEventListener('click', () => { location.hash = '#/series'; });
+  back.append(document.createTextNode(` ${backLabel}`));
+  back.addEventListener('click', () => { location.hash = backHash; });
 
   const card = el('div', 'show-card');
   const posterWrap = el('div', 'show-poster');
@@ -1744,7 +1741,7 @@ function renderShowCard() {
     // Straight through: loadTab already ran every library item's logo through
     // img(), so these arrive as `/img?u=…` proxy paths. Wrapping again made a
     // URL pointing the proxy at itself, which failed and fell back to printing
-    // the show's name where the poster should be.
+    // the title where the poster should be.
     image.src = item.logo;
     image.addEventListener('error', () => {
       image.remove();
@@ -1765,11 +1762,6 @@ function renderShowCard() {
   const meta = el('p', 'show-meta');
   const plot = el('p', 'show-plot');
   plot.hidden = true;
-  const mount = el('div', 'show-episodes');
-  body.append(heading, meta, plot, mount);
-
-  card.append(posterWrap, body);
-  view.append(back, card);
 
   const fav = el('button', 'btn btn-ghost btn-sm show-fav');
   fav.textContent = profiles.hasFav(item) ? 'In favorites' : 'Add to favorites';
@@ -1778,16 +1770,91 @@ function renderShowCard() {
     fav.textContent = added ? 'In favorites' : 'Add to favorites';
     toast(added ? 'Added to favorites.' : 'Removed from favorites.');
   });
-  body.insertBefore(fav, mount);
 
-  renderSeries(item, mount, (info) => {
-    meta.textContent = [info.releaseDate, info.genre, item.rating ? `★ ${item.rating}` : '']
+  const mount = el('div', 'show-episodes');
+  body.append(heading, meta, plot, fav, mount);
+  card.append(posterWrap, body);
+  view.append(back, card);
+
+  /** Fill the meta line and synopsis from whatever the provider knows. */
+  const describe = ({ year, genre, plot: text, extra }) => {
+    meta.textContent = [year, genre, item.rating ? `★ ${item.rating}` : '', extra]
       .filter(Boolean).join(' · ');
-    if (info.plot) {
-      plot.textContent = info.plot;
+    if (text) {
+      plot.textContent = text;
       plot.hidden = false;
     }
+  };
+
+  return { mount, describe };
+}
+
+function renderShowCard() {
+  const item = (state.library.series?.items || [])
+    .find((i) => String(i.id) === String(state.seriesId));
+  $('#contentTitle').textContent = 'Series';
+  if (!item) return missingTitle('That show is no longer in the library.');
+
+  const { mount, describe } = detailCard(item, '#/series', 'All series');
+  renderSeries(item, mount, (info) =>
+    describe({ year: info.releaseDate, genre: info.genre, plot: info.plot }));
+}
+
+/**
+ * A film's page. Where a show has its seasons and episodes, a film has one
+ * button and how long it runs — which is the whole of what there is to decide.
+ */
+async function renderMovieCard() {
+  const item = (state.library.movies?.items || [])
+    .find((i) => String(i.id) === String(state.movieId));
+  $('#contentTitle').textContent = 'Movies';
+  if (!item) return missingTitle('That film is no longer in the library.');
+
+  const { mount, describe } = detailCard(item, '#/movies', 'All movies');
+  describe({ year: '', genre: '' });
+
+  const play = el('button', 'btn btn-primary play-title');
+  play.innerHTML = '<svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>';
+  play.append(document.createTextNode(' Play'));
+  play.addEventListener('click', () => openPlayer(item));
+
+  const runtime = el('span', 'title-runtime');
+  const row = el('div', 'title-actions');
+  row.append(play, runtime);
+  mount.append(row);
+
+  // Asked for here rather than at playback: the provider answers a metadata
+  // call while its one connection is free, and returns nothing once ffmpeg is
+  // streaming through it. Cached so pressing play does not ask again.
+  let info = state.vodCache[item.id];
+  if (info === undefined) {
+    runtime.textContent = 'Checking runtime…';
+    info = await fetchVodInfo(item);
+    state.vodCache[item.id] = info;
+    // Left the page while that was in flight.
+    if (state.tab !== 'movies' || String(state.movieId) !== String(item.id)) return;
+  }
+
+  const seconds = parseRuntime(info);
+  runtime.textContent = seconds ? hms(seconds) : '';
+  describe({
+    year: info?.releasedate || '',
+    genre: info?.genre || '',
+    plot: info?.plot || '',
   });
+}
+
+/** Shared miss: the library moved on, or the link is old. */
+function missingTitle(message) {
+  const view = $('#seriesView');
+  $('#grid').hidden = true;
+  $('#rowsView').hidden = true;
+  $('#homeView').hidden = true;
+  view.hidden = false;
+  view.innerHTML = '';
+  const note = el('p', 'show-note');
+  note.textContent = message;
+  view.append(note);
 }
 
 /* ------------------------------------------------------ live categories ---
@@ -2000,6 +2067,7 @@ function render() {
   if (state.tab === 'downloads') return renderDownloads();
   if (state.tab === 'home') return renderHome();
   if (state.tab === 'series' && state.seriesId) return renderShowCard();
+  if (state.tab === 'movies' && state.movieId) return renderMovieCard();
   $('#homeView').hidden = true;
   $('#seriesView').hidden = true;
 
@@ -2631,7 +2699,7 @@ async function goTo(tab) {
   // drawn. A tab whose library fails to load returns before render() ever
   // runs, which left the whole home screen sitting there underneath the error.
   if (tab !== 'home') $('#homeView').hidden = true;
-  if (tab !== 'series') $('#seriesView').hidden = true;
+  if (tab !== 'series' && tab !== 'movies') $('#seriesView').hidden = true;
   state.category = null;
   state.shelf = null;
   state.visible = PAGE_SIZE;
@@ -2697,6 +2765,7 @@ function routeFromHash() {
 function applyRoute() {
   const { tab, param } = routeFromHash();
   state.seriesId = tab === 'series' ? param : '';
+  state.movieId = tab === 'movies' ? param : '';
   return goTo(tab);
 }
 
@@ -3860,7 +3929,7 @@ function enterCinema(item) {
   cinemaReturnHash = fromDownloads
     ? '#/downloads'
     : item.kind === 'series' ? `#/series/${item.id}`
-      : item.kind === 'live' ? '#/live' : '#/movies';
+      : item.kind === 'live' ? '#/live' : `#/movies/${item.id}`;
 
   $('#cinemaTop').hidden = false;
   $('#cinemaTitle').textContent = item.name || '';
@@ -4713,8 +4782,15 @@ async function openPlayer(item) {
   // a downloaded film should play with the provider entirely out of the loop.
   let vodInfo = null;
   if (item.kind === 'movie' && !item.localOnly && !localCopy && state.config.mode === 'xtream') {
-    loader.show('Fetching film details…');
-    vodInfo = await fetchVodInfo(item);
+    // The film's own page has usually just asked for this, and asking again
+    // spends the provider's one connection on an answer already in hand.
+    if (state.vodCache[item.id] !== undefined) {
+      vodInfo = state.vodCache[item.id];
+    } else {
+      loader.show('Fetching film details…');
+      vodInfo = await fetchVodInfo(item);
+      state.vodCache[item.id] = vodInfo;
+    }
   }
 
   try {

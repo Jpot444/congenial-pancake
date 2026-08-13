@@ -960,19 +960,29 @@ which is what pointed at the packaging above. The re-encode stays because
 pinning the format is worth having regardless, and because it ruled the
 encoder out.
 
-## A show has its own page
+## Every title has its own page
 
-Clicking a series opens `#/series/<id>`: the poster on the left, the seasons
-across the top of the episode list on the right, and the synopsis and favorite
-button in between. Picking an episode opens the player over it, and the
-player's back button — which already reads **Series** — lands back on that
-card rather than on the grid.
+Clicking a series opens `#/series/<id>` and a film `#/movies/<id>`: the poster
+on the left, and on the right the name, year, genre, rating, synopsis and a
+favorite button. Underneath that is whatever there is to decide — for a show
+the seasons across the top of its episode list, for a film one **Play** button
+and how long it runs. Opening either puts the player over it, and the player's
+back button lands on that card rather than on the grid.
 
-Episodes used to be picked inside the player. Opening a show put an empty video
-frame on screen with a list of episodes underneath, the player pressed into
-service as a browser because that was where the season data had been fetched.
-The list belongs out with the rest of the library, and the player is left to do
-the one thing it is for.
+A film's details are fetched by the card rather than at playback, which is
+strictly better: the provider answers a metadata call while its one connection
+is free and returns nothing once ffmpeg is streaming through it. The answer is
+cached, so pressing play does not ask twice.
+
+Live TV has no page of its own. There is nothing to decide about a channel, so
+it tunes straight in.
+
+Both used to happen inside the player. Episodes were picked there, so opening a show put an empty video
+frame on screen with a list underneath it; a film's synopsis was only readable
+once it was already playing. The player was pressed into service as a browser
+because that is where the metadata happened to be fetched. Browsing belongs
+with the rest of the library, and the player is left to do the one thing it is
+for.
 
 Two things follow from making it a real route rather than internal state: the
 browser's back button leaves a show the way anyone would expect, and the player

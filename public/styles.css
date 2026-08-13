@@ -2411,6 +2411,26 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 .show-note { margin: 0; font-size: 14px; color: var(--muted); }
 
+/* A film has one decision to make, so the button is the whole of its list. */
+.title-actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+
+.play-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 26px 0 20px;
+  font-size: 15px;
+}
+
+.play-title svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
+
+.title-runtime {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
 /* Stacked where there is no room for two columns — a phone, or a narrow
    window. The poster comes down to a strip so the episodes stay in reach. */
 @media (max-width: 720px) {
