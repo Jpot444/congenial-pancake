@@ -706,6 +706,30 @@ what you wanted to know. Static files are served with real ETags, so a changed
 `app.js` is always picked up and the number cannot be stale in the other
 direction.
 
+### Audio is always re-encoded, never copied
+
+The remux copies the video stream untouched and **re-encodes the audio every
+time** — stereo AAC-LC at a fixed 48kHz.
+
+Copying stereo AAC straight through was there as free headroom, and for most of
+the catalogue it worked. It cost a real bug. `codec_name` is `aac` for both
+AAC-LC and HE-AAC, and an HE-AAC stream carries only half its sample rate in
+the core with SBR restoring the top; a decoder that takes the core alone plays
+it an octave down and at half speed. That is a deep, dragging voice over
+completely normal video — and it is invisible to every measurement the player
+can make, because the video clock, the frame rate, the buffering and the
+segment timings are all genuinely fine.
+
+Nothing in the provider's metadata distinguishes the two profiles, and probing
+the source for it would spend the single provider connection playback itself
+needs. Re-encoding removes the question: every browser decodes the result
+identically. It costs a few percent of one core against a video copy already
+running many times faster than playback, and it is what the download optimizer
+had been doing all along — the streaming path was the odd one out.
+
+The playback report names the profile of what came out, so the next report can
+confirm it rather than assume.
+
 ## Playing movies and series (.mkv remuxing)
 
 **The live format setting does not apply to VOD.** Movies and episodes are

@@ -630,7 +630,8 @@ async function prepareForBrowser(job) {
   ];
   if (/hevc|h265/.test(probed.codec || '')) args.push('-tag:v', 'hvc1');
   args.push(
-    '-c:a', 'aac', '-ac', '2', '-b:a', '160k',
+    // Same fixed profile and rate as the streaming remux, for the same reason.
+    '-c:a', 'aac', '-profile:a', 'aac_low', '-ac', '2', '-ar', '48000', '-b:a', '160k',
     // moov at the front so seeking works the moment playback starts.
     '-movflags', '+faststart',
     tmp
@@ -1426,7 +1427,7 @@ function probeOutput(session) {
       [
         '-v', 'error',
         '-show_entries',
-        'stream=codec_type,codec_name,avg_frame_rate,r_frame_rate,time_base,sample_rate,channels',
+        'stream=codec_type,codec_name,profile,avg_frame_rate,r_frame_rate,time_base,sample_rate,channels',
         '-show_entries', 'format=duration',
         '-of', 'json',
         target,
@@ -1481,6 +1482,10 @@ function probeOutput(session) {
         },
         audio: {
           codec: audio.codec_name || '',
+          // The one that matters: HE-AAC here means half the sample rate is
+          // hiding behind SBR, and a decoder that misses it plays an octave
+          // down. Nothing else in the report would show that.
+          profile: audio.profile || '',
           sampleRate: Number(audio.sample_rate) || 0,
           channels: Number(audio.channels) || 0,
           timeBase: audio.time_base || '',
@@ -1564,7 +1569,7 @@ function probeSource(input) {
   });
 }
 
-function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audio = {}) {
+function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0) {
   const args = [];
   if (/^https?:/i.test(input)) {
     // This provider paces VOD at barely above realtime and drops the socket
@@ -1599,27 +1604,33 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audio = {}) {
     '-c:v', 'copy'
   );
 
-  // Most of the English catalogue is already stereo AAC — exactly what every
-  // browser wants. Copying it skips a decode+encode+resample per stream, which
-  // is free headroom on the Pi. Only the 5.1 / E-AC3 tracks need converting.
-  const audioIsReady =
-    /^aac$/i.test(audio.codec || '') && Number(audio.channels || 0) > 0 && Number(audio.channels) <= 2;
-
-  if (audioIsReady) {
-    args.push('-c:a', 'copy');
-  } else {
-    // E-AC3/AC-3 5.1 is common here and inconsistently supported. Stereo AAC
-    // is cheap to produce and plays on everything.
-    args.push(
-      '-c:a', 'aac',
-      '-ac', '2',
-      '-b:a', '160k',
-      // Guards audio against drifting away from video over a long playback.
-      // Honest note: this does NOT fix the ~0.9s late audio start that `-ss`
-      // introduces on a seek — measured before and after, that gap was unchanged.
-      '-af', 'aresample=async=1'
-    );
-  }
+  // Audio is always re-encoded, never copied.
+  //
+  // Copying stereo AAC straight through looked like free headroom, and for
+  // most of the catalogue it was. But `codec_name` is `aac` for both AAC-LC
+  // and HE-AAC, and an HE-AAC stream carries only half its sample rate in the
+  // core, with SBR restoring the top. A decoder that takes the core alone
+  // plays it an octave down and at half speed — a deep, dragging voice over
+  // completely normal video, which is exactly what came back from the box.
+  // Nothing in the provider's metadata distinguishes the two profiles, and
+  // probing the source for it would spend the single provider connection that
+  // playback itself needs.
+  //
+  // Re-encoding to plain stereo AAC-LC at a fixed rate removes the question:
+  // every browser decodes the result identically. It costs a few percent of
+  // one core against a video copy already running many times faster than
+  // playback, and it is what the download optimizer has always done.
+  args.push(
+    '-c:a', 'aac',
+    '-profile:a', 'aac_low',
+    '-ac', '2',
+    '-ar', '48000',
+    '-b:a', '160k',
+    // Guards audio against drifting away from video over a long playback.
+    // Honest note: this does NOT fix the ~0.9s late audio start that `-ss`
+    // introduces on a seek — measured before and after, that gap was unchanged.
+    '-af', 'aresample=async=1'
+  );
 
   // Apple's HLS spec carries HEVC in fragmented MP4 only — HEVC inside MPEG-TS
   // will not play on iOS at all. It also insists on the hvc1 tag, not hev1.
@@ -1650,7 +1661,7 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audio = {}) {
  * provider-backed session runs at a time — the account allows a single
  * connection, so a second would just fail.
  */
-async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, audio = {} }) {
+async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0 }) {
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed on this machine');
 
   // One viewer, one session: whatever was running is now abandoned, and an
@@ -1678,7 +1689,7 @@ async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, a
 
   const proc = spawn(
     'ffmpeg',
-    ['-v', 'error', '-y', ...ffmpegArgs(input, dir, codec, startSeconds, audio)],
+    ['-v', 'error', '-y', ...ffmpegArgs(input, dir, codec, startSeconds)],
     { stdio: ['ignore', 'ignore', 'pipe'] }
   );
 
@@ -2930,10 +2941,6 @@ async function handleApi(req, res, pathname, query) {
         fromProvider,
         videoCodec: (query.get('vcodec') || '').toLowerCase(),
         startSeconds: Math.max(0, Number(query.get('start') || 0)),
-        audio: {
-          codec: (query.get('acodec') || '').toLowerCase(),
-          channels: Number(query.get('achannels') || 0),
-        },
       });
       return json(res, 200, {
         url: `/hls/${session.id}/index.m3u8`,

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '12.1';
+const VERSION = '13';
 
 const PAGE_SIZE = 60;
 
@@ -3099,8 +3099,8 @@ const playback = {
       `  a segment     claims ${Number(seg.declared || 0).toFixed(3)}s, holds ` +
         `${Number(seg.real || 0).toFixed(3)}s  → timeline ${seg.ratio ? seg.ratio.toFixed(3) : 'n/a'}`,
       `  video         ${p.video?.codec || '?'} ${p.video?.fps || '?'}fps tb ${p.video?.timeBase || '?'}`,
-      `  audio         ${p.audio?.codec || '?'} ${p.audio?.sampleRate || '?'}Hz ` +
-        `${p.audio?.channels || '?'}ch tb ${p.audio?.timeBase || '?'}`,
+      `  audio         ${p.audio?.codec || '?'} ${p.audio?.profile || 'profile?'} ` +
+        `${p.audio?.sampleRate || '?'}Hz ${p.audio?.channels || '?'}ch tb ${p.audio?.timeBase || '?'}`,
       `  ffmpeg        exited ${p.exited} code ${p.exitCode}${p.lastError ? ` — ${p.lastError}` : ''}`,
     ];
   },
@@ -4160,10 +4160,6 @@ async function resolveStream(item, override) {
       id,
       ext,
       vcodec: override?.vcodec || item.vcodec || '',
-      // Lets the server copy audio instead of transcoding it when it's
-      // already stereo AAC, which is most of the English catalogue.
-      acodec: override?.acodec || item.acodec || '',
-      achannels: override?.achannels || item.achannels || '',
       start: startAt || '',
     });
     lastRemux = remuxed;
@@ -4478,8 +4474,6 @@ async function renderSeries(item) {
       id: episode.id,
       ext: episode.container_extension || 'mp4',
       vcodec: episode.info?.video?.codec_name || '',
-      acodec: episode.info?.audio?.codec_name || '',
-      achannels: episode.info?.audio?.channels || '',
     };
     try {
       const { url, format, seekTo } = await resolveStream(item, { ...override, startAt });
