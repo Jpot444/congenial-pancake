@@ -1491,10 +1491,15 @@ answer legible either way:
 - The header counts **playing** separately from **asked for**. On HLS those
   turn out to be the same number; on MPEG-TS they should not be, and that gap
   is the measurement.
-- A failed cell **does not retry**. On MPEG-TS a quiet reconnect loop would
-  take the connection off whichever cell currently has it, and the sequence of
-  who held it when is the thing being observed. On HLS it costs nothing, since
-  nothing fails — so this stays as it is until there is a reason to change it.
+- A failed cell **does not retry by itself**, but every cell carries a **↻** in
+  its bar. On MPEG-TS a quiet reconnect loop would take the connection off
+  whichever cell currently has it, and the sequence of who held it when is the
+  thing being observed — so somebody says when, rather than the app guessing.
+  The button matters most on a cell that was turned away: the bar is shown
+  whenever a channel has been *asked for*, not only when one is playing, so a
+  refused cell carries the reason and the way to try again side by side.
+  Refreshing keeps the channel, leaves the other cells alone, and takes the
+  sound with it if that was the cell you were listening to.
 - Opening multi-view closes the main player first, so it is not a fifth
   claimant on the connection while the other four are being counted.
 

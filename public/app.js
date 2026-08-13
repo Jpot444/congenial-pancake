@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '19.7';
+const VERSION = '19.8';
 
 const PAGE_SIZE = 60;
 
@@ -509,11 +509,13 @@ const multiview = {
     const play = button('mv-btn mv-play', '❚❚', 'Pause', () => this.toggle(index));
     const fwd = button('mv-btn', '+10', `Forward ${MV_SKIP} seconds`,
       () => this.skip(index, MV_SKIP));
+    const again = button('mv-btn mv-again', '↻', 'Refresh this stream',
+      () => this.refresh(index));
     const sound = button('mv-btn mv-sound', '🔇', 'Listen to this one',
       () => this.listen(index));
     const grow = button('mv-btn mv-grow', '⤢', 'Full screen', () => this.expand(index));
     const drop = button('mv-btn mv-drop', '✕', 'Stop this channel', () => this.stop(index));
-    bar.append(name, tag, back, play, fwd, sound, grow, drop);
+    bar.append(name, tag, back, play, fwd, again, sound, grow, drop);
 
     const note = el('p', 'mv-status');
     note.hidden = true;   // an empty one still paints as a grey strip
@@ -696,6 +698,28 @@ const multiview = {
     const first = video.seekable.start(0);
     const last = video.seekable.end(video.seekable.length - 1);
     video.currentTime = Math.max(first, Math.min(last, video.currentTime + seconds));
+  },
+
+  /**
+   * Throw this cell's stream away and ask for it again.
+   *
+   * The one recovery a cell did not have. A failed cell does not retry by
+   * itself — a reconnect loop would take the connection off whichever cell
+   * currently has it, and on MPEG-TS the order of who held it when is the
+   * thing being watched — so somebody has to say when, and until now saying
+   * when meant stopping the cell and finding the channel in the picker again.
+   *
+   * Sound follows the stream: a cell you were listening to is still the one
+   * you want to hear afterwards.
+   */
+  refresh(index) {
+    const cell = this.cells[index];
+    if (!cell?.item) return;
+    const listening = !cell.video.muted;
+    const item = cell.item;
+    this.start(index, item).then(() => {
+      if (listening && this.cells[index]?.item === item) this.listen(index);
+    });
   },
 
   /** Exactly one cell may make a noise. */
