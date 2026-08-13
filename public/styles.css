@@ -554,12 +554,12 @@ svg {
  * Reached from the badge, not a tab. One large poster for the last thing
  * watched, a 2x2 of the four before it, and the two favorite boxes underneath.
  */
-.home { display: flex; flex-direction: column; gap: 34px; }
+.home { display: flex; flex-direction: column; gap: 24px; }
 
 .home-label {
-  margin: 0 0 14px;
+  margin: 0 0 12px;
   font-family: var(--display);
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 400;
   letter-spacing: .04em;
   color: var(--text);
@@ -573,8 +573,15 @@ svg {
      min-content width, and one long film title is enough to push the whole
      grid wider than the screen. */
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* The row track matters as much as the height: a height alone leaves the row
+     `auto`, which sizes to the hero's artwork and overflows the box it was
+     given — the favorite boxes then drew straight over the posters. */
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
   align-items: stretch;
+  /* Otherwise the hero's own artwork decides how tall this is, and at half the
+     width of a desktop that pushes the favorite boxes off the screen. */
+  height: clamp(220px, 32vh, 300px);
 }
 
 /* Same reason — a flex/grid child holds its content width without this. */
@@ -588,11 +595,23 @@ svg {
   gap: 16px;
 }
 
-/* The hero takes whatever height the 2x2 settles at rather than its own
-   aspect ratio, so the two sides always line up. */
-.home-hero .card-art { height: 100%; aspect-ratio: auto; }
-.home-hero .card-title { font-size: 17px; margin-top: 12px; }
-.home-quad-card .card-art { height: 100%; aspect-ratio: auto; }
+/* The art takes whatever is left after the title rather than carrying its own
+   ratio, so a card always fills its share of the block exactly and the two
+   columns end level. min-height:0 because a flex child will not shrink past
+   its content without it. */
+.home-quad { height: 100%; }
+.home-hero,
+.home-quad-card { min-height: 0; }
+
+.home-hero .card-art,
+.home-quad-card .card-art {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  aspect-ratio: auto;
+}
+
+.home-hero .card-title { font-size: 16px; margin-top: 10px; }
 
 /* ---- the two favorite boxes ---- */
 .home-boxes {
@@ -637,6 +656,9 @@ svg {
 
 .home-box-cell {
   position: relative;
+  /* A height rather than a ratio, for the same reason: a 2:3 poster four
+     across a wide box is taller than the rest of the page put together. */
+  height: clamp(64px, 9vh, 96px);
   border-radius: var(--radius-sm);
   border: 1px solid var(--line-soft);
   background: var(--bg-raised);
@@ -644,9 +666,7 @@ svg {
 }
 
 /* Channels are logos on a plate, films are posters that fill it. */
-.home-box-live .home-box-cell { aspect-ratio: 16 / 9; }
-.home-box-live .home-box-cell img { width: 100%; height: 100%; object-fit: contain; padding: 12%; }
-.home-box-vod .home-box-cell { aspect-ratio: 2 / 3; }
+.home-box-live .home-box-cell img { width: 100%; height: 100%; object-fit: contain; padding: 10%; }
 .home-box-vod .home-box-cell img { width: 100%; height: 100%; object-fit: cover; }
 
 .home-box-cell .fallback {
@@ -673,12 +693,35 @@ svg {
    small to read at 390px. */
 @media (max-width: 700px) {
   .home { gap: 26px; }
-  .home-recent-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  /* height:auto as well as the ratio — the desktop rule stretches the hero to
-     the 2x2 beside it, and that has to be undone once they are stacked. */
+  /* Stacked, so the desktop's fixed block height and the flex sizing that
+     hangs off it both have to be undone. */
+  .home-recent-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    gap: 14px;
+    height: auto;
+  }
+  .home-hero .card-art,
+  .home-quad-card .card-art { flex: none; }
   .home-hero .card-art { height: auto; aspect-ratio: 16 / 10; }
-  .home-quad { gap: 12px; }
+  /* One row of four under the hero, rather than a 2x2 — asked for, and it
+     keeps the two favorite boxes above the fold on a phone. */
+  .home-quad {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: auto;
+    gap: 8px;
+  }
   .home-quad-card .card-art { height: auto; aspect-ratio: 2 / 3; }
+  /* A quarter of a phone's width is no place for a wrapped title. */
+  .home-quad .card-title {
+    margin-top: 6px;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .home-quad .card-sub { display: none; }
+  .home-box-cell { height: clamp(56px, 8vh, 76px); }
   .home-boxes { grid-template-columns: minmax(0, 1fr); }
   .home-box-art { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
