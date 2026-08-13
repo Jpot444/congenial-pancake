@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '15';
+const VERSION = '15.1';
 
 const PAGE_SIZE = 60;
 
@@ -1741,7 +1741,11 @@ function renderShowCard() {
   if (item.logo) {
     const image = el('img');
     image.alt = '';
-    image.src = img(item.logo);
+    // Straight through: loadTab already ran every library item's logo through
+    // img(), so these arrive as `/img?u=…` proxy paths. Wrapping again made a
+    // URL pointing the proxy at itself, which failed and fell back to printing
+    // the show's name where the poster should be.
+    image.src = item.logo;
     image.addEventListener('error', () => {
       image.remove();
       const fb = el('div', 'fallback');
