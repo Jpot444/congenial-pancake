@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '18.2';
+const VERSION = '19';
 
 const PAGE_SIZE = 60;
 
@@ -384,6 +384,313 @@ $('#colsSeg').addEventListener('click', (event) => {
   if (!button) return;
   device.setCols(Number(button.dataset.cols));
 });
+
+/* ------------------------------------------------------------ beta mode */
+
+/**
+ * The switch for things that are being tried rather than relied on.
+ *
+ * Kept on the device rather than in the profile on purpose. It is not a taste
+ * or a preference that should follow someone to the television — it is "I am
+ * poking at this, here, now", and it should not turn up unannounced on a
+ * screen someone else is watching.
+ */
+const beta = {
+  on: false,
+
+  init() {
+    this.on = localStorage.getItem('portal.beta') === '1';
+    this.apply();
+  },
+
+  apply() {
+    $('#betaToggle').checked = this.on;
+    $('#betaBody').hidden = !this.on;
+    // Only on Live TV: multi-view has nothing to show anywhere else.
+    $('#multiviewBtn').hidden = !(this.on && state.tab === 'live');
+  },
+
+  set(on) {
+    this.on = on;
+    localStorage.setItem('portal.beta', on ? '1' : '0');
+    // Leaving beta must not leave a beta screen up behind the switch.
+    if (!on) multiview.close();
+    this.apply();
+  },
+};
+
+$('#betaToggle').addEventListener('change', (event) => beta.set(event.target.checked));
+$('#betaMultiview').addEventListener('click', () => {
+  health.close();
+  multiview.open();
+});
+$('#multiviewBtn').addEventListener('click', () => multiview.open());
+
+/* ------------------------------------------------ multi-view (beta) --- */
+
+/**
+ * Four live channels on one screen.
+ *
+ * Its own player, deliberately. The main one is built around there being
+ * exactly one of everything — one video element, one engine, one film bar, one
+ * watchdog, one remux session, all module-level — and none of that survives
+ * being asked to be four things at once. Sharing it would have meant unpicking
+ * every one of those globals for a feature behind a beta switch.
+ *
+ * What this is really for: **the account allows one connection at a time.** So
+ * the expected result is that the first cell plays and the rest are refused.
+ * Nothing here pretends otherwise — each cell reports what happened to it, in
+ * its own words, because "which one failed and how" is the entire question.
+ */
+const MV_CELLS = 4;
+
+const multiview = {
+  cells: [],
+  picking: -1,
+
+  /** Cells are built once; opening and closing does not rebuild them. */
+  build() {
+    if (this.cells.length) return;
+    const grid = $('#mvGrid');
+    for (let i = 0; i < MV_CELLS; i += 1) {
+      const box = el('div', 'mv-cell');
+      const video = el('video');
+      video.playsInline = true;
+      // Every cell starts silent. Four live channels all talking at once is
+      // not a feature, and a browser will refuse to autoplay with sound
+      // anyway — one cell can be unmuted at a time, below.
+      video.muted = true;
+      video.autoplay = true;
+
+      const empty = el('button', 'mv-empty');
+      empty.innerHTML = '<span class="mv-plus">+</span><span>Add a channel</span>';
+      empty.addEventListener('click', () => this.pick(i));
+
+      const bar = el('div', 'mv-bar');
+      const name = el('span', 'mv-name');
+      const sound = el('button', 'mv-sound');
+      sound.title = 'Listen to this one';
+      sound.textContent = '🔇';
+      sound.addEventListener('click', () => this.listen(i));
+      const drop = el('button', 'mv-drop');
+      drop.title = 'Stop this channel';
+      drop.textContent = '✕';
+      drop.addEventListener('click', () => this.stop(i));
+      bar.append(name, sound, drop);
+
+      const note = el('p', 'mv-status');
+      note.hidden = true;   // an empty one still paints as a grey strip
+
+      box.append(video, note, bar, empty);
+      grid.append(box);
+      this.cells.push({
+        box, video, empty, bar, name, sound, note,
+        engine: null,
+        item: null,
+        // Asked for is not the same as playing, and on this account it is
+        // usually not the same. Tracked separately so the count says which.
+        ok: false,
+      });
+    }
+  },
+
+  open() {
+    this.build();
+    // The main player holds the connection while it is up, and this is a
+    // measurement of what happens when several are asked for at once. Leaving
+    // it running would put a fifth claimant in the experiment.
+    if (!$('#playerOverlay').hidden) closePlayer();
+    $('#multiview').hidden = false;
+    document.body.style.overflow = 'hidden';
+    this.paint();
+  },
+
+  close() {
+    if ($('#multiview').hidden) return;
+    this.stopAll();
+    $('#multiview').hidden = true;
+    $('#mvPicker').hidden = true;
+    document.body.style.overflow = '';
+  },
+
+  paint() {
+    for (const cell of this.cells) {
+      const live = Boolean(cell.item);
+      cell.empty.hidden = live;
+      cell.bar.hidden = !live;
+      cell.video.hidden = !live;
+      cell.name.textContent = cell.item?.name || '';
+      cell.sound.textContent = cell.video.muted ? '🔇' : '🔊';
+      cell.sound.classList.toggle('is-on', !cell.video.muted);
+    }
+    const asked = this.cells.filter((c) => c.item).length;
+    const playing = this.cells.filter((c) => c.ok).length;
+    $('#mvNote').textContent = asked
+      ? `${playing} playing of ${asked} asked for — this account allows one `
+        + 'connection at a time.'
+      : 'One connection at a time is all this account has. Expect refusals.';
+  },
+
+  /** Exactly one cell may make a noise. */
+  listen(index) {
+    const wanted = this.cells[index];
+    const turningOn = wanted.video.muted;
+    for (const cell of this.cells) cell.video.muted = true;
+    if (turningOn) {
+      wanted.video.muted = false;
+      // A muted element is allowed to autoplay; unmuting one that never got a
+      // gesture can be refused, and silently.
+      wanted.video.play().catch(() => {});
+    }
+    this.paint();
+  },
+
+  pick(index) {
+    this.picking = index;
+    $('#mvSearch').value = '';
+    this.results('');
+    $('#mvPicker').hidden = false;
+    $('#mvSearch').focus();
+  },
+
+  results(query) {
+    const box = $('#mvResults');
+    box.innerHTML = '';
+    const all = state.library.live?.items || [];
+    if (!all.length) {
+      const note = el('p', 'health-note');
+      note.textContent = 'No channels loaded yet — open Live TV once and come back.';
+      return box.append(note);
+    }
+    const q = query.trim().toLowerCase();
+    const hits = (q ? all.filter((i) => i.name.toLowerCase().includes(q)) : all).slice(0, 60);
+    for (const item of hits) {
+      const row = el('button', 'mv-result');
+      row.textContent = item.name;
+      row.addEventListener('click', () => {
+        $('#mvPicker').hidden = true;
+        this.start(this.picking, item);
+      });
+      box.append(row);
+    }
+    if (!hits.length) {
+      const note = el('p', 'health-note');
+      note.textContent = 'Nothing matches that.';
+      box.append(note);
+    }
+  },
+
+  async start(index, item) {
+    const cell = this.cells[index];
+    if (!cell) return;
+    this.stop(index);
+    cell.item = item;
+    cell.ok = false;
+    cell.note.hidden = false;
+    cell.note.textContent = 'Asking for the stream…';
+    this.paint();
+
+    // Stamped so a slow answer for a cell that has since been stopped or
+    // repointed does not attach itself over whatever is there now.
+    const mine = (cell.token = (cell.token || 0) + 1);
+
+    try {
+      const data = await api('/api/play', {
+        kind: 'live',
+        id: item.id,
+        ext: item.ext || '',
+        latency: prefs.data.liveLatency,
+      });
+      if (cell.token !== mine || cell.item !== item) return;
+      this.attach(cell, data.url, data.format);
+    } catch (err) {
+      if (cell.token !== mine) return;
+      // The interesting failure. Said plainly rather than as a stack.
+      cell.note.textContent = `Refused: ${err.message}`;
+      cell.ok = false;
+      this.paint();
+    }
+  },
+
+  attach(cell, url, format) {
+    const video = cell.video;
+    cell.note.textContent = 'Connecting…';
+    video.addEventListener('playing', () => {
+      cell.note.hidden = true;
+      cell.ok = true;
+      this.paint();
+    }, { once: true });
+
+    if (format === 'ts' && window.mpegts && mpegts.isSupported()) {
+      cell.engine = mpegts.createPlayer(
+        { type: 'mpegts', isLive: true, url: new URL(url, location.href).href },
+        { enableWorker: true, liveBufferLatencyChasing: false, enableStashBuffer: false }
+      );
+      cell.engine.attachMediaElement(video);
+      cell.engine.load();
+      cell.engine.play().catch(() => {});
+      cell.engine.on(mpegts.Events.ERROR, (type, detail) => {
+        cell.note.hidden = false;
+        cell.note.textContent = `Stream error — ${type}: ${detail}`;
+        cell.ok = false;
+        this.paint();
+      });
+      return;
+    }
+
+    if (format === 'm3u8' && window.Hls && Hls.isSupported()) {
+      cell.engine = new Hls({ lowLatencyMode: true, backBufferLength: 30 });
+      cell.engine.loadSource(url);
+      cell.engine.attachMedia(video);
+      cell.engine.on(Hls.Events.ERROR, (_, data) => {
+        if (!data.fatal) return;
+        cell.note.hidden = false;
+        cell.note.textContent = `Stream failed — ${data.details}`;
+        cell.ok = false;
+        this.paint();
+        // No retry loop here on purpose. The single connection is the thing
+        // being tested, and a cell that quietly reconnected would take the
+        // connection off whichever cell currently has it.
+        cell.engine?.destroy();
+        cell.engine = null;
+      });
+      return;
+    }
+
+    video.src = url;
+    video.play().catch(() => {
+      cell.note.hidden = false;
+      cell.note.textContent = 'The browser would not start this one.';
+    });
+  },
+
+  stop(index) {
+    const cell = this.cells[index];
+    if (!cell) return;
+    cell.token = (cell.token || 0) + 1;   // orphan anything still in flight
+    if (cell.engine) {
+      try { cell.engine.destroy(); } catch { /* already gone */ }
+      cell.engine = null;
+    }
+    cell.video.removeAttribute('src');
+    cell.video.load();
+    cell.video.muted = true;
+    cell.item = null;
+    cell.ok = false;
+    cell.note.hidden = true;
+    cell.note.textContent = '';
+    this.paint();
+  },
+
+  stopAll() {
+    for (let i = 0; i < this.cells.length; i += 1) this.stop(i);
+  },
+};
+
+$('#mvClose').addEventListener('click', () => multiview.close());
+$('#mvStopAll').addEventListener('click', () => multiview.stopAll());
+$('#mvPickerCancel').addEventListener('click', () => { $('#mvPicker').hidden = true; });
+$('#mvSearch').addEventListener('input', (event) => multiview.results(event.target.value));
 
 /* ----------------------------------------------------------- pi health */
 
@@ -2433,6 +2740,10 @@ function render() {
   $('#contentTitle').textContent = titles[state.tab];
 
   syncTabs();
+  // The multi-view button belongs to Live TV, so it is settled per render
+  // rather than once at startup. Kept out of syncTabs, which device.init()
+  // reaches before this module has been initialised at all.
+  beta.apply();
 
   if (state.tab === 'downloads') return renderDownloads();
   if (state.tab === 'home') return renderHome();
@@ -3083,6 +3394,10 @@ async function goTo(tab) {
   // runs, which left the whole home screen sitting there underneath the error.
   if (tab !== 'home') $('#homeView').hidden = true;
   if (tab !== 'series' && tab !== 'movies') $('#seriesView').hidden = true;
+  // Same reason as the two lines above: a tab whose library fails to load
+  // returns before render(), and a Live TV button left sitting on Movies is
+  // the kind of thing that only shows up when something else is broken.
+  beta.apply();
   state.category = null;
   state.shelf = null;
   state.visible = PAGE_SIZE;
@@ -5537,6 +5852,12 @@ document.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key === 'Escape' && !$('#playerOverlay').hidden) closePlayer();
+  // The picker sits over multi-view, so it goes first.
+  if (event.key === 'Escape' && !$('#mvPicker').hidden) {
+    $('#mvPicker').hidden = true;
+    return;
+  }
+  if (event.key === 'Escape' && !$('#multiview').hidden) multiview.close();
 });
 
 /* --------------------------------------------------------------- chrome */
@@ -5950,6 +6271,7 @@ async function startApp() {
 (async function boot() {
   // Before anything renders, so controls are the right size on first paint.
   device.init();
+  beta.init();
   try {
     const config = await api('/api/config');
     if (!config.configured) return showSetup();

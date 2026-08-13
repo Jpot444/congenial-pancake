@@ -56,6 +56,32 @@
       <p class="health-note" id="speedResult" hidden></p>
     </div>
 
+    <!-- Experiments. Kept behind a switch and on this device only: what is in
+         here is being tried out, not relied on. -->
+    <div class="health-beta">
+      <!-- The input is nested, so no `for` is needed; it is also visually hidden,
+           which is why the track is what anyone (or any test) actually clicks. -->
+      <label class="switch">
+        <input type="checkbox" id="betaToggle" />
+        <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+        <span class="switch-label">
+          Beta mode
+          <small>Unfinished things, on this device only. Nothing here is promised to work.</small>
+        </span>
+      </label>
+      <div class="beta-body" id="betaBody" hidden>
+        <p class="health-note">
+          <strong>Multi-view</strong> puts up to four live channels on one screen.
+          This provider allows <strong>one connection at a time</strong>, so the
+          second channel onwards will probably be refused — finding out exactly
+          how it fails is the point of it.
+        </p>
+        <button type="button" class="btn btn-ghost btn-sm" id="betaMultiview">
+          Open multi-view
+        </button>
+      </div>
+    </div>
+
     <!-- Lives here rather than in the header: it is the one destructive thing
          in the app, and a gear sitting between the controls you use every day
          is an easy thing to hit by accident on a phone. -->
@@ -105,6 +131,39 @@
       <button type="submit" class="btn btn-primary" id="profileSubmit">Create profile</button>
     </div>
   </form>
+</div>
+
+<!-- ────────────────────────────────────────────────── multi-view (beta) ─── -->
+<!-- Four live channels at once. Its own player entirely: the main one keeps a
+     single video element and a pile of module-level state (the film bar, the
+     watchdog, the remux session), none of which survives being asked to be
+     four things. Cells are built by the module. -->
+<div class="multiview" id="multiview" hidden>
+  <div class="mv-top">
+    <button class="cinema-back" id="mvClose">
+      <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>
+      <span>Live TV</span>
+    </button>
+    <div class="cinema-titles">
+      <h2>Multi-view <span class="mv-beta">beta</span></h2>
+      <p id="mvNote">One connection at a time is all this account has. Expect refusals.</p>
+    </div>
+    <button class="btn btn-ghost btn-sm" id="mvStopAll">Stop all</button>
+  </div>
+  <div class="mv-grid" id="mvGrid"></div>
+</div>
+
+<!-- Channel picker for a multi-view cell. -->
+<div class="modal" id="mvPicker" hidden>
+  <div class="modal-card mv-picker-card">
+    <h2>Pick a channel</h2>
+    <input type="search" id="mvSearch" placeholder="Search channels…" autocomplete="off" />
+    <div class="mv-results" id="mvResults"></div>
+    <div class="modal-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-ghost" id="mvPickerCancel">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <!-- ─────────────────────────────────────────────────── walkthrough ─── -->
@@ -356,6 +415,15 @@
           <h1 id="contentTitle">Live TV</h1>
           <p class="content-meta" id="contentMeta"></p>
         </div>
+        <span class="spacer"></span>
+        <!-- Beta only, and only on Live TV. Shown by beta.apply(). -->
+        <button class="btn btn-ghost btn-sm" id="multiviewBtn" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="mv-icon">
+            <rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/>
+            <rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/>
+          </svg>
+          Multi-view
+        </button>
       </div>
 
       <div class="grid" id="grid"></div>

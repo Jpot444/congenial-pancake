@@ -918,8 +918,16 @@ stalled one.
 ## Version number
 
 `VERSION` at the top of `public/app.js`, shown in the bottom-left corner of the
-home screen and nowhere else. Bump it on every deploy: a minor step for a
-change to something that already existed, a whole number for a new feature.
+home screen and nowhere else. Bump it on every deploy:
+
+- **A whole number** — `18` → `19` — for a new feature.
+- **A second part** — `18` → `18.1`, and on up to `18.9` — for a change to
+  something that already existed.
+- **A third part** — `18.2` → `18.2.1` — for something genuinely small: a
+  wording fix, a stray margin, a one-line guard.
+
+It is a plain string, not a number, so `18.10` follows `18.9` perfectly happily
+and nothing rounds anything off.
 
 It is read from the client bundle rather than reported by the server on
 purpose. The question it answers is "did my push actually reach the Pi", and a
@@ -1320,6 +1328,51 @@ Three modes, selectable in the player bar and remembered in `prefs.json`:
 catch up, so a speed-controller extension keeps full control. Your chosen rate
 is preserved across channel changes, which a plain `load()` would otherwise
 reset to 1×.
+
+## Beta mode
+
+A switch in **Pi health** for things that are being tried rather than relied
+on. Off by default, and stored in `localStorage` rather than the profile —
+deliberately. It is not a taste that should follow someone to the television;
+it is "I am poking at this, here, now", and it should not turn up unannounced
+on a screen somebody else is watching. Turning it off closes anything it
+opened, so a beta screen cannot outlive the switch.
+
+### Multi-view
+
+Up to four live channels on one screen, reached from a button that appears on
+Live TV while beta is on.
+
+**It is an experiment, and what it is measuring is failure.** This account
+allows **one connection at a time** — the same limit that makes downloads pause
+while you watch. So the expected result is that one cell plays and the rest are
+turned away, and the whole design is arranged to make that legible rather than
+to hide it:
+
+- Each cell reports its own outcome, on the cell, **in the provider's words**.
+  "Refused: All connections for this account are in use" is the finding; a
+  spinner that never resolves would not be.
+- The header counts **playing** separately from **asked for**, because on this
+  account those are usually different numbers.
+- A failed cell **does not retry**. A quiet reconnect loop would take the
+  connection off whichever cell currently has it, and the sequence of who held
+  it when is the thing being observed.
+- Opening multi-view closes the main player first, so it is not a fifth
+  claimant on the connection while the other four are being counted.
+
+It is a **separate player**, not the main one reconfigured. The main player is
+built around there being exactly one of everything — one video element, one
+engine, one film bar, one watchdog, one remux session, all module-level — and
+none of that survives being asked to be four things at once. Sharing it would
+have meant unpicking every one of those globals for something behind a beta
+switch.
+
+Every cell starts muted and exactly one may be unmuted at a time. Four live
+channels talking at once is not a feature, and a browser will refuse to
+autoplay with sound in any case.
+
+On a phone the four cells stack rather than tiling; four cells across 390px is
+nothing anybody can watch.
 
 ## Known limits
 

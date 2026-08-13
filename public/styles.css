@@ -2358,6 +2358,226 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
    fade with the rest of the chrome. */
 /* ---- the walkthrough ---- */
 
+/* ------------------------------------------------------- beta mode ---- */
+
+.health-beta {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, .1);
+}
+
+.switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.switch-track {
+  flex: none;
+  width: 42px;
+  height: 24px;
+  margin-top: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .16);
+  transition: background .18s ease;
+}
+.switch-knob {
+  display: block;
+  width: 18px;
+  height: 18px;
+  margin: 3px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform .18s ease;
+}
+.switch input:checked + .switch-track { background: var(--brand-red); }
+.switch input:checked + .switch-track .switch-knob { transform: translateX(18px); }
+.switch input:focus-visible + .switch-track { outline: 2px solid #fff; outline-offset: 2px; }
+
+.switch-label { font-size: .95rem; line-height: 1.35; }
+.switch-label small {
+  display: block;
+  margin-top: 2px;
+  color: rgba(255, 255, 255, .55);
+  font-size: .8rem;
+}
+
+.beta-body { margin: 12px 0 0 54px; }
+.beta-body .health-note { margin: 0 0 10px; }
+
+.mv-icon { width: 15px; height: 15px; margin-right: 6px; vertical-align: -2px; }
+
+/* ------------------------------------------------------- multi-view --- */
+
+.multiview {
+  position: fixed;
+  inset: 0;
+  /* Same layer as the main player. At 60 it tied with the site header, which
+     is later in the document and so painted over it — the header's buttons
+     then swallowed clicks aimed at the bar underneath. */
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  background: #080505;
+}
+
+.mv-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+.mv-top .cinema-titles { flex: 1 1 auto; min-width: 0; }
+.mv-top h2 { margin: 0; font-size: 1.05rem; }
+.mv-top p {
+  margin: 2px 0 0;
+  font-size: .8rem;
+  color: rgba(255, 255, 255, .55);
+}
+.mv-beta {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--brand-red);
+  font-size: .62rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  vertical-align: 2px;
+}
+
+/* Two by two, filling whatever is left under the bar. minmax(0,1fr) so a
+   long channel name cannot push a cell wider than its share. */
+.mv-grid {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px;
+  min-height: 0;
+}
+
+.mv-cell {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 10px;
+  background: #0d0909;
+}
+.mv-cell video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.mv-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, .45);
+  font: inherit;
+  font-size: .9rem;
+  cursor: pointer;
+}
+.mv-empty:hover { color: rgba(255, 255, 255, .8); background: rgba(255, 255, 255, .03); }
+.mv-plus { font-size: 2rem; line-height: 1; }
+
+.mv-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .8));
+}
+.mv-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .82rem;
+}
+.mv-sound,
+.mv-drop {
+  flex: none;
+  border: 0;
+  background: rgba(0, 0, 0, .45);
+  border-radius: 6px;
+  color: #fff;
+  font: inherit;
+  font-size: .85rem;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.mv-sound.is-on { background: var(--brand-red); }
+
+/* The whole point of the experiment: which cell was refused, and why. */
+.mv-status {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  margin: 0;
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, .66);
+  color: rgba(255, 255, 255, .85);
+  font-size: .78rem;
+  line-height: 1.35;
+}
+
+.mv-picker-card { max-width: 520px; min-width: 0; }
+.mv-picker-card input[type="search"] {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .3);
+  color: #fff;
+  font: inherit;
+}
+.mv-results {
+  max-height: 46vh;
+  overflow-y: auto;
+  margin-top: 12px;
+}
+.mv-result {
+  display: block;
+  width: 100%;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: .88rem;
+  text-align: left;
+  cursor: pointer;
+}
+.mv-result:hover { background: rgba(255, 255, 255, .07); }
+
+/* On a phone four cells side by side are unwatchable; stack them instead. */
+@media (max-width: 720px) {
+  .mv-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(4, minmax(0, 1fr));
+  }
+}
+
 .tour {
   position: fixed;
   inset: 0;
