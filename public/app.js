@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '14.2';
+const VERSION = '14.3';
 
 const PAGE_SIZE = 60;
 
@@ -2990,6 +2990,32 @@ const playback = {
   },
 
   /**
+   * Which browser this came from, and what it can do.
+   *
+   * Several rounds of this were spent reasoning about engine behaviour — how
+   * hls.js buffers, whether Web Audio can take the element's output, which
+   * fullscreen call applies — without the report ever saying which engine was
+   * running. The raw string rather than a parsed name on purpose: a name is a
+   * guess about what the string means, and the guess is the part that has
+   * been wrong.
+   *
+   * Note for anyone reading a report from a phone: every browser on iOS is
+   * WebKit underneath, Chrome included, because Apple requires it. "Chrome on
+   * the iPhone" and "Safari on the iPhone" are the same engine, and the iOS
+   * branches in this file apply to both.
+   */
+  browserLines() {
+    const ua = navigator.userAgent || 'unknown';
+    const video = $('#video');
+    return [
+      `browser         ${ua.slice(0, 150)}`,
+      `                iOS ${isIOS()}, MSE ${Boolean(window.MediaSource)}, ` +
+        `native HLS ${Boolean(video.canPlayType('application/vnd.apple.mpegurl'))}, ` +
+        `hls.js ${Boolean(window.Hls && window.Hls.isSupported())}`,
+    ];
+  },
+
+  /**
    * Where hls.js actually put each track.
    *
    * The conversion can hand over a file whose audio legitimately starts later
@@ -3130,6 +3156,7 @@ const playback = {
       `events          waiting ${this.events.waiting}, stalled ${this.events.stalled}, ` +
         `error ${this.events.error}, ratechange ${this.events.ratechange}, seeked ${this.events.seeked}`,
       `engine          ${engineKind || 'none'}`,
+      ...this.browserLines(),
       `audio device    ${this.deviceSampleRate() || 'unknown'}Hz output`,
       `audio offset    ${film.audioDelay || 0}ms chosen ` +
         `(${Math.round(avSync.applied() * 1000)}ms live, ${film.serverDelay || 0}ms converted)`,

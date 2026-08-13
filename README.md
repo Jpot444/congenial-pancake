@@ -158,6 +158,18 @@ for `.m3u8`, [mpegts.js](https://github.com/xqq/mpegts.js) for `.ts`, native
 `<video>` for MP4. Both libraries load from jsDelivr, so the first load needs
 internet.
 
+**Every device here runs Chrome**, which is why the desktop path assumes MSE
+and hls.js rather than native HLS. It does not make the iOS branches dead code:
+on an iPhone or iPad every browser is WebKit underneath, Chrome included,
+because Apple requires it. `isIOS()` keys off the device rather than the
+browser name for exactly that reason, so the native-fullscreen handoff and the
+HEVC-in-fMP4 packaging still apply to Chrome on the phone.
+
+The playback report names the browser it came from, and whether that browser
+has MSE, native HLS and hls.js. Several rounds of chasing an audio fault were
+spent reasoning about engine behaviour without the report ever saying which
+engine was running.
+
 ## Profiles
 
 Netflix-style personas. Each carries its own favorites, pinned categories,
