@@ -33,6 +33,17 @@
       <p class="health-loading">Reading the box…</p>
     </div>
 
+    <!-- Reads the watchdog rather than the player, because how fast the media
+         clock actually moves is the number that says what is wrong. Survives
+         the player closing, since this panel cannot be reached from inside it. -->
+    <div class="playback-panel" id="playbackPanel" hidden>
+      <h3>Playback</h3>
+      <p class="playback-age" id="playbackAge"></p>
+      <p class="playback-verdict" id="playbackVerdict"></p>
+      <pre class="playback-report" id="playbackReport"></pre>
+      <button type="button" class="btn btn-ghost btn-sm" id="copyPlayback">Copy report</button>
+    </div>
+
     <!-- Sits outside #healthBody because that is replaced wholesale every few
          seconds by the poll, which would wipe the result mid-read. -->
     <div class="health-speed">

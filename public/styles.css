@@ -237,6 +237,11 @@ svg {
 
 .modal-card {
   width: min(440px, 100%);
+  /* .modal is a grid, so this is a grid item, and a grid item's automatic
+     minimum is its min-content width — wide unwrappable content (the playback
+     report) otherwise pushes the card straight past the edge of a phone
+     screen, where the width above is quietly ignored. */
+  min-width: 0;
   padding: 26px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -2758,6 +2763,50 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   color: var(--live);
   font-size: 12.5px;
   line-height: 1.5;
+}
+
+/* ---- the playback report ---- */
+.playback-panel { margin-top: 18px; }
+
+.playback-panel h3 {
+  margin: 0 0 8px;
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+
+.playback-age {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  color: var(--muted-dim);
+}
+
+.playback-verdict {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.playback-report {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, .3);
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre;
+  /* The report is the one thing here meant to be selected by hand. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* The connection test borrows the note block, but unlike the rest of it the

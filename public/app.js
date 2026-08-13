@@ -368,9 +368,37 @@ const health = {
 
   async open() {
     $('#healthModal').hidden = false;
+    this.paintPlayback();
     await this.refresh();
     clearInterval(this.timer);
-    this.timer = setInterval(() => this.refresh(), 4000);
+    this.timer = setInterval(() => {
+      this.refresh();
+      this.paintPlayback();
+    }, 4000);
+  },
+
+  /**
+   * The playback report, refreshed alongside the rest of the panel.
+   *
+   * Live while something is playing, and otherwise the last snapshot the
+   * watchdog banked — you cannot reach this panel from inside the player, so
+   * by the time anyone opens it the playback being complained about has
+   * usually just been closed. Hidden entirely when nothing has played, since
+   * an empty block only raises questions.
+   */
+  paintPlayback() {
+    const panel = $('#playbackPanel');
+    const live = !$('#playerOverlay').hidden && $('#video').currentSrc && !$('#video').paused;
+    const snap = playback.last;
+    panel.hidden = !live && !snap;
+    if (panel.hidden) return;
+
+    const age = live ? 0 : Math.round((Date.now() - snap.at) / 1000);
+    $('#playbackAge').textContent = live
+      ? 'Live — updating every second.'
+      : `From the last thing that played, ${age < 60 ? `${age}s` : `${Math.round(age / 60)}m`} ago.`;
+    $('#playbackVerdict').textContent = live ? playback.verdict() : snap.verdict;
+    $('#playbackReport').textContent = live ? playback.report() : snap.report;
   },
 
   close() {
@@ -623,6 +651,24 @@ $('#speedTest').addEventListener('click', async () => {
   } finally {
     btn.disabled = false;
     btn.textContent = label;
+  }
+});
+
+$('#copyPlayback').addEventListener('click', async () => {
+  const text = `${playback.verdict()}\n\n${playback.report()}`;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Report copied — paste it into the chat.');
+  } catch {
+    // Clipboard access needs a secure context, and this is served over plain
+    // http on the tailnet. Select it instead so it can be copied by hand.
+    const pre = $('#playbackReport');
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    toast('Selected the report — copy it with your keyboard or a long press.');
   }
 });
 
@@ -2466,6 +2512,8 @@ window.addEventListener('hashchange', () => goTo(routeFromHash()));
 /* ---------------------------------------------------------------- player */
 
 let engine = null;
+/** Which decoder is driving playback, for the diagnostics report. */
+let engineKind = null;
 
 function teardown() {
   const video = $('#video');
@@ -2499,6 +2547,9 @@ function attach(url, format, opts = {}) {
   const video = $('#video');
 
   teardown();
+  // Overridden below if a library takes over; otherwise the element itself is
+  // doing the decoding.
+  engineKind = 'native';
   status(format === 'ts' ? 'Tuning in — skipping the provider backlog…' : 'Connecting to stream…');
 
   // Always start at normal speed.
@@ -2537,6 +2588,7 @@ function attach(url, format, opts = {}) {
       // mpegts.js does its fetching inside a Web Worker, which has no document
       // base URL — a relative path throws "Failed to parse URL". Absolutise it.
       const absolute = new URL(url, location.href).href;
+      engineKind = 'mpegts.js';
       engine = mpegts.createPlayer(
         { type: 'mpegts', isLive: true, url: absolute },
         {
@@ -2572,6 +2624,7 @@ function attach(url, format, opts = {}) {
       // pull as much of that cushion into memory as it can. Live keeps the
       // tight settings — a big forward buffer there is just added latency.
       const live = format === 'ts' || currentLiveItem;
+      engineKind = 'hls.js';
       engine = new Hls(
         live
           ? { lowLatencyMode: true, backBufferLength: 60 }
@@ -2667,6 +2720,159 @@ function stopLiveTracking() {
   $('#livePill').hidden = true;
   $('#latencyMode').hidden = true;
 }
+
+/* ------------------------------------------------------ playback watchdog ---
+ *
+ * The useful number when playback "goes slow" is not the one the player
+ * reports, it is how fast the media clock actually advances against the wall
+ * clock. That single measurement splits the problem in two:
+ *
+ *   measured ≈ playbackRate    the rate is wrong — something set it
+ *   measured < playbackRate    the rate is fine and the stream is not keeping
+ *                              up: either decoding slowly, or stalling, which
+ *                              the waiting count then tells apart
+ *
+ * Sampling runs whenever something is playing, so the report covers the minute
+ * before the problem was noticed rather than starting when someone thinks to
+ * look.
+ */
+const playback = {
+  samples: [],
+  events: { waiting: 0, stalled: 0, error: 0, ratechange: 0, seeked: 0 },
+  worstRate: null,
+  startedAt: 0,
+  // The last report rendered while something was actually playing. The health
+  // panel sits behind the player overlay, so the report has to outlive the
+  // player: hit the bug, close the player, open the panel, and the numbers
+  // from a second ago are still there. Deliberately kept across reset() — a
+  // new video overwrites it within a second anyway.
+  last: null,
+
+  reset() {
+    this.samples = [];
+    this.events = { waiting: 0, stalled: 0, error: 0, ratechange: 0, seeked: 0 };
+    this.worstRate = null;
+    this.startedAt = Date.now();
+  },
+
+  /** One second of the watchdog: measure, then bank a readable snapshot. */
+  tick() {
+    this.sample();
+    if ($('#video').paused || !$('#video').currentSrc) return;
+    this.last = { at: Date.now(), verdict: this.verdict(), report: this.report() };
+  },
+
+  sample() {
+    const video = $('#video');
+    if (video.paused || video.seeking) return;
+    // performance.now() rather than Date.now(): immune to the clock being set.
+    this.samples.push({ at: performance.now(), t: video.currentTime });
+    if (this.samples.length > 20) this.samples.shift();
+
+    const rate = this.measuredRate();
+    // Only once there is a real window behind it, or the first second or two
+    // of start-up reads as a stall.
+    if (rate !== null && this.span() > 6 && (this.worstRate === null || rate < this.worstRate)) {
+      this.worstRate = rate;
+    }
+  },
+
+  /**
+   * The samples the rate is measured over: the last ten seconds, not the whole
+   * buffer. Averaged over a longer history a fresh slowdown is diluted by the
+   * good playback in front of it and takes most of a minute to show up — which
+   * is exactly the moment someone is staring at the panel waiting for it to
+   * say something.
+   */
+  window() {
+    if (this.samples.length < 2) return [];
+    const cutoff = this.samples[this.samples.length - 1].at - 10_000;
+    const recent = this.samples.filter((s) => s.at >= cutoff);
+    return recent.length >= 2 ? recent : this.samples.slice(-2);
+  },
+
+  span() {
+    const w = this.window();
+    if (w.length < 2) return 0;
+    return (w[w.length - 1].at - w[0].at) / 1000;
+  },
+
+  /** Media seconds per wall-clock second. 1 is normal; 0.1 is the reported bug. */
+  measuredRate() {
+    const w = this.window();
+    if (w.length < 2) return null;
+    const first = w[0];
+    const last = w[w.length - 1];
+    const wall = (last.at - first.at) / 1000;
+    if (wall < 1) return null;
+    return (last.t - first.t) / wall;
+  },
+
+  quality() {
+    const video = $('#video');
+    if (typeof video.getVideoPlaybackQuality !== 'function') return null;
+    const q = video.getVideoPlaybackQuality();
+    return { dropped: q.droppedVideoFrames, total: q.totalVideoFrames };
+  },
+
+  report() {
+    const video = $('#video');
+    const rate = this.measuredRate();
+    const q = this.quality();
+    const buffered = [];
+    for (let i = 0; i < video.buffered.length; i += 1) {
+      buffered.push(`${video.buffered.start(i).toFixed(1)}-${video.buffered.end(i).toFixed(1)}`);
+    }
+    const lines = [
+      `when            ${new Date().toISOString()}`,
+      `measured rate   ${rate === null ? 'n/a' : `${rate.toFixed(3)}x over ${this.span().toFixed(0)}s`}`,
+      `worst measured  ${this.worstRate === null ? 'n/a' : `${this.worstRate.toFixed(3)}x`}`,
+      `playbackRate    ${video.playbackRate}`,
+      `paused/seeking  ${video.paused} / ${video.seeking}`,
+      `readyState      ${video.readyState}   networkState ${video.networkState}`,
+      `currentTime     ${video.currentTime.toFixed(2)} of ${Number.isFinite(video.duration) ? video.duration.toFixed(2) : 'unknown'}`,
+      `buffered        ${buffered.join(', ') || 'none'}`,
+      `frames          ${q ? `${q.dropped} dropped of ${q.total}` : 'n/a'}`,
+      `events          waiting ${this.events.waiting}, stalled ${this.events.stalled}, ` +
+        `error ${this.events.error}, ratechange ${this.events.ratechange}, seeked ${this.events.seeked}`,
+      `engine          ${engineKind || 'none'}`,
+      `source          ${(video.currentSrc || '').slice(0, 120) || 'none'}`,
+      `film            active ${film.active}, offset ${Math.round(film.offset)}, ` +
+        `ready ${Math.round(film.ready)}, duration ${film.duration}`,
+      `remux session   ${lastRemux.session || 'none (playing directly)'}`,
+      `watching since  ${Math.round((Date.now() - this.startedAt) / 1000)}s ago`,
+    ];
+    return lines.join('\n');
+  },
+
+  /** The one-line read on what the numbers mean, so the report needs no expert. */
+  verdict() {
+    const video = $('#video');
+    const rate = this.worstRate ?? this.measuredRate();
+    if (rate === null) return 'Not enough playback yet to judge.';
+    if (rate > 0.9) return 'Normal — the media clock is keeping up with the wall clock.';
+    if (Math.abs(video.playbackRate - rate) < 0.15 && video.playbackRate < 0.9) {
+      return `Playback RATE is ${video.playbackRate}× — something set it, this is not the stream.`;
+    }
+    if (this.events.waiting > 3) {
+      return `Running at ${rate.toFixed(2)}× with ${this.events.waiting} stalls — the stream is not arriving fast enough.`;
+    }
+    return `Running at ${rate.toFixed(2)}× with the rate at ${video.playbackRate} and few stalls — ` +
+      'the media itself is decoding slowly, which points at the conversion rather than the network.';
+  },
+};
+
+for (const name of ['waiting', 'stalled', 'error', 'ratechange', 'seeked']) {
+  $('#video').addEventListener(name, () => {
+    playback.events[name] += 1;
+  });
+}
+$('#video').addEventListener('loadstart', () => playback.reset());
+// Seeking jumps the media clock, so the window either side of it is meaningless.
+$('#video').addEventListener('seeking', () => {
+  playback.samples = [];
+});
+setInterval(() => playback.tick(), 1000);
 
 /**
  * Rebuild whatever is playing, from where it currently is.

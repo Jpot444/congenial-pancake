@@ -566,6 +566,40 @@ writes `ENDLIST`, since there is no runway left to run out of.
 remuxed so far, not the full running time. It corrects itself when ffmpeg
 finishes the file.
 
+### When something plays at the wrong speed: the playback report
+
+The reload button rebuilds the stream from where it is, which fixes a
+connection that has gone bad. It does nothing for a film that plays at a tenth
+of speed with the audio dragging to match, because that is not a bad
+connection. **Pi health → Playback** says which of the two you are looking at.
+
+The number it turns on is how fast the media clock advances against the wall
+clock — media seconds per real second, sampled every second and averaged over
+the last ten. Not what the player claims, what actually happened. That one
+measurement splits the problem three ways:
+
+| what the report says | what it means |
+| --- | --- |
+| measured ≈ playbackRate, both low | the **rate** was set. Nothing in the portal sets a rate other than 1, so this is the browser or a stray gesture — not the stream. |
+| measured well below playbackRate, many `waiting` events | the stream is **not arriving** fast enough. Bandwidth: run the speed test below it. |
+| measured below playbackRate, few stalls | the media is **decoding slowly**, which points at the remux rather than the network. |
+
+A plain-language verdict sits above the raw numbers, so the report is readable
+without knowing any of the above, and **Copy report** puts the whole thing on
+the clipboard. Over plain http the clipboard API is unavailable — there is no
+secure context on the tailnet — so it falls back to selecting the text for a
+long press.
+
+**It keeps the last reading after the player closes.** The health panel is in
+the header, which the player overlay covers, so there is no way to open it
+while the problem is on screen: you hit the bug, close the player, and only
+then go looking. A report that only existed during playback would always be
+empty by the time anyone read it. The panel says how old the reading is.
+
+`worst measured` matters more than the current rate — a slowdown that recovered
+still leaves its mark, and the first six seconds are ignored because start-up
+reads as a stall.
+
 ## Playing movies and series (.mkv remuxing)
 
 **The live format setting does not apply to VOD.** Movies and episodes are
