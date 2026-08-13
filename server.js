@@ -1380,66 +1380,51 @@ function probeOutput(session) {
   // playlist *claims* — it adds up the EXTINF lines — so the two sides of the
   // comparison would come from the same source and the check could never fail.
   // A segment file is the content itself, timestamps and all.
-  let target;
-  let declared = 0;
-  let total = 0;
+  let segments = [];
+  let declaredTotal = 0;
   try {
     const text = fs.readFileSync(path.join(session.dir, 'index.m3u8'), 'utf8');
-    const segments = [];
     let pending = 0;
     for (const line of text.split('\n')) {
       const inf = /^#EXTINF:([\d.]+)/.exec(line.trim());
       if (inf) {
         pending = Number(inf[1]) || 0;
-        total += pending;
+        declaredTotal += pending;
         continue;
       }
       const name = line.trim();
       if (name && !name.startsWith('#')) segments.push({ name, declared: pending });
     }
-    // The newest is very likely still being written, so take the one behind it.
-    const pick = segments[segments.length - (segments.length > 1 ? 2 : 1)];
-    if (!pick) return Promise.resolve({ error: 'nothing written yet' });
-    declared = pick.declared;
-    target = path.join(session.dir, pick.name);
   } catch (err) {
     return Promise.resolve({ error: `couldn't read the playlist — ${err.message}` });
   }
+  if (!segments.length) return Promise.resolve({ error: 'nothing written yet' });
 
-  // A fragmented-MP4 segment carries no headers of its own, so on its own it is
-  // unreadable. Stitching the init segment in front of it makes a valid file.
-  let temp = '';
-  const init = path.join(session.dir, 'init.mp4');
-  if (target.endsWith('.m4s') && fs.existsSync(init)) {
-    try {
-      temp = path.join(session.dir, 'probe-tmp.mp4');
-      fs.writeFileSync(temp, Buffer.concat([fs.readFileSync(init), fs.readFileSync(target)]));
-      target = temp;
-    } catch {
-      temp = '';   // fall through and probe the bare segment; it may still parse
+  // Two segments answer two different questions. The first one carries the
+  // start of each stream, which is where an audio/video offset introduced by
+  // seeking shows up. A recent one says whether the timeline still matches its
+  // contents. The newest of all is very likely still being written.
+  const first = segments[0];
+  const recent = segments[segments.length - (segments.length > 1 ? 2 : 1)];
+
+  /**
+   * ffprobe one segment. A fragmented-MP4 segment carries no headers of its
+   * own, so on its own it is unreadable — stitching the init segment in front
+   * of it makes a valid file.
+   */
+  const probeSegment = (name, tag) => new Promise((resolve) => {
+    let target = path.join(session.dir, name);
+    let temp = '';
+    const init = path.join(session.dir, 'init.mp4');
+    if (target.endsWith('.m4s') && fs.existsSync(init)) {
+      try {
+        temp = path.join(session.dir, `probe-${tag}.mp4`);
+        fs.writeFileSync(temp, Buffer.concat([fs.readFileSync(init), fs.readFileSync(target)]));
+        target = temp;
+      } catch {
+        temp = '';   // fall through and probe the bare segment; it may still parse
+      }
     }
-  }
-
-  const declaredTotal = total;
-  return new Promise((resolve) => {
-    const proc = spawn(
-      'ffprobe',
-      [
-        '-v', 'error',
-        '-show_entries',
-        'stream=codec_type,codec_name,profile,avg_frame_rate,r_frame_rate,time_base,sample_rate,channels',
-        '-show_entries', 'format=duration',
-        '-of', 'json',
-        target,
-      ],
-      { stdio: ['ignore', 'pipe', 'ignore'] }
-    );
-
-    let out = '';
-    const timer = setTimeout(() => proc.kill('SIGKILL'), 25000);
-    timer.unref?.();
-    proc.stdout.on('data', (d) => (out += d));
-
     const dropTemp = () => {
       // Synchronous on purpose: this file sits in the directory the segments
       // are served from, and an asynchronous unlink leaves it there for an
@@ -1452,51 +1437,97 @@ function probeOutput(session) {
       }
     };
 
-    const finish = () => {
+    const proc = spawn(
+      'ffprobe',
+      [
+        '-v', 'error',
+        '-show_entries',
+        'stream=codec_type,codec_name,profile,avg_frame_rate,r_frame_rate,time_base,' +
+          'sample_rate,channels,start_time,duration',
+        '-show_entries', 'format=duration,start_time',
+        '-of', 'json',
+        target,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    let out = '';
+    const timer = setTimeout(() => proc.kill('SIGKILL'), 25000);
+    timer.unref?.();
+    proc.stdout.on('data', (d) => (out += d));
+    proc.on('close', () => {
       clearTimeout(timer);
       dropTemp();
-      let parsed = {};
       try {
-        parsed = JSON.parse(out);
+        resolve(JSON.parse(out));
       } catch {
-        return resolve({ error: 'ffprobe returned nothing readable' });
+        resolve(null);
       }
-      const streams = parsed.streams || [];
-      const video = streams.find((s) => s.codec_type === 'video') || {};
-      const audio = streams.find((s) => s.codec_type === 'audio') || {};
-      const real = Number(parsed.format?.duration) || 0;
-      resolve({
-        declaredTotal,
-        segment: {
-          declared,
-          real,
-          // 1.0 is honest. Far from it is a conversion writing a timeline that
-          // does not match the content it put in the segment.
-          ratio: real && declared ? declared / real : 0,
-        },
-        video: {
-          codec: video.codec_name || '',
-          fps: video.avg_frame_rate || '',
-          rawFps: video.r_frame_rate || '',
-          timeBase: video.time_base || '',
-        },
-        audio: {
-          codec: audio.codec_name || '',
-          // The one that matters: HE-AAC here means half the sample rate is
-          // hiding behind SBR, and a decoder that misses it plays an octave
-          // down. Nothing else in the report would show that.
-          profile: audio.profile || '',
-          sampleRate: Number(audio.sample_rate) || 0,
-          channels: Number(audio.channels) || 0,
-          timeBase: audio.time_base || '',
-        },
-      });
-    };
-    proc.on('close', finish);
-    proc.on('error', () => {
-      dropTemp();
-      resolve({ error: 'ffprobe is not available' });
     });
+    proc.on('error', () => {
+      clearTimeout(timer);
+      dropTemp();
+      resolve(null);
+    });
+  });
+
+  const streamOf = (parsed, kind) =>
+    (parsed?.streams || []).find((st) => st.codec_type === kind) || {};
+
+  return Promise.all([
+    probeSegment(recent.name, 'recent'),
+    first.name === recent.name ? null : probeSegment(first.name, 'first'),
+  ]).then(([now, opening]) => {
+    if (!now) return { error: 'ffprobe returned nothing readable' };
+    const video = streamOf(now, 'video');
+    const audio = streamOf(now, 'audio');
+
+    // The subtraction is the whole point. A fragment's timeline does not start
+    // at zero — it starts at its own base decode time — so ffprobe's duration
+    // for one is the moment it ENDS, not how long it lasts. Taking it at face
+    // value made a healthy six-second segment read as three minutes of content
+    // and reported every conversion as broken.
+    const spanOf = (parsed) => {
+      const dur = Number(parsed?.format?.duration);
+      const from = Number(parsed?.format?.start_time) || 0;
+      if (!Number.isFinite(dur)) return 0;
+      return dur > from ? dur - from : dur;
+    };
+    const real = spanOf(now);
+
+    // Audio and video should begin together. Input seeking lands video on the
+    // keyframe before the mark while the audio starts at the mark itself, and
+    // the gap between them is heard as lip-sync drift.
+    const head = opening || now;
+    const vStart = Number(streamOf(head, 'video').start_time);
+    const aStart = Number(streamOf(head, 'audio').start_time);
+    const sync = Number.isFinite(vStart) && Number.isFinite(aStart) ? aStart - vStart : null;
+
+    return {
+      declaredTotal,
+      segment: {
+        declared: recent.declared,
+        real,
+        // 1.0 is honest. Far from it is a conversion writing a timeline that
+        // does not match the content it put in the segment.
+        ratio: real && recent.declared ? recent.declared / real : 0,
+      },
+      start: { video: vStart, audio: aStart, sync, segment: head === now ? recent.name : first.name },
+      video: {
+        codec: video.codec_name || '',
+        fps: video.avg_frame_rate || '',
+        rawFps: video.r_frame_rate || '',
+        timeBase: video.time_base || '',
+      },
+      audio: {
+        codec: audio.codec_name || '',
+        // HE-AAC here would mean half the sample rate is hiding behind SBR,
+        // and a decoder that misses it plays an octave down.
+        profile: audio.profile || '',
+        sampleRate: Number(audio.sample_rate) || 0,
+        channels: Number(audio.channels) || 0,
+        timeBase: audio.time_base || '',
+      },
+    };
   });
 }
 
@@ -1626,10 +1657,18 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0) {
     '-ac', '2',
     '-ar', '48000',
     '-b:a', '160k',
-    // Guards audio against drifting away from video over a long playback.
-    // Honest note: this does NOT fix the ~0.9s late audio start that `-ss`
-    // introduces on a seek — measured before and after, that gap was unchanged.
-    '-af', 'aresample=async=1'
+    // async=1 guards audio against drifting away from video over a long
+    // playback. first_pts=0 is the seek fix.
+    //
+    // `-ss` ahead of `-i` seeks the container, and with `-c:v copy` the video
+    // can only begin at the keyframe at or before the mark, while the audio
+    // begins at the mark itself. The two streams therefore start at different
+    // points, and a browser handed a track that starts late does not
+    // necessarily wait for it — it plays what it has, which is heard as the
+    // audio running ahead of the picture. first_pts=0 pads the difference with
+    // silence so the audio track starts where the video does and nothing has
+    // to guess.
+    '-af', 'aresample=async=1:first_pts=0'
   );
 
   // Fragmented MP4 for everything, not just HEVC.

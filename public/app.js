@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '13.1';
+const VERSION = '13.2';
 
 const PAGE_SIZE = 60;
 
@@ -3126,6 +3126,9 @@ const playback = {
         `(measured ${age}s ago)`,
       `  a segment     claims ${Number(seg.declared || 0).toFixed(3)}s, holds ` +
         `${Number(seg.real || 0).toFixed(3)}s  → timeline ${seg.ratio ? seg.ratio.toFixed(3) : 'n/a'}`,
+      `  a/v start     video ${Number.isFinite(p.start?.video) ? p.start.video.toFixed(3) : '?'}s, ` +
+        `audio ${Number.isFinite(p.start?.audio) ? p.start.audio.toFixed(3) : '?'}s  → offset ` +
+        `${Number.isFinite(p.start?.sync) ? `${(p.start.sync * 1000).toFixed(0)}ms` : 'n/a'}`,
       `  video         ${p.video?.codec || '?'} ${p.video?.fps || '?'}fps tb ${p.video?.timeBase || '?'}`,
       `  audio         ${p.audio?.codec || '?'} ${p.audio?.profile || 'profile?'} ` +
         `${p.audio?.sampleRate || '?'}Hz ${p.audio?.channels || '?'}ch tb ${p.audio?.timeBase || '?'}`,
@@ -3160,6 +3163,14 @@ const playback = {
     // step with its own contents looks flawless from in here — 1x, no stalls,
     // nothing dropped — and wrong on the screen, so every measurement below
     // would agree that all is well.
+    // Audio and video starting at different points is heard as lip-sync drift
+    // and shows up in nothing the player reports — the clock, the frame rate
+    // and the buffering are all correct, the two tracks are simply offset.
+    const sync = p && !p.error ? p.start?.sync : null;
+    if (Number.isFinite(sync) && Math.abs(sync) > 0.12) {
+      return `Audio and video start ${Math.abs(sync * 1000).toFixed(0)}ms apart — the audio ` +
+        `begins ${sync > 0 ? 'after' : 'before'} the picture, which is heard as lip-sync drift.`;
+    }
     const ratio = p && !p.error ? p.segment?.ratio : 0;
     if (ratio && (ratio > 1.2 || ratio < 0.85)) {
       return `The CONVERSION is out of step: a segment claims ${p.segment.declared.toFixed(2)}s ` +

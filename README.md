@@ -650,6 +650,12 @@ could never fail. A segment file is the content itself. Fragmented output has
 its init segment stitched on first, since an fMP4 segment alone carries no
 headers and will not parse.
 
+**A fragment's length is not its duration.** Its timeline starts at its own
+base decode time, so ffprobe's `duration` for one is the moment it *ends* —
+subtract `start_time` or a healthy six-second segment three minutes into a film
+reads as three minutes of content and rates the conversion 0.03. This check
+cried wolf exactly once before that was noticed.
+
 The probe runs unprompted about twelve seconds into each session rather than
 when the panel is opened, because the panel cannot be reached from inside the
 player — by the time anyone looks, the session in question is usually gone. It
@@ -731,6 +737,30 @@ fMP4 segments carry explicit sample counts and durations in their own headers
 and are passed to the browser essentially untouched, which takes that
 reconstruction out of the path. It also leaves one packaging format instead of
 two.
+
+### Audio starts where the video starts
+
+`-ss` ahead of `-i` seeks the container, which is what makes a seek fast — but
+with `-c:v copy` the video can only begin at the keyframe at or before the
+mark, while the audio begins at the mark itself. The two streams end up
+starting at different points, and a browser handed a track that starts late
+does not necessarily wait for it: it plays what it has, and the audio runs
+ahead of the picture.
+
+`aresample=async=1:first_pts=0` pads that difference with silence so the audio
+track starts where the video does and nothing has to guess. `async=1` stays for
+what it was always there for — keeping audio from drifting away from video over
+a long playback.
+
+The playback report measures the result rather than assuming it. The probe
+reads the **first** segment of the session and reports where each stream
+begins:
+
+    a/v start     video 0.000s, audio 0.000s  → offset 0ms
+
+Anything past ~120ms is called out in the verdict, because an offset shows up
+in nothing else the player reports — the clock, the frame rate and the
+buffering are all perfectly correct, the two tracks are simply not aligned.
 
 ### Audio is always re-encoded, never copied
 
