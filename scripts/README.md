@@ -66,6 +66,13 @@ Nothing happens unless `origin/main` has moved. When it has, the script asks
 open or a download is running; it tries again on the next tick. `FORCE=1`
 skips that check.
 
+**A hold has a ceiling.** Deferring exists to avoid cutting off a film, not to
+defer for ever — a busy signal that stops clearing, such as a download wedged
+in `downloading`, would otherwise stall every deploy silently and indefinitely.
+After `HOLD_LIMIT` seconds (30 minutes by default) the update is applied
+regardless, and the log says so. The hold itself is logged once rather than
+every couple of minutes for as long as it lasts.
+
 ### One-time setup on the Pi
 
 `~/iptv-portal/` is an rsync target today, with no `.git` in it — `deploy.sh`

@@ -23,6 +23,8 @@ PM2_APP="${PM2_APP:-iptv-portal}"
 PORT="${PORT:-8420}"
 # Restart even if something is playing. Off by default.
 FORCE="${FORCE:-0}"
+# How long a busy box may defer an update before it is applied regardless.
+HOLD_LIMIT="${HOLD_LIMIT:-1800}"
 
 cd "$(dirname "$0")/.."
 REPO_DIR="$PWD"
@@ -89,10 +91,31 @@ portal_busy() {
   '
 }
 
+HELD_FLAG="$REPO_DIR/.auto-update-held"
+
+# Deferring exists to avoid cutting off a film, not to defer for ever. Any busy
+# signal that stops clearing — a download wedged in `downloading`, a stream
+# count that never comes back down — would otherwise stall every deploy
+# silently and indefinitely, which is exactly what it did. Hold, but only up to
+# a limit, then go anyway.
 if [[ "$FORCE" != "1" ]] && portal_busy; then
-  log "holding ${remote_sha:0:7} — portal in use"
-  exit 0
+  now=$(date +%s)
+  since=$(cat "$HELD_FLAG" 2>/dev/null || true)
+
+  if [[ -z "${since:-}" ]]; then
+    printf '%s' "$now" >"$HELD_FLAG"
+    # Logged once, not every couple of minutes for as long as it lasts.
+    log "holding ${remote_sha:0:7} — portal in use"
+    exit 0
+  fi
+
+  if (( now - since < HOLD_LIMIT )); then
+    exit 0
+  fi
+
+  log "held ${remote_sha:0:7} for $(( (now - since) / 60 ))m — applying anyway"
 fi
+rm -f "$HELD_FLAG"
 
 # Anything rsynced over by deploy.sh would be silently destroyed by the reset
 # below. Park it in a stash instead: recoverable, and the update still lands.

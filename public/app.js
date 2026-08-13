@@ -115,10 +115,16 @@ const profiles = {
   async loadTaste() {
     if (!this.current) return;
     try {
-      const taste = await api(`/api/profiles/${this.current.id}/taste`);
+      // A link to the box slow enough to hang this would otherwise hang
+      // whatever is waiting on it, with nothing on screen to say why.
+      const taste = await Promise.race([
+        api(`/api/profiles/${this.current.id}/taste`),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 8000)),
+      ]);
       state.recentlyWatched = taste.recentlyWatched || [];
     } catch {
-      state.recentlyWatched = [];
+      // Keep whatever was already loaded. Emptying it here blanked Continue
+      // watching every time the call was merely slow.
     }
   },
 
@@ -2312,10 +2318,14 @@ async function goTo(tab) {
     return render();
   }
   if (tab === 'home') {
-    // Built from watch history and favorites, neither of which needs a library
-    // fetch — so the badge always lands somewhere instantly.
-    await profiles.loadTaste();
-    return render();
+    // Draw first, refresh after. Awaiting the history call before rendering
+    // anything meant the badge did nothing at all until it came back, and over
+    // a slow link to the box that is long enough to look broken.
+    render();
+    profiles.loadTaste().then(() => {
+      if (state.tab === 'home') render();
+    });
+    return;
   }
   if (tab === 'favorites' || tab === 'favlive') return render();
 
