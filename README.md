@@ -1343,20 +1343,39 @@ opened, so a beta screen cannot outlive the switch.
 Up to four live channels on one screen, reached from a button that appears on
 Live TV while beta is on.
 
-**It is an experiment, and what it is measuring is failure.** This account
+**It works, and the prediction that it would not was wrong.** This was built
+expecting one cell to play and the rest to be refused, because the account
 allows **one connection at a time** — the same limit that makes downloads pause
-while you watch. So the expected result is that one cell plays and the rest are
-turned away, and the whole design is arranged to make that legible rather than
-to hide it:
+while you watch. Four channels ran for several minutes without a complaint.
+
+The reason is a distinction that limit hides: it counts **connections held
+open**, and HLS does not hold one. A live channel here is
+`…/live/user/pass/ID.m3u8`, and playing it is a series of short segment
+fetches, each opening and closing. Four of those interleave without ever being
+concurrent in the sense the provider counts.
+
+What *does* hold a connection open is a single continuous GET — which is
+exactly what a **download** is, and what live becomes when the provider is set
+to **MPEG-TS** instead of HLS. That is the real shape of the limit: downloads
+pause live playback not because the account is busy, but because both are one
+long GET. Multi-view in MPEG-TS mode should collapse to one working cell; that
+is the falsifiable half of this and it has not been run yet.
+
+So each cell now shows the delivery it got (`M3U8` / `TS`), and the header only
+warns about contention when more than one cell is actually the kind that
+contends. The rest of the design still stands, because it is what made the
+answer legible either way:
 
 - Each cell reports its own outcome, on the cell, **in the provider's words**.
   "Refused: All connections for this account are in use" is the finding; a
   spinner that never resolves would not be.
-- The header counts **playing** separately from **asked for**, because on this
-  account those are usually different numbers.
-- A failed cell **does not retry**. A quiet reconnect loop would take the
-  connection off whichever cell currently has it, and the sequence of who held
-  it when is the thing being observed.
+- The header counts **playing** separately from **asked for**. On HLS those
+  turn out to be the same number; on MPEG-TS they should not be, and that gap
+  is the measurement.
+- A failed cell **does not retry**. On MPEG-TS a quiet reconnect loop would
+  take the connection off whichever cell currently has it, and the sequence of
+  who held it when is the thing being observed. On HLS it costs nothing, since
+  nothing fails — so this stays as it is until there is a reason to change it.
 - Opening multi-view closes the main player first, so it is not a fifth
   claimant on the connection while the other four are being counted.
 

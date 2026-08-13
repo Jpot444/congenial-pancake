@@ -2525,6 +2525,19 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 }
 .mv-sound.is-on { background: var(--brand-red); }
 
+/* How this cell is being delivered. Flagged when it is the kind that holds a
+   connection open, since that is the one that has to share. */
+.mv-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .14);
+  font-size: .62rem;
+  letter-spacing: .06em;
+  color: rgba(255, 255, 255, .8);
+}
+.mv-tag.is-held { background: rgba(224, 122, 42, .35); color: #ffd7b0; }
+
 /* The whole point of the experiment: which cell was refused, and why. */
 .mv-status {
   position: absolute;

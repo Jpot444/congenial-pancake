@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '19';
+const VERSION = '19.1';
 
 const PAGE_SIZE = 60;
 
@@ -468,6 +468,9 @@ const multiview = {
 
       const bar = el('div', 'mv-bar');
       const name = el('span', 'mv-name');
+      // Which delivery each cell got. This is the answer to why four at once
+      // works at all, so it belongs on the screen rather than in a comment.
+      const tag = el('span', 'mv-tag');
       const sound = el('button', 'mv-sound');
       sound.title = 'Listen to this one';
       sound.textContent = '🔇';
@@ -476,7 +479,7 @@ const multiview = {
       drop.title = 'Stop this channel';
       drop.textContent = '✕';
       drop.addEventListener('click', () => this.stop(i));
-      bar.append(name, sound, drop);
+      bar.append(name, tag, sound, drop);
 
       const note = el('p', 'mv-status');
       note.hidden = true;   // an empty one still paints as a grey strip
@@ -484,7 +487,8 @@ const multiview = {
       box.append(video, note, bar, empty);
       grid.append(box);
       this.cells.push({
-        box, video, empty, bar, name, sound, note,
+        box, video, empty, bar, name, tag, sound, note,
+        format: '',
         engine: null,
         item: null,
         // Asked for is not the same as playing, and on this account it is
@@ -520,15 +524,27 @@ const multiview = {
       cell.bar.hidden = !live;
       cell.video.hidden = !live;
       cell.name.textContent = cell.item?.name || '';
+      cell.tag.textContent = live && cell.format ? cell.format.toUpperCase() : '';
+      cell.tag.hidden = !cell.tag.textContent;
+      cell.tag.classList.toggle('is-held', cell.format === 'ts');
       cell.sound.textContent = cell.video.muted ? '🔇' : '🔊';
       cell.sound.classList.toggle('is-on', !cell.video.muted);
     }
     const asked = this.cells.filter((c) => c.item).length;
     const playing = this.cells.filter((c) => c.ok).length;
+    // The one-connection limit bites on streams that hold a connection open.
+    // HLS does not — it fetches a segment at a time — which is why four of
+    // those run happily. MPEG-TS is one long GET per channel, and those will
+    // contend. Said only when it applies.
+    const held = this.cells.filter((c) => c.item && c.format === 'ts').length;
     $('#mvNote').textContent = asked
-      ? `${playing} playing of ${asked} asked for — this account allows one `
-        + 'connection at a time.'
-      : 'One connection at a time is all this account has. Expect refusals.';
+      ? `${playing} playing of ${asked} asked for`
+        + (held > 1
+          ? ` — ${held} of them MPEG-TS, which holds a connection open. This `
+            + 'account allows one, so expect these to fight.'
+          : '')
+      : 'Up to four at once. HLS channels fetch a segment at a time and hold '
+        + 'no connection open; MPEG-TS holds one each, and this account allows one.';
   },
 
   /** Exactly one cell may make a noise. */
@@ -602,6 +618,7 @@ const multiview = {
         latency: prefs.data.liveLatency,
       });
       if (cell.token !== mine || cell.item !== item) return;
+      cell.format = data.format || '';
       this.attach(cell, data.url, data.format);
     } catch (err) {
       if (cell.token !== mine) return;
@@ -677,6 +694,7 @@ const multiview = {
     cell.video.muted = true;
     cell.item = null;
     cell.ok = false;
+    cell.format = '';
     cell.note.hidden = true;
     cell.note.textContent = '';
     this.paint();
