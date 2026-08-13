@@ -290,6 +290,42 @@ function readProfiles() {
   return data;
 }
 
+/**
+ * How much this profile may keep on the box, in bytes, or Infinity.
+ *
+ * Named rather than flagged: this is a house of a few people who all know each
+ * other, the box belongs to Hunter, and a `limitless: true` field on a profile
+ * anyone can edit from the profile screen would be a limit in name only.
+ */
+const DOWNLOAD_ALLOWANCE = 3 * 1024 * 1024 * 1024;
+const UNLIMITED_PROFILE = 'hunter';
+
+function downloadLimitFor(profile) {
+  const name = String(profile?.name || '').trim().toLowerCase();
+  return name === UNLIMITED_PROFILE ? Infinity : DOWNLOAD_ALLOWANCE;
+}
+
+/**
+ * Bytes this profile is holding: what has landed, plus what its queued and
+ * running jobs are expected to weigh. Counting only finished files would let
+ * someone queue a hundred at once and sail past the allowance before the first
+ * of them completed.
+ */
+function downloadBytesFor(profileId, exceptId = null) {
+  let total = 0;
+  for (const job of downloads.values()) {
+    if (job.profileId !== profileId || job.id === exceptId) continue;
+    total += Math.max(Number(job.bytes) || 0, Number(job.total) || 0);
+  }
+  return total;
+}
+
+/** The profile a job is charged to, or undefined for one made before this. */
+function ownerOf(profileId) {
+  if (!profileId) return undefined;
+  return readProfiles().profiles.find((p) => p.id === profileId);
+}
+
 function writeProfiles(data) {
   writeJsonAtomic(PROFILES_PATH, data, { mode: 0o600 });
   try {
@@ -1009,6 +1045,29 @@ async function runJob(job) {
   const declared = Number(upstream.headers['content-length'] || 0);
   job.total = resuming ? job.bytes + declared : declared;
   persistDownloads();
+
+  // The allowance is checked again here, because this is the first moment the
+  // file's size is known. The check at the request only knows what is already
+  // used, so without this one a profile sitting at zero could take a single
+  // 5GB film and be over the line before anything could object.
+  if (job.total > 0) {
+    const allowance = downloadLimitFor(ownerOf(job.profileId));
+    const used = downloadBytesFor(job.profileId, job.id);
+    if (Number.isFinite(allowance) && used + job.total > allowance) {
+      upstream.destroy();
+      try {
+        fs.unlinkSync(part);   // it is never going to be resumed
+      } catch {
+        /* nothing partial to remove */
+      }
+      job.bytes = 0;
+      throw new Error(
+        `${job.name || 'That'} is ${gb(job.total)} and you have `
+        + `${gb(Math.max(0, allowance - used))} of your ${gb(allowance)} left. `
+        + 'Delete something from Downloads to make room.'
+      );
+    }
+  }
 
   // Now that the real size is known, check the card can actually take it.
   // Refusing up front beats filling the disk and breaking every other write.
@@ -2632,6 +2691,18 @@ async function handleApi(req, res, pathname, query) {
         return json(res, 200, {
           favorites: profile.favorites || [],
           pinnedCategories: profile.pinnedCategories || [],
+          pinOrder: profile.pinOrder || {},
+          deletedItems: profile.deletedItems || [],
+          deletedCategories: profile.deletedCategories || [],
+          // A profile that has already watched or favorited something has
+          // plainly found its way around, so it is not walked through the
+          // basics. Only genuinely new ones get the tour.
+          tourDone: profile.tourDone
+            ?? ((profile.history || []).length > 0 || (profile.favorites || []).length > 0),
+          // Everyone but Hunter has a download allowance. Sent so the UI can
+          // show what is left rather than only finding out by being refused.
+          downloadLimit: downloadLimitFor(profile),
+          downloadUsed: downloadBytesFor(profile.id),
         });
       }
       if (req.method === 'PUT') {
@@ -2647,6 +2718,24 @@ async function handleApi(req, res, pathname, query) {
         if (Array.isArray(incoming.pinnedCategories)) {
           profile.pinnedCategories = incoming.pinnedCategories.slice(0, 300);
         }
+        // These three were being dropped on the floor. The client has kept
+        // them in the same object as favorites for a while, and PUT only ever
+        // read two fields out of it — so hiding a title or reordering pins
+        // looked like it worked and was gone by the next reload, on every
+        // device including the one that did it.
+        if (incoming.pinOrder && typeof incoming.pinOrder === 'object') {
+          profile.pinOrder = {};
+          for (const [tab, ids] of Object.entries(incoming.pinOrder)) {
+            if (Array.isArray(ids)) profile.pinOrder[tab] = ids.slice(0, 300);
+          }
+        }
+        if (Array.isArray(incoming.deletedItems)) {
+          profile.deletedItems = incoming.deletedItems.slice(0, 2000);
+        }
+        if (Array.isArray(incoming.deletedCategories)) {
+          profile.deletedCategories = incoming.deletedCategories.slice(0, 500);
+        }
+        if (typeof incoming.tourDone === 'boolean') profile.tourDone = incoming.tourDone;
         writeProfiles(data);
         return json(res, 200, { ok: true });
       }
@@ -2904,6 +2993,23 @@ async function handleApi(req, res, pathname, query) {
         return json(res, 400, { error: 'streamId or sourceUrl is required' });
       }
 
+      // Checked here rather than in the browser. The browser is where the
+      // number is shown; this is where it means anything.
+      const profileId = String(incoming.profileId || '');
+      const owner = readProfiles().profiles.find((p) => p.id === profileId);
+      const allowance = downloadLimitFor(owner);
+      if (Number.isFinite(allowance)) {
+        const used = downloadBytesFor(profileId);
+        if (used >= allowance) {
+          return json(res, 413, {
+            error: `That's your ${gb(allowance)} of downloads used up. `
+              + 'Delete something from Downloads to make room.',
+            used,
+            limit: allowance,
+          });
+        }
+      }
+
       const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       const job = {
         id,
@@ -2922,6 +3028,9 @@ async function handleApi(req, res, pathname, query) {
         season: Number(incoming.season) || 0,
         episode: Number(incoming.episode) || 0,
         subtitle: incoming.subtitle || '',
+        // Who this counts against. Downloads are shared — anyone can play
+        // anything that is on the box — but the allowance is per profile.
+        profileId,
         bytes: 0,
         total: 0,
         status: 'queued',

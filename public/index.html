@@ -104,6 +104,25 @@
   </form>
 </div>
 
+<!-- ─────────────────────────────────────────────────── walkthrough ─── -->
+<!-- One hole punched in a full-screen dim, plus a card. The hole is a single
+     element with an enormous box-shadow rather than four panels around a gap,
+     which cannot leave seams at the corners however it is positioned. -->
+<div class="tour" id="tour" hidden>
+  <div class="tour-hole" id="tourHole"></div>
+  <div class="tour-card" id="tourCard">
+    <button class="tour-x" id="tourSkip" title="Skip the tour" aria-label="Skip the tour">
+      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <h3 class="tour-title" id="tourTitle"></h3>
+    <p class="tour-body" id="tourBody"></p>
+    <div class="tour-foot">
+      <span class="tour-left" id="tourLeft"></span>
+      <button class="btn btn-primary btn-sm" id="tourNext">Next</button>
+    </div>
+  </div>
+</div>
+
 <!-- ─────────────────────────────────────────────── loading screen ─── -->
 <div class="loader" id="loader" hidden>
   <div class="loader-stage">

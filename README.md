@@ -137,6 +137,41 @@ resume. Pausing keeps the partial file and resumes from the exact byte offset
 via a Range request rather than starting over. Downloads interrupted by a server
 restart come back as paused and resume the same way.
 
+### Every profile but one has a 3GB allowance
+
+`hunter` downloads without limit. Everyone else gets 3GB, counted across that
+profile's own downloads — finished files at what they weigh, running and queued
+ones at what they *will* weigh, so queueing twenty at once cannot sail past the
+line before the first of them lands.
+
+It is checked twice, because the two moments know different things. **At the
+request**, all that exists is what is already used; over the line and the POST
+comes back `413` with a sentence the client toasts as-is. **When the download
+starts**, `Content-Length` arrives and the file's real size is known for the
+first time — so this is the only gate that can stop a single 5GB film asked for
+by a profile sitting at zero. That one destroys the socket, deletes the partial,
+and fails the job with a message naming the film's size and what is left, which
+the Downloads grid shows on the card. Only the second check can be the whole
+answer, and only the first can refuse without spending a connection.
+
+A season download asks per episode, so a refusal partway through used to be
+reported as "Queued 0 episodes" with no reason given. The loop now carries the
+first refusal out and says it.
+
+The count is per profile rather than per box on purpose. The Pi's disk is
+shared, so a global cap would mean whoever downloaded first got everything and
+everyone else got a wall — an allowance nobody could reason about. Per profile,
+the number in front of you is yours and deleting your own things is what frees
+it.
+
+Two things it deliberately is not. It is **not** enforcement: profiles carry no
+authentication, so anyone can switch into `hunter` and download freely. It is a
+guard rail for a handful of people who share a Pi, and it is honest about that.
+And it is **not** a disk-space guard — the sum of everyone's allowances can
+still outrun the card. Downloads record their owner (`profileId` on the job) so
+a file bought by one profile is not charged to another; downloads made before
+this shipped have no owner and count against nobody.
+
 Saved files keep their original container. Most of this library is `.mkv`, which
 the iPad's built-in player won't open — use **VLC** or **Infuse** for saved
 files. (Streaming inside the portal handles `.mkv` automatically; see below.)
@@ -195,6 +230,50 @@ and restart — it re-seeds.
 
 The first profile created inherits whatever was already favorited and pinned
 before profiles existed, so nothing is lost on upgrade.
+
+## The walkthrough
+
+A new profile gets a guided tour on its first load: a dimmed screen with a hole
+punched over one control at a time, a card beside it explaining what the control
+does, a count of how many steps are left, **Next**, and an **✕** that ends it.
+It is written for the handful of people who actually use this, so it is rude.
+That is the point — nobody reads a polite tour.
+
+`tourDone` is stored per profile alongside favorites, so it runs once per
+person rather than once per browser. Switching to a phone does not start it
+again.
+
+Three things about it are less obvious than they look:
+
+**The steps are chosen from what is on screen, not from a list.** Each step
+names a selector; a step whose target is not rendered is dropped before the
+tour starts. So the desktop tour walks the nav and the phone tour walks the tab
+bar, without either layout being described anywhere.
+
+That only works if the *visible* copy is the one picked. Several steps name both
+layouts (`.nav a[href="#/live"], .tabbar a[href="#/live"]`) and both exist in
+the DOM at all times — the hidden one is hidden with `hidden`, not removed.
+`querySelector` returns the first match in document order, which on a phone is
+the desktop nav link, which has no box, so the step was dropped and the phone
+tour lost every tab. The lookup takes the first match **that has client rects**,
+which is the one the reader can see.
+
+**The highlight is one element, not four.** A hole in a dim overlay is normally
+four divs boxing the target in. This is a single box with `box-shadow: 0 0 0
+9999px rgba(8,5,5,.78)` — the shadow paints everything outside the box, so
+moving the highlight is four style writes and the dimming follows for free. It
+also means the hole can be transitioned, which is why it slides between steps
+rather than jumping.
+
+**The card is placed, not positioned in CSS.** It goes below the highlight, or
+above it when there is no room below, then is clamped into the viewport — a card
+half off the screen is worse than one slightly overlapping what it points at.
+On a resize it repaints, because a phone rotating mid-tour otherwise leaves the
+hole over nothing.
+
+The Downloads step reads the profile's own allowance rather than a fixed
+sentence, so `hunter` is told there is no limit and everyone else is told the
+number they have.
 
 ## Personalization API
 
@@ -257,6 +336,14 @@ hover is not a gesture a phone has.
 
 Category counts are taken after the hidden ones are removed, so a category that
 says 6 opens with 6 in it.
+
+This is stored per profile and so is meant to follow you between devices — and
+for a long time it did not. `PUT /api/profiles/:id/prefs` accepted the whole
+object but only ever wrote `favorites` and `pinnedCategories` through to
+`profiles.json`; `deletedItems`, `deletedCategories` and `pinOrder` were saved
+by the client, acknowledged by the server and dropped. Nothing failed, which is
+why it lasted: the tab you were on kept the hiding, because it kept it in
+memory. The server now persists every key it is sent, and returns them all.
 
 ## The home screen
 
@@ -1120,8 +1207,10 @@ reset to 1×.
 - Very large libraries load fully into memory in the browser. With 57k channels
   and 178k movies, the first load of a section takes several seconds.
 - Series resume points aren't tracked yet — episodes start from zero.
-- Downloads have no disk-space guard. A 4K film here runs 4–5 GB; check the Pi's
-  free space before queueing a stack of them.
+- Downloads have no disk-space guard. The 3GB per-profile allowance is not one:
+  it is per profile, `hunter` is exempt from it, and nothing stops the sum of
+  everyone's from outrunning the card. A 4K film here runs 4–5 GB; check the
+  Pi's free space before queueing a stack of them.
 
 ## Layout
 

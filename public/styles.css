@@ -2339,6 +2339,74 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 /* Always-visible speed warning — deliberately outside .vod-bar so it does not
    fade with the rest of the chrome. */
+/* ---- the walkthrough ---- */
+
+.tour {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  /* The dim is painted by the hole's shadow, so this layer catches clicks and
+     nothing else. Without it the page underneath is still usable mid-tour,
+     which is a good way to end up three menus deep with a card pointing at
+     something that has scrolled away. */
+  pointer-events: auto;
+}
+
+.tour-hole {
+  position: absolute;
+  border-radius: var(--radius);
+  box-shadow: 0 0 0 9999px rgba(8, 5, 5, .78);
+  /* A ring so the cut-out reads as deliberate rather than as a rendering
+     glitch on a dark background. */
+  outline: 2px solid var(--brand-red);
+  outline-offset: 2px;
+  transition: top .25s var(--ease), left .25s var(--ease),
+    width .25s var(--ease), height .25s var(--ease);
+  pointer-events: none;
+}
+
+.tour-card {
+  position: absolute;
+  width: min(340px, calc(100vw - 32px));
+  padding: 20px 22px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
+  transition: top .25s var(--ease), left .25s var(--ease);
+}
+
+.tour-title {
+  margin: 0 30px 8px 0;
+  font-family: var(--display);
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: .03em;
+  color: var(--text);
+}
+
+.tour-body { margin: 0 0 16px; font-size: 13.5px; line-height: 1.6; color: var(--muted); }
+
+.tour-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tour-left { font-size: 12px; color: var(--muted-dim); }
+
+.tour-x {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 28px; height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted-dim);
+  cursor: pointer;
+}
+
+.tour-x:hover { color: var(--text); background: rgba(255, 255, 255, .07); }
+.tour-x svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; }
+
 /* ---- one show's own page ---- */
 
 .show-view { display: block; }

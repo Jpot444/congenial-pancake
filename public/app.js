@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '16';
+const VERSION = '17';
 
 const PAGE_SIZE = 60;
 
@@ -700,6 +700,180 @@ $('#copyPlayback').addEventListener('click', async () => {
 $('#healthModal').addEventListener('click', (e) => {
   if (e.target.id === 'healthModal') health.close();
 });
+
+/* ----------------------------------------------------------- walkthrough ---
+ *
+ * A one-time tour for a profile that has not been round the place yet.
+ *
+ * Steps name a target by selector and are dropped if that target is not on
+ * screen — the tab bar exists only on a phone, the nav links only off it — so
+ * one list serves both layouts without either being walked past something it
+ * does not have.
+ *
+ * The copy is rude on purpose. This is a private box shared with people who
+ * would find a polite product tour more offensive than the swearing.
+ */
+const TOUR = [
+  {
+    target: '.brand',
+    title: 'Start here, dipshit',
+    body: 'The bison is Home. Continue watching, your favourite channels, your '
+      + 'favourite films — all on one page. Click him whenever you get lost, '
+      + 'which will be constantly.',
+  },
+  {
+    target: '.nav a[href="#/live"], .tabbar a[href="#/live"]',
+    title: 'Live TV',
+    body: 'Hundreds of channels, all of them showing something you do not want. '
+      + 'You get categories first, then the actual channels — pin the ones you '
+      + 'use so you are not scrolling past forty religious networks every time.',
+  },
+  {
+    target: '.nav a[href="#/movies"], .tabbar a[href="#/movies"]',
+    title: 'Movies',
+    body: 'Rows of films. Click one and you get its own page — poster, plot, '
+      + 'runtime, and a big Play button. Hover a poster and a little bin '
+      + 'appears: that hides it forever, which is the correct response to most '
+      + 'of them.',
+  },
+  {
+    target: '.nav a[href="#/series"], .tabbar a[href="#/series"]',
+    title: 'Series',
+    body: 'Same idea, with seasons across the top and episodes down the side. '
+      + 'When an episode is nearly done a Next Episode button turns up so you '
+      + 'do not have to move a muscle. You are welcome.',
+  },
+  {
+    target: '#searchInput, .search',
+    title: 'Search, and lower your expectations',
+    body: 'Type a couple of words and hope. The provider names things like a '
+      + 'man typing with his elbows, so "the batman 2022 4K HDR REMUX" is a '
+      + 'real title and "Batman" might not find it.',
+  },
+  {
+    target: '.nav a[href="#/downloads"], .tabbar a[href="#/downloads"]',
+    title: 'Downloads',
+    body: '',   // filled in below: the allowance depends on who is watching
+  },
+  {
+    target: '#profileChip',
+    title: 'That is you',
+    body: 'Your favourites, your history, your embarrassing taste — kept apart '
+      + 'from everyone else\'s. Click it to switch to someone with better '
+      + 'judgement.',
+  },
+  {
+    target: '#healthBtn',
+    title: 'When it inevitably breaks',
+    body: 'The pulse shows what the Pi is doing. If playback goes to hell, open '
+      + 'it, hit Copy report, and send that to Hunter. He genuinely enjoys '
+      + 'reading them, which says a lot about him.',
+  },
+];
+
+const tour = {
+  steps: [],
+  at: 0,
+
+  /**
+   * Only the steps whose target is actually on this screen — and for the ones
+   * that name both a desktop and a phone control, the copy of it that is
+   * showing. querySelector would hand back the desktop nav link on a phone,
+   * where it is hidden, and the step would vanish.
+   */
+  visible() {
+    return TOUR.map((step) => ({
+      ...step,
+      node: [...document.querySelectorAll(step.target)]
+        .find((node) => node.getClientRects().length),
+    })).filter((step) => step.node);
+  },
+
+  start() {
+    this.steps = this.visible();
+    if (!this.steps.length) return;
+    this.at = 0;
+    $('#tour').hidden = false;
+    this.paint();
+    window.addEventListener('resize', this.reposition);
+  },
+
+  /** Written down so the tour does not come back on the next device. */
+  async finish() {
+    $('#tour').hidden = true;
+    window.removeEventListener('resize', this.reposition);
+    if (profiles.current && !profiles.data.tourDone) {
+      profiles.data.tourDone = true;
+      await profiles.save();
+    }
+  },
+
+  next() {
+    if (this.at >= this.steps.length - 1) return this.finish();
+    this.at += 1;
+    this.paint();
+  },
+
+  paint() {
+    const step = this.steps[this.at];
+    const box = step.node.getBoundingClientRect();
+    const pad = 8;
+    const hole = $('#tourHole');
+    hole.style.top = `${box.top - pad}px`;
+    hole.style.left = `${box.left - pad}px`;
+    hole.style.width = `${box.width + pad * 2}px`;
+    hole.style.height = `${box.height + pad * 2}px`;
+
+    $('#tourTitle').textContent = step.title;
+    $('#tourBody').textContent = step.body || tourDownloadCopy();
+    const left = this.steps.length - this.at - 1;
+    $('#tourLeft').textContent = left
+      ? `${left} more ${left === 1 ? 'thing' : 'things'}`
+      : 'last one';
+    $('#tourNext').textContent = left ? 'Next' : 'Got it';
+
+    this.place(box);
+  },
+
+  /**
+   * Put the card beside the highlight, on whichever side it fits. Clamped to
+   * the viewport at the end regardless: a card half off the screen is worse
+   * than one slightly overlapping what it points at.
+   */
+  place(box) {
+    const card = $('#tourCard');
+    const gap = 14;
+    const w = card.offsetWidth;
+    const h = card.offsetHeight;
+    let top = box.bottom + gap;
+    if (top + h > window.innerHeight - 8) top = box.top - h - gap;
+    let left = box.left + box.width / 2 - w / 2;
+    left = Math.max(12, Math.min(window.innerWidth - w - 12, left));
+    top = Math.max(12, Math.min(window.innerHeight - h - 12, top));
+    card.style.top = `${top}px`;
+    card.style.left = `${left}px`;
+  },
+
+  reposition: () => {
+    if (!$('#tour').hidden) tour.paint();
+  },
+};
+
+/** The Downloads step, which reads differently depending on the allowance. */
+function tourDownloadCopy() {
+  const limit = profiles.data?.downloadLimit;
+  const capped = Number.isFinite(limit) && limit > 0;
+  return 'Pull a film or an episode onto the box and it plays even when the '
+    + 'wifi shits the bed. '
+    + (capped
+      ? `You get ${(limit / 1073741824).toFixed(0)}GB, so do not download an entire `
+        + 'season of something you will never watch. Delete things with the X on '
+        + 'the poster.'
+      : 'No limit for you, obviously. Everyone else gets 3GB.');
+}
+
+$('#tourNext').addEventListener('click', () => tour.next());
+$('#tourSkip').addEventListener('click', () => tour.finish());
 
 /* ---------------------------------------------------------------- loader */
 
@@ -2620,15 +2794,24 @@ async function requestSeasonDownload() {
   if (!ok) return;
 
   let queued = 0;
+  let refused = '';
   for (const episode of pending) {
     // Sequential: each POST is cheap, and this keeps queue order predictable.
     // eslint-disable-next-line no-await-in-loop
     const done = await requestDownload(item, { ...episode, season }, { quiet: true });
-    if (done) queued += 1;
+    if (done.ok) queued += 1;
+    else if (!refused) refused = done.error;
   }
 
   await refreshDownloads({ rerender: true });
-  toast(`Queued ${queued} episode${queued === 1 ? '' : 's'} of Season ${season}.`);
+  // "Queued 0 episodes" is not an answer. If the server turned them down —
+  // most likely the download allowance — say what it said.
+  if (refused && !queued) toast(refused);
+  else if (refused) {
+    toast(`Queued ${queued} of ${pending.length} — ${refused}`);
+  } else {
+    toast(`Queued ${queued} episode${queued === 1 ? '' : 's'} of Season ${season}.`);
+  }
 }
 
 async function requestDownload(item, episode, { quiet = false } = {}) {
@@ -2668,6 +2851,10 @@ async function requestDownload(item, episode, { quiet = false } = {}) {
     payload.streamId = '';
   }
 
+  // Whose allowance this comes out of. The server decides what that allowance
+  // is and whether there is room; this only says who is asking.
+  payload.profileId = profiles.current?.id || '';
+
   try {
     const res = await fetch('/api/downloads', {
       method: 'POST',
@@ -2677,17 +2864,17 @@ async function requestDownload(item, episode, { quiet = false } = {}) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not queue that download.');
     // A season download reports once at the end rather than per episode.
-    if (quiet) return true;
+    if (quiet) return { ok: true, error: '' };
     await refreshDownloads({ rerender: true });
     toast(
       state.downloads.queued > 1
         ? `Queued “${payload.name}”. It starts when the current one finishes.`
         : `Downloading “${payload.name}”. Watch progress in Downloads.`
     );
-    return true;
+    return { ok: true, error: '' };
   } catch (err) {
     if (!quiet) toast(err.message);
-    return false;
+    return { ok: false, error: err.message };
   }
 }
 
@@ -5457,6 +5644,10 @@ async function startApp() {
   $('#filterToggle').checked = prefs.data.filtersEnabled !== false;
   await refreshDownloads();
   await applyRoute();
+
+  // After the first page has drawn, or the tour would be pointing at things
+  // that are not there yet.
+  if (profiles.current && profiles.data && !profiles.data.tourDone) tour.start();
 
   // Keep the progress bars and the nav badge honest while anything is running.
   setInterval(() => {
