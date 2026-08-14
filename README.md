@@ -1550,7 +1550,8 @@ A finished download in a container the browser already plays is the exception
 to all of it: no ffmpeg, no provider connection, and nothing stopping several
 cells doing it at once.
 
-**The picker is the Live TV page.** A Live TV / Movies / Series switch across
+**The picker is the Live TV page.** A Live TV / Movies / Series / Favorites /
+Recent switch across
 the top, then categories as cards with their artwork, then what is inside one —
 and for a series a third step, because a show is not a thing you can play. If
 the section has never been opened this session its library is fetched on the
@@ -1565,6 +1566,33 @@ that only looked inside the folder you happened to be in would be a worse
 search. The one thing the tiles lose here is the bin — hiding a category from
 inside the sheet would re-render the page underneath it, which is not what
 pressing it there means.
+
+**Favorites and Recent are the two shortcuts**, and they skip all of that. Both
+are flat lists — no category step, because putting a folder in front of the six
+things somebody came here to pick from is the work these exist to remove — and
+neither waits on a fetch, since both are the profile's own lists rather than the
+provider's. Each tile says what kind of thing it is, because unlike a category
+these lists are mixed.
+
+The two are not the same shape underneath, and that is where the work is:
+
+- A **favorite** is a whole library record. The heart in the player saves the
+  item, not a reference to it, so a channel or a film goes straight into a cell
+  with nothing to look up. A favorited *show* still opens its episode list — a
+  show is not a thing you can play.
+- A **history row** is not a record. It carries a name and a poster so the home
+  screen can draw it before any library has loaded, but not the fields a stream
+  needs: no container extension, and for a show an episode *number* rather than
+  the provider's episode id. So the tile draws from the row and the resolving
+  waits until it is tapped — load the library, find the record, and for a show
+  fetch the episode list to turn "season 2, episode 5" into an id. It goes
+  straight into the episode, which is the same call Continue watching makes on
+  the home screen and for the same reason. If that episode is gone but the show
+  is not, it hands over the episode list rather than failing at somebody who
+  only wanted to carry on watching.
+
+Recent folds to one row per title, newest first. The history is per-episode,
+and five tiles of the same show would crowd out four other things.
 
 **The live player carries a channel in.** A four-pane button in the player's
 top-right corner — with the other controls, which in cinema mode *is* the
@@ -1605,17 +1633,19 @@ pause live playback not because the account is busy, but because both are one
 long GET. Multi-view in MPEG-TS mode should collapse to one working cell; that
 is the falsifiable half of this and it has not been run yet.
 
-So each cell now shows the delivery it got (`M3U8` / `TS`), and the header only
-warns about contention when more than one cell is actually the kind that
-contends. The rest of the design still stands, because it is what made the
-answer legible either way:
+So each cell shows the delivery it got (`M3U8` / `TS`), and that tag carries the
+explanation with it: HLS holds no connection open, MPEG-TS holds one and this
+account allows one. The rest of the design still stands, because it is what made
+the answer legible either way:
 
 - Each cell reports its own outcome, on the cell, **in the provider's words**.
   "Refused: All connections for this account are in use" is the finding; a
   spinner that never resolves would not be.
-- The header counts **playing** separately from **asked for**. On HLS those
-  turn out to be the same number; on MPEG-TS they should not be, and that gap
-  is the measurement.
+- The header **no longer counts** playing against asked for. That tally was a
+  readout for the experiment above, and the experiment answered its question —
+  a permanent "4 playing of 4 asked for" over a working grid is just noise. The
+  half of it that was not a measurement — which cell is holding a connection
+  open — moved onto the cell that is holding it, where it is about something.
 - **Cells can be dragged into each other's places** by the grip in the bar. The
   swap exchanges the two boxes *in the DOM* rather than handing one cell's
   channel to the other: moving the box takes the video element, its engine and

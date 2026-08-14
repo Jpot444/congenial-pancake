@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '20.2.1';
+const VERSION = '20.3';
 
 const PAGE_SIZE = 60;
 
@@ -447,13 +447,21 @@ const MV_MAX = 4;
 const MV_SKIP = 10;          // seconds a skip button moves
 const MV_IDLE = 3000;        // how long the chrome stays up with nothing moving
 
+/**
+ * What the picker can offer. The first three are the provider's libraries and
+ * browse as categories; the last two are this profile's own flat lists, need
+ * no fetch, and are the fast way to fill a cell with something you already
+ * know you want.
+ */
+const MV_SOURCES = ['live', 'movies', 'series', 'favorites', 'recent'];
+
 const multiview = {
   cells: [],
   count: 4,
   picking: -1,
   solo: -1,
   idleTimer: null,
-  /** What the picker is offering: live, movies or series. */
+  /** What the picker is offering — one of MV_SOURCES. */
   source: 'live',
   /** Which category the picker is inside, or null at the top level. */
   browsing: null,
@@ -769,13 +777,27 @@ const multiview = {
       // square is exactly what choosing a count is meant to avoid.
       cell.box.hidden = !inUse || (this.solo >= 0 && this.solo !== i);
       cell.box.classList.toggle('is-solo', this.solo === i);
-      cell.empty.hidden = live;
+      // `pending` is a cell that has been given something but has nothing to
+      // show for it yet — a history row being turned into an episode id. The
+      // prompt to add something would be inviting a second choice over the top
+      // of the first.
+      cell.empty.hidden = live || Boolean(cell.pending);
       cell.bar.hidden = !live;
       cell.video.hidden = !live;
       cell.name.textContent = cell.label || cell.item?.name || '';
       cell.tag.textContent = live && cell.format ? cell.format.toUpperCase() : '';
       cell.tag.hidden = !cell.tag.textContent;
       cell.tag.classList.toggle('is-held', cell.format === 'ts');
+      // The header used to carry a running tally and an explanation of the
+      // one-connection limit. It was a readout for an experiment, and the
+      // experiment is over — but which delivery a cell got still matters when
+      // two of them fight, so it says so on the cell that is holding one.
+      cell.tag.title = cell.format === 'ts'
+        ? 'MPEG-TS — holds a connection open the whole time it plays, and this '
+          + 'account allows one. Two of these will fight.'
+        : cell.format === 'm3u8'
+          ? 'HLS — fetches a segment at a time and holds no connection open.'
+          : cell.format === 'file' ? 'Playing from a downloaded file.' : '';
       cell.sound.textContent = cell.video.muted ? '🔇' : '🔊';
       cell.sound.classList.toggle('is-on', !cell.video.muted);
       cell.play.textContent = cell.video.paused ? '▶' : '❚❚';
@@ -785,23 +807,6 @@ const multiview = {
     for (const button of document.querySelectorAll('#mvCountSeg button')) {
       button.classList.toggle('is-on', Number(button.dataset.count) === this.count);
     }
-
-    const inUse = this.cells.slice(0, this.count);
-    const asked = inUse.filter((c) => c.item).length;
-    const playing = inUse.filter((c) => c.ok).length;
-    // The one-connection limit bites on streams that hold a connection open.
-    // HLS does not — it fetches a segment at a time — which is why four of
-    // those run happily. MPEG-TS is one long GET per channel, and those will
-    // contend. Said only when it applies.
-    const held = inUse.filter((c) => c.item && c.format === 'ts').length;
-    $('#mvNote').textContent = asked
-      ? `${playing} playing of ${asked} asked for`
-        + (held > 1
-          ? ` — ${held} of them MPEG-TS, which holds a connection open. This `
-            + 'account allows one, so expect these to fight.'
-          : '')
-      : 'Up to four at once. HLS channels fetch a segment at a time and hold '
-        + 'no connection open; MPEG-TS holds one each, and this account allows one.';
   },
 
   /* -- transport -------------------------------------------------------- */
@@ -886,14 +891,24 @@ const multiview = {
   },
 
   async setSource(source) {
-    if (!['live', 'movies', 'series'].includes(source)) return;
+    if (!MV_SOURCES.includes(source)) return;
     this.source = source;
     this.browsing = null;
     this.show = null;
     $('#mvSearch').value = '';
-    $('#mvSearch').placeholder = source === 'live' ? 'Search channels…'
-      : source === 'movies' ? 'Search films…' : 'Search shows…';
+    $('#mvSearch').placeholder = {
+      live: 'Search channels…',
+      movies: 'Search films…',
+      series: 'Search shows…',
+      favorites: 'Search favorites…',
+      recent: 'Search what you have watched…',
+    }[source];
     this.results('');
+
+    // Favorites and Recent are already on this device — the profile's own
+    // lists, not the provider's — so there is nothing to fetch and nothing to
+    // wait for. Resolving one into something playable happens on the tap.
+    if (source === 'favorites' || source === 'recent') return;
 
     // Multi-view is reached from Live TV, so Movies and Series have usually
     // never been opened in this session and their libraries are not loaded.
@@ -942,6 +957,20 @@ const multiview = {
     box.innerHTML = '';
     for (const b of document.querySelectorAll('#mvSourceSeg button')) {
       b.classList.toggle('is-on', b.dataset.source === this.source);
+    }
+
+    // The two shortcut lists are flat by nature — there is no category step to
+    // take, and inventing one would put a folder in front of the six things
+    // somebody came here to pick from. The episode step still applies: a
+    // favorited show is a show, not something you can play.
+    if (this.source === 'favorites' || this.source === 'recent') {
+      if (this.show) return this.episodeTiles(box);
+      box.classList.remove('is-cats');
+      box.classList.add('is-live');
+      $('#mvPickerBackLabel').textContent = query.trim() ? 'Back' : 'Cancel';
+      return this.source === 'favorites'
+        ? this.favoriteTiles(box, query)
+        : this.recentTiles(box, query);
     }
 
     const library = state.library[this.source];
@@ -1033,8 +1062,15 @@ const multiview = {
     }
   },
 
-  /** A tile for a channel, a film, or a show. Same shape, different action. */
-  titleTile(item) {
+  /**
+   * A tile for a channel, a film, or a show. Same shape, different action.
+   *
+   * `opts.sub` puts a line under the name and `opts.onPick` replaces what a
+   * tap does — both only used by the two shortcut lists, where a tile has to
+   * say what kind of thing it is (the list is mixed) and where getting from a
+   * saved row to something playable takes more than handing over the record.
+   */
+  titleTile(item, { sub = '', onPick = null } = {}) {
     const card = el('button', 'card');
     const art = el('div', 'card-art');
     const nameOnly = () => {
@@ -1042,11 +1078,12 @@ const multiview = {
       fb.textContent = item.name;
       art.append(fb);
     };
-    if (item.logo) {
+    const poster = item.logo || item.poster || '';
+    if (poster) {
       const image = el('img');
       image.loading = 'lazy';
       image.alt = '';
-      image.src = item.logo;
+      image.src = poster;
       image.addEventListener('error', () => { image.remove(); nameOnly(); });
       art.append(image);
     } else {
@@ -1055,13 +1092,163 @@ const multiview = {
     const title = el('h3', 'card-title');
     title.textContent = item.name;
     card.append(art, title);
+    if (sub) {
+      const line = el('p', 'card-sub');
+      line.textContent = sub;
+      card.append(line);
+    }
     card.addEventListener('click', () => {
+      if (onPick) return onPick();
       // A show is not a thing you can play — it is a list of things you can.
       if (item.kind === 'series') return this.openShow(item);
       this.closePicker();
       this.start(this.picking, item);
     });
     return card;
+  },
+
+  /* -- the two shortcut lists -------------------------------------------- */
+
+  /**
+   * Favorites. These are whole library records — the heart in the player saves
+   * the item, not a reference to it — so a channel or a film goes straight into
+   * a cell with nothing to look up. A show still opens its episode list.
+   */
+  favoriteTiles(box, query) {
+    const q = query.trim().toLowerCase();
+    const kindWord = { live: 'Channel', movie: 'Film', series: 'Show' };
+    const items = profiles.favItems()
+      .filter((i) => i && i.name)
+      .filter((i) => !profiles.isDeleted(i))
+      .filter((i) => !q || i.name.toLowerCase().includes(q));
+
+    $('#mvPickerTitle').textContent = 'Favorites';
+    $('#mvPickerSub').textContent = items.length
+      ? `${items.length.toLocaleString()} favorite${items.length === 1 ? '' : 's'}`
+      : '';
+    if (!items.length) {
+      const note = el('p', 'show-note');
+      note.textContent = q ? 'Nothing matches that.'
+        : 'No favorites yet — tap the heart while watching something.';
+      return box.append(note);
+    }
+    for (const item of items) {
+      box.append(this.titleTile(item, { sub: kindWord[item.kind] || '' }));
+    }
+  },
+
+  /**
+   * Recently viewed. Unlike favorites these are HISTORY rows, which carry a
+   * name and a poster but not the fields a stream needs — no extension, and
+   * for a show an episode NUMBER rather than the provider's episode id. So a
+   * tile draws from the row and the resolving waits until it is tapped, in
+   * `startRecent`, where there is somewhere to report it going wrong.
+   *
+   * One row per title, newest first: the history is per-episode, and five
+   * tiles of the same show would crowd out four other things.
+   */
+  recentTiles(box, query) {
+    const q = query.trim().toLowerCase();
+    const seen = new Set();
+    const rows = [];
+    for (const row of state.recentlyWatched || []) {
+      if (!row?.name) continue;
+      const key = `${row.kind}:${row.seriesId ?? row.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (q && !row.name.toLowerCase().includes(q)) continue;
+      rows.push(row);
+      if (rows.length === 40) break;
+    }
+
+    $('#mvPickerTitle').textContent = 'Recently viewed';
+    $('#mvPickerSub').textContent = rows.length
+      ? `${rows.length} title${rows.length === 1 ? '' : 's'}` : '';
+    if (!rows.length) {
+      const note = el('p', 'show-note');
+      note.textContent = q ? 'Nothing matches that.'
+        : 'Nothing watched yet — this fills up as you use the app.';
+      return box.append(note);
+    }
+
+    for (const row of rows) {
+      const sub = row.kind === 'live' ? 'Channel'
+        : row.kind === 'series' && row.season && row.episode
+          ? `S${row.season}E${row.episode}`
+          : row.kind === 'series' ? 'Show' : 'Film';
+      box.append(this.titleTile(row, { sub, onPick: () => this.startRecent(row) }));
+    }
+  },
+
+  /**
+   * Turn a history row into something a cell can play.
+   *
+   * A channel or a film only needs its library record, for the extension the
+   * conversion is asked for. A show needs the episode list as well, because
+   * the row remembers season 2 episode 5 and the provider wants an episode id
+   * — the same translation Continue watching does on the home screen, and for
+   * the same reason: landing somebody on a show's page to find their own place
+   * again is the work this is meant to skip.
+   */
+  async startRecent(row) {
+    const index = this.picking;
+    const tab = row.kind === 'series' ? 'series' : row.kind === 'live' ? 'live' : 'movies';
+    this.closePicker();
+
+    const cell = this.cells[index];
+    if (cell) {
+      cell.pending = true;
+      cell.note.hidden = false;
+      cell.note.textContent = 'Finding it…';
+      this.paint();
+    }
+    const giveUp = (why) => {
+      if (!cell) return toast(why);
+      cell.pending = false;
+      cell.note.textContent = why;
+      this.paint();
+    };
+
+    try {
+      if (!state.library[tab]) await loadTab(tab);
+    } catch (err) {
+      return giveUp(`Couldn't load ${tab}: ${err.message}`);
+    }
+
+    const wantId = String(row.kind === 'series' ? row.seriesId ?? row.id : row.id);
+    const item = (state.library[tab]?.items || []).find((i) => String(i.id) === wantId);
+    if (!item) return giveUp('That title is no longer in the library.');
+    if (item.kind !== 'series') return this.start(index, item);
+
+    // The episode list is the only thing that can turn "season 2, episode 5"
+    // into the id the stream is asked for.
+    try {
+      state.seriesCache[item.id] ||=
+        await api('/api/xtream', { action: 'get_series_info', series_id: item.id });
+    } catch (err) {
+      return giveUp(`Couldn't load episodes: ${err.message}`);
+    }
+
+    const episodes = state.seriesCache[item.id]?.episodes || {};
+    const season = String(row.season || '');
+    const wanted = Number(row.episode) || 0;
+    const ep = (episodes[season] || []).find((e) => Number(e.episode_num) === wanted);
+    if (!ep) {
+      // The show is still here but that episode is not. Better to hand over the
+      // list than to fail at somebody who only wanted to carry on watching.
+      this.picking = index;
+      $('#mvPicker').hidden = false;
+      if (cell) { cell.note.hidden = true; cell.empty.hidden = false; this.paint(); }
+      return this.openShow(item);
+    }
+
+    this.start(index, item, {
+      kind: 'series',
+      id: ep.id,
+      ext: ep.container_extension || 'mp4',
+      vcodec: ep.info?.video?.codec_name || '',
+      label: `${item.name} — S${season}E${wanted}`,
+    });
   },
 
   /* -- the third step, for series --------------------------------------- */
@@ -1363,6 +1550,7 @@ const multiview = {
     cell.format = '';
     cell.note.hidden = true;
     cell.note.textContent = '';
+    cell.pending = false;
     if (this.solo === index) this.unexpand({ silent: true });
     this.paint();
   },

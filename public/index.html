@@ -157,7 +157,6 @@
     </button>
     <div class="cinema-titles">
       <h2>Multi-view <span class="mv-beta">beta</span></h2>
-      <p id="mvNote">Up to four at once.</p>
     </div>
     <!-- How many cells. The grid template follows this, so three is one large
          beside two stacked rather than three across with a hole in it. -->
@@ -188,11 +187,17 @@
     </div>
     <!-- What this cell is going to show. Live is what multi-view was built
          for; a film or an episode is a conversion, and only one of those can
-         run at a time — see the README. -->
+         run at a time — see the README.
+
+         Favorites and Recent are the two shortcuts: both are flat lists that
+         are already on this device, so they fill a cell without walking a
+         category tree, and neither waits on a library fetch to draw. -->
     <div class="mv-count-seg" id="mvSourceSeg" role="group" aria-label="What to watch">
       <button type="button" data-source="live">Live TV</button>
       <button type="button" data-source="movies">Movies</button>
       <button type="button" data-source="series">Series</button>
+      <button type="button" data-source="favorites">Favorites</button>
+      <button type="button" data-source="recent">Recent</button>
     </div>
     <input type="search" id="mvSearch" placeholder="Search channels…" autocomplete="off" />
   </div>

@@ -2679,9 +2679,18 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 }
 .mv-picker .show-note { padding: 8px 4px; color: var(--muted-dim); }
 
+/* Five sources and a search box is more than a narrow window holds on one
+   line. Wrapping well before it has to beats the segment squeezing its labels
+   down to nothing. */
+@media (max-width: 1040px) {
+  .mv-picker .mv-top { flex-wrap: wrap; }
+  .mv-picker .cinema-titles { flex: 1 0 100%; }
+}
+
 @media (max-width: 700px) {
   .mv-picker input[type="search"] { width: 100%; }
-  .mv-picker .mv-top { flex-wrap: wrap; }
+  .mv-picker #mvSourceSeg { flex: 1 1 100%; }
+  .mv-picker #mvSourceSeg button { flex: 1 1 0; padding: 6px 4px; font-size: .78rem; }
 }
 
 /* On a phone, cells side by side are unwatchable; stack however many there
