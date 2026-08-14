@@ -8,6 +8,7 @@ sub init()
     m.sectionTitle = m.top.findNode("sectionTitle")
     m.sectionCount = m.top.findNode("sectionCount")
     m.categories = m.top.findNode("categories")
+    m.categoriesHead = m.top.findNode("categoriesHead")
     m.categoryEmpty = m.top.findNode("categoryEmpty")
     m.gridTitle = m.top.findNode("gridTitle")
     m.posterGrid = m.top.findNode("posterGrid")
@@ -274,13 +275,14 @@ sub showTab(section as String)
     end if
 
     if section = "favorites" then
-        m.sectionTitle.text = "Favorites"
+        setSectionLabel("Favorites")
         m.categories.visible = false
+        m.categoriesHead.visible = false
         m.categoryEmpty.visible = false
         ' No category pane here, so the grid takes the full width.
-        m.gridTitle.translation = [60, 228]
-        m.posterGrid.translation = [60, 292]
-        m.gridEmpty.translation = [60, 300]
+        m.gridTitle.translation = [60, 148]
+        m.posterGrid.translation = [60, 214]
+        m.gridEmpty.translation = [60, 222]
         m.posterGrid.numColumns = 7
         m.browseHint.text = "OK to open  ·  * to remove from favorites"
         renderFavorites()
@@ -289,17 +291,18 @@ sub showTab(section as String)
     end if
 
     m.categories.visible = true
-    m.gridTitle.translation = [640, 228]
-    m.posterGrid.translation = [640, 292]
-    m.gridEmpty.translation = [640, 300]
+    m.categoriesHead.visible = true
+    m.gridTitle.translation = [640, 148]
+    m.posterGrid.translation = [640, 214]
+    m.gridEmpty.translation = [640, 222]
     m.posterGrid.numColumns = 5
 
     if section = "live" then
-        m.sectionTitle.text = "Live TV"
+        setSectionLabel("Live TV")
     else if section = "movies" then
-        m.sectionTitle.text = "Movies"
+        setSectionLabel("Movies")
     else
-        m.sectionTitle.text = "Series"
+        setSectionLabel("Series")
     end if
     m.browseHint.text = "OK to open  ·  * to pin a category or favorite an item  ·  Back to step out"
 
@@ -311,6 +314,15 @@ sub showTab(section as String)
     end if
 
     loadCategories(section)
+end sub
+
+' The heading is uppercased to match the text-transform the web player puts on
+' its display face, but the same name also turns up mid-sentence in the loading
+' overlay, the search prompt and the dialogs — where caps would read as
+' shouting. The sentence-case form is kept alongside for those.
+sub setSectionLabel(label as String)
+    m.sectionLabel = label
+    m.sectionTitle.text = UCase(label)
 end sub
 
 '----------------------------------------------------------------- catalogue
@@ -325,7 +337,7 @@ sub loadCategories(section as String)
     m.gridTitle.text = ""
     m.gridEmpty.visible = false
 
-    showLoading("Loading " + m.sectionTitle.text + "…", false)
+    showLoading("Loading " + m.sectionLabel + "…", false)
     m.loadWatchdog.control = "start"
 
     m.categoriesTask = CreateObject("roSGNode", "CategoriesTask")
@@ -353,7 +365,7 @@ sub onLoadTimedOut()
     detail = "The Pi hasn't answered in over two minutes." + gap
     detail = detail + "Trying: " + ConfigBaseUrl() + gap
     detail = detail + "It may still be building the catalogue from the provider — if so, opening the section again shortly will find it cached and instant."
-    showDialog("Still waiting on " + m.sectionTitle.text, detail)
+    showDialog("Still waiting on " + m.sectionLabel, detail)
     setZone("nav")
 end sub
 
@@ -381,7 +393,7 @@ sub onCategoriesDone(event as Object)
         gap = Chr(10) + Chr(10)
         detail = task.errorMessage + gap + "Trying: " + ConfigBaseUrl()
         detail = detail + gap + "If that address is wrong, change it under Settings."
-        showDialog("Can't load " + m.sectionTitle.text, detail)
+        showDialog("Can't load " + m.sectionLabel, detail)
         setZone("nav")
         return
     end if
@@ -1000,7 +1012,7 @@ end sub
 
 sub openTitleSearch()
     m.textEntryMode = "titles"
-    m.textEntry.promptText = "Search " + m.sectionTitle.text
+    m.textEntry.promptText = "Search " + m.sectionLabel
     m.textEntry.hintText = "Searches every title in this section, not just the open category."
     m.textEntry.text = m.titleQuery
     m.textEntry.visible = true
@@ -1055,7 +1067,7 @@ end sub
 sub openSearch()
     m.textEntryMode = "search"
     m.textEntry.promptText = "Search categories"
-    m.textEntry.hintText = "Filters the category list for " + m.sectionTitle.text + "."
+    m.textEntry.hintText = "Filters the category list for " + m.sectionLabel + "."
     m.textEntry.text = m.catQuery
     m.textEntry.visible = true
     m.textEntry.callFunc("activate", invalid)

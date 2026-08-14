@@ -5,6 +5,8 @@ sub init()
     m.favBadge = m.top.findNode("favBadge")
     m.blockedBar = m.top.findNode("blockedBar")
     m.title = m.top.findNode("title")
+    m.ratingRow = m.top.findNode("ratingRow")
+    m.ratingText = m.top.findNode("ratingText")
 end sub
 
 sub onContentChanged()
@@ -19,6 +21,12 @@ sub onContentChanged()
     content.observeField("isFavorite", "onFavoriteChanged")
 
     m.title.text = content.title
+
+    ' Providers leave rating blank far more often than they fill it, and an
+    ' orphan star under half the grid looks like a rendering fault.
+    rating = AsText(content.rating)
+    m.ratingText.text = rating
+    m.ratingRow.visible = (rating <> "")
 
     poster = ItemPoster(content)
     if poster <> "" then
@@ -53,12 +61,11 @@ sub onFocusChanged()
     theme = Theme()
 
     ' The frame only reads as a highlight once it turns brand red; unfocused it
-    ' is the card colour and disappears into the grid.
+    ' is the hairline border .card-art carries and disappears into the grid.
+    ' The title stays at --text throughout, as it does on the web.
     if focus > 0.5 then
         m.frame.color = theme.brand
-        m.title.color = theme.text
     else
-        m.frame.color = theme.bgCard
-        m.title.color = theme.muted
+        m.frame.color = theme.lineSoft
     end if
 end sub

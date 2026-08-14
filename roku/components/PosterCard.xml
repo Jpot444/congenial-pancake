@@ -9,8 +9,9 @@
   </interface>
 
   <children>
-    <Rectangle id="frame" width="228" height="338" color="0x241C1AFF" translation="[-4,-4]" />
-    <Rectangle width="220" height="330" color="0x1D1715FF" />
+    <!-- .card-art: 2/3 box, 1px line-soft border over bg-card. -->
+    <Rectangle id="frame" width="224" height="334" color="0x2A211FFF" translation="[-2,-2]" />
+    <Rectangle width="220" height="330" color="0x241C1AFF" />
 
     <Poster id="poster" width="220" height="330" loadDisplayMode="scaleToFit" />
 
@@ -35,10 +36,21 @@
       </Label>
     </Rectangle>
 
-    <Label id="title" translation="[0,342]" width="220" height="34" wrap="false" ellipsisText="…"
-           color="0xA3928CFF">
-      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="22" />
+    <!-- .card-title: text, wraps to two lines rather than ellipsing. -->
+    <Label id="title" translation="[2,340]" width="216" height="48" wrap="true" maxLines="2"
+           color="0xF6F1EEFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="20" />
     </Label>
+
+    <!-- .card-sub, carrying the rating the web player shows under series and
+         film titles. The star is drawn for the reason the heart is. -->
+    <Group id="ratingRow" visible="false">
+      <Rectangle translation="[3,398]" width="9" height="9" color="0x705F5AFF" />
+      <Label id="ratingText" translation="[18,390]" width="198" height="26" wrap="false"
+             ellipsisText="…" color="0x705F5AFF">
+        <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="18" />
+      </Label>
+    </Group>
   </children>
   <!-- pkg:/source is the main scope, which SceneGraph components do not
        share. Shared helpers have to be pulled into each component's own

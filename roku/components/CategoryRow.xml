@@ -7,22 +7,25 @@
   </interface>
 
   <children>
-    <Rectangle id="background" width="520" height="64" color="0x1D1715FF" opacity="0" />
-    <Rectangle id="marker" width="5" height="64" color="0xA21F24FF" opacity="0" />
+    <!-- .cat.is-active fills with bg-card rather than the raised tone used
+         for hover; a remote only ever has the equivalent of one of the two. -->
+    <Rectangle id="background" width="520" height="58" color="0x241C1AFF" opacity="0" />
+    <Rectangle id="marker" width="4" height="58" color="0xA21F24FF" opacity="0" />
 
     <!-- Drawn rather than a glyph: Roku's system font can't be relied on for
          symbols like ★, and a missing one renders as an empty box. -->
-    <Rectangle id="pin" translation="[22,28]" width="10" height="10" color="0xA21F24FF"
+    <Rectangle id="pin" translation="[20,25]" width="9" height="9" color="0xA21F24FF"
                visible="false" />
 
-    <Label id="name" translation="[52,15]" width="360" height="36" color="0xA3928CFF"
+    <Label id="name" translation="[46,14]" width="368" height="32" color="0xA3928CFF"
            wrap="false" ellipsisText="…">
-      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="26" />
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="24" />
     </Label>
 
-    <Label id="count" translation="[420,18]" width="86" height="32" color="0x705F5AFF"
+    <!-- .cat b: lighter and smaller than the name, never competing with it. -->
+    <Label id="count" translation="[422,16]" width="84" height="28" color="0x705F5AFF"
            horizAlign="right">
-      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="22" />
+      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="20" />
     </Label>
   </children>
   <!-- pkg:/source is the main scope, which SceneGraph components do not

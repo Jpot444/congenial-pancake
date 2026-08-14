@@ -1,3 +1,8 @@
+' The web player pulses .badge .dot on a CSS keyframe. It is left static here:
+' a grid holds a few dozen live cells and recycles them as it scrolls, so that
+' would be a few dozen animations starting and stopping on every row change for
+' a detail nobody reads from a sofa.
+
 sub init()
     m.frame = m.top.findNode("frame")
     m.logo = m.top.findNode("logo")
@@ -35,15 +40,17 @@ sub onFavoriteChanged()
     m.favMark.visible = content.isFavorite
 end sub
 
+' .card-title sits at full --text either way in the web player; the tile itself
+' is what answers the pointer. Same split here, with the border going brand red
+' rather than merely lighter — a mouse has a cursor to say where it is and a
+' remote does not.
 sub onFocusChanged()
     focus = m.top.focusPercent
     theme = Theme()
 
     if focus > 0.5 then
         m.frame.color = theme.brand
-        m.name.color = theme.text
     else
-        m.frame.color = theme.bgCard
-        m.name.color = theme.muted
+        m.frame.color = theme.lineSoft
     end if
 end sub

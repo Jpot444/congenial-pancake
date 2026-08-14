@@ -21,3 +21,15 @@ function Theme() as Object
         scrim:     "0x0B0807E6"
     }
 end function
+
+' The web player sets --display on every heading, the eyebrow labels and the
+' LIVE pill, and leaves body copy on the system stack. Bebas Neue is that face;
+' it ships here as a TTF converted from the same woff2 public/ serves, so the
+' two players are literally running the same typeface.
+'
+' Bebas is drawn caps-only — lowercase codepoints map to the same glyphs — so
+' UCase() on heading text is about matching the CSS text-transform, not about
+' avoiding missing glyphs.
+function FontDisplay() as String
+    return "pkg:/fonts/BebasNeue.ttf"
+end function
