@@ -567,7 +567,42 @@ row that stops existing (a changed filter, a category the provider dropped)
 falls back to the rows rather than showing an empty page under a title that is
 no longer there.
 
-## Library filtering
+## What order the rows are in
+
+Two answers, because the rows want opposite things.
+
+**New Releases is newest-added first, and nothing else.** The provider stamps
+every record — `added` on a movie, `last_modified` on a series — and
+`buildShelves` sorts on it descending. New arrivals therefore climb to the front
+on their own; the library cache is 30-minute stale-while-revalidate, so a title
+the provider added this morning is at the head of the row by lunchtime without
+anyone touching the code.
+
+The row is named after a provider category (`EN - NEW RELEASES …`), and that
+name is not something we control. If it is ever renamed, split or dropped, the
+match finds nothing and the row would simply vanish — so it carries
+`fallbackAll: true`: with no category match it draws from the whole tab and lets
+`added` do the work. The row means "what is new", not "what is in the category
+the provider currently calls new".
+
+**Every other row is shuffled.** A rail shows the first 40 of a row that may
+hold three thousand, and without this you would see the same forty posters until
+the provider's library order changed — the other 2,960 might as well not exist.
+`shuffleShelf` deals a different 40 to the front instead.
+
+The shuffle is a seeded Fisher–Yates, not `Math.random()` in a sort comparator,
+and the seeding is where the behaviour actually lives:
+
+- **One seed per page load** (`SHUFFLE_SEED`), mixed with the row title. So the
+  posters hold still while you browse — `render()` runs on every pin, hide, tab
+  change and search keystroke, and artwork that rearranged under the pointer
+  each time would be worse than never shuffling.
+- **A fresh seed next visit.** Reload, or come back tomorrow, and it is a
+  different hand.
+
+Two rows are exempt. New Releases, for the reason above. And **For You**, whose
+order *is* its content — it is the things you watched, most recent first, and
+shuffling it would throw away the only information it carries.
 
 This provider sells everything it has to everyone: **57,046 live channels,
 178,252 movies and 46,825 series** across every language it carries. Fetching

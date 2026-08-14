@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '20.1';
+const VERSION = '20.2';
 
 const PAGE_SIZE = 60;
 
@@ -2250,7 +2250,7 @@ async function loadTab(tab) {
  */
 const MOVIE_ROWS = [
   { title: 'For You', special: 'recent' },
-  { title: 'New Releases', match: [/^EN\s*-\s*NEW RELEASE/i], sort: 'added' },
+  { title: 'New Releases', match: [/^EN\s*-\s*NEW RELEASE/i], fallbackAll: true, sort: 'added' },
   { title: 'IMDB Top 250', match: [/^EN\s*-\s*IMDB TOP 250/i] },
   { title: 'Action', match: [/^EN\s*-\s*ACTION/i, /^EN\s*-\s*ADVENTURE/i] },
   { title: 'Comedy', match: [/^EN\s*-\s*COMEDY/i] },
@@ -2311,6 +2311,43 @@ function forYouItems(tab) {
   return out.slice(0, 24);
 }
 
+/**
+ * A different forty every time you come back.
+ *
+ * Seeded once per load rather than per render, and by row title as well, so:
+ * the shelves are stable while you are looking at them — pinning something or
+ * hiding a title re-renders the page, and posters that jumped every time would
+ * be worse than a fixed order — a row keeps its own arrangement rather than
+ * every row reshuffling together, and the whole page looks different the next
+ * time it is opened.
+ *
+ * mulberry32, because `Math.random()` cannot be seeded and a fresh shuffle on
+ * every render is exactly what this is avoiding.
+ */
+const SHUFFLE_SEED = (Math.random() * 2 ** 32) >>> 0;
+
+function shuffleShelf(title, items) {
+  let seed = SHUFFLE_SEED;
+  for (let i = 0; i < title.length; i += 1) {
+    seed = (seed ^ title.charCodeAt(i)) >>> 0;
+    seed = Math.imul(seed, 16777619) >>> 0;
+  }
+  const rand = () => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1) >>> 0;
+    t = (t ^ (t + Math.imul(t ^ (t >>> 7), t | 61))) >>> 0;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rand() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 function buildShelves(tab) {
   const lib = state.library[tab];
   if (!lib) return [];
@@ -2337,7 +2374,23 @@ function buildShelves(tab) {
             ids.has(String(i.categoryId)) ||
             (def.genre && def.genre.test(i.genre || ''))
         );
-    if (def.sort === 'added') items = [...items].sort((a, b) => (b.added || 0) - (a.added || 0));
+
+    // Every row here matches on the provider's own category names, and a
+    // provider that renames one empties the row. For New Releases that matters
+    // more than for the rest: it is the row that answers "what is new", so
+    // when the named category is not there it falls back to the whole library
+    // and lets `added` do the work. The answer is then the same either way —
+    // newest first — rather than an empty shelf.
+    if (!items.length && def.fallbackAll) items = pool;
+
+    if (def.sort === 'added') {
+      items = [...items].sort((a, b) => (b.added || 0) - (a.added || 0));
+    } else if (!def.special) {
+      // Everything else is shuffled. A shelf is capped at forty, so without
+      // this the same forty posters are the whole of what a category ever
+      // looks like — the rest of it might as well not be there.
+      items = shuffleShelf(def.title, items);
+    }
     if (items.length) rows.push({ title: def.title, items });
   }
 
