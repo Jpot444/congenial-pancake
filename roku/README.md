@@ -240,8 +240,43 @@ stream the web player opens can still be refused here — an unsupported codec,
 or a playlist that parses everywhere else. Rather than stopping at the first
 refusal, the channel falls back once and says so on the console:
 
-Both kinds fall back the same way: **anything refused on direct play is
-retried through `/api/remux`**, which repackages it and normalises the audio.
+Both kinds fall back the same way, down three rungs, cheapest first:
+
+| # | Attempt | Cost | Fixes |
+|---|---------|------|-------|
+| 1 | Play the provider's stream directly | free | nothing; this is the happy path |
+| 2 | `/api/remux` — repackage, video copied | ~80x realtime | wrong container, awkward audio, HEVC-in-TS |
+| 3 | `/api/remux?transcode=1` — re-encode the video | ~1x realtime | a codec the box has no decoder for |
+
+Rungs 1 and 2 were the whole ladder for a while, and they share an assumption
+worth naming: that the **container** is what Roku objects to, and the codecs
+inside are already fine. That is true of a browser, which is what the remuxer
+was written against. It is not true of a Roku.
+
+A Roku will not decode **MPEG-2**, **MPEG-4 Part 2** (Xvid/DivX), **VC-1**, or
+**10-bit H.264** at all. Copying any of those into HLS produces a stream the Pi
+is perfectly happy with and the television cannot show, so rungs 1 and 2 both
+fail identically and the title used to be marked unplayable. Rung 3 is the
+answer for that material: the video is genuinely re-encoded to 8-bit H.264.
+
+Ten-bit H.264 is the one worth watching for — it reports `codec_name=h264`
+like anything else, so nothing about the file looks wrong until the screen
+stays black. It is caught on `pix_fmt`, not on the codec name.
+
+Rung 3 is last for a reason. A remux copies video bit-for-bit and outruns the
+provider; an encode does real work per frame and produces at roughly the speed
+it plays. `/api/health` reports which encoder the server found:
+
+```json
+{ "ffmpeg": true, "videoEncoder": "libx264", "canTranscode": true }
+```
+
+A Pi 4 reports `h264_v4l2m2m` and encodes in hardware, holding realtime at
+1080p. A Pi 5 has no encoder block at all and reports `libx264`, which is the
+CPU doing it — usable at 1080p, not at 4K. Note that ffmpeg *lists*
+`h264_v4l2m2m` on any Linux build whether the hardware exists or not, so the
+server makes each candidate encode one real frame before trusting it, and
+falls through to the next when that fails.
 
 Live earns a note, and a correction. A channel reporting `error -5: malformed
 data` looks like a codec the box cannot decode, and the obvious suspect is
