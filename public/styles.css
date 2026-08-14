@@ -2433,6 +2433,11 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 .mv-icon { width: 15px; height: 15px; margin-right: 6px; vertical-align: -2px; }
 
+/* Lives with the other player controls, which in cinema mode sit in the
+   top-right corner — cinema-top reserves 200px of padding to clear them. */
+.cinema-mv { flex: none; }
+.cinema-mv svg { fill: none; stroke: currentColor; stroke-width: 1.7; }
+
 /* ------------------------------------------------------- multi-view --- */
 
 .multiview {
@@ -2568,6 +2573,15 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 }
 .mv-btn:hover { background: rgba(255, 255, 255, .22); }
 .mv-sound.is-on { background: var(--brand-red); }
+
+/* The move handle. `touch-action: none` or the browser scrolls the page
+   instead of giving us the pointermove events the drag runs on. */
+.mv-grip { cursor: grab; touch-action: none; }
+.mv-grip:active { cursor: grabbing; }
+
+/* Where it came from, and where it is going. */
+.mv-cell.is-dragging { opacity: .55; }
+.mv-cell.is-target { outline: 2px solid var(--brand-red); outline-offset: -2px; }
 /* The one that is doing something right now reads as the primary control. */
 .mv-play { min-width: 30px; }
 
@@ -2630,38 +2644,45 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .mv-count-seg button:hover { color: #fff; }
 .mv-count-seg button.is-on { background: var(--brand-red); color: #fff; }
 
-.mv-picker-card { max-width: 520px; min-width: 0; }
-.mv-picker-card input[type="search"] {
-  width: 100%;
-  padding: 9px 11px;
+/* The picker is a sheet over multi-view, not a small modal, because what is
+   in it is the Live TV grid — the same tiles from the same function. A list of
+   names in a 520px box was a different thing wearing the same words. */
+.mv-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 210;              /* over multi-view, under the ordinary modals */
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.mv-picker .mv-top { border-bottom: 1px solid rgba(255, 255, 255, .08); }
+.mv-picker input[type="search"] {
+  flex: none;
+  width: min(320px, 38vw);
+  padding: 9px 12px;
   border: 1px solid rgba(255, 255, 255, .16);
-  border-radius: 8px;
+  border-radius: 999px;
   background: rgba(0, 0, 0, .3);
   color: #fff;
   font: inherit;
+  font-size: .9rem;
 }
+
+/* The body IS the library grid: `.grid.is-cats` and `.grid.is-live` are put on
+   it by the module, so the tiles size and space themselves exactly as they do
+   on the Live TV page. All this adds is somewhere to scroll. */
 .mv-results {
-  max-height: 46vh;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  margin-top: 12px;
+  padding: 18px;
 }
-.mv-result {
-  display: block;
-  width: 100%;
-  padding: 9px 11px;
-  border: 0;
-  border-radius: 7px;
-  background: none;
-  color: inherit;
-  font: inherit;
-  font-size: .88rem;
-  text-align: left;
-  cursor: pointer;
+.mv-picker .show-note { padding: 8px 4px; color: var(--muted-dim); }
+
+@media (max-width: 700px) {
+  .mv-picker input[type="search"] { width: 100%; }
+  .mv-picker .mv-top { flex-wrap: wrap; }
 }
-.mv-result:hover { background: rgba(255, 255, 255, .07); }
-.mv-cat { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.mv-count { flex: none; color: rgba(255, 255, 255, .45); font-size: .78rem; }
-.mv-back { color: rgba(255, 255, 255, .6); }
 
 /* On a phone, cells side by side are unwatchable; stack however many there
    are, one per row, and drop the three-up span with them. */

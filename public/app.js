@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '19.9';
+const VERSION = '20';
 
 const PAGE_SIZE = 60;
 
@@ -471,7 +471,26 @@ const multiview = {
     }
   },
 
+  /** Where a cell is right now, which reordering changes under it. */
+  at(cell) {
+    return this.cells.indexOf(cell);
+  },
+
   cell(index) {
+    // The record is made first and the handlers close over IT rather than over
+    // `index`, because cells can be dragged into each other's places — a
+    // button that remembered where it was built would then act on whichever
+    // cell had moved into that slot.
+    const rec = {
+      engine: null,
+      item: null,
+      format: '',
+      // Asked for is not the same as playing, and on this account it was
+      // expected not to be. Tracked separately so the count says which.
+      ok: false,
+    };
+    this.cells[index] = rec;
+
     const box = el('div', 'mv-cell');
     const video = el('video');
     video.playsInline = true;
@@ -483,7 +502,7 @@ const multiview = {
 
     const empty = el('button', 'mv-empty');
     empty.innerHTML = '<span class="mv-plus">+</span><span>Add a channel</span>';
-    empty.addEventListener('click', () => this.pick(index));
+    empty.addEventListener('click', () => this.pick(this.at(rec)));
 
     const button = (cls, label, title, onClick) => {
       const b = el('button', cls);
@@ -505,32 +524,134 @@ const multiview = {
     const tag = el('span', 'mv-tag');
 
     const back = button('mv-btn', '−10', `Back ${MV_SKIP} seconds`,
-      () => this.skip(index, -MV_SKIP));
-    const play = button('mv-btn mv-play', '❚❚', 'Pause', () => this.toggle(index));
+      () => this.skip(this.at(rec), -MV_SKIP));
+    const play = button('mv-btn mv-play', '❚❚', 'Pause', () => this.toggle(this.at(rec)));
     const fwd = button('mv-btn', '+10', `Forward ${MV_SKIP} seconds`,
-      () => this.skip(index, MV_SKIP));
+      () => this.skip(this.at(rec), MV_SKIP));
     const again = button('mv-btn mv-again', '↻', 'Refresh this stream',
-      () => this.refresh(index));
+      () => this.refresh(this.at(rec)));
     const sound = button('mv-btn mv-sound', '🔇', 'Listen to this one',
-      () => this.listen(index));
-    const grow = button('mv-btn mv-grow', '⤢', 'Full screen', () => this.expand(index));
-    const drop = button('mv-btn mv-drop', '✕', 'Stop this channel', () => this.stop(index));
-    bar.append(name, tag, back, play, fwd, again, sound, grow, drop);
+      () => this.listen(this.at(rec)));
+    const grow = button('mv-btn mv-grow', '⤢', 'Full screen',
+      () => this.expand(this.at(rec)));
+    const drop = button('mv-btn mv-drop', '✕', 'Stop this channel',
+      () => this.stop(this.at(rec)));
+
+    // The handle. Dragging it onto another cell swaps the two.
+    const grip = el('button', 'mv-btn mv-grip');
+    grip.innerHTML = '⠿';
+    grip.title = 'Drag to move this stream';
+    grip.setAttribute('aria-label', grip.title);
+    this.makeDraggable(grip, rec);
+
+    bar.append(name, tag, grip, back, play, fwd, again, sound, grow, drop);
 
     const note = el('p', 'mv-status');
     note.hidden = true;   // an empty one still paints as a grey strip
 
     box.append(video, note, bar, empty);
-    this.cells[index] = {
-      box, video, empty, bar, name, tag, play, sound, note,
-      engine: null,
-      item: null,
-      format: '',
-      // Asked for is not the same as playing, and on this account it was
-      // expected not to be. Tracked separately so the count says which.
-      ok: false,
-    };
+    Object.assign(rec, { box, video, empty, bar, name, tag, play, sound, note });
     return box;
+  },
+
+  /* -- moving cells around ---------------------------------------------- */
+
+  /**
+   * Swap two cells.
+   *
+   * The DOM nodes are exchanged rather than the streams inside them. Handing a
+   * playing `<video>` to another box would mean tearing its engine down and
+   * asking the provider all over again for something already on screen; moving
+   * the box takes the element, the engine and whatever it has buffered with it,
+   * and the picture does not so much as blink.
+   *
+   * `cells` is reordered to match, because everything else — which cells the
+   * count shows, which one is blown up — is by position.
+   */
+  swap(a, b) {
+    if (a === b || !this.cells[a] || !this.cells[b]) return;
+    const boxA = this.cells[a].box;
+    const boxB = this.cells[b].box;
+    const grid = $('#mvGrid');
+
+    // A marker, because inserting A before B moves A out from under B first.
+    const marker = document.createComment('');
+    grid.insertBefore(marker, boxA);
+    grid.insertBefore(boxA, boxB);
+    grid.insertBefore(boxB, marker);
+    marker.remove();
+
+    [this.cells[a], this.cells[b]] = [this.cells[b], this.cells[a]];
+    // Sound is a property of the cell, and the cell has moved with it.
+    if (this.solo === a) this.solo = b;
+    else if (this.solo === b) this.solo = a;
+    this.paint();
+  },
+
+  /**
+   * Pointer-events drag, the same bargain the pinned-category rows make: the
+   * drag only begins once the pointer has moved a few pixels, so a tap on the
+   * handle is still a tap and the two gestures do not fight.
+   */
+  makeDraggable(grip, rec) {
+    let from = null;
+    let startX = 0;
+    let startY = 0;
+    let dragging = false;
+    let held = null;
+
+    const cellUnder = (event) => {
+      const node = document.elementFromPoint(event.clientX, event.clientY);
+      const box = node?.closest?.('.mv-cell');
+      if (!box) return -1;
+      const at = this.cells.findIndex((c) => c.box === box);
+      return at < this.count ? at : -1;
+    };
+
+    const clear = () => {
+      for (const c of this.cells) c.box.classList.remove('is-dragging', 'is-target');
+    };
+
+    const onMove = (event) => {
+      if (held !== event.pointerId) return;
+      if (!dragging) {
+        if (Math.abs(event.clientX - startX) < 6 && Math.abs(event.clientY - startY) < 6) return;
+        dragging = true;
+        rec.box.classList.add('is-dragging');
+      }
+      event.preventDefault();
+      this.wake();
+      const over = cellUnder(event);
+      for (const c of this.cells) c.box.classList.remove('is-target');
+      if (over >= 0 && over !== this.at(rec)) this.cells[over].box.classList.add('is-target');
+    };
+
+    const onUp = (event) => {
+      if (held !== event.pointerId) return;
+      grip.releasePointerCapture?.(event.pointerId);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      held = null;
+      if (dragging) {
+        const over = cellUnder(event);
+        if (over >= 0 && over !== this.at(rec)) this.swap(this.at(rec), over);
+      }
+      dragging = false;
+      clear();
+    };
+
+    grip.addEventListener('pointerdown', (event) => {
+      from = this.at(rec);
+      if (from < 0) return;
+      held = event.pointerId;
+      startX = event.clientX;
+      startY = event.clientY;
+      grip.setPointerCapture?.(event.pointerId);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+    });
   },
 
   /* -- opening and closing --------------------------------------------- */
@@ -742,101 +863,141 @@ const multiview = {
     this.picking = index;
     this.browsing = null;
     $('#mvSearch').value = '';
-    this.results('');
     $('#mvPicker').hidden = false;
+    this.results('');
     $('#mvSearch').focus();
   },
 
+  closePicker() {
+    $('#mvPicker').hidden = true;
+    this.wake();
+  },
+
+  /** Back out of a category, or out of the picker if at the top. */
+  pickerBack() {
+    if (this.browsing && !$('#mvSearch').value.trim()) {
+      this.browsing = null;
+      return this.results('');
+    }
+    this.closePicker();
+  },
+
   /**
-   * Categories first, then the channels inside one.
+   * Categories first, then the channels inside one — the same two steps, and
+   * the same tiles, as the Live TV page.
    *
-   * A flat list of every channel the provider carries is thousands long and is
-   * not something anyone scrolls — the categories are the only usable way in,
-   * exactly as they are on the Live TV page. Typing cuts across all of them,
-   * because a search that only looked inside the folder you happened to be in
-   * would be a worse search.
+   * Typing cuts across every category, because a search that only looked
+   * inside the folder you happened to be in would be a worse search.
    */
   results(query) {
     const box = $('#mvResults');
     box.innerHTML = '';
     const library = state.library.live;
     const all = library?.items || [];
+
+    const q = query.trim().toLowerCase();
+    const inCategory = Boolean(this.browsing) && !q;
+    box.classList.toggle('is-cats', !inCategory && !q);
+    box.classList.toggle('is-live', inCategory || Boolean(q));
+
+    $('#mvPickerTitle').textContent = this.browsing && !q
+      ? this.browsing.name
+      : 'Pick a channel';
+    $('#mvPickerBackLabel').textContent = this.browsing && !q ? 'Categories' : 'Cancel';
+
     if (!all.length) {
-      const note = el('p', 'health-note');
+      $('#mvPickerSub').textContent = '';
+      const note = el('p', 'show-note');
       note.textContent = 'No channels loaded yet — open Live TV once and come back.';
       return box.append(note);
     }
 
-    const q = query.trim().toLowerCase();
-    if (!q && !this.browsing) return this.categories(box, library, all);
-
-    const inside = this.browsing
-      ? all.filter((i) => String(i.categoryId) === String(this.browsing.id))
-      : all;
-    const hits = (q ? inside.filter((i) => i.name.toLowerCase().includes(q)) : inside).slice(0, 200);
-
-    if (this.browsing && !q) {
-      const back = el('button', 'mv-result mv-back');
-      back.textContent = '‹ All categories';
-      back.addEventListener('click', () => {
-        this.browsing = null;
-        this.results('');
-      });
-      box.append(back);
-    }
-    for (const item of hits) {
-      const row = el('button', 'mv-result');
-      row.textContent = item.name;
-      row.addEventListener('click', () => {
-        $('#mvPicker').hidden = true;
-        this.start(this.picking, item);
-      });
-      box.append(row);
-    }
-    if (!hits.length) {
-      const note = el('p', 'health-note');
-      note.textContent = 'Nothing matches that.';
-      box.append(note);
-    }
-  },
-
-  categories(box, library, all) {
+    // Counts and cover art in one pass, exactly as the Live TV page does it:
+    // the item list runs to thousands, so walking it per category would show.
     const counts = new Map();
+    const covers = new Map();
     for (const item of all) {
       const id = String(item.categoryId);
       counts.set(id, (counts.get(id) || 0) + 1);
+      if (item.logo && !covers.has(id) && !looksAnimated(item.logo)) covers.set(id, item.logo);
     }
-    // Empty categories and hidden ones are left out, the same as the grid —
-    // a folder you cannot open anything in is not worth a row.
+
+    if (!inCategory && !q) return this.categoryTiles(box, library, counts, covers);
+
+    const inside = inCategory
+      ? all.filter((i) => String(i.categoryId) === String(this.browsing.id))
+      : all;
+    const hits = (q ? inside.filter((i) => i.name.toLowerCase().includes(q)) : inside)
+      .filter((i) => !profiles.isDeleted(i))
+      .slice(0, 300);
+
+    $('#mvPickerSub').textContent = hits.length
+      ? `${hits.length.toLocaleString()} channel${hits.length === 1 ? '' : 's'}`
+      : '';
+    if (!hits.length) {
+      const note = el('p', 'show-note');
+      note.textContent = 'Nothing matches that.';
+      return box.append(note);
+    }
+    for (const item of hits) box.append(this.channelTile(item));
+  },
+
+  categoryTiles(box, library, counts, covers) {
     const cats = (library.categories || []).filter(
       (cat) => counts.get(String(cat.id)) && !profiles.isDeletedCategory(cat.id)
     );
-    // Pinned first, in the order they were dragged into, exactly as Live TV
-    // shows them. Somebody who pinned the sports feeds wants them here too.
+    // Pinned first, in the order they were dragged into — the same sequence
+    // the Live TV grid shows them in.
     const order = profiles.pinOrder('live');
     const pinned = cats
       .filter((c) => profiles.isPinned('live', c.id))
       .sort((a, b) => order.indexOf(String(a.id)) - order.indexOf(String(b.id)));
     const rest = cats.filter((c) => !profiles.isPinned('live', c.id));
+    const ordered = [...pinned, ...rest];
 
-    for (const cat of [...pinned, ...rest]) {
-      const row = el('button', 'mv-result mv-cat');
-      const label = el('span');
-      label.textContent = cat.name;
-      const count = el('span', 'mv-count');
-      count.textContent = String(counts.get(String(cat.id)) || 0);
-      row.append(label, count);
-      row.addEventListener('click', () => {
-        this.browsing = cat;
-        this.results('');
-      });
-      box.append(row);
-    }
-    if (!cats.length) {
-      const note = el('p', 'health-note');
+    $('#mvPickerSub').textContent =
+      `${ordered.length.toLocaleString()} categor${ordered.length === 1 ? 'y' : 'ies'}`;
+    if (!ordered.length) {
+      const note = el('p', 'show-note');
       note.textContent = 'No live categories.';
-      box.append(note);
+      return box.append(note);
     }
+    for (const cat of ordered) {
+      const id = String(cat.id);
+      box.append(liveCategoryCard(cat, counts.get(id) || 0, covers.get(id) || '', {
+        bin: false,
+        onOpen: () => { this.browsing = cat; this.results(''); },
+      }));
+    }
+  },
+
+  /** A station tile. Same shape as the Live TV grid's, different action. */
+  channelTile(item) {
+    const card = el('button', 'card');
+    const art = el('div', 'card-art');
+    const nameOnly = () => {
+      const fb = el('div', 'fallback');
+      fb.textContent = item.name;
+      art.append(fb);
+    };
+    if (item.logo) {
+      const image = el('img');
+      image.loading = 'lazy';
+      image.alt = '';
+      image.src = item.logo;
+      image.addEventListener('error', () => { image.remove(); nameOnly(); });
+      art.append(image);
+    } else {
+      nameOnly();
+    }
+    const title = el('h3', 'card-title');
+    title.textContent = item.name;
+    card.append(art, title);
+    card.addEventListener('click', () => {
+      this.closePicker();
+      this.start(this.picking, item);
+    });
+    return card;
   },
 
   /* -- streams ---------------------------------------------------------- */
@@ -960,10 +1121,7 @@ const multiview = {
 
 $('#mvClose').addEventListener('click', () => multiview.close());
 $('#mvStopAll').addEventListener('click', () => multiview.stopAll());
-$('#mvPickerCancel').addEventListener('click', () => {
-  $('#mvPicker').hidden = true;
-  multiview.wake();
-});
+$('#mvPickerBack').addEventListener('click', () => multiview.pickerBack());
 $('#mvSearch').addEventListener('input', (event) => multiview.results(event.target.value));
 
 // Any sign of life brings the chrome back. Pointer and touch both, since the
@@ -2984,7 +3142,17 @@ function maybeExplainLivePins() {
 }
 
 /** One square standing for a category, opening its stations when tapped. */
-function liveCategoryCard(cat, count, cover) {
+/**
+ * One category tile.
+ *
+ * `onOpen` and `bin` exist so multi-view's picker can put the very same tile on
+ * screen — the ask was that picking a channel look like Live TV, and the way to
+ * be sure of that is for it to be the same function rather than a copy that
+ * drifts. The picker passes its own action and leaves the bin off: hiding a
+ * category from inside a modal re-renders the page behind it, which is not
+ * what anybody pressing it there means.
+ */
+function liveCategoryCard(cat, count, cover, { onOpen = null, bin: withBin = true } = {}) {
   const card = el('button', 'card cat-card');
 
   const art = el('div', 'card-art');
@@ -3013,20 +3181,22 @@ function liveCategoryCard(cat, count, cover) {
   // Hides the whole category from this grid. The channels inside keep their
   // own bins, and are still reachable by search either way.
   const gone = profiles.isDeletedCategory(cat.id);
-  const bin = el('button', `icon-btn card-bin${gone ? ' is-restore' : ''}`);
-  bin.title = gone ? 'Put this category back' : 'Hide this category';
-  bin.setAttribute('aria-label', bin.title);
-  bin.innerHTML = gone
-    ? '<svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M3 4v5h5"/></svg>'
-    : '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>';
-  bin.addEventListener('click', (event) => {
-    // The tile underneath opens the category.
-    event.stopPropagation();
-    const nowGone = profiles.toggleDeletedCategory(cat.id);
-    toast(nowGone ? `Hid “${cat.name}”.` : `Restored “${cat.name}”.`);
-    render();
-  });
-  art.append(bin);
+  const bin = withBin ? el('button', `icon-btn card-bin${gone ? ' is-restore' : ''}`) : null;
+  if (bin) {
+    bin.title = gone ? 'Put this category back' : 'Hide this category';
+    bin.setAttribute('aria-label', bin.title);
+    bin.innerHTML = gone
+      ? '<svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M3 4v5h5"/></svg>'
+      : '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>';
+    bin.addEventListener('click', (event) => {
+      // The tile underneath opens the category.
+      event.stopPropagation();
+      const nowGone = profiles.toggleDeletedCategory(cat.id);
+      toast(nowGone ? `Hid “${cat.name}”.` : `Restored “${cat.name}”.`);
+      render();
+    });
+    art.append(bin);
+  }
 
   const title = el('h3', 'card-title');
   title.textContent = cat.name;
@@ -3038,11 +3208,11 @@ function liveCategoryCard(cat, count, cover) {
 
   card.append(art, title, sub);
 
-  card.addEventListener('click', () => {
+  card.addEventListener('click', onOpen || (() => {
     state.category = cat.id;
     state.visible = PAGE_SIZE;
     render();
-  });
+  }));
   return card;
 }
 
@@ -5048,6 +5218,9 @@ function enterCinema(item) {
       : item.kind === 'live' ? '#/live' : `#/movies/${item.id}`;
 
   $('#cinemaTop').hidden = false;
+  // Live only: multi-view is four live channels, and there is nothing to put
+  // in a second cell when the thing on screen is a film.
+  $('#cinemaMultiview').hidden = !(beta.on && item.kind === 'live');
   $('#cinemaTitle').textContent = item.name || '';
   $('#cinemaSub').textContent = '';
   $('#cinemaBackLabel').textContent = fromDownloads ? 'Downloads' : labels[item.kind] || 'Back';
@@ -5071,6 +5244,19 @@ function leaveCinema() {
 }
 
 $('#cinemaBack').addEventListener('click', leaveCinema);
+
+/**
+ * Carry the channel being watched into multi-view rather than making somebody
+ * find it again in there. It lands in the first free cell — or the first cell
+ * if they are all busy, since the one you just asked for is the one you want.
+ */
+$('#cinemaMultiview').addEventListener('click', () => {
+  const item = currentLiveItem;
+  if (!item) return;
+  multiview.open();          // closes the player, and with it its connection
+  const free = multiview.cells.findIndex((c, i) => i < multiview.count && !c.item);
+  multiview.start(free >= 0 ? free : 0, item);
+});
 
 for (const evt of ['mousemove', 'touchstart', 'click']) {
   $('#playerOverlay').addEventListener(evt, showChrome, { passive: true });

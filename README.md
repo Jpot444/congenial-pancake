@@ -1469,12 +1469,23 @@ is 60s here, which is what sets that), and forward stops at the live edge.
 Pressing at the edge does nothing rather than throwing the position somewhere
 invalid.
 
-**The picker opens on categories**, then the channels inside one, with a way
-back up. A flat list of every channel this provider carries is thousands long
-and is not something anyone scrolls — the categories are the only usable way
-in, exactly as on the Live TV page, and pinned ones lead in the order they were
-dragged into. Typing cuts across every category, because a search that only
-looked inside the folder you happened to be in would be a worse search.
+**The picker is the Live TV page.** Categories first as cards with their
+artwork, then the channels inside one, on the same `.grid.is-cats` /
+`.grid.is-live` the library uses and built by the same `liveCategoryCard` — not
+a copy that looks like it today and drifts tomorrow. It is a full sheet rather
+than a small modal for the same reason: a list of names in a 520px box was a
+different thing wearing the same words. Pinned categories lead in the order
+they were dragged into. Typing cuts across every category, because a search
+that only looked inside the folder you happened to be in would be a worse
+search. The one thing the tiles lose here is the bin — hiding a category from
+inside the sheet would re-render the page underneath it, which is not what
+pressing it there means.
+
+**The live player carries a channel in.** A four-pane button in the player's
+top-right corner — with the other controls, which in cinema mode *is* the
+corner — closes the player and opens multi-view with whatever was on screen
+already in the first free cell. Live only: multi-view is four live channels,
+and a film has nothing to put beside it.
 
 **The bars get out of the way.** Cell chrome and the top bar fade after three
 seconds and return on any movement, pointer or touch — the same bargain the
@@ -1520,6 +1531,16 @@ answer legible either way:
 - The header counts **playing** separately from **asked for**. On HLS those
   turn out to be the same number; on MPEG-TS they should not be, and that gap
   is the measurement.
+- **Cells can be dragged into each other's places** by the grip in the bar. The
+  swap exchanges the two boxes *in the DOM* rather than handing one cell's
+  channel to the other: moving the box takes the video element, its engine and
+  whatever it has buffered along with it, so the picture does not blink, where
+  re-pointing a cell would mean tearing an engine down and asking the provider
+  again for something already on screen. `cells` is reordered to match, because
+  everything else — which cells the count shows, which one is blown up — is by
+  position. That in turn is why every button closes over its cell **record**
+  rather than the index it was built at: a control that remembered its slot
+  would act on whichever cell had since moved into it.
 - A failed cell **does not retry by itself**, but every cell carries a **↻** in
   its bar. On MPEG-TS a quiet reconnect loop would take the connection off
   whichever cell currently has it, and the sequence of who held it when is the
