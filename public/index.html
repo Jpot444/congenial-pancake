@@ -5,7 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Portal — Live TV, Movies &amp; Series</title>
   <link rel="stylesheet" href="/styles.css" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📺</text></svg>" />
+  <!-- The same bison the app puts on the profile gate and the loading screen,
+       the file itself rather than a copy made for the purpose.
+       Added to an iPhone home screen, a site with no apple-touch-icon gets a
+       screenshot or the first letter of its title on a plate — which is where
+       the "P" for Portal came from. iOS ignores SVG icons for this entirely,
+       so the emoji below it cannot stand in. -->
+  <link rel="apple-touch-icon" href="/bison.png" />
+  <link rel="icon" type="image/png" href="/bison.png" />
+  <!-- What the icon is called underneath. Without this iOS uses the document
+       title, which is the other half of where "Portal" was coming from. -->
+  <meta name="apple-mobile-web-app-title" content="Treasure Theater" />
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js"></script>
 </head>
