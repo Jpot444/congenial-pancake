@@ -1671,6 +1671,11 @@ function ffmpegArgs(
     // is cheap to produce and plays on everything.
     args.push(
       '-c:a', 'aac',
+      // Say AAC-LC outright. HE-AAC is the thing being converted away from
+      // here, so letting the encoder pick its own profile would occasionally
+      // reintroduce it — and a Roku's support for it is model-dependent,
+      // which presents as video with no sound at all.
+      '-profile:a', 'aac_low',
       '-ac', '2',
       '-b:a', '160k',
       // Guards audio against drifting away from video over a long playback.
@@ -1763,9 +1768,13 @@ async function startRemux(
     );
   }
 
-  // A probe knows the audio better than the catalogue listing does, so prefer
-  // it — but only where the caller left the field empty.
-  const audioInfo = audio && audio.codec ? audio : probed.audio || {};
+  // Deliberately NOT filled in from the probe. An empty acodec is a caller
+  // saying "normalise the audio for me", and the probe cannot answer the
+  // question that matters anyway: ffprobe reports HE-AAC as codec_name=aac
+  // exactly like AAC-LC, and only the profile separates them. Filling the
+  // field in from a probe turns "normalise this" into "copy it" on the
+  // strength of a codec name that does not mean what it looks like.
+  const audioInfo = audio || {};
 
   fs.mkdirSync(HLS_DIR, { recursive: true });
   const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
