@@ -186,6 +186,14 @@
       <h2 id="mvPickerTitle">Pick a channel</h2>
       <p id="mvPickerSub"></p>
     </div>
+    <!-- What this cell is going to show. Live is what multi-view was built
+         for; a film or an episode is a conversion, and only one of those can
+         run at a time — see the README. -->
+    <div class="mv-count-seg" id="mvSourceSeg" role="group" aria-label="What to watch">
+      <button type="button" data-source="live">Live TV</button>
+      <button type="button" data-source="movies">Movies</button>
+      <button type="button" data-source="series">Series</button>
+    </div>
     <input type="search" id="mvSearch" placeholder="Search channels…" autocomplete="off" />
   </div>
   <div class="grid is-cats mv-results" id="mvResults"></div>

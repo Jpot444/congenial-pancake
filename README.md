@@ -1469,8 +1469,49 @@ is 60s here, which is what sets that), and forward stops at the live edge.
 Pressing at the edge does nothing rather than throwing the position somewhere
 invalid.
 
-**The picker is the Live TV page.** Categories first as cards with their
-artwork, then the channels inside one, on the same `.grid.is-cats` /
+### A film or an episode in a cell
+
+A cell will take a film or an episode as well as a channel — but it is a
+different animal, and the difference is worth stating because it is what the
+design is shaped around.
+
+A channel costs a run of short segment fetches. A film is a **conversion**:
+ffmpeg on the Pi, reading one continuous stream from the provider. And the
+server runs exactly one of those at a time on purpose — `startRemux` kills
+every existing session before it spawns, because a seek must not stack encoders
+on a Raspberry Pi.
+
+So **one cell can hold a conversion**, and asking a second cell for one takes
+the first one's picture away. That is enforced in the client and said out loud
+when it happens, rather than left to be discovered as a cell that mysteriously
+went black. Channels alongside are untouched; they are not conversions.
+
+Three more things follow from a conversion not being a channel:
+
+- **hls.js needs the opposite settings.** While ffmpeg is still writing, the
+  playlist has no end marker, so hls.js reads it as live — and with a back
+  buffer being evicted the playhead can fall out of the window and get dragged
+  to the "live edge", which here is just however far ffmpeg has got. A cell
+  playing a conversion gets `backBufferLength: Infinity` and `startPosition: 0`;
+  a channel keeps the low-latency ones.
+- **Stopping the cell has to stop the box.** A conversion is a process, not a
+  socket the browser can drop: left running it grinds through a film nobody is
+  watching and keeps the provider connection with it.
+- **The wait is reported on the cell.** The main player's `waitForPrebuffer`
+  puts the full-screen loader up and writes the module-level `activeRemux` —
+  both of which belong to the one thing the main player is doing, and the
+  loader would cover the other three cells.
+
+A finished download in a container the browser already plays is the exception
+to all of it: no ffmpeg, no provider connection, and nothing stopping several
+cells doing it at once.
+
+**The picker is the Live TV page.** A Live TV / Movies / Series switch across
+the top, then categories as cards with their artwork, then what is inside one —
+and for a series a third step, because a show is not a thing you can play. If
+the section has never been opened this session its library is fetched on the
+spot rather than telling somebody to go and open a page they came here to
+avoid. Otherwise: channels inside one, on the same `.grid.is-cats` /
 `.grid.is-live` the library uses and built by the same `liveCategoryCard` — not
 a copy that looks like it today and drifts tomorrow. It is a full sheet rather
 than a small modal for the same reason: a list of names in a 520px box was a

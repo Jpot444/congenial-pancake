@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '20';
+const VERSION = '20.1';
 
 const PAGE_SIZE = 60;
 
@@ -453,8 +453,12 @@ const multiview = {
   picking: -1,
   solo: -1,
   idleTimer: null,
+  /** What the picker is offering: live, movies or series. */
+  source: 'live',
   /** Which category the picker is inside, or null at the top level. */
   browsing: null,
+  /** Which show the picker is inside, for the episode step. */
+  show: null,
 
   /* -- building ------------------------------------------------------- */
 
@@ -485,6 +489,11 @@ const multiview = {
       engine: null,
       item: null,
       format: '',
+      // A film or an episode rather than a channel: it is a conversion, and
+      // only one of those can run at a time.
+      vod: false,
+      remux: '',
+      label: '',
       // Asked for is not the same as playing, and on this account it was
       // expected not to be. Tracked separately so the count says which.
       ok: false,
@@ -501,7 +510,8 @@ const multiview = {
     video.autoplay = true;
 
     const empty = el('button', 'mv-empty');
-    empty.innerHTML = '<span class="mv-plus">+</span><span>Add a channel</span>';
+    // Not "a channel" any more: a cell will take a film or an episode too.
+    empty.innerHTML = '<span class="mv-plus">+</span><span>Add a channel or film</span>';
     empty.addEventListener('click', () => this.pick(this.at(rec)));
 
     const button = (cls, label, title, onClick) => {
@@ -762,7 +772,7 @@ const multiview = {
       cell.empty.hidden = live;
       cell.bar.hidden = !live;
       cell.video.hidden = !live;
-      cell.name.textContent = cell.item?.name || '';
+      cell.name.textContent = cell.label || cell.item?.name || '';
       cell.tag.textContent = live && cell.format ? cell.format.toUpperCase() : '';
       cell.tag.hidden = !cell.tag.textContent;
       cell.tag.classList.toggle('is-held', cell.format === 'ts');
@@ -838,7 +848,8 @@ const multiview = {
     if (!cell?.item) return;
     const listening = !cell.video.muted;
     const item = cell.item;
-    this.start(index, item).then(() => {
+    const again = cell.override || undefined;
+    this.start(index, item, again).then(() => {
       if (listening && this.cells[index]?.item === item) this.listen(index);
     });
   },
@@ -862,6 +873,7 @@ const multiview = {
   pick(index) {
     this.picking = index;
     this.browsing = null;
+    this.show = null;
     $('#mvSearch').value = '';
     $('#mvPicker').hidden = false;
     this.results('');
@@ -873,9 +885,44 @@ const multiview = {
     this.wake();
   },
 
-  /** Back out of a category, or out of the picker if at the top. */
+  async setSource(source) {
+    if (!['live', 'movies', 'series'].includes(source)) return;
+    this.source = source;
+    this.browsing = null;
+    this.show = null;
+    $('#mvSearch').value = '';
+    $('#mvSearch').placeholder = source === 'live' ? 'Search channels…'
+      : source === 'movies' ? 'Search films…' : 'Search shows…';
+    this.results('');
+
+    // Multi-view is reached from Live TV, so Movies and Series have usually
+    // never been opened in this session and their libraries are not loaded.
+    // Fetching one here beats a dead end telling somebody to go and open a
+    // page they came here to avoid.
+    if (!state.library[source]) {
+      $('#mvPickerSub').textContent = 'Loading…';
+      try {
+        await loadTab(source);
+      } catch (err) {
+        $('#mvPickerSub').textContent = `Couldn't load: ${err.message}`;
+        return;
+      }
+      if (this.source !== source) return;   // switched again while it loaded
+      this.results($('#mvSearch').value);
+    }
+  },
+
+  /** Back out one level at a time: an episode list, then a category, then out. */
   pickerBack() {
-    if (this.browsing && !$('#mvSearch').value.trim()) {
+    if ($('#mvSearch').value.trim()) {
+      $('#mvSearch').value = '';
+      return this.results('');
+    }
+    if (this.show) {
+      this.show = null;
+      return this.results('');
+    }
+    if (this.browsing) {
       this.browsing = null;
       return this.results('');
     }
@@ -883,8 +930,9 @@ const multiview = {
   },
 
   /**
-   * Categories first, then the channels inside one — the same two steps, and
-   * the same tiles, as the Live TV page.
+   * Categories first, then what is inside one — the same two steps, and the
+   * same tiles, as the library page for whichever source is chosen. Series get
+   * a third step, because a show is not a thing you can play.
    *
    * Typing cuts across every category, because a search that only looked
    * inside the folder you happened to be in would be a worse search.
@@ -892,27 +940,41 @@ const multiview = {
   results(query) {
     const box = $('#mvResults');
     box.innerHTML = '';
-    const library = state.library.live;
-    const all = library?.items || [];
+    for (const b of document.querySelectorAll('#mvSourceSeg button')) {
+      b.classList.toggle('is-on', b.dataset.source === this.source);
+    }
 
+    const library = state.library[this.source];
+    if (!library) {
+      $('#mvPickerSub').textContent = '';
+      $('#mvPickerTitle').textContent = 'Pick something';
+      const note = el('p', 'show-note');
+      note.textContent =
+        `No ${this.source === 'live' ? 'channels' : this.source} loaded yet — `
+        + 'open that section once and come back.';
+      return box.append(note);
+    }
+    const all = library.items || [];
     const q = query.trim().toLowerCase();
-    const inCategory = Boolean(this.browsing) && !q;
-    box.classList.toggle('is-cats', !inCategory && !q);
-    box.classList.toggle('is-live', inCategory || Boolean(q));
 
-    $('#mvPickerTitle').textContent = this.browsing && !q
-      ? this.browsing.name
-      : 'Pick a channel';
-    $('#mvPickerBackLabel').textContent = this.browsing && !q ? 'Categories' : 'Cancel';
+    if (this.show) return this.episodeTiles(box);
+
+    const inCategory = Boolean(this.browsing) && !q;
+    const flat = inCategory || Boolean(q);
+    box.classList.toggle('is-cats', !flat);
+    box.classList.toggle('is-live', flat && this.source === 'live');
+
+    $('#mvPickerTitle').textContent = inCategory ? this.browsing.name : 'Pick something';
+    $('#mvPickerBackLabel').textContent = inCategory || q ? 'Back' : 'Cancel';
 
     if (!all.length) {
       $('#mvPickerSub').textContent = '';
       const note = el('p', 'show-note');
-      note.textContent = 'No channels loaded yet — open Live TV once and come back.';
+      note.textContent = 'Nothing in here yet.';
       return box.append(note);
     }
 
-    // Counts and cover art in one pass, exactly as the Live TV page does it:
+    // Counts and cover art in one pass, exactly as the library page does it:
     // the item list runs to thousands, so walking it per category would show.
     const counts = new Map();
     const covers = new Map();
@@ -922,7 +984,7 @@ const multiview = {
       if (item.logo && !covers.has(id) && !looksAnimated(item.logo)) covers.set(id, item.logo);
     }
 
-    if (!inCategory && !q) return this.categoryTiles(box, library, counts, covers);
+    if (!flat) return this.categoryTiles(box, library, counts, covers);
 
     const inside = inCategory
       ? all.filter((i) => String(i.categoryId) === String(this.browsing.id))
@@ -932,14 +994,14 @@ const multiview = {
       .slice(0, 300);
 
     $('#mvPickerSub').textContent = hits.length
-      ? `${hits.length.toLocaleString()} channel${hits.length === 1 ? '' : 's'}`
+      ? `${hits.length.toLocaleString()} ${hits.length === 1 ? 'title' : 'titles'}`
       : '';
     if (!hits.length) {
       const note = el('p', 'show-note');
       note.textContent = 'Nothing matches that.';
       return box.append(note);
     }
-    for (const item of hits) box.append(this.channelTile(item));
+    for (const item of hits) box.append(this.titleTile(item));
   },
 
   categoryTiles(box, library, counts, covers) {
@@ -947,19 +1009,19 @@ const multiview = {
       (cat) => counts.get(String(cat.id)) && !profiles.isDeletedCategory(cat.id)
     );
     // Pinned first, in the order they were dragged into — the same sequence
-    // the Live TV grid shows them in.
-    const order = profiles.pinOrder('live');
+    // the library grid shows them in.
+    const order = profiles.pinOrder(this.source);
     const pinned = cats
-      .filter((c) => profiles.isPinned('live', c.id))
+      .filter((c) => profiles.isPinned(this.source, c.id))
       .sort((a, b) => order.indexOf(String(a.id)) - order.indexOf(String(b.id)));
-    const rest = cats.filter((c) => !profiles.isPinned('live', c.id));
+    const rest = cats.filter((c) => !profiles.isPinned(this.source, c.id));
     const ordered = [...pinned, ...rest];
 
     $('#mvPickerSub').textContent =
       `${ordered.length.toLocaleString()} categor${ordered.length === 1 ? 'y' : 'ies'}`;
     if (!ordered.length) {
       const note = el('p', 'show-note');
-      note.textContent = 'No live categories.';
+      note.textContent = 'Nothing in here.';
       return box.append(note);
     }
     for (const cat of ordered) {
@@ -971,8 +1033,8 @@ const multiview = {
     }
   },
 
-  /** A station tile. Same shape as the Live TV grid's, different action. */
-  channelTile(item) {
+  /** A tile for a channel, a film, or a show. Same shape, different action. */
+  titleTile(item) {
     const card = el('button', 'card');
     const art = el('div', 'card-art');
     const nameOnly = () => {
@@ -994,38 +1056,135 @@ const multiview = {
     title.textContent = item.name;
     card.append(art, title);
     card.addEventListener('click', () => {
+      // A show is not a thing you can play — it is a list of things you can.
+      if (item.kind === 'series') return this.openShow(item);
       this.closePicker();
       this.start(this.picking, item);
     });
     return card;
   },
 
+  /* -- the third step, for series --------------------------------------- */
+
+  async openShow(item) {
+    this.show = item;
+    $('#mvPickerTitle').textContent = item.name;
+    $('#mvPickerSub').textContent = 'Loading episodes…';
+    $('#mvPickerBackLabel').textContent = 'Back';
+    $('#mvResults').innerHTML = '';
+    if (!state.seriesCache[item.id]) {
+      try {
+        state.seriesCache[item.id] =
+          await api('/api/xtream', { action: 'get_series_info', series_id: item.id });
+      } catch (err) {
+        $('#mvPickerSub').textContent = '';
+        const note = el('p', 'show-note');
+        note.textContent = `Couldn't load episodes: ${err.message}`;
+        return $('#mvResults').append(note);
+      }
+    }
+    if (this.show !== item) return;    // left while that was in flight
+    this.episodeTiles($('#mvResults'));
+  },
+
+  episodeTiles(box) {
+    box.innerHTML = '';
+    box.classList.remove('is-cats');
+    box.classList.add('is-live');
+    const item = this.show;
+    $('#mvPickerTitle').textContent = item.name;
+    $('#mvPickerBackLabel').textContent = 'Back';
+
+    const episodes = state.seriesCache[item.id]?.episodes || {};
+    const seasons = Object.keys(episodes).sort((a, b) => Number(a) - Number(b));
+    const rows = seasons.flatMap((season) =>
+      (episodes[season] || []).map((ep) => ({ season, ep })));
+    $('#mvPickerSub').textContent = rows.length
+      ? `${rows.length} episode${rows.length === 1 ? '' : 's'}`
+      : '';
+    if (!rows.length) {
+      const note = el('p', 'show-note');
+      note.textContent = 'No episodes listed for this series.';
+      return box.append(note);
+    }
+
+    for (const { season, ep } of rows) {
+      const card = el('button', 'card');
+      const art = el('div', 'card-art');
+      const fb = el('div', 'fallback');
+      fb.textContent = `S${season} E${ep.episode_num}`;
+      art.append(fb);
+      const title = el('h3', 'card-title');
+      title.textContent = ep.title || `Episode ${ep.episode_num}`;
+      card.append(art, title);
+      card.addEventListener('click', () => {
+        this.closePicker();
+        this.start(this.picking, item, {
+          kind: 'series',
+          id: ep.id,
+          ext: ep.container_extension || 'mp4',
+          vcodec: ep.info?.video?.codec_name || '',
+          label: `${item.name} — S${season}E${ep.episode_num}`,
+        });
+      });
+      box.append(card);
+    }
+  },
+
   /* -- streams ---------------------------------------------------------- */
 
-  async start(index, item) {
+  /**
+   * Put something in a cell.
+   *
+   * Live is a channel and costs nothing but segment fetches. A film or an
+   * episode is a CONVERSION — ffmpeg on the Pi, reading one continuous stream
+   * from the provider — and the server runs exactly one of those at a time by
+   * design: startRemux kills whatever was running before it spawns. So one
+   * cell can hold a conversion, and asking a second to takes the first one's
+   * picture away. That is enforced here rather than discovered.
+   */
+  async start(index, item, override) {
     const cell = this.cells[index];
     if (!cell) return;
+    const kind = override?.kind || item.kind;
+    const vod = kind !== 'live';
+
+    if (vod) {
+      const busy = this.cells.findIndex((c, i) => i !== index && i < this.count && c.vod);
+      if (busy >= 0) {
+        toast('Only one film or episode at a time — the box converts it as it plays. '
+          + `Stopping “${this.cells[busy].item?.name || 'the other one'}”.`);
+        this.stop(busy);
+      }
+    }
+
     this.stop(index);
     cell.item = item;
+    cell.vod = vod;
+    cell.override = override || null;
+    cell.label = override?.label || item.name;
     cell.ok = false;
     cell.note.hidden = false;
-    cell.note.textContent = 'Asking for the stream…';
+    cell.note.textContent = vod ? 'Converting…' : 'Asking for the stream…';
     this.paint();
 
     // Stamped so a slow answer for a cell that has since been stopped or
     // repointed does not attach itself over whatever is there now.
     const mine = (cell.token = (cell.token || 0) + 1);
+    const stale = () => cell.token !== mine || cell.item !== item;
 
     try {
-      const data = await api('/api/play', {
-        kind: 'live',
-        id: item.id,
-        ext: item.ext || '',
-        latency: prefs.data.liveLatency,
-      });
-      if (cell.token !== mine || cell.item !== item) return;
-      cell.format = data.format || '';
-      this.attach(cell, data.url, data.format);
+      const play = vod
+        ? await this.resolveVod(cell, item, override, () => stale())
+        : await api('/api/play', {
+          kind: 'live',
+          id: item.id,
+          ext: item.ext || '',
+          latency: prefs.data.liveLatency,
+        });
+      if (stale() || !play) return;
+      cell.format = play.format || '';
+      this.attach(cell, play.url, play.format, vod);
     } catch (err) {
       if (cell.token !== mine) return;
       // The interesting failure. Said plainly rather than as a stack.
@@ -1035,7 +1194,74 @@ const multiview = {
     }
   },
 
-  attach(cell, url, format) {
+  /**
+   * A film or an episode, ready to attach.
+   *
+   * A finished download in a container the browser already plays is the cheap
+   * case and the only one that costs nothing at all — no ffmpeg, no provider
+   * connection, and no limit on how many cells could do it. Everything else is
+   * a conversion, and the wait for it is reported on the cell rather than
+   * through the app-wide loader, which would cover the other three.
+   */
+  async resolveVod(cell, item, override, stale) {
+    const kind = override?.kind || item.kind;
+    const id = override?.id ?? item.id;
+    const ext = override?.ext ?? item.ext ?? '';
+
+    const local = findLocalCopy(kind, id);
+    if (local && !needsRemux(local.ext)) {
+      return { url: `/api/downloads/${local.id}/file`, format: 'file' };
+    }
+
+    const remuxed = local
+      ? await api('/api/remux', { download: local.id })
+      : await api('/api/remux', {
+        kind,
+        id,
+        ext,
+        vcodec: override?.vcodec || item.vcodec || '',
+      });
+    if (stale()) {
+      // Nothing is going to watch it, so do not leave ffmpeg grinding.
+      fetch('/api/remux/stop').catch(() => {});
+      return null;
+    }
+    cell.remux = remuxed.session || '';
+    await this.waitForConversion(cell, remuxed, stale);
+    if (stale()) return null;
+    return { url: remuxed.url, format: 'm3u8' };
+  },
+
+  /**
+   * Wait for the conversion to bank enough to play through, counting up on the
+   * cell itself. The main player's waitForPrebuffer cannot be reused: it puts
+   * the full-screen loader up and writes the module-level activeRemux, both of
+   * which belong to the one thing the main player is doing.
+   */
+  async waitForConversion(cell, remux, stale) {
+    if (!remux.session) return;
+    const target = remux.prebuffer || 45;
+    const startedAt = Date.now();
+    for (;;) {
+      if (stale()) return;
+      let status;
+      try {
+        status = await api('/api/remux/status', { id: remux.session });
+      } catch {
+        return;                       // session gone; let the player try anyway
+      }
+      if (status.failed) throw new Error(status.error || 'Conversion failed');
+      if (status.complete || status.seconds >= target) return;
+      cell.note.textContent =
+        `Converting — ${Math.round(status.seconds)}s of ${Math.round(target)}s banked`;
+      // Give up waiting rather than hanging on a conversion that has stalled;
+      // whatever has been written by then is usually enough to start on.
+      if (Date.now() - startedAt > 90_000) return;
+      await new Promise((r) => setTimeout(r, 700));
+    }
+  },
+
+  attach(cell, url, format, vod = false) {
     const video = cell.video;
     cell.note.textContent = 'Connecting…';
     video.addEventListener('playing', () => {
@@ -1069,7 +1295,24 @@ const multiview = {
     if (format === 'm3u8' && window.Hls && Hls.isSupported()) {
       // backBufferLength is what the −10 button has to work with: it is how
       // much of the stream stays seekable behind the playhead.
-      cell.engine = new Hls({ lowLatencyMode: true, backBufferLength: 60 });
+      //
+      // A conversion needs the opposite settings to a channel. Its playlist
+      // has no end marker while ffmpeg is still writing, so hls.js reads it as
+      // live — and with a back buffer being evicted the playhead can fall out
+      // of the window and get dragged forward to the "live edge", which here
+      // is just however far ffmpeg has got. Never evicting keeps the window
+      // starting at zero, and startPosition pins it to the beginning.
+      cell.engine = new Hls(vod
+        ? {
+          lowLatencyMode: false,
+          backBufferLength: Infinity,
+          liveSyncDuration: 1e9,
+          liveMaxLatencyDuration: 2e9,
+          liveDurationInfinity: false,
+          maxBufferLength: 120,
+          startPosition: 0,
+        }
+        : { lowLatencyMode: true, backBufferLength: 60 });
       cell.engine.loadSource(url);
       cell.engine.attachMedia(video);
       cell.engine.on(Hls.Events.ERROR, (_, data) => {
@@ -1102,10 +1345,20 @@ const multiview = {
       try { cell.engine.destroy(); } catch { /* already gone */ }
       cell.engine = null;
     }
+    // A conversion is a process on the box, not just a socket in the browser.
+    // Left running it keeps ffmpeg grinding through a film nobody is watching
+    // and keeps the provider connection with it.
+    if (cell.remux) {
+      fetch('/api/remux/stop').catch(() => {});
+      cell.remux = '';
+    }
     cell.video.removeAttribute('src');
     cell.video.load();
     cell.video.muted = true;
     cell.item = null;
+    cell.vod = false;
+    cell.override = null;
+    cell.label = '';
     cell.ok = false;
     cell.format = '';
     cell.note.hidden = true;
@@ -1122,6 +1375,9 @@ const multiview = {
 $('#mvClose').addEventListener('click', () => multiview.close());
 $('#mvStopAll').addEventListener('click', () => multiview.stopAll());
 $('#mvPickerBack').addEventListener('click', () => multiview.pickerBack());
+for (const button of document.querySelectorAll('#mvSourceSeg button')) {
+  button.addEventListener('click', () => multiview.setSource(button.dataset.source));
+}
 $('#mvSearch').addEventListener('input', (event) => multiview.results(event.target.value));
 
 // Any sign of life brings the chrome back. Pointer and touch both, since the
