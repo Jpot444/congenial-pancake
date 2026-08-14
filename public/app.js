@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '20.2';
+const VERSION = '20.2.1';
 
 const PAGE_SIZE = 60;
 
@@ -2225,19 +2225,26 @@ async function loadTab(tab) {
   const titles = { live: 'Live TV', movies: 'Movies', series: 'Series' };
   loader.show(`Loading ${titles[tab] || tab}…`);
 
-  const data = await fetchWithProgress(`/api/library?tab=${encodeURIComponent(tab)}`, (f, got, total) =>
-    loader.set(f, `${mb(got)} of ${mb(total)}`)
-  );
+  // Whoever shows the loading screen hides it. Leaving that to the caller left
+  // the bar sitting at 100% for ever the first time a caller forgot — so it is
+  // owned here, where it cannot be forgotten again.
+  try {
+    const data = await fetchWithProgress(`/api/library?tab=${encodeURIComponent(tab)}`, (f, got, total) =>
+      loader.set(f, `${mb(got)} of ${mb(total)}`)
+    );
 
-  loader.label('Building the library…');
-  loader.set(1, `${(data.items || []).length.toLocaleString()} titles`);
+    loader.label('Building the library…');
+    loader.set(1, `${(data.items || []).length.toLocaleString()} titles`);
 
-  state.library[tab] = {
-    categories: data.categories || [],
-    items: (data.items || []).map((row) => ({ ...row, logo: img(row.logo) })),
-    totals: data.totals,
-  };
-  return state.library[tab];
+    state.library[tab] = {
+      categories: data.categories || [],
+      items: (data.items || []).map((row) => ({ ...row, logo: img(row.logo) })),
+      totals: data.totals,
+    };
+    return state.library[tab];
+  } finally {
+    loader.hide();
+  }
 }
 
 /* ---------------------------------------------------------- movie rows ---

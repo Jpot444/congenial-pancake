@@ -670,6 +670,15 @@ latency.
 The library cache is written to `library-cache.json`, so a restart no longer
 re-pulls 141 MB from the provider. Cold load 4.3s → **0.016s** after a restart.
 
+**`loadTab` hides its own loading screen.** It used to show it and leave hiding
+it to whoever called — which held for the two callers that navigate to a tab,
+and then broke the moment a third appeared. Multi-view's picker fetches Movies
+or Series on demand, had no reason to know it had inherited a loading screen,
+and left the bar sitting at 100% over the picker for ever. The overlay is
+`z-index: 400`, above everything, so the categories loaded fine and were simply
+unreachable underneath it. Whoever shows it hides it, in a `finally`, so a
+failed fetch does not strand it either.
+
 ### The cinema player
 
 Films and episodes open full-viewport with the chrome floating over the
