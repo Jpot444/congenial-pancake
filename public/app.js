@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '20.3';
+const VERSION = '20.4';
 
 const PAGE_SIZE = 60;
 
@@ -78,6 +78,10 @@ const prefs = {
     liveLatency: 'balanced',
     filtersEnabled: true,
     filters: {},
+    // The subtitle track last turned on, by label. Somebody who wants English
+    // subtitles wants them on the next film too, and being asked again every
+    // time is the thing this remembers them to avoid.
+    captionTrack: '',
   },
 
   async load() {
@@ -4549,6 +4553,12 @@ function attach(url, format, opts = {}) {
   const clearOnPlay = () => status('');
   video.addEventListener('playing', clearOnPlay, { once: true });
 
+  // Every path that resolves a stream sets `lastRemux` first — to the response
+  // for a conversion, or to `{}` for anything that plays directly — so hanging
+  // the subtitle tracks here catches all of them, including a seek, which is a
+  // whole new session with a whole new set of files.
+  captions.attach(lastRemux);
+
   if (format === 'ts') {
     if (window.mpegts && mpegts.isSupported()) {
       // mpegts.js does its fetching inside a Web Worker, which has no document
@@ -5811,6 +5821,8 @@ function showFilmBar(item, duration, override) {
   $('#vodTotal').textContent = hms(film.duration);
   enterCinema(item);
   paintFilmBar();
+  // The CC button lives in this bar, so it can only appear once the bar has.
+  captions.paint();
 }
 
 function hideFilmBar() {
@@ -5819,6 +5831,10 @@ function hideFilmBar() {
   film.item = null;
   $('#vodBar').hidden = true;
   $('#video').controls = true;
+  // Live keeps the browser's own controls, and those carry their own caption
+  // menu for whatever the channel has in band.
+  captions.close();
+  captions.paint();
 }
 
 function paintFilmBar() {
@@ -5983,23 +5999,228 @@ $('#vodTrack').addEventListener('keydown', (event) => {
   event.stopPropagation();
 });
 
+/* ------------------------------------------------------------- captions ---
+ *
+ * Subtitles come from two completely different places, and the menu deliberately
+ * does not distinguish them, because a viewer has no reason to care:
+ *
+ *   * **Sidecar tracks.** A conversion writes its text subtitle streams out as
+ *     WebVTT beside the video segments, and those are added as `<track>`
+ *     children. This is where a film's subtitles come from.
+ *   * **In-band tracks.** Captions carried inside the stream itself — CEA-608
+ *     on a live channel, a text track in a downloaded MP4 — which hls.js and
+ *     the browser surface on their own.
+ *
+ * Both land in `video.textTracks`, so that list is the single source of truth
+ * and the menu is built from it rather than from what we think we added.
+ *
+ * The one thing that needs care is that a sidecar is being WRITTEN while it is
+ * being read. A `<track>` fetches once and keeps whatever it got, so a track
+ * turned on two minutes into a conversion would hold two minutes of subtitles
+ * and then stop for ever. While the conversion is still running the element is
+ * replaced on a timer, which re-fetches the file as it has grown.
+ */
+const captions = {
+  /** Sidecar descriptors from the last /api/remux response. */
+  sidecars: [],
+  /**
+   * The chosen track's label, or '' for off. Survives a track being replaced,
+   * and is seeded from the profile so a film opens with the same subtitles as
+   * the last one.
+   */
+  get chosen() {
+    return prefs.data.captionTrack || '';
+  },
+  set chosen(value) {
+    prefs.data.captionTrack = value || '';
+  },
+  timer: null,
+
+  /** A film or channel is starting: forget the last one's tracks entirely. */
+  reset() {
+    this.sidecars = [];
+    clearInterval(this.timer);
+    this.timer = null;
+    for (const el of [...$('#video').querySelectorAll('track')]) el.remove();
+    // Anything the engine put there is the engine's to remove, but it must not
+    // be left showing over the next title.
+    for (const track of $('#video').textTracks) track.mode = 'disabled';
+    this.close();
+    this.paint();
+  },
+
+  /**
+   * Attach the tracks a conversion is writing.
+   *
+   * `remux.subs` is what the server found in the source and is extracting; an
+   * empty list means this title has no text subtitles, which is a real answer
+   * and is said as one.
+   */
+  attach(remux) {
+    this.sidecars = (remux?.subs || []).filter((s) => s && s.url);
+    if (!this.sidecars.length) return this.paint();
+    this.build();
+
+    // Re-read while it is still being written. Stops as soon as the conversion
+    // finishes, with one last pass to pick up the tail.
+    clearInterval(this.timer);
+    this.timer = setInterval(async () => {
+      if (!lastRemux.session) return this.stopRefreshing();
+      let done = false;
+      try {
+        const status = await api('/api/remux/status', { id: lastRemux.session });
+        done = Boolean(status.complete);
+      } catch {
+        return this.stopRefreshing();   // session gone; what we have is all there is
+      }
+      this.build();
+      if (done) this.stopRefreshing();
+    }, CC_REFRESH);
+  },
+
+  stopRefreshing() {
+    clearInterval(this.timer);
+    this.timer = null;
+  },
+
+  /**
+   * (Re)create the sidecar `<track>` elements.
+   *
+   * The URL carries a changing query so the browser fetches the grown file
+   * rather than answering from cache, and the chosen track is turned back on
+   * afterwards — replacing the element is invisible to the viewer, and it has
+   * to stay that way or captions would blink off every refresh.
+   */
+  build() {
+    const video = $('#video');
+    const stamp = Date.now();
+    for (const el of [...video.querySelectorAll('track')]) el.remove();
+    for (const sub of this.sidecars) {
+      const el = document.createElement('track');
+      el.kind = 'subtitles';
+      el.label = sub.label || 'Subtitles';
+      if (sub.lang) el.srclang = sub.lang;
+      el.src = `${sub.url}?t=${stamp}`;
+      video.append(el);
+    }
+    this.restore();
+    this.paint();
+  },
+
+  /** Every track the player has, in menu order. */
+  list() {
+    return [...$('#video').textTracks].filter(
+      (t) => t.kind === 'subtitles' || t.kind === 'captions'
+    );
+  },
+
+  /** Turn on the one that matches what was chosen, if it is there. */
+  restore() {
+    if (!this.chosen) return;
+    // A newly added track starts disabled, and setting a mode is what makes a
+    // browser load its cues at all.
+    for (const track of this.list()) {
+      track.mode = track.label === this.chosen ? 'showing' : 'disabled';
+    }
+  },
+
+  /** Choose a track by label, or '' to turn captions off. */
+  choose(label) {
+    this.chosen = label || '';
+    for (const track of this.list()) {
+      track.mode = track.label === this.chosen ? 'showing' : 'disabled';
+    }
+    // hls.js keeps its own idea of which subtitle rendition is on, and for an
+    // in-band track that is the switch that actually matters.
+    if (engine && engineKind === 'hls.js' && Array.isArray(engine.subtitleTracks)) {
+      const at = engine.subtitleTracks.findIndex((t) => t.name === this.chosen);
+      engine.subtitleTrack = at;
+      engine.subtitleDisplay = at >= 0;
+    }
+    prefs.save();
+    this.close();
+    this.paint();
+  },
+
+  /** The button is only there when there is something behind it. */
+  paint() {
+    const tracks = this.list();
+    $('#ccWrap').hidden = !film.active || !tracks.length;
+    $('#ccBtn').classList.toggle('is-on', Boolean(this.chosen));
+    $('#ccBtn').title = this.chosen ? `Subtitles: ${this.chosen}` : 'Subtitles off';
+    if (!$('#ccMenu').hidden) this.renderMenu();
+  },
+
+  renderMenu() {
+    const menu = $('#ccMenu');
+    menu.innerHTML = '';
+    const row = (label, value) => {
+      const b = el('button', 'cc-item');
+      b.type = 'button';
+      b.setAttribute('role', 'menuitemradio');
+      b.textContent = label;
+      const on = (value || '') === this.chosen;
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-checked', String(on));
+      b.addEventListener('click', () => this.choose(value));
+      menu.append(b);
+    };
+    row('Off', '');
+    for (const track of this.list()) row(track.label || 'Subtitles', track.label);
+  },
+
+  toggleMenu() {
+    if ($('#ccMenu').hidden) {
+      this.renderMenu();
+      $('#ccMenu').hidden = false;
+      $('#ccBtn').setAttribute('aria-expanded', 'true');
+    } else {
+      this.close();
+    }
+  },
+
+  close() {
+    $('#ccMenu').hidden = true;
+    $('#ccBtn')?.setAttribute('aria-expanded', 'false');
+  },
+};
+
+/** How often a still-converting subtitle file is re-read. */
+const CC_REFRESH = 20000;
+
+$('#ccBtn').addEventListener('click', (event) => {
+  event.stopPropagation();
+  captions.toggleMenu();
+  showChrome();
+});
+document.addEventListener('click', (event) => {
+  if (!$('#ccWrap').contains(event.target)) captions.close();
+});
+
+// A track can arrive after the menu was drawn — hls.js adds in-band ones when
+// it reaches them, and a sidecar's cues load asynchronously.
+$('#video').textTracks.addEventListener?.('addtrack', () => {
+  captions.restore();
+  captions.paint();
+});
+$('#video').textTracks.addEventListener?.('removetrack', () => captions.paint());
+
 /**
  * Surface an altered playback rate. Nothing here ever sets a rate other than
  * 1 — but an extension can, and a video quietly running at a fraction of speed
  * is baffling without something on screen saying so.
+ *
+ * This used to be said twice: a pill in the bar, and a second one parked over
+ * the picture outside the fading chrome. The floating one is gone. It was
+ * there because the bar fades — but it sat in the middle of the frame on every
+ * title whether or not anything was wrong with it, and one badge in the bar,
+ * on the rare occasion an extension has meddled, is enough.
  */
 function paintSpeed() {
   const rate = $('#video').playbackRate;
   const off = Math.abs(rate - 1) > 0.01;
   $('#vodSpeed').hidden = !off;
   if (off) $('#vodSpeedLabel').textContent = `${Number(rate.toFixed(2))}×`;
-
-  // The bar fades after a few idle seconds, so a badge living inside it is
-  // invisible exactly when you need it. This warning sits outside the fading
-  // chrome and stays put until the speed is normal again.
-  const warn = $('#speedWarn');
-  warn.hidden = !off;
-  if (off) $('#speedWarnLabel').textContent = `Playing at ${Number(rate.toFixed(2))}× — click to reset`;
 }
 
 /** Put playback back to normal speed. */
@@ -6014,12 +6235,10 @@ function normalizeRate() {
 
 $('#video').addEventListener('ratechange', paintSpeed);
 
-for (const id of ['#vodSpeed', '#speedWarn']) {
-  $(id).addEventListener('click', () => {
-    normalizeRate();
-    toast('Playback speed reset to normal.');
-  });
-}
+$('#vodSpeed').addEventListener('click', () => {
+  normalizeRate();
+  toast('Playback speed reset to normal.');
+});
 
 /**
  * Record who last changed the rate. Nothing in this app sets a rate other than
@@ -6551,6 +6770,9 @@ function preparePlayer(item) {
   // put the wrong runtime on the scrubber for anything that plays natively.
   lastRemux = {};
   currentLiveItem = null;
+  // Nor its subtitles. The last film's tracks left attached would show its
+  // dialogue over this one, which is the worst kind of wrong.
+  captions.reset();
   return myToken;
 }
 

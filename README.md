@@ -687,7 +687,7 @@ and takes the cursor with it — then returns on any movement. A paused film
 keeps its controls up.
 
 - **Back** (top left) returns to Movies or Series, matching what was playing.
-- **Skip ±10s**, play/pause, mute and fullscreen on the bottom bar.
+- **Skip ±10s**, play/pause, **subtitles**, mute and fullscreen on the bottom bar.
 - Keyboard: space or `k` to pause, `←`/`→` for ±10s, `f` for fullscreen.
 - Favorite, download and close stay reachable in the top right, alongside a
   **reload** button that throws the current connection away and rebuilds it
@@ -696,6 +696,75 @@ keeps its controls up.
   gone wrong in a way pausing will not clear.
 
 Live TV keeps the old windowed player; the cinema layout is only for VOD.
+
+### Subtitles
+
+A **CC button in the bottom bar**, next to mute, listing every track the player
+has plus Off. It only appears when there is something behind it — a button that
+opens onto an empty list is worse than no button. The choice is remembered on
+the profile, so a film opens with the same subtitles as the last one.
+
+The tracks come from two unrelated places, and the menu deliberately does not
+say which is which, because a viewer has no reason to care:
+
+- **Sidecars.** A conversion writes its text subtitle streams out as WebVTT
+  beside the video segments, and those are attached as `<track>` children.
+  This is where a film's subtitles come from.
+- **In-band.** Captions carried inside the stream — CEA-608 on a live channel,
+  a text track in a downloaded MP4 — which hls.js and the browser surface on
+  their own.
+
+Both land in `video.textTracks`, so that list is the single source of truth and
+the menu is built from it rather than from what we believe we attached.
+
+**The subtitle files ride the same ffmpeg run**, as extra outputs off the one
+input:
+
+```
+-map 0:v:0 -map 0:a:0? … index.m3u8  -map 0:s:0 -c:s webvtt sub0.vtt
+```
+
+That is the whole reason it is shaped this way. A second ffmpeg would be a
+second read of the source, and on a provider that allows **one connection** the
+second read is the one that fails — or worse, takes the connection off the
+picture. One input, several outputs, one connection.
+
+Three consequences worth knowing:
+
+- **Nothing is mapped unless a probe has actually seen it.** An output with no
+  streams in it is fatal to the *whole* command, so a hopeful `-map 0:s:0?` on a
+  film with no subtitles would take the video down with it. With nothing known,
+  the command is byte-for-byte what it has always been.
+- **Only text subtitles are offered.** PGS off a Blu-ray and VobSub off a DVD
+  are pictures of words; turning one into WebVTT is OCR, not a remux. They are
+  left out of the menu rather than listed and then failing to appear.
+- **The picture wins.** If subtitle outputs were attached and ffmpeg died, the
+  session restarts once without them. A source whose subtitle stream ffmpeg
+  cannot write must not be a source you cannot watch.
+
+**A sidecar is read while it is still being written.** A `<track>` fetches once
+and keeps what it got, so a track turned on early would hold the first few
+minutes of dialogue and then fall silent for the rest of the film. While the
+conversion is running the element is replaced every 20 seconds against a
+cache-busted URL, which re-reads the file as it has grown, and the chosen track
+is turned straight back on so the swap is invisible.
+
+Finding the tracks costs **one short probe per title, cached** — the same
+`probeSource` the remuxer has always run when the provider withheld the video
+codec, now reading every stream rather than just `v:0`. The extra streams are
+free: the expense is the bytes pulled off the network to fill the probe window,
+and those are read either way. Since the probe now also hands back the codec,
+the remux no longer goes and reads the source a second time for it. The cache is
+keyed on `kind:id:ext` and never on the stream URL, which carries the account
+password.
+
+**The playback-rate pill over the picture is gone.** Nothing in this app ever
+sets a rate other than 1, but an extension can, and a film quietly running at
+0.75× is baffling without something saying so — which is why that was said
+twice, once in the bar and once floating in the middle of the frame outside the
+fading chrome. The floating one sat over every title whether or not anything
+was wrong with it. The badge in the bar stays, and still resets the rate when
+pressed.
 
 **Fullscreen on iPhone and iPad hands over to Apple's player.** Everywhere else
 the fullscreen button expands the shell so the custom chrome stays in frame, but

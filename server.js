@@ -220,6 +220,7 @@ function readPrefsRaw() {
       pinnedCategories: Array.isArray(parsed.pinnedCategories) ? parsed.pinnedCategories : [],
       favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
       liveLatency: parsed.liveLatency || 'balanced',
+      captionTrack: typeof parsed.captionTrack === 'string' ? parsed.captionTrack : '',
       prebufferSeconds: Number(parsed.prebufferSeconds) || DEFAULT_PREBUFFER,
       filtersEnabled: parsed.filtersEnabled !== false,
       filters: { ...DEFAULT_FILTERS, ...(parsed.filters || {}) },
@@ -243,6 +244,7 @@ function readPrefs() {
     pinnedCategories: [],
     favorites: [],
     liveLatency: 'balanced',
+    captionTrack: '',
     prebufferSeconds: DEFAULT_PREBUFFER,
     filtersEnabled: true,
     filters: { ...DEFAULT_FILTERS },
@@ -1699,10 +1701,28 @@ function killSession(id) {
  * fMP4 packaging) and the container's own duration — a reliable fallback when
  * the provider's metadata is unavailable, which it often is while streaming.
  */
+/**
+ * Subtitle codecs that are TEXT, and can therefore become WebVTT.
+ *
+ * The rest of what a Matroska file carries — PGS from a Blu-ray, VobSub from a
+ * DVD — are pictures of words, not words. Converting one to WebVTT is OCR, not
+ * a remux, and asking ffmpeg for it fails rather than doing something clever.
+ * They are left out of the list a viewer is offered, because a caption track
+ * that cannot be turned on is worse than one that is not mentioned.
+ */
+const TEXT_SUBTITLE_CODECS = new Set([
+  'subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text', 'text', 'eia_608', 'subviewer',
+]);
+
 function probeSource(input) {
   // Keep this cheap. Matroska carries codec and duration in the header, so a
   // small window is enough — and it matters: a heavy probe holds the
   // provider's single connection long enough to stall the remux behind it.
+  //
+  // Every stream is listed rather than just v:0. The extra streams cost nothing
+  // — the expense is the bytes pulled off the network to fill the probe window,
+  // and those are read either way — and they are what says whether the title
+  // has subtitles worth offering.
   //
   // Async on purpose. spawnSync here blocked the whole event loop for the
   // probe's duration — every live stream and download on the server froze
@@ -1713,10 +1733,9 @@ function probeSource(input) {
       [
         '-v', 'error',
         '-user_agent', UA,
-        '-select_streams', 'v:0',
         '-analyzeduration', '1000000',
         '-probesize', '600000',
-        '-show_entries', 'stream=codec_name',
+        '-show_entries', 'stream=index,codec_name,codec_type:stream_tags=language,title',
         '-show_entries', 'format=duration',
         '-of', 'default=noprint_wrappers=1',
         input,
@@ -1731,20 +1750,63 @@ function probeSource(input) {
 
     const finish = () => {
       clearTimeout(timer);
-      let codec = '';
-      let duration = 0;
-      for (const line of out.split('\n')) {
-        const name = /^codec_name=(.+)$/.exec(line.trim());
-        if (name) codec = name[1].toLowerCase();
-        const dur = /^duration=([\d.]+)$/.exec(line.trim());
-        if (dur) duration = Math.floor(Number(dur[1]) || 0);
-      }
-      resolve({ codec, duration });
+      resolve(parseProbe(out));
     };
 
     proc.on('close', finish);
     proc.on('error', finish);
   });
+}
+
+/**
+ * Read ffprobe's flat key=value output into the codec, the duration, and the
+ * subtitle tracks.
+ *
+ * Streams arrive as runs of keys with nothing marking where one ends and the
+ * next begins except `index` coming round again, so a record is flushed when
+ * the next index appears and once more at the end.
+ */
+function parseProbe(out) {
+  let codec = '';
+  let duration = 0;
+  const streams = [];
+  let cur = null;
+
+  const flush = () => {
+    if (cur && cur.type) streams.push(cur);
+    cur = null;
+  };
+
+  for (const raw of out.split('\n')) {
+    const line = raw.trim();
+    let m;
+    if ((m = /^index=(\d+)$/.exec(line))) {
+      flush();
+      cur = { index: Number(m[1]), type: '', codec: '', lang: '', title: '' };
+    } else if ((m = /^codec_name=(.+)$/.exec(line))) {
+      if (cur) cur.codec = m[1].toLowerCase();
+    } else if ((m = /^codec_type=(.+)$/.exec(line))) {
+      if (cur) cur.type = m[1].toLowerCase();
+    } else if ((m = /^TAG:language=(.+)$/i.exec(line))) {
+      if (cur) cur.lang = m[1].toLowerCase();
+    } else if ((m = /^TAG:title=(.*)$/i.exec(line))) {
+      if (cur) cur.title = m[1];
+    } else if ((m = /^duration=([\d.]+)$/.exec(line))) {
+      duration = Math.floor(Number(m[1]) || 0);
+    }
+  }
+  flush();
+
+  const video = streams.find((s) => s.type === 'video');
+  if (video) codec = video.codec;
+
+  // Numbered within their own type, because that is how `-map 0:s:N` counts.
+  const subs = streams
+    .filter((s) => s.type === 'subtitle')
+    .map((s, i) => ({ at: i, codec: s.codec, lang: s.lang, title: s.title }))
+    .filter((s) => TEXT_SUBTITLE_CODECS.has(s.codec));
+
+  return { codec, duration, subs };
 }
 
 /**
@@ -1783,7 +1845,8 @@ function audioFilter(delayMs = 0, padSeconds = 0) {
   return chain.join(',');
 }
 
-function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 0, audioPadSeconds = 0) {
+function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 0,
+  audioPadSeconds = 0, subs = []) {
   const args = [];
   if (/^https?:/i.test(input)) {
     // This provider paces VOD at barely above realtime and drops the socket
@@ -1897,8 +1960,93 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 
     '-hls_flags', 'independent_segments',
     path.join(outDir, 'index.m3u8')
   );
+
+  // Subtitles ride the SAME ffmpeg run, as extra outputs off the one input.
+  //
+  // That is the whole reason this is shaped the way it is. A second process
+  // would mean a second read of the source, and on a provider that allows one
+  // connection the second read is the one that fails — or worse, takes the
+  // connection off the picture. One input, several outputs, one connection.
+  //
+  // Only text subtitles are ever mapped, and only ones a probe has actually
+  // seen. An output with no streams in it is fatal to the whole command, so
+  // `-map 0:s:0?` on a file with no subtitles would take the video down with
+  // it; nothing is added unless something is known to be there.
+  subs.forEach((sub, i) => {
+    args.push('-map', `0:s:${sub.at}`, '-c:s', 'webvtt', path.join(outDir, `sub${i}.vtt`));
+  });
+
   return args;
 }
+
+/**
+ * What each title's subtitle streams turned out to be, keyed by `kind:id:ext`
+ * rather than by the stream URL — the URL carries the account password, and a
+ * cache keyed on it would both leak it into memory dumps and miss every entry
+ * the moment the password is rotated.
+ *
+ * In memory only. A restart re-probes each title once, which is a second on the
+ * first play and nothing after that; a file on disk to avoid it would be a new
+ * thing to keep, invalidate and leave lying around.
+ */
+const subtitleLayouts = new Map();
+
+/**
+ * What a title is made of — codec, duration and subtitle tracks — probed at
+ * most once per title.
+ *
+ * The probe costs one short read of the source. Where that read is free — a
+ * file already on disk, or a title looked at before — this costs nothing at
+ * all. Where it is not, it is the same probe `startRemux` has always run when
+ * the provider withheld the video codec, and it happens before the conversion
+ * spawns rather than beside it, so it never competes with playback for the
+ * single connection.
+ */
+async function probeTitle(input, key) {
+  if (key && subtitleLayouts.has(key)) return subtitleLayouts.get(key);
+  if (!hasFfmpeg()) return { codec: '', duration: 0, subs: [] };
+  let probed = { codec: '', duration: 0, subs: [] };
+  try {
+    probed = await probeSource(input);
+  } catch {
+    // Never fail a film over what could not be learned about it.
+  }
+  if (key) subtitleLayouts.set(key, probed);
+  return probed;
+}
+
+/** How a subtitle track is named in the menu. */
+function subtitleLabel(sub) {
+  const name = LANGUAGE_NAMES[sub.lang] || (sub.lang ? sub.lang.toUpperCase() : '');
+  // The file's own title wins when it has one — "English (SDH)", "Forced" and
+  // "Signs & Songs" are distinctions a language code cannot carry.
+  if (sub.title && name) return `${name} — ${sub.title}`;
+  return sub.title || name || 'Subtitles';
+}
+
+/**
+ * Enough of ISO 639 to name what this library actually carries. Anything else
+ * shows its code, which is worse than a name and much better than nothing.
+ */
+const LANGUAGE_NAMES = {
+  eng: 'English', en: 'English',
+  spa: 'Spanish', es: 'Spanish', esp: 'Spanish',
+  fre: 'French', fra: 'French', fr: 'French',
+  ger: 'German', deu: 'German', de: 'German',
+  ita: 'Italian', it: 'Italian',
+  por: 'Portuguese', pt: 'Portuguese',
+  dut: 'Dutch', nld: 'Dutch', nl: 'Dutch',
+  rus: 'Russian', ru: 'Russian',
+  pol: 'Polish', pl: 'Polish',
+  ara: 'Arabic', ar: 'Arabic',
+  chi: 'Chinese', zho: 'Chinese', zh: 'Chinese',
+  jpn: 'Japanese', ja: 'Japanese',
+  kor: 'Korean', ko: 'Korean',
+  hin: 'Hindi', hi: 'Hindi',
+  swe: 'Swedish', nor: 'Norwegian', dan: 'Danish', fin: 'Finnish',
+  tur: 'Turkish', gre: 'Greek', ell: 'Greek', heb: 'Hebrew',
+  ron: 'Romanian', rum: 'Romanian', hun: 'Hungarian', ces: 'Czech', cze: 'Czech',
+};
 
 /**
  * Spawn a remux and resolve once the playlist has real segments in it. Only one
@@ -1907,7 +2055,8 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 
  */
 async function startRemux(input, opts) {
   const { fromProvider, videoCodec, startSeconds = 0, audioDelayMs = 0,
-    audioPadSeconds = 0, aligned = false } = opts;
+    audioPadSeconds = 0, aligned = false, subs = [], noSubs = false,
+    sourceDuration = 0 } = opts;
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed on this machine');
 
   // One viewer, one session: whatever was running is now abandoned, and an
@@ -1925,7 +2074,9 @@ async function startRemux(input, opts) {
   // spawning. The provider usually tells us; fall back to probing. The same
   // probe hands back the source duration, which the scrubber uses when the
   // provider's own metadata is unavailable.
-  const probed = videoCodec ? { codec: videoCodec, duration: 0 } : await probeSource(input);
+  const probed = videoCodec
+    ? { codec: videoCodec, duration: sourceDuration }
+    : await probeSource(input);
   const codec = probed.codec;
 
   fs.mkdirSync(HLS_DIR, { recursive: true });
@@ -1938,8 +2089,9 @@ async function startRemux(input, opts) {
   // profile — and that is the only description of the provider's audio we can
   // get without spending the single connection playback needs on a second
   // probe. `-nostats` keeps the per-frame progress spew out of it.
+  const wanted = noSubs ? [] : subs;
   const args = ['-v', 'info', '-nostats', '-hide_banner', '-y',
-    ...ffmpegArgs(input, dir, codec, startSeconds, audioDelayMs, audioPadSeconds)];
+    ...ffmpegArgs(input, dir, codec, startSeconds, audioDelayMs, audioPadSeconds, wanted)];
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
   let stderr = '';
@@ -1971,6 +2123,17 @@ async function startRemux(input, opts) {
     // unable to tell whether a fix was deployed yet; the flags themselves
     // settle it.
     args: redactUrl(args.join(' ')),
+    // What the viewer can be offered, and where each one is being written.
+    // `sub0.vtt` is filled progressively as the conversion runs, so a track
+    // fetched early is short and grows — which is fine for WebVTT and is why
+    // the client re-fetches rather than trusting the first read.
+    subs: wanted.map((sub, i) => ({
+      at: sub.at,
+      lang: sub.lang || '',
+      title: sub.title || '',
+      codec: sub.codec || '',
+      file: `sub${i}.vtt`,
+    })),
   };
   remuxSessions.set(id, session);
 
@@ -1993,12 +2156,21 @@ async function startRemux(input, opts) {
     if (session.exited && session.exitCode !== 0) {
       const detail = stderr.split('\n').filter(Boolean).pop() || `exit ${session.exitCode}`;
       killSession(id);
+      // Captions are a bonus; the picture is not. If subtitle outputs were
+      // attached and the command died, drop them and run the command that has
+      // always worked rather than handing back a film that will not play. A
+      // source whose subtitle stream ffmpeg cannot write must not be a source
+      // you cannot watch.
+      if (wanted.length) {
+        return startRemux(input, { ...opts, noSubs: true });
+      }
       throw new Error(`ffmpeg failed: ${detail}`);
     }
     await new Promise((r) => setTimeout(r, 300));
   }
 
   killSession(id);
+  if (wanted.length) return startRemux(input, { ...opts, noSubs: true });
   throw new Error('Remux timed out starting up');
 }
 
@@ -2993,6 +3165,9 @@ async function handleApi(req, res, pathname, query) {
       if (['low', 'balanced', 'instant'].includes(incoming.liveLatency)) {
         prefs.liveLatency = incoming.liveLatency;
       }
+      if (typeof incoming.captionTrack === 'string') {
+        prefs.captionTrack = incoming.captionTrack.slice(0, 120);
+      }
       if (typeof incoming.filtersEnabled === 'boolean') {
         prefs.filtersEnabled = incoming.filtersEnabled;
       }
@@ -3308,6 +3483,7 @@ async function handleApi(req, res, pathname, query) {
     const downloadId = query.get('download');
     let input;
     let fromProvider = true;
+    let subKey = '';
 
     if (downloadId) {
       // Local file: no provider connection burned, and much faster.
@@ -3315,6 +3491,7 @@ async function handleApi(req, res, pathname, query) {
       if (!job || job.status !== 'done') return json(res, 404, { error: 'No such download' });
       input = path.join(DOWNLOAD_DIR, job.file);
       fromProvider = false;
+      subKey = `dl:${downloadId}`;
     } else {
       const kind = query.get('kind');
       const id = query.get('id');
@@ -3322,14 +3499,22 @@ async function handleApi(req, res, pathname, query) {
       if (!kind || !id) return json(res, 400, { error: 'kind and id are required' });
       if (cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
       input = buildStreamUrl(cfg, kind === 'series' ? 'series' : 'movie', id, ext);
+      // Keyed on what identifies the title, never on the URL that carries the
+      // account password.
+      subKey = `${kind}:${id}:${ext}`;
     }
 
     try {
+      const probed = await probeTitle(input, subKey);
       const session = await startRemux(input, {
         fromProvider,
-        videoCodec: (query.get('vcodec') || '').toLowerCase(),
+        // The probe has already read the source; taking its codec here means
+        // startRemux does not go and read it a second time.
+        videoCodec: (query.get('vcodec') || '').toLowerCase() || probed.codec,
         startSeconds: Math.max(0, Number(query.get('start') || 0)),
         audioDelayMs: Number(query.get('adelay') || 0),
+        sourceDuration: probed.duration,
+        subs: probed.subs,
       });
       return json(res, 200, {
         url: `/hls/${session.id}/index.m3u8`,
@@ -3338,6 +3523,11 @@ async function handleApi(req, res, pathname, query) {
         prebuffer: session.prebuffer,
         offset: session.offset,
         sourceDuration: session.sourceDuration,
+        subs: session.subs.map((sub) => ({
+          lang: sub.lang,
+          label: subtitleLabel(sub),
+          url: `/hls/${session.id}/${sub.file}`,
+        })),
       });
     } catch (err) {
       return json(res, 502, { error: err.message });
@@ -3478,14 +3668,19 @@ function serveRemux(req, res, pathname) {
     }
 
     // fMP4 output produces init.mp4 + .m4s segments; TS output produces .ts.
+    const isVtt = file.endsWith('.vtt');
     const type = isPlaylist
       ? 'application/vnd.apple.mpegurl'
-      : /\.(mp4|m4s)$/.test(file)
-        ? 'video/mp4'
-        : 'video/mp2t';
+      : isVtt
+        ? 'text/vtt; charset=utf-8'
+        : /\.(mp4|m4s)$/.test(file)
+          ? 'video/mp4'
+          : 'video/mp2t';
     res.writeHead(200, {
       'content-type': type,
-      'cache-control': isPlaylist ? 'no-store' : 'public, max-age=3600',
+      // A subtitle file grows while the conversion runs, exactly as the
+      // playlist does, so it must not be cached as though it were finished.
+      'cache-control': isPlaylist || isVtt ? 'no-store' : 'public, max-age=3600',
       'access-control-allow-origin': '*',
     });
     res.end(data);

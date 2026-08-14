@@ -535,7 +535,6 @@ svg {
 .touch .resume-actions .btn { height: 54px; padding: 0 26px; font-size: 16px; }
 .touch .profile-avatar { width: 118px; height: 118px; }
 .touch .latency-select, .touch .live-pill { height: 40px; font-size: 14px; }
-.touch .speed-warn { height: 42px; font-size: 15px; }
 
 .touch .modal-card .picker button { width: 50px; height: 50px; font-size: 23px; }
 
@@ -2304,6 +2303,60 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   text-align: center;
 }
 
+/* ---- captions ---- */
+
+.cc-wrap { position: relative; flex-shrink: 0; display: flex; }
+
+/* On, as a state rather than a hover: the button is the only thing that says
+   subtitles are running when nothing is being said on screen. */
+.vod-cc.is-on { color: var(--text); background: rgba(224, 49, 50, .28); }
+
+/* Opens upward, because the bar is at the bottom of the screen and a menu that
+   dropped from it would open off the end of the world. */
+.cc-menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  z-index: 8;
+  min-width: 180px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 10px;
+  background: rgba(18, 14, 13, .97);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .6);
+}
+
+.cc-item {
+  display: block;
+  width: 100%;
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cc-item:hover { color: #fff; background: rgba(255, 255, 255, .08); }
+.cc-item.is-on { color: #fff; background: var(--brand-red); }
+
+/* Cues clear of the bar rather than behind it. A caption hidden under the
+   scrubber is a caption you cannot read, which is the whole of the point. */
+#video::cue {
+  background: rgba(0, 0, 0, .72);
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.touch .cc-item { padding: 12px 14px; font-size: 15px; }
+
 /* ========================================================== resume === */
 .resume-ask {
   position: absolute;
@@ -3086,26 +3139,6 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .touch .cinema .up-next-go { padding: 14px; flex: 1; }
 .touch .cinema .up-next-x { width: 48px; }
 
-.speed-warn {
-  position: absolute;
-  top: 84px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 7;
-  height: 34px;
-  padding: 0 16px;
-  border: 1px solid rgba(240, 195, 106, .6);
-  border-radius: 999px;
-  background: rgba(58, 34, 8, .92);
-  color: #F0C36A;
-  font-size: 13px;
-  cursor: pointer;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
-  transition: background .16s var(--ease);
-}
-
-.speed-warn:hover { background: rgba(80, 48, 10, .96); }
-
 /* Only appears when the rate isn't 1 — a quiet warning, not a control. */
 .vod-speed {
   flex-shrink: 0;
@@ -3562,9 +3595,9 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
    answer is often good news — so it recolours by result. Bad keeps the red. */
 .health-speed { margin-top: 18px; }
 
-/* conn-, not speed-: .speed-warn is already the player's playback-rate pill,
-   and it is absolutely positioned — sharing the name threw this note out of
-   the card and halfway up the screen. */
+/* conn-, not speed-: .health-speed is the block this sits inside, and a
+   .speed- name here once collided with an absolutely-positioned pill and threw
+   the note out of the card and halfway up the screen. */
 .conn-ok {
   border-color: rgba(87, 200, 139, .35);
   background: rgba(87, 200, 139, .08);

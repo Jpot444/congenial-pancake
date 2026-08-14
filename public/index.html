@@ -550,12 +550,6 @@
       <div class="video-status" id="videoStatus" hidden></div>
     </div>
 
-    <!-- Sits outside the fading chrome so an odd playback rate is always
-         visible, not hidden three seconds after the mouse stops. -->
-    <button class="speed-warn" id="speedWarn" hidden>
-      <span id="speedWarnLabel"></span>
-    </button>
-
     <!-- Picked from a short list rather than nudged a step at a time: each
          change restarts the conversion, so trial-and-error by increments would
          mean waiting through a rebuild for every press. -->
@@ -650,6 +644,21 @@
       <button class="vod-speed" id="vodSpeed" hidden title="Playing at an altered speed — click to reset to normal">
         <span id="vodSpeedLabel">1×</span>
       </button>
+
+      <!-- Captions. The menu opens upward out of the bar rather than as a
+           modal: it is a choice about what is on screen, made while watching,
+           and a dialog over the picture to pick a language is the wrong
+           weight for it. -->
+      <div class="cc-wrap" id="ccWrap" hidden>
+        <button class="vod-btn vod-cc" id="ccBtn" aria-label="Subtitles"
+                aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="2.5" y="5" width="19" height="14" rx="2.5"/>
+            <path d="M10 10.2a2.4 2.4 0 100 3.6M17.5 10.2a2.4 2.4 0 100 3.6"/>
+          </svg>
+        </button>
+        <div class="cc-menu" id="ccMenu" role="menu" hidden></div>
+      </div>
 
       <button class="vod-btn" id="vodMute" aria-label="Mute">
         <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 9a4 4 0 010 6"/></svg>
