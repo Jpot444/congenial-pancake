@@ -35,18 +35,20 @@
         <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="24" />
       </Label>
 
-      <Label id="gridTitle" translation="[640,228]" width="1220" height="42" wrap="false"
+      <Label id="gridTitle" translation="[640,228]" width="1220" height="50" wrap="false"
              ellipsisText="…" color="0xF6F1EEFF">
-        <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="30" />
+        <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="36" />
       </Label>
 
-      <MarkupGrid id="posterGrid" translation="[640,292]" itemSize="[220,382]"
-                  itemSpacing="[30,26]" numColumns="5" numRows="2"
+      <!-- Poster grid for movies and series with improved spacing -->
+      <MarkupGrid id="posterGrid" translation="[640,290]" itemSize="[220,390]"
+                  itemSpacing="[28,30]" numColumns="5" numRows="2"
                   itemComponentName="PosterCard" drawFocusFeedback="false"
                   vertFocusAnimationStyle="floatingFocus" visible="false" />
 
-      <MarkupGrid id="liveGrid" translation="[640,292]" itemSize="[390,122]"
-                  itemSpacing="[25,24]" numColumns="3" numRows="5"
+      <!-- Live TV grid with improved card sizing and spacing to match desktop design -->
+      <MarkupGrid id="liveGrid" translation="[640,290]" itemSize="[390,180]"
+                  itemSpacing="[28,30]" numColumns="3" numRows="4"
                   itemComponentName="ChannelCard" drawFocusFeedback="false"
                   vertFocusAnimationStyle="floatingFocus" visible="false" />
 

@@ -1,9 +1,11 @@
 sub init()
     m.frame = m.top.findNode("frame")
+    m.card = m.top.findNode("card")
     m.logo = m.top.findNode("logo")
     m.name = m.top.findNode("name")
     m.favMark = m.top.findNode("favMark")
     m.blockedBar = m.top.findNode("blockedBar")
+    m.liveBadge = m.top.findNode("liveBadge")
 end sub
 
 sub onContentChanged()
@@ -20,6 +22,9 @@ sub onContentChanged()
     m.name.text = content.title
     m.logo.uri = ItemPoster(content)
     m.favMark.visible = content.isFavorite
+
+    ' Show LIVE badge for live content (channel cards are always live)
+    m.liveBadge.visible = true
 
     m.blockedBar.visible = content.unplayable
     if content.unplayable then

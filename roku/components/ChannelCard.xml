@@ -8,29 +8,43 @@
   </interface>
 
   <children>
-    <Rectangle id="frame" width="396" height="122" color="0x241C1AFF" translation="[-3,-3]" />
-    <Rectangle id="card" width="390" height="116" color="0x1D1715FF" />
+    <!-- Card background with subtle shadow effect -->
+    <Rectangle id="frame" width="396" height="180" color="0x3A2D2AFF" translation="[-3,-3]"
+               cornerRadius="8" />
+    <Rectangle id="card" width="390" height="174" color="0x241C1AFF" cornerRadius="8" />
 
-    <Rectangle width="118" height="116" color="0x15100FFF">
-      <Poster id="logo" width="98" height="96" translation="[10,10]" loadDisplayMode="scaleToFit" />
+    <!-- Logo container -->
+    <Rectangle width="390" height="110" color="0x15100FFF" cornerRadius="8">
+      <Poster id="logo" width="350" height="70" translation="[20,20]" loadDisplayMode="scaleToFit" />
     </Rectangle>
 
-    <Label id="name" translation="[136,20]" width="238" height="76" wrap="true" maxLines="3"
-           color="0xA3928CFF">
-      <Font role="font" uri="pkg:/fonts/DejaVuSans.ttf" size="24" />
-    </Label>
-
-    <!-- Shown on anything this box has already failed to play. -->
-    <Rectangle id="blockedBar" width="254" height="26" translation="[136,86]" color="0x0B0807E6"
-               visible="false">
-      <Label text="WON'T PLAY HERE" width="254" height="26" vertAlign="center" color="0xFF6B5EFF">
-        <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="17" />
+    <!-- LIVE badge -->
+    <Rectangle id="liveBadge" translation="[12,12]" width="60" height="28" color="0xE50914FF"
+               cornerRadius="4" visible="false">
+      <Label text="● LIVE" translation="[8,2]" width="44" height="24" vertAlign="center"
+             color="0xFFFFFFFF">
+        <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="16" />
       </Label>
     </Rectangle>
 
-    <!-- Drawn, not a glyph — see PosterCard.xml. -->
-    <Rectangle id="favMark" translation="[338,0]" width="52" height="8" color="0xA21F24FF"
-               visible="false" />
+    <!-- Title section -->
+    <Label id="name" translation="[12,124]" width="366" height="50" wrap="true" maxLines="2"
+           color="0xF6F1EEFF">
+      <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="18" />
+    </Label>
+
+    <!-- Shown on anything this box has already failed to play. -->
+    <Rectangle id="blockedBar" width="366" height="50" translation="[12,124]" color="0x0B0807CC"
+               cornerRadius="4" visible="false">
+      <Label text="WON'T PLAY HERE" width="366" height="50" horizAlign="center" vertAlign="center"
+             color="0xFF6B5EFF">
+        <Font role="font" uri="pkg:/fonts/DejaVuSans-Bold.ttf" size="16" />
+      </Label>
+    </Rectangle>
+
+    <!-- Favorite indicator -->
+    <Rectangle id="favMark" translation="[342,4]" width="48" height="8" color="0xA21F24FF"
+               cornerRadius="2" visible="false" />
   </children>
   <!-- pkg:/source is the main scope, which SceneGraph components do not
        share. Shared helpers have to be pulled into each component's own
