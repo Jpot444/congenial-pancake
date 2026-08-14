@@ -2308,11 +2308,18 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .cc-wrap { position: relative; flex-shrink: 0; display: flex; }
 
 /* On, as a state rather than a hover: the button is the only thing that says
-   subtitles are running when nothing is being said on screen. */
-.vod-cc.is-on { color: var(--text); background: rgba(224, 49, 50, .28); }
+   subtitles are running when nothing is being said on screen. Both bars, since
+   the button moves between them — the bottom one for a film, the top one for a
+   channel, which has no bottom bar. */
+.vod-cc.vod-btn.is-on { color: var(--text); background: rgba(224, 49, 50, .28); }
+.vod-cc.icon-btn.is-on { color: var(--live); border-color: rgba(255, 75, 62, .4); }
+.vod-cc.icon-btn svg { width: 19px; height: 19px; }
 
 /* Opens upward, because the bar is at the bottom of the screen and a menu that
-   dropped from it would open off the end of the world. */
+   dropped from it would open off the end of the world. In the top bar it is
+   the other way round for the same reason. */
+.cc-top .cc-menu { top: calc(100% + 10px); bottom: auto; }
+
 .cc-menu {
   position: absolute;
   bottom: calc(100% + 10px);
@@ -2345,6 +2352,18 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 .cc-item:hover { color: #fff; background: rgba(255, 255, 255, .08); }
 .cc-item.is-on { color: #fff; background: var(--brand-red); }
+
+/* Said in the menu rather than by the button disappearing: a control that
+   comes and goes by title is one you stop looking for. */
+.cc-none {
+  margin: 0;
+  padding: 9px 11px;
+  max-width: 280px;
+  white-space: normal;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted-dim);
+}
 
 /* Cues clear of the bar rather than behind it. A caption hidden under the
    scrubber is a caption you cannot read, which is the whole of the point. */
@@ -2926,100 +2945,6 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .touch .show-card { grid-template-columns: minmax(0, 1fr); gap: 18px; }
 .touch .show-poster { max-width: 180px; }
 .touch .show-episodes .ep-list { max-height: none; }
-
-/* ---- manual audio offset ---- */
-
-.av-badge {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  min-width: 16px;
-  padding: 0 3px;
-  border-radius: 8px;
-  background: var(--brand-red);
-  color: #fff;
-  font-size: 9px;
-  line-height: 14px;
-  text-align: center;
-  pointer-events: none;
-}
-
-.av-sync {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 9;
-  width: min(420px, calc(100% - 32px));
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(18, 12, 12, .97);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
-}
-
-.av-sync-title {
-  margin: 0 0 6px;
-  font-family: var(--display);
-  font-size: 14px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--text);
-}
-
-.av-sync-hint { margin: 0 0 14px; font-size: 12px; line-height: 1.5; color: var(--muted-dim); }
-
-.av-sync-value {
-  display: block;
-  margin: 0 0 10px;
-  font-family: var(--display);
-  font-size: 30px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
-
-.av-sync-slider {
-  display: block;
-  width: 100%;
-  height: 34px;
-  margin: 0 0 12px;
-  background: transparent;
-  cursor: pointer;
-  /* Wide enough for a thumb, since this is dragged on a phone too. */
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-.av-sync-slider::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--line);
-}
-
-.av-sync-slider::-moz-range-track {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--line);
-}
-
-.av-sync-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 26px; height: 26px;
-  margin-top: -11px;
-  border: 0;
-  border-radius: 50%;
-  background: var(--brand-red);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .5);
-}
-
-.av-sync-slider::-moz-range-thumb {
-  width: 26px; height: 26px;
-  border: 0;
-  border-radius: 50%;
-  background: var(--brand-red);
-}
-
 
 /* ---- next episode, once the credits start ---- */
 

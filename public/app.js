@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '20.4';
+const VERSION = '20.5';
 
 const PAGE_SIZE = 60;
 
@@ -5033,9 +5033,6 @@ const playback = {
    * the setting without touching playback.
    */
   deviceSampleRate() {
-    // The sync control's context if it has one, rather than opening a second:
-    // two contexts is two audio devices woken up to answer one question.
-    if (avSync.ctx) return avSync.ctx.sampleRate;
     if (this.deviceRate !== undefined) return this.deviceRate;
     this.deviceRate = 0;
     try {
@@ -5132,8 +5129,6 @@ const playback = {
       `engine          ${engineKind || 'none'}`,
       ...this.browserLines(),
       `audio device    ${this.deviceSampleRate() || 'unknown'}Hz output`,
-      `audio offset    ${film.audioDelay || 0}ms chosen ` +
-        `(${Math.round(avSync.applied() * 1000)}ms live, ${film.serverDelay || 0}ms converted)`,
       ...this.buffers().map((line, i) => `${i === 0 ? 'buffers' : ''}`.padEnd(16) + line),
       `source          ${(video.currentSrc || '').slice(0, 120) || 'none'}`,
       `film            active ${film.active}, offset ${Math.round(film.offset)}, ` +
@@ -5455,148 +5450,6 @@ async function reloadStream() {
 
 $('#reloadBtn').addEventListener('click', reloadStream);
 
-/* ------------------------------------------------------- audio sync ---
- *
- * A live offset between sound and picture.
- *
- * The first version of this restarted the conversion for every change, which
- * made finding the right value a matter of waiting through a rebuild per guess
- * — useless for the one job it has, which is nudging while you watch until the
- * voices land on the lips.
- *
- * Pushing the sound LATER needs nothing from the server: the audio goes
- * through a Web Audio delay on its way to the speakers, and the value can move
- * while you drag. That is the direction this fault actually takes.
- *
- * Pulling it EARLIER cannot be done in a browser. A media element has one
- * clock, and the only lever on it is holding the audio back — there is no way
- * to hold the picture back to match. So the negative half still goes to the
- * conversion, which can trim the head off the audio track, and still costs a
- * rebuild. The panel says which half you are in.
- */
-const avSync = {
-  ctx: null,
-  node: null,
-  source: null,
-  broken: false,
-
-  /**
-   * Route the element's audio through a delay, once.
-   *
-   * Built on first use rather than at startup, and specifically from a click:
-   * `createMediaElementSource` takes the audio away from the element's own
-   * output and hands it to a context that starts suspended without a gesture,
-   * which would be silence rather than a delay. It also cannot be undone — the
-   * element stays routed through here for the life of the page — so it is not
-   * done until someone actually asks for an offset.
-   */
-  attach() {
-    if (this.node || this.broken) return this.node;
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) throw new Error('no Web Audio');
-      this.ctx = new Ctx();
-      this.source = this.ctx.createMediaElementSource($('#video'));
-      this.node = this.ctx.createDelay(2);
-      this.source.connect(this.node);
-      this.node.connect(this.ctx.destination);
-      this.ctx.resume?.();
-    } catch {
-      this.broken = true;
-      this.node = null;
-    }
-    return this.node;
-  },
-
-  /** Seconds of delay currently applied on the way to the speakers. */
-  applied() {
-    return this.node ? this.node.delayTime.value : 0;
-  },
-
-  set(ms) {
-    if (ms <= 0) {
-      // Nothing to hold back. Leave any graph in place at zero rather than
-      // tearing it down, which is not something Web Audio allows anyway.
-      if (this.node) this.node.delayTime.value = 0;
-      return true;
-    }
-    if (!this.attach()) return false;
-    this.node.delayTime.value = Math.min(2, ms / 1000);
-    return true;
-  },
-};
-
-function paintAvSync() {
-  const ms = film.audioDelay || 0;
-  const badge = $('#avSyncBadge');
-  badge.hidden = ms === 0;
-  badge.textContent = ms > 0 ? `+${ms / 1000}` : `${ms / 1000}`;
-  $('#avSyncSlider').value = String(ms);
-  $('#avSyncValue').textContent = `${ms > 0 ? '+' : ''}${ms} ms`;
-  $('#avSyncHint').textContent = ms < 0
-    ? 'Pulling the sound earlier has to be done by the conversion, so this one rebuilds when you let go.'
-    : 'Drag until the voices land on the lips. Pushing the sound later takes effect as you drag.';
-}
-
-/** What the conversion is being asked for: only the half a browser cannot do. */
-const serverOffset = (ms) => (ms < 0 ? ms : 0);
-
-$('#avSyncSlider').addEventListener('input', (event) => {
-  const ms = Number(event.target.value) || 0;
-  const was = serverOffset(film.audioDelay || 0);
-  film.audioDelay = ms;
-  paintAvSync();
-  // Only the live half moves while dragging; the rebuild waits for release.
-  if (ms >= 0 && was === 0 && !avSync.set(ms)) {
-    toast('This browser will not let the audio be delayed — rebuilding instead.');
-  }
-});
-
-$('#avSyncSlider').addEventListener('change', async (event) => {
-  const ms = Number(event.target.value) || 0;
-  const wanted = avSync.broken ? ms : serverOffset(ms);
-  const current = avSync.broken ? film.serverDelay ?? 0 : serverOffset(film.serverDelay ?? 0);
-  film.audioDelay = ms;
-  paintAvSync();
-  if (wanted === current) {
-    avSync.set(avSync.broken ? 0 : Math.max(0, ms));
-    return;
-  }
-  film.serverDelay = wanted;
-  if (!film.active) return;
-  avSync.set(0);   // the conversion is taking this one; don't double it up
-  toast('Rebuilding with the sound pulled earlier…');
-  await reloadStream();
-});
-
-$('#avSyncReset').addEventListener('click', async () => {
-  const hadServer = (film.serverDelay ?? 0) !== 0;
-  film.audioDelay = 0;
-  film.serverDelay = 0;
-  avSync.set(0);
-  paintAvSync();
-  if (hadServer && film.active) {
-    toast('Rebuilding without the offset…');
-    await reloadStream();
-  }
-});
-
-$('#avSyncBtn').addEventListener('click', () => {
-  if (!film.active) return toast('Audio sync applies to films and episodes.');
-  const panel = $('#avSyncPanel');
-  panel.hidden = !panel.hidden;
-  paintAvSync();
-  showChrome();
-});
-
-// Anywhere else on the picture closes it, the way the other overlays behave.
-$('#playerOverlay').addEventListener('click', (event) => {
-  const panel = $('#avSyncPanel');
-  if (panel.hidden) return;
-  if (panel.contains(event.target) || $('#avSyncBtn').contains(event.target)) return;
-  panel.hidden = true;
-});
-
 /** Manual catch-up. Deliberately never automatic — surprise seeks are the bug. */
 $('#livePill').addEventListener('click', () => {
   const video = $('#video');
@@ -5642,12 +5495,6 @@ const film = {
   item: null,
   override: null,
   seeking: false,
-  // Manual audio offset in milliseconds, as chosen. `serverDelay` is the part
-  // of it the conversion has to do — only ever the negative half, since a
-  // browser can hold audio back but never the picture. Both are kept for the
-  // title being watched and reapplied to every seek within it.
-  audioDelay: 0,
-  serverDelay: 0,
 };
 
 /**
@@ -5810,10 +5657,6 @@ function showFilmBar(item, duration, override) {
   film.ready = 0;
   film.item = item;
   film.override = override || null;
-  film.audioDelay = 0;
-  film.serverDelay = 0;
-  avSync.set(0);
-  paintAvSync();
 
   const video = $('#video');
   video.controls = false;           // ours replaces it
@@ -5831,8 +5674,8 @@ function hideFilmBar() {
   film.item = null;
   $('#vodBar').hidden = true;
   $('#video').controls = true;
-  // Live keeps the browser's own controls, and those carry their own caption
-  // menu for whatever the channel has in band.
+  // The button moves up to the live player's top bar rather than going away
+  // with the film bar — a channel can carry captions too.
   captions.close();
   captions.paint();
 }
@@ -5925,7 +5768,6 @@ async function seekFilm(target, { force = false } = {}) {
         ? {
             download: film.item.downloadId,
             start: Math.floor(clamped),
-            adelay: film.serverDelay || '',
           }
         : {
             kind: film.override?.kind || (film.item.kind === 'movie' ? 'movie' : film.item.kind),
@@ -5933,10 +5775,6 @@ async function seekFilm(target, { force = false } = {}) {
             ext: film.override?.ext ?? film.item.ext ?? '',
             vcodec: film.override?.vcodec || film.item.vcodec || '',
             start: Math.floor(clamped),
-            // Carried on every seek, not just the first: an offset that fell
-            // off at the next jump would look like the control had stopped
-            // working.
-            adelay: film.serverDelay || '',
           }
     );
     lastRemux = remux;
@@ -6101,10 +5939,35 @@ const captions = {
       el.label = sub.label || 'Subtitles';
       if (sub.lang) el.srclang = sub.lang;
       el.src = `${sub.url}?t=${stamp}`;
+      // Cues only exist once the file has been fetched, so this is the moment
+      // they can be moved off the control bar.
+      el.addEventListener('load', () => this.lift(el.track));
       video.append(el);
     }
     this.restore();
     this.paint();
+  },
+
+  /**
+   * Move cues up off the bottom of the frame.
+   *
+   * A browser puts subtitles at the very bottom of the video, which here is
+   * exactly where the scrubber, the clock and these buttons are — a caption
+   * behind the seek bar is a caption you cannot read. `::cue` can colour text
+   * but cannot place it; the position lives on the cue itself.
+   *
+   * Only cues that never asked for a position are moved. A source that
+   * positioned its own — a sign on a wall, a caption dodging a burned-in
+   * subtitle — meant it, and is left where it put itself.
+   */
+  lift(track) {
+    if (!track?.cues) return;
+    for (const cue of track.cues) {
+      if (cue.line === 'auto' || cue.line === undefined) {
+        cue.snapToLines = true;
+        cue.line = -3;      // three lines up from the bottom, clear of the bar
+      }
+    }
   },
 
   /** Every track the player has, in menu order. */
@@ -6121,6 +5984,7 @@ const captions = {
     // browser load its cues at all.
     for (const track of this.list()) {
       track.mode = track.label === this.chosen ? 'showing' : 'disabled';
+      if (track.mode === 'showing') this.lift(track);
     }
   },
 
@@ -6129,6 +5993,7 @@ const captions = {
     this.chosen = label || '';
     for (const track of this.list()) {
       track.mode = track.label === this.chosen ? 'showing' : 'disabled';
+      if (track.mode === 'showing') this.lift(track);
     }
     // hls.js keeps its own idea of which subtitle rendition is on, and for an
     // in-band track that is the switch that actually matters.
@@ -6142,18 +6007,63 @@ const captions = {
     this.paint();
   },
 
-  /** The button is only there when there is something behind it. */
+  /**
+   * The button is there whenever a player is, in whichever bar that player
+   * has: the bottom one for a film, the top one for live, which has no bottom
+   * bar of its own.
+   *
+   * It is NOT hidden when a title turns out to have no subtitles. Hiding it
+   * was the first try and it was wrong twice over — you cannot tell a title
+   * with no captions from a build that never shipped the feature, and a
+   * control that comes and goes by title is one you stop looking for. It says
+   * so in the menu instead.
+   */
   paint() {
-    const tracks = this.list();
-    $('#ccWrap').hidden = !film.active || !tracks.length;
-    $('#ccBtn').classList.toggle('is-on', Boolean(this.chosen));
-    $('#ccBtn').title = this.chosen ? `Subtitles: ${this.chosen}` : 'Subtitles off';
+    const wrap = $('#ccWrap');
+    const playing = !$('#playerOverlay').hidden;
+    wrap.hidden = !playing;
+    if (playing) {
+      // Moving the node keeps its listeners, its menu and its state — only its
+      // parent changes. The menu has to flip which way it opens with it.
+      const top = !film.active;
+      const home = top ? $('.player-bar-actions') : $('#vodBar');
+      // Ahead of the heart in the top bar, not against the edge: multi-view and
+      // close are the two ways OUT of the player and they keep the corner.
+      // Slotting captions between them pushed multi-view off it.
+      const before = top ? $('#favBtn') : $('#vodMute');
+      if (wrap.parentElement !== home || wrap.nextElementSibling !== before) {
+        home.insertBefore(wrap, before);
+      }
+      wrap.classList.toggle('cc-top', top);
+      $('#ccBtn').classList.toggle('icon-btn', top);
+      $('#ccBtn').classList.toggle('vod-btn', !top);
+    }
+    const on = Boolean(this.chosen) && this.list().some((t) => t.label === this.chosen);
+    $('#ccBtn').classList.toggle('is-on', on);
+    $('#ccBtn').title = on ? `Subtitles: ${this.chosen}` : 'Subtitles';
     if (!$('#ccMenu').hidden) this.renderMenu();
   },
 
   renderMenu() {
     const menu = $('#ccMenu');
     menu.innerHTML = '';
+    const tracks = this.list();
+
+    if (!tracks.length) {
+      const note = el('p', 'cc-none');
+      // Three different reasons a title has none, and which one it is decides
+      // whether there is anything to be done about it — so say which.
+      note.textContent = film.active
+        ? (lastRemux.session
+          ? 'No subtitles in this film. The provider ships none this can use — '
+            + 'picture subtitles from a disc would need OCR, not a conversion.'
+          : 'No subtitles in this file.')
+        : 'No subtitles on this channel. Live captions only appear if the '
+          + 'broadcaster sends them in the stream.';
+      menu.append(note);
+      return;
+    }
+
     const row = (label, value) => {
       const b = el('button', 'cc-item');
       b.type = 'button';
@@ -6166,7 +6076,7 @@ const captions = {
       menu.append(b);
     };
     row('Off', '');
-    for (const track of this.list()) row(track.label || 'Subtitles', track.label);
+    for (const track of tracks) row(track.label || 'Subtitles', track.label);
   },
 
   toggleMenu() {
@@ -6622,7 +6532,6 @@ async function playLocalCopy(job, startAt = 0) {
     const remuxed = await api('/api/remux', {
       download: job.id,
       start: startAt || '',
-      adelay: film.serverDelay || '',
     });
     lastRemux = remuxed;
     await waitForPrebuffer(remuxed);
@@ -6651,8 +6560,7 @@ async function resolveStream(item, override) {
     if (item.localOnly && item.downloadId && needsRemux(localExt)) {
       const data = await api('/api/remux', {
         download: item.downloadId,
-        adelay: film.serverDelay || '',
-      });
+        });
       // Keep the response — sourceDuration is the scrubber's runtime, and
       // session is what marks this as remux-backed for seeking.
       lastRemux = data;
@@ -6688,7 +6596,6 @@ async function resolveStream(item, override) {
       ext,
       vcodec: override?.vcodec || item.vcodec || '',
       start: startAt || '',
-      adelay: film.serverDelay || '',
     });
     lastRemux = remuxed;
     await waitForPrebuffer(remuxed);

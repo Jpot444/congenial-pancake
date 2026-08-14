@@ -689,8 +689,8 @@ keeps its controls up.
 - **Back** (top left) returns to Movies or Series, matching what was playing.
 - **Skip ±10s**, play/pause, **subtitles**, mute and fullscreen on the bottom bar.
 - Keyboard: space or `k` to pause, `←`/`→` for ±10s, `f` for fullscreen.
-- Favorite, download and close stay reachable in the top right, alongside a
-  **reload** button that throws the current connection away and rebuilds it
+- Favorite, download, subtitles and close stay reachable in the top right,
+  alongside a **reload** button that throws the current connection away and rebuilds it
   from the same spot — a new remux session for a converted film, a re-resolve
   for live, a re-attach for a file on disk. It is there for playback that has
   gone wrong in a way pausing will not clear.
@@ -700,9 +700,25 @@ Live TV keeps the old windowed player; the cinema layout is only for VOD.
 ### Subtitles
 
 A **CC button in the bottom bar**, next to mute, listing every track the player
-has plus Off. It only appears when there is something behind it — a button that
-opens onto an empty list is worse than no button. The choice is remembered on
-the profile, so a film opens with the same subtitles as the last one.
+has plus Off. The choice is remembered on the profile, so a film opens with the
+same subtitles as the last one.
+
+**It is always there while a player is.** Hiding it on a title with no captions
+was the first try and it was wrong twice over: a film with none looks identical
+to a build that never shipped the feature, and a control that comes and goes by
+title is one you stop looking for. The menu carries the answer instead, and says
+which of the three reasons applies — the film has none, the file has none, or
+the broadcaster is not sending any.
+
+**Live TV gets one too**, in the top bar, because a channel has no bottom bar to
+put it in. The button moves between the two rather than being duplicated, and
+its menu flips which way it opens so it never lands off the top of the screen.
+
+**Cues sit clear of the controls.** A browser puts subtitles at the very bottom
+of the video, which is exactly where the scrubber and these buttons are. `::cue`
+can colour text but cannot place it, so the position is set on the cue itself —
+and only on cues that never asked for one, since a source that positioned its
+own meant it.
 
 The tracks come from two unrelated places, and the menu deliberately does not
 say which is which, because a viewer has no reason to care:
@@ -1156,38 +1172,26 @@ It never goes round twice. The second pass is marked aligned whatever it
 measures, so a source this cannot fix wastes one restart rather than looping,
 and a probe that fails leaves the first session playing untouched.
 
-### Audio sync, by hand
+### The manual audio offset is gone
 
-The player carries a manual audio offset — a slider behind the speaker icon
-beside the reload button, −600ms to +800ms in 10ms steps. The choice sticks for
-the title being watched and is reapplied to every seek within it.
+The player used to carry one — a slider behind a speaker icon beside the reload
+button, −600ms to +800ms, half of it a live Web Audio delay and half a rebuild
+with the head of the audio trimmed. It was removed on request.
 
-It exists because not every desync is the conversion's fault. Some of this
-library was mastered with the two tracks adrift, and nothing done to a copy of
-it will put that right — the same reason desktop players have carried this
-control for decades.
+Two things it leaves behind, both deliberate:
 
-**Pushing the sound later is live.** The element's audio goes through a Web
-Audio delay on its way to the speakers, so the value moves while you drag and
-nothing is rebuilt. That is the direction this fault actually takes, and it is
-the whole point of the control: nudging while you watch until the voices land
-on the lips.
+- **`audioFilter` stays, and is still tested in full.** `realign` uses the same
+  chain to pad the head of the audio when a seek lands the two streams apart.
+  That is automatic, it is what keeps lips and voices together across a jump,
+  and it has nothing to do with the control that is gone.
+- **`/api/remux?adelay=` still works.** Nothing sends it now, but the endpoint
+  has no reason to shrink and the automatic correction goes through the same
+  code.
 
-**Pulling it earlier cannot be done in a browser.** A media element has one
-clock, and the only lever on it is holding the audio back — there is no way to
-hold the picture back to match. So the negative half goes to the conversion,
-which trims the head off the audio track, and still costs a rebuild. The panel
-says which half you are in, and only rebuilds when you let go.
-
-The first version of this restarted the conversion for every change, including
-the live half. Finding a value meant waiting through a rebuild per guess, which
-is useless for the one job it has.
-
-The audio graph is built on first use and specifically from a click.
-`createMediaElementSource` takes the audio away from the element's own output
-and hands it to a context that starts suspended without a gesture — doing it
-eagerly would be silence rather than a delay. It also cannot be undone, so it
-is not done until someone asks for an offset.
+What it does *not* leave behind is the Web Audio graph.
+`createMediaElementSource` takes audio away from the element's own output and
+cannot be undone for the life of the page, so a control nobody is using is not
+a harmless thing to leave wired up.
 
 ### `async` is a mode, not a rate — and the 1000 was wrong
 
