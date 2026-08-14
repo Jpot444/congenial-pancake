@@ -737,8 +737,7 @@ sub onDetailPlay()
         subtitle: JoinParts([item.genre, item.rating], "  ·  "),
         isLive: false,
         attempt: 0,
-        forceRemux: false,
-        forceTranscode: false
+        forceRemux: false
     })
 end sub
 
@@ -772,8 +771,7 @@ sub onEpisodePlay()
         subtitle: AsText(episode.label),
         isLive: false,
         attempt: 0,
-        forceRemux: false,
-        forceTranscode: false
+        forceRemux: false
     })
 end sub
 
@@ -795,8 +793,7 @@ sub playLive(item as Object)
         subtitle: "Live",
         isLive: true,
         attempt: 0,
-        forceRemux: false,
-        forceTranscode: false
+        forceRemux: false
     })
     ' What's on now is a nicety; it lands in the banner if it arrives.
     fetchNowPlaying(item.itemId)
@@ -808,14 +805,10 @@ sub startPlayback(spec as Object)
     ' Live is HLS already — the Pi's preferredFormat is m3u8, so /api/play
     ' hands back a .m3u8 the Video node opens natively. Only VOD in a container
     ' Roku won't take has to be converted first.
-    if spec.forceRemux or spec.forceTranscode or (spec.kind <> "live" and not IsNativeContainer(spec.ext)) then
-        ' Re-encoding is slow enough that calling it "converting" would look
-        ' like a hang. Say which one is happening.
-        if spec.forceTranscode then
-            showLoading("Re-encoding for this TV — this takes a while…", spec.kind <> "live")
-        else if spec.kind = "live" then
-            ' No progress bar for live: there is no buffer being banked to
-            ' report, only the wait for ffmpeg's first couple of segments.
+    if spec.forceRemux or (spec.kind <> "live" and not IsNativeContainer(spec.ext)) then
+        ' No progress bar for live: there is no buffer being banked to report,
+        ' only the wait for ffmpeg's first couple of segments.
+        if spec.kind = "live" then
             showLoading("Converting this channel…", false)
         else
             showLoading("Converting for playback…", true)
@@ -825,16 +818,10 @@ sub startPlayback(spec as Object)
         if spec.kind = "live" then
             ' No codec hints to offer — the section listing does not carry
             ' them for live — so the server probes and picks the packaging.
-            params = { kind: "live", id: spec.id }
-            if spec.forceTranscode then params.transcode = "1"
-            m.remuxTask.params = params
-            ' A copied live stream is ready as fast as the provider sends it,
-            ' so there is nothing to wait for. An encoded one is produced at
-            ' about the speed it plays, and starting at the live edge with no
-            ' cushion underruns immediately.
-            m.remuxTask.skipPrebuffer = not spec.forceTranscode
+            m.remuxTask.params = { kind: "live", id: spec.id }
+            m.remuxTask.skipPrebuffer = true
         else
-            params = {
+            m.remuxTask.params = {
                 kind: spec.kind,
                 id: spec.id,
                 ext: spec.ext,
@@ -842,8 +829,6 @@ sub startPlayback(spec as Object)
                 acodec: spec.acodec,
                 achannels: spec.achannels
             }
-            if spec.forceTranscode then params.transcode = "1"
-            m.remuxTask.params = params
         end if
         m.remuxTask.observeField("progress", "onRemuxProgress")
         m.remuxTask.observeField("result", "onRemuxResult")
@@ -957,7 +942,6 @@ sub onPlaybackError()
 
     gap = Chr(10) + Chr(10)
     detail = message + gap
-    detail = detail + "Tried playing it directly, repackaged, and re-encoded on the Pi." + gap
     detail = detail + "Marked as unplayable on this Roku. It stays marked until it plays."
     showDialog("Playback stopped", detail)
     focusGrid()
@@ -966,14 +950,9 @@ end sub
 ' Roku's decoders and its HLS parser are both stricter than a browser's, so a
 ' stream the web player opens can still fail here. Rather than stopping at the
 ' first refusal, fall back once to the other way of getting the same title.
-' Three rungs, cheapest first: play the provider's stream as it comes, then
-' repackage it, then re-encode it. Each one costs more than the last, and the
-' last one costs the Pi real work, so nothing skips ahead — a title only
-' reaches the encoder once the two free answers have both been wrong.
 function retryPlayback(message as String) as Boolean
     spec = m.pendingPlay
-    if spec = invalid then return false
-    if spec.attempt >= 2 then return false
+    if spec = invalid or spec.attempt >= 1 then return false
 
     retry = {}
     for each field in spec
@@ -981,26 +960,15 @@ function retryPlayback(message as String) as Boolean
     end for
     retry.attempt = spec.attempt + 1
 
-    ' Rung two. Both kinds fall back the same way here. Retrying live as plain
-    ' TS was tried and changed nothing, which is the clue: HEVC inside MPEG-TS
-    ' is something Roku will not demux in either wrapper, and it reports that
-    ' as corrupt data rather than as an unsupported codec. Repackaging into
+    ' Both kinds fall back the same way now. Retrying live as plain TS was
+    ' tried and changed nothing, which is the clue: HEVC inside MPEG-TS is
+    ' something Roku will not demux in either wrapper, and it reports that as
+    ' corrupt data rather than as an unsupported codec. Repackaging into
     ' fragmented MP4 is what fixes it, and costs no re-encoding.
-    if not spec.forceRemux then
-        retry.forceRemux = true
-        print "[play] direct play failed, retrying through /api/remux — " + message
-        startPlayback(retry)
-        return true
-    end if
+    if spec.forceRemux then return false
+    retry.forceRemux = true
+    print "[play] direct play failed, retrying through /api/remux — " + message
 
-    ' Rung three. Repackaging moved the same video into a different container
-    ' and the television still refused it, so the container was never the
-    ' problem — the codec is. MPEG-2, Xvid, VC-1 and 10-bit H.264 all reach
-    ' here: perfectly good files that this box has no decoder for. Only a real
-    ' re-encode helps, and only the server can do it.
-    if spec.forceTranscode then return false
-    retry.forceTranscode = true
-    print "[play] remuxed stream refused too, retrying re-encoded — " + message
     startPlayback(retry)
     return true
 end function

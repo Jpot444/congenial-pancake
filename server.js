@@ -1392,14 +1392,12 @@ function probeSource(input) {
       [
         '-v', 'error',
         '-user_agent', UA,
+        '-select_streams', 'v:0',
         '-analyzeduration', '1000000',
         '-probesize', '600000',
-        // pix_fmt earns its place: 10-bit H.264 reports codec_name=h264 like
-        // any other, and a Roku cannot decode it. Without the pixel format
-        // there is no way to tell the two apart before playback fails.
-        '-show_entries', 'stream=codec_type,codec_name,profile,pix_fmt,channels',
+        '-show_entries', 'stream=codec_name',
         '-show_entries', 'format=duration',
-        '-of', 'json',
+        '-of', 'default=noprint_wrappers=1',
         input,
       ],
       { stdio: ['ignore', 'pipe', 'ignore'] }
@@ -1412,34 +1410,15 @@ function probeSource(input) {
 
     const finish = () => {
       clearTimeout(timer);
-      let parsed = {};
-      try {
-        parsed = JSON.parse(out || '{}');
-      } catch {
-        // A killed or truncated probe leaves half a JSON document. Treat it as
-        // "nothing known" rather than throwing — every caller already copes
-        // with an empty codec, and an exception here would take out playback.
-        parsed = {};
+      let codec = '';
+      let duration = 0;
+      for (const line of out.split('\n')) {
+        const name = /^codec_name=(.+)$/.exec(line.trim());
+        if (name) codec = name[1].toLowerCase();
+        const dur = /^duration=([\d.]+)$/.exec(line.trim());
+        if (dur) duration = Math.floor(Number(dur[1]) || 0);
       }
-      const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
-      const v = streams.find((s) => s.codec_type === 'video') || {};
-      const a = streams.find((s) => s.codec_type === 'audio') || {};
-      const duration = Math.floor(Number(parsed.format?.duration) || 0);
-
-      resolve({
-        // codec/duration keep the original shape; callers predate the rest.
-        codec: String(v.codec_name || '').toLowerCase(),
-        duration,
-        video: {
-          codec: String(v.codec_name || '').toLowerCase(),
-          profile: String(v.profile || '').toLowerCase(),
-          pixFmt: String(v.pix_fmt || '').toLowerCase(),
-        },
-        audio: {
-          codec: String(a.codec_name || '').toLowerCase(),
-          channels: Number(a.channels || 0),
-        },
-      });
+      resolve({ codec, duration });
     };
 
     proc.on('close', finish);
@@ -1447,176 +1426,7 @@ function probeSource(input) {
   });
 }
 
-/* ---------------------------------------------------------- transcoding ---
- *
- * Everything above this point converts by *remuxing*: the container changes and
- * the video is copied through bit-for-bit. That was written against Safari,
- * where the container was the only thing wrong — the codecs inside were
- * already fine.
- *
- * A Roku is a far narrower decoder than Safari. It will not play MPEG-2, and
- * it will not play MPEG-4 Part 2 (Xvid/DivX), VC-1, or 10-bit H.264 at all.
- * Copying those into HLS produces a stream the Pi is perfectly happy with and
- * the television cannot show — which is exactly the "can't play" the channel
- * reports. For that material the video has to be genuinely re-encoded.
- *
- * Re-encoding is not in the same cost bracket as remuxing. A remux runs at
- * roughly 80x realtime here; a software H.264 encode on a Pi is closer to
- * 1x, and slower than that above 1080p. It is a fallback, never the default.
- */
-
-/** Video codecs a Roku decodes natively. Everything else has to be encoded. */
-const ROKU_VIDEO_CODECS = new Set(['h264', 'avc1', 'hevc', 'h265', 'vp9', 'av1']);
-
-/**
- * Roku's H.264 decoder is 8-bit only. Hi10P files report codec_name=h264 and
- * play everywhere else, which makes them the most confusing failure of the
- * lot: nothing about the file looks wrong until the screen stays black.
- */
-function isTenBit(pixFmt) {
-  return /10le|10be|p010|10bit/.test(pixFmt || '');
-}
-
-/**
- * Does this source need its video re-encoded for the given client, or is the
- * container the only thing in the way?
- *
- * allowHevc is a setting rather than a constant because it is model-dependent:
- * Roku TVs and the 4K sticks decode HEVC, the older HD sticks do not, and
- * getting it wrong in either direction is expensive — a needless HEVC->H.264
- * encode will crawl on a Pi, and a missing one is a black screen.
- */
-function videoNeedsTranscode(video, { allowHevc = true } = {}) {
-  const codec = String(video?.codec || '').toLowerCase();
-
-  // Nothing known. Copy and let playback be the test — probing costs a
-  // provider connection, and guessing "transcode" here would put every
-  // unprobed title through the encoder.
-  if (!codec) return false;
-
-  if (!ROKU_VIDEO_CODECS.has(codec)) return true;
-  if (!allowHevc && /hevc|h265/.test(codec)) return true;
-  if (/h264|avc1/.test(codec) && isTenBit(video.pixFmt)) return true;
-
-  return false;
-}
-
-/**
- * Pick the best H.264 encoder ffmpeg on this machine actually has.
- *
- * A Pi 4 carries a hardware encoder (h264_v4l2m2m) that will hold realtime at
- * 1080p. A Pi 5 dropped the encoder block entirely, so there is nothing but
- * libx264 and the ceiling is much lower. Detected rather than assumed, because
- * the answer decides whether transcoding is usable at all.
- */
-let encoderChoice = null;
-
-/**
- * Listing an encoder is not the same as being able to run it. ffmpeg reports
- * h264_v4l2m2m on any Linux build, hardware or not — a Pi 5, which has no
- * encoder block at all, advertises it and then fails at the first frame. So
- * each candidate is made to encode one real frame before it is trusted.
- *
- * Two seconds once at startup, against picking an encoder that cannot open and
- * failing every playback attempt from then on.
- */
-function encoderWorks(name) {
-  const probe = spawnSync(
-    'ffmpeg',
-    [
-      '-v', 'error', '-hide_banner',
-      '-f', 'lavfi', '-i', 'color=black:size=320x240:rate=25:duration=0.1',
-      ...videoEncodeArgs(name),
-      '-frames:v', '1',
-      '-f', 'null', '-',
-    ],
-    { encoding: 'utf8', timeout: 20000 }
-  );
-  return !probe.error && probe.status === 0;
-}
-
-function pickVideoEncoder() {
-  if (encoderChoice !== null) return encoderChoice;
-
-  let available = '';
-  const probe = spawnSync('ffmpeg', ['-v', 'error', '-hide_banner', '-encoders'], {
-    encoding: 'utf8',
-  });
-  if (!probe.error && probe.status === 0) available = probe.stdout || '';
-
-  // Hardware first, libx264 last: on a Pi the CPU encoder is the one that
-  // cannot hold realtime, so it is the fallback rather than the choice.
-  for (const name of ['h264_v4l2m2m', 'h264_omx', 'h264_videotoolbox', 'libx264']) {
-    if (!available.includes(name)) continue;
-    if (!encoderWorks(name)) {
-      console.log(`[transcode] ${name} is listed but will not run; trying the next one`);
-      continue;
-    }
-    encoderChoice = name;
-    console.log(`[transcode] using ${name}`);
-    return encoderChoice;
-  }
-
-  encoderChoice = '';
-  return encoderChoice;
-}
-
-/** True when this build of ffmpeg can encode H.264 at all. */
-function canTranscode() {
-  return hasFfmpeg() && pickVideoEncoder() !== '';
-}
-
-/**
- * Encoder settings, per encoder. The hardware paths take a bitrate because
- * they have no CRF equivalent; libx264 gets a speed preset because on a Pi the
- * difference between veryfast and medium is the difference between keeping up
- * and not.
- */
-function videoEncodeArgs(encoder) {
-  const args = ['-c:v', encoder];
-
-  if (encoder === 'libx264') {
-    args.push('-preset', 'veryfast', '-crf', '23');
-  } else {
-    args.push('-b:v', '4M', '-maxrate', '5M', '-bufsize', '8M');
-  }
-
-  // -profile:v high / -level 4.2 are libx264's spellings. h264_v4l2m2m parses
-  // profile against its own constant table and refuses "high" outright —
-  // "Unable to parse option value" and no encoder at all. The hardware
-  // encoders' defaults are already inside what a Roku decodes, so the safe
-  // thing is to say nothing to them.
-  if (encoder === 'libx264' || encoder === 'h264_videotoolbox') {
-    // Roku is comfortable with High@4.2. Staying inside it avoids trading one
-    // unplayable codec for one unplayable profile.
-    args.push('-profile:v', 'high', '-level', '4.2');
-  }
-
-  args.push(
-    '-pix_fmt', 'yuv420p',
-    // Segment boundaries need a keyframe to land on. Without a fixed GOP the
-    // encoder picks its own and hls_time becomes a suggestion.
-    '-g', '60',
-    '-keyint_min', '60',
-    '-sc_threshold', '0',
-    // 4K into a software encoder on a Pi is not a real option, and a Roku is
-    // showing this on a 1080p pipeline more often than not. Downscale only
-    // when the source is larger — never upscale.
-    '-vf', "scale='min(1920,iw)':-2"
-  );
-
-  return args;
-}
-
-function ffmpegArgs(
-  input,
-  outDir,
-  videoCodec,
-  startSeconds = 0,
-  audio = {},
-  live = false,
-  transcodeVideo = false
-) {
+function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audio = {}, live = false) {
   const args = [];
   if (/^https?:/i.test(input)) {
     // This provider paces VOD at barely above realtime and drops the socket
@@ -1635,9 +1445,7 @@ function ffmpegArgs(
     );
   }
 
-  // A transcode always lands on 8-bit H.264, so the HEVC packaging rules below
-  // stop applying the moment we stop copying.
-  const isHevc = !transcodeVideo && /hevc|h265/.test(videoCodec || '');
+  const isHevc = /hevc|h265/.test(videoCodec || '');
 
   // -ss ahead of -i is the fast seek: ffmpeg jumps in with Range requests
   // rather than decoding from the top. With -c copy it lands on the nearest
@@ -1649,14 +1457,9 @@ function ffmpegArgs(
     // Rebase timestamps so a seeked session still starts its playlist at zero.
     '-avoid_negative_ts', 'make_zero',
     '-map', '0:v:0',
-    '-map', '0:a:0?'
+    '-map', '0:a:0?',
+    '-c:v', 'copy'
   );
-
-  if (transcodeVideo) {
-    args.push(...videoEncodeArgs(pickVideoEncoder()));
-  } else {
-    args.push('-c:v', 'copy');
-  }
 
   // Most of the English catalogue is already stereo AAC — exactly what every
   // browser wants. Copying it skips a decode+encode+resample per stream, which
@@ -1718,18 +1521,7 @@ function ffmpegArgs(
  * provider-backed session runs at a time — the account allows a single
  * connection, so a second would just fail.
  */
-async function startRemux(
-  input,
-  {
-    fromProvider,
-    videoCodec,
-    startSeconds = 0,
-    audio = {},
-    live = false,
-    transcodeVideo = false,
-    allowHevc = true,
-  }
-) {
+async function startRemux(input, { fromProvider, videoCodec, startSeconds = 0, audio = {}, live = false }) {
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed on this machine');
 
   // One viewer, one session: whatever was running is now abandoned, and an
@@ -1747,25 +1539,8 @@ async function startRemux(
   // spawning. The provider usually tells us; fall back to probing. The same
   // probe hands back the source duration, which the scrubber uses when the
   // provider's own metadata is unavailable.
-  const probed = videoCodec
-    ? { codec: videoCodec, duration: 0, video: { codec: videoCodec, pixFmt: '' }, audio: {} }
-    : await probeSource(input);
+  const probed = videoCodec ? { codec: videoCodec, duration: 0 } : await probeSource(input);
   const codec = probed.codec;
-
-  // Copy unless the codec itself is the problem. A caller that already knows
-  // the answer — the retry after a television has refused the copied stream —
-  // says so outright and skips the guessing.
-  const transcode = transcodeVideo || videoNeedsTranscode(probed.video, { allowHevc });
-  if (transcode && !canTranscode()) {
-    throw new Error(
-      'This needs its video re-encoded, and no H.264 encoder is available: ' +
-        'ffmpeg here was built without libx264 and the machine has no hardware encoder.'
-    );
-  }
-
-  // A probe knows the audio better than the catalogue listing does, so prefer
-  // it — but only where the caller left the field empty.
-  const audioInfo = audio && audio.codec ? audio : probed.audio || {};
 
   fs.mkdirSync(HLS_DIR, { recursive: true });
   const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1774,10 +1549,7 @@ async function startRemux(
 
   const proc = spawn(
     'ffmpeg',
-    [
-      '-v', 'error', '-y',
-      ...ffmpegArgs(input, dir, codec, startSeconds, audioInfo, live, transcode),
-    ],
+    ['-v', 'error', '-y', ...ffmpegArgs(input, dir, codec, startSeconds, audio, live)],
     { stdio: ['ignore', 'ignore', 'pipe'] }
   );
 
@@ -1796,28 +1568,15 @@ async function startRemux(
     // scrubber reads in real running time rather than session time.
     offset: startSeconds,
     sourceDuration: probed.duration || 0,
-    // Reported to the client so it can say "re-encoding" rather than
-    // "converting", and so a stall has a visible explanation.
-    transcode,
-    encoder: transcode ? pickVideoEncoder() : '',
     // A seek should feel responsive, so bank less than on a cold open — but
     // not 8s: at this provider's pacing that drains before the first drop.
     // A channel has no backlog to bank: whatever ffmpeg has written is the
     // live edge, and waiting for 45s of it would only sit 45s behind.
-    // A copy banks its cushion many times faster than it plays, so a large
-    // one costs little. An encode produces at roughly the speed it plays, so
-    // every banked second is a second of waiting — and if the encoder is
-    // slower than realtime no cushion is ever big enough. Bank a modest fixed
-    // amount there and let the wait stay short.
     prebuffer: live
-      ? transcode
-        ? 8
-        : 0
-      : transcode
-        ? 20
-        : startSeconds > 0
-          ? 45
-          : readPrefs().prebufferSeconds || DEFAULT_PREBUFFER,
+      ? 0
+      : startSeconds > 0
+        ? 45
+        : readPrefs().prebufferSeconds || DEFAULT_PREBUFFER,
     stderr: () => stderr,
   };
   remuxSessions.set(id, session);
@@ -1834,12 +1593,7 @@ async function startRemux(
   // reconnect flags mean a provider that is stalling shows up as silence
   // rather than an error. One segment and a longer budget, for live only.
   const needed = live ? 1 : 2;
-  // A copy outruns the provider; an encode does not. Two six-second segments
-  // that took a moment to appear now take at least twelve seconds of encoding
-  // to exist at all, and more than that on a machine without a hardware
-  // encoder. Giving the old budget to a transcode would time out every one.
-  const startupBudget = live ? 60000 : 30000;
-  const deadline = Date.now() + (transcode ? startupBudget + 90000 : startupBudget);
+  const deadline = Date.now() + (live ? 60000 : 30000);
 
   while (Date.now() < deadline) {
     if (fs.existsSync(playlist)) {
@@ -2767,17 +2521,7 @@ async function handleApi(req, res, pathname, query) {
 
   /* ---- Downloads ---- */
   if (pathname === '/api/health') {
-    return json(res, 200, {
-      ...(await readHealth()),
-      // Which encoder is available decides whether re-encoding is usable at
-      // all on this machine. A Pi 4 has h264_v4l2m2m in hardware and holds
-      // realtime at 1080p; a Pi 5 has no encoder block, so this reads
-      // libx264 and everything runs on the CPU. Worth being able to see
-      // without opening a terminal on the Pi.
-      ffmpeg: hasFfmpeg(),
-      videoEncoder: pickVideoEncoder(),
-      canTranscode: canTranscode(),
-    });
+    return json(res, 200, await readHealth());
   }
 
   /* One yes/no for "is anyone actually using this right now". The auto-updater
@@ -3134,43 +2878,19 @@ async function handleApi(req, res, pathname, query) {
     //
     // The codec decides one thing here — TS versus fragmented MP4 packaging —
     // so assume h264 for live and let a caller that knows better say so.
-    //
-    // That assumption is also why a caller can force a re-encode. Probing live
-    // to find out whether the codec is decodable would cost the provider
-    // connection this endpoint is about to need, and the note above measures
-    // what that does to startup. So live still assumes, still copies, and a
-    // client whose television then refuses the stream comes back with
-    // transcode=1 — one wasted attempt instead of a probe on every channel.
     let videoCodec = (query.get('vcodec') || '').toLowerCase();
     if (isLive && !videoCodec) videoCodec = 'h264';
-
-    const forceTranscode = query.get('transcode') === '1';
-    if (forceTranscode && !canTranscode()) {
-      return json(res, 501, {
-        error:
-          'No H.264 encoder is available on the server, so this cannot be re-encoded. ' +
-          'Install ffmpeg with libx264 support.',
-      });
-    }
 
     try {
       const session = await startRemux(input, {
         fromProvider,
-        // A forced re-encode ignores the source codec entirely: the output is
-        // H.264 whatever went in, so say so. Passing the source codec through
-        // would pick fMP4 packaging for a stream that is no longer HEVC, and
-        // passing nothing would send startRemux off to probe — spending the
-        // provider connection ffmpeg is about to need, for an answer that
-        // cannot change what we do.
-        videoCodec: forceTranscode ? 'h264' : videoCodec,
+        videoCodec,
         startSeconds: Math.max(0, Number(query.get('start') || 0)),
         audio: {
           codec: (query.get('acodec') || '').toLowerCase(),
           channels: Number(query.get('achannels') || 0),
         },
         live: isLive,
-        transcodeVideo: forceTranscode,
-        allowHevc: query.get('hevc') !== '0',
       });
       return json(res, 200, {
         url: `/hls/${session.id}/index.m3u8`,
@@ -3179,8 +2899,6 @@ async function handleApi(req, res, pathname, query) {
         prebuffer: session.prebuffer,
         offset: session.offset,
         sourceDuration: session.sourceDuration,
-        transcode: session.transcode,
-        encoder: session.encoder,
       });
     } catch (err) {
       return json(res, 502, { error: err.message });
@@ -3196,8 +2914,6 @@ async function handleApi(req, res, pathname, query) {
       seconds,
       complete,
       target: session.prebuffer,
-      transcode: session.transcode,
-      encoder: session.encoder,
       failed: Boolean(session.exited && session.exitCode !== 0 && !complete),
       error: session.exited && session.exitCode !== 0 ? session.stderr().split('\n').pop() : '',
     });
