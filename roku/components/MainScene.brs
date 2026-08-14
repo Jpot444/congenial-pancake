@@ -821,13 +821,27 @@ sub startPlayback(spec as Object)
             m.remuxTask.params = { kind: "live", id: spec.id }
             m.remuxTask.skipPrebuffer = true
         else
+            ' vcodec is worth sending: it picks TS versus fMP4 packaging and
+            ' saves the server an ffprobe over the provider link.
+            '
+            ' acodec and achannels are not, and sending them was why series
+            ' played with a picture and no sound. A series .mkv here carries
+            ' ten audio tracks — several E-AC3 5.1, a couple of stereo HE-AAC.
+            ' ffmpeg maps 0:a:0, the first of them, which is E-AC3 5.1. The
+            ' provider's info.audio describes one of the stereo AAC tracks
+            ' instead, so the hint says "aac, 2 channels" about a stream that
+            ' is not the one being used. The server reads that as "already
+            ' fine, copy it" and copies the E-AC3 5.1 through untouched, which
+            ' this box will not render.
+            '
+            ' No hint means the server re-encodes whatever it actually mapped
+            ' down to stereo AAC — which is what live has always done, and why
+            ' live has never had this problem.
             m.remuxTask.params = {
                 kind: spec.kind,
                 id: spec.id,
                 ext: spec.ext,
-                vcodec: spec.vcodec,
-                acodec: spec.acodec,
-                achannels: spec.achannels
+                vcodec: spec.vcodec
             }
         end if
         m.remuxTask.observeField("progress", "onRemuxProgress")
