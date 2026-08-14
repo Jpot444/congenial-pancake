@@ -834,22 +834,13 @@ sub startPlayback(spec as Object)
             ' cushion underruns immediately.
             m.remuxTask.skipPrebuffer = not spec.forceTranscode
         else
-            ' vcodec is worth sending: it picks TS versus fMP4 packaging and
-            ' saves the server an ffprobe over the provider link.
-            '
-            ' acodec and achannels are deliberately not. The provider reports
-            ' HE-AAC as plain "aac" — ffprobe does too, only the profile tells
-            ' them apart — and the server reads acodec=aac with two channels
-            ' as "already fine, copy it". Roku's HE-AAC support is
-            ' model-dependent, so that copy is what a series playing with no
-            ' sound looks like. Sending nothing asks for the same normalised
-            ' stereo AAC-LC that live has always been given, and the audio
-            ' re-encode is cheap next to the video work already happening.
             params = {
                 kind: spec.kind,
                 id: spec.id,
                 ext: spec.ext,
-                vcodec: spec.vcodec
+                vcodec: spec.vcodec,
+                acodec: spec.acodec,
+                achannels: spec.achannels
             }
             if spec.forceTranscode then params.transcode = "1"
             m.remuxTask.params = params
