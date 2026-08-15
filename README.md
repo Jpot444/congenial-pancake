@@ -2075,6 +2075,20 @@ else is on the disk).
 set in `ecosystem.config.js` so it survives pm2 restarts. Setup and
 re-scanning: **[docs/archive-drive.md](docs/archive-drive.md)**.
 
+**Every card wears a frame of the file itself** — cut by ffmpeg a quarter of
+the way into the runtime, the first time that card scrolls into view, and
+cached forever on the SD card (the drive is mounted read-only, so the cache
+cannot live there). At most two frames are cut at once however fast the grid
+scrolls, simultaneous requests for the same frame share one ffmpeg, and a
+frame that cannot be cut — drive unplugged, no ffmpeg — leaves the
+typographic card that was always there rather than a broken image glyph. The
+same frame is the poster on the home screen's Continue watching card.
+
+**Continue watching knows the drive.** An archive play records history under
+`archive:<path>`, and resuming from home rebuilds the archive item from that
+id — it used to be looked up in the provider's film library, which answered
+"no longer in the library" about a file sitting on the drive.
+
 Pi health carries an **Archive drive** row: free and used space with a bar
 when mounted, a plain "Not plugged in" when it isn't, and no row at all on a
 box that has never had an index. Read live on the panel's four-second poll,

@@ -2549,6 +2549,55 @@ async function ensureLiveDvr(cfg, channelId) {
   throw new Error('Live ingest timed out starting');
 }
 
+/* ---- archive thumbnails ---- */
+
+const THUMB_DIR = path.join(ROOT, 'thumbs');
+const thumbInFlight = new Map(); // rel -> promise
+let thumbRunning = 0;
+const thumbWaiting = [];
+
+function makeArchiveThumb(rel, abs, item, outFile) {
+  if (thumbInFlight.has(rel)) return thumbInFlight.get(rel);
+  const job = new Promise((resolve, reject) => {
+    const run = () => {
+      thumbRunning += 1;
+      // A quarter of the way in: past any titles, deterministic, and clamped
+      // so a short file still lands inside itself.
+      const at = Math.max(1, Math.min((item.duration || 240) * 0.25, (item.duration || 240) - 5));
+      const tmp = `${outFile}.part.jpg`;
+      const proc = spawn('ffmpeg', [
+        '-v', 'error', '-y',
+        '-ss', String(Math.floor(at)),
+        '-i', abs,
+        '-frames:v', '1',
+        '-vf', 'scale=480:-2',
+        '-q:v', '5',
+        tmp,
+      ], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let stderr = '';
+      proc.stderr.on('data', (d) => { stderr = (stderr + d).slice(-500); });
+      // A hung read off a failing drive must not wedge the queue.
+      const timer = setTimeout(() => proc.kill('SIGKILL'), 20000);
+      proc.on('exit', (code) => {
+        clearTimeout(timer);
+        thumbRunning -= 1;
+        if (thumbWaiting.length) thumbWaiting.shift()();
+        if (code === 0 && fs.existsSync(tmp)) {
+          fs.renameSync(tmp, outFile);
+          resolve();
+        } else {
+          fs.rmSync(tmp, { force: true });
+          reject(new Error(stderr.split('\n').filter(Boolean).pop() || `ffmpeg exit ${code}`));
+        }
+      });
+    };
+    if (thumbRunning < 2) run();
+    else thumbWaiting.push(run);
+  }).finally(() => thumbInFlight.delete(rel));
+  thumbInFlight.set(rel, job);
+  return job;
+}
+
 /* ------------------------------------------------------------- m3u parsing */
 
 /**
@@ -4025,6 +4074,43 @@ async function handleApi(req, res, pathname, query) {
 
   if (pathname === '/api/archive/recent') {
     return json(res, 200, { items: archive.recent(Number(query.get('limit') || 60)) });
+  }
+
+  /* A frame from a quarter of the way in, as the card's artwork.
+   *
+   * Made lazily on first request and cached forever on the SD card — the
+   * drive is mounted read-only, so the cache cannot live there. A scroll can
+   * ask for thirty at once, so at most two ffmpegs run and the rest wait
+   * their turn; a second request for a thumbnail already being made joins
+   * the in-flight one instead of spawning a twin. Deterministic (25% of the
+   * runtime, not random) so the cache is stable and a card never changes
+   * its face between visits. */
+  if (pathname === '/api/archive/thumb') {
+    const rel = query.get('path');
+    const item = archive.entry(rel);
+    if (!item) return json(res, 404, { error: 'Not in the archive index' });
+
+    fs.mkdirSync(THUMB_DIR, { recursive: true });
+    const file = path.join(THUMB_DIR,
+      `${crypto.createHash('sha1').update(rel).digest('hex')}.jpg`);
+    if (!fs.existsSync(file)) {
+      if (!archive.mounted()) return json(res, 503, { error: 'Drive not mounted' });
+      const abs = archive.resolve(rel);
+      if (!abs || !fs.existsSync(abs)) return json(res, 404, { error: 'Missing on disk' });
+      if (!hasFfmpeg()) return json(res, 501, { error: 'ffmpeg is not installed' });
+      try {
+        await makeArchiveThumb(rel, abs, item, file);
+      } catch (err) {
+        return json(res, 500, { error: redactUrl(err.message) });
+      }
+    }
+    const body = fs.readFileSync(file);
+    res.writeHead(200, {
+      'content-type': 'image/jpeg',
+      // The frame never changes — the file it came from is an archive.
+      'cache-control': 'public, max-age=604800, immutable',
+    });
+    return res.end(body);
   }
 
   /* Decide how one archive file gets on screen, and start it.

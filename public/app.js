@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '23.6';
+const VERSION = '23.7';
 
 const PAGE_SIZE = 60;
 
@@ -3769,6 +3769,22 @@ function openSeries(item) {
  * the way into the player rather than up front.
  */
 async function playFromHistory(row) {
+  /* An archive title never was in the provider library, so looking it up
+   * there ends in "no longer in the library" — the wrong words for a file
+   * sitting on the drive. Its id carries its own path (`archive:<path>`),
+   * which with the row's name, poster and resume key is everything the
+   * player needs; the server's index answers for the rest at play time. */
+  if (String(row.id || '').startsWith('archive:')) {
+    return openPlayer({
+      kind: 'movie',
+      id: row.id,
+      name: row.name || '',
+      archivePath: String(row.id).slice('archive:'.length),
+      localOnly: true,
+      resumeKey: row.key || String(row.id),
+      logo: row.poster || '',
+    });
+  }
   const tab = row.kind === 'series' ? 'series' : row.kind === 'live' ? 'live' : 'movies';
   try {
     if (!state.library[tab]) await loadTab(tab);
@@ -5210,6 +5226,12 @@ const ARCHIVE_MODE_LABEL = {
   transcode: 'Converts on play',
 };
 
+/** The card's face: a frame from a quarter of the way in, made on the Pi. */
+function archiveThumbUrl(relPath) {
+  return `/api/archive/thumb?path=${encodeURIComponent(relPath)}`
+    + `&profileId=${encodeURIComponent(profiles.current?.id || '')}`;
+}
+
 function archiveItemToPlayable(entry) {
   // Shape an index record into something openPlayer already understands.
   return {
@@ -5221,6 +5243,9 @@ function archiveItemToPlayable(entry) {
     localOnly: true,
     resumeKey: `archive:${entry.path}`,
     duration: entry.duration,
+    // The history row stores this as the poster, which is what puts a face on
+    // the home screen's Continue watching card for an archive title.
+    logo: archiveThumbUrl(entry.path),
     plot: [
       entry.date ? entry.date.replace(/-/g, '.') : '',
       entry.tags && entry.tags.length ? entry.tags.join(' · ') : '',
@@ -5241,6 +5266,7 @@ function archiveCard(entry) {
   const badge = ARCHIVE_MODE_LABEL[entry.playback] || '';
 
   card.innerHTML = `
+    <span class="archive-card-art"></span>
     <span class="archive-card-date">${entry.date ? entry.date.replace(/-/g, '.') : ''}</span>
     <span class="archive-card-title"></span>
     <span class="archive-card-meta">${[mins, entry.tags?.[entry.tags.length - 1] || '']
@@ -5251,6 +5277,15 @@ function archiveCard(entry) {
   // Titles come from filenames on a drive of unknown provenance — set as text
   // so a stray angle bracket in a filename can never become markup.
   card.querySelector('.archive-card-title').textContent = entry.title;
+  // A frame from the file itself, made lazily as the card scrolls into view.
+  // If the drive is unplugged or the frame cannot be cut, the image goes and
+  // the card is the typographic face it always was — never a broken glyph.
+  const face = el('img');
+  face.loading = 'lazy';
+  face.alt = '';
+  face.src = archiveThumbUrl(entry.path);
+  face.addEventListener('error', () => card.querySelector('.archive-card-art')?.remove());
+  card.querySelector('.archive-card-art').append(face);
 
   card.onclick = () => openPlayer(archiveItemToPlayable(entry));
   return card;
@@ -7820,7 +7855,9 @@ async function resolveStream(item, override) {
     });
 
     if (data.mode === 'direct') {
-      lastRemux = {};
+      // The index's runtime rides along so the film bar has a length even
+      // when the item was rebuilt from a history row that carries none.
+      lastRemux = { sourceDuration: data.sourceDuration || 0 };
       return { url: data.url, format: 'file', seekTo: startAt };
     }
 
