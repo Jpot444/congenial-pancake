@@ -2374,6 +2374,45 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   text-align: center;
 }
 
+/* ---- what the two download steps are for ---- */
+
+.dl-explain {
+  position: relative;
+  grid-column: 1 / -1;
+  margin-bottom: 6px;
+  padding: 14px 44px 14px 16px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-left: 3px solid var(--brand-red);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .03);
+}
+
+.dl-explain p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--muted); }
+.dl-explain strong { color: var(--text); font-weight: 600; }
+.dl-explain-why { margin-top: 8px !important; font-size: 12px !important; color: var(--muted-dim) !important; }
+
+/* Read once, then kept as the one line worth keeping. */
+.dl-explain.is-brief { padding: 10px 16px; }
+.dl-explain.is-brief .dl-explain-why,
+.dl-explain.is-brief .dl-explain-x { display: none; }
+
+.dl-explain-x {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .06);
+  color: var(--muted);
+  cursor: pointer;
+}
+.dl-explain-x:hover { color: #fff; background: rgba(255, 255, 255, .14); }
+.dl-explain-x svg { width: 14px; height: 14px; }
+
 /* ---- captions ---- */
 
 .cc-wrap { position: relative; flex-shrink: 0; display: flex; }
@@ -3453,6 +3492,29 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .epg-row.is-now .epg-title { color: var(--text); font-weight: 600; }
 
 /* ============================================================= toast === */
+/* An action makes it a row rather than a line, and gives it room to be one. */
+.toast.has-action {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-radius: 14px;
+  padding: 11px 12px 11px 20px;
+  max-width: min(560px, calc(100vw - 32px));
+}
+
+.toast-action {
+  flex: none;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--brand-red);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.toast-action:hover { filter: brightness(1.12); }
+
 .toast {
   position: fixed;
   bottom: 26px;

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '22';
+const VERSION = '22.1';
 
 const PAGE_SIZE = 60;
 
@@ -2751,8 +2751,10 @@ const TOUR_COPY = {
 function tourDownloadCopy() {
   const limit = profiles.data?.downloadLimit;
   const capped = Number.isFinite(limit) && limit > 0;
-  return 'Pull a film or an episode onto the box and it plays even when the '
-    + 'wifi shits the bed. '
+  return 'Pull a film or an episode onto the Pi and it plays instantly, with no '
+    + 'waiting and without touching the provider — so two of you can watch the '
+    + 'same thing at once. To have it when there is no wifi at all, press Save '
+    + 'to device on it afterwards: that is the copy that lives on your phone. '
     + (capped
       ? `You get ${(limit / 1073741824).toFixed(0)}GB, so do not download an entire `
         + 'season of something you will never watch. Delete things with the X on '
@@ -2838,12 +2840,31 @@ async function fetchWithProgress(url, onProgress) {
   return data;
 }
 
-function toast(message) {
+/**
+ * A line at the bottom of the screen, optionally with one thing to do about it.
+ *
+ * An action makes it stay up longer — long enough to reach, on a phone, having
+ * noticed it — but it still goes away on its own. A message that waits for a
+ * press is a dialog, and this is not one.
+ */
+function toast(message, { action = null } = {}) {
   const node = $('#toast');
   node.textContent = message;
+  node.classList.toggle('has-action', Boolean(action));
+  if (action) {
+    const button = el('button', 'toast-action');
+    button.type = 'button';
+    button.textContent = action.label;
+    button.addEventListener('click', () => {
+      node.hidden = true;
+      clearTimeout(toast._t);
+      action.run();
+    });
+    node.append(button);
+  }
   node.hidden = false;
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => (node.hidden = true), 2600);
+  toast._t = setTimeout(() => (node.hidden = true), action ? 9000 : 2600);
 }
 
 function clockFromTimestamp(ts) {
@@ -4422,11 +4443,13 @@ function formatBytes(n) {
 }
 
 async function refreshDownloads({ rerender = false } = {}) {
+  const was = new Map((state.downloads.items || []).map((j) => [j.id, j]));
   try {
     state.downloads = await api('/api/downloads');
   } catch {
     return;
   }
+  offerDeviceSave(was, state.downloads.items || []);
   const busy = state.downloads.items.filter(
     (j) => j.status === 'downloading' || j.status === 'queued'
   ).length;
@@ -4445,12 +4468,104 @@ async function refreshDownloads({ rerender = false } = {}) {
   if (rerender && changed && state.tab === 'downloads') renderDownloads();
 }
 
+/**
+ * Offer the device copy the moment there is one to offer.
+ *
+ * A download only becomes useful without wifi once it is off the Pi, and the
+ * button that does that was buried in a list somebody had to remember to go
+ * back to. This is the prompt at the moment it can be acted on — while whoever
+ * asked for it is still here.
+ *
+ * It waits for the MP4, not merely for the bytes. The provider sends .mkv and
+ * the Pi converts every finished download; offering the file while `preparing`
+ * is still true would hand out the one container a phone cannot open, which is
+ * the exact dead end this whole change is about.
+ */
+function offerDeviceSave(before, after) {
+  for (const job of after) {
+    if (job.status !== 'done' || job.preparing) continue;
+    const prev = before.get(job.id);
+    // Newly finished, or newly converted. Nothing on the first poll of a
+    // session, when everything already on the box would look new.
+    if (!prev || (prev.status === 'done' && !prev.preparing)) continue;
+    if (savedOffers.has(job.id)) continue;
+    savedOffers.add(job.id);
+
+    toast(`${job.name} is on the box. Save it to this device?`, {
+      action: {
+        label: 'Save to device',
+        run: () => saveToDevice(job),
+      },
+    });
+  }
+}
+
+/** Offered once per download per session; a nag is not an offer. */
+const savedOffers = new Set();
+
+/**
+ * Hand the file to the browser.
+ *
+ * A plain link with `download` rather than fetch-and-blob: a film is gigabytes,
+ * and pulling one into memory to make a blob out of it is how a phone runs out
+ * of it. The server sets `Content-Disposition`, so iOS puts it in Files and a
+ * Mac in Downloads.
+ */
+function saveToDevice(job) {
+  const a = document.createElement('a');
+  a.href = `/api/downloads/${job.id}/save`;
+  a.download = `${job.name}.${job.ext}`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+
 /** Poster for a download: stored at save time, else matched from the library. */
 function downloadPoster(job) {
   if (job.poster) return img(job.poster);
   const lib = state.library[job.kind === 'series' ? 'series' : 'movies'];
   const hit = (lib?.items || []).find((i) => String(i.id) === String(job.streamId));
   return hit ? hit.logo : '';
+}
+
+/**
+ * The two steps, said once at the top of the page.
+ *
+ * Dismissible and remembered, because it is an explanation rather than a
+ * warning — worth reading once and worth being able to put away.
+ */
+function downloadsExplainer() {
+  const box = el('div', 'dl-explain');
+  if (profiles.data?.dlExplainSeen) box.classList.add('is-brief');
+
+  const line = el('p', 'dl-explain-line');
+  line.innerHTML = '<strong>On the box</strong> plays instantly and costs no '
+    + 'provider connection, so two of you can watch the same thing at once — '
+    + 'but it still needs the Pi, so it is no use with the wifi down. '
+    + '<strong>Save to device</strong> is the copy that lives on your phone.';
+  box.append(line);
+
+  const why = el('p', 'dl-explain-why');
+  why.textContent = 'It goes to the Pi first because your phone never gets the '
+    + 'provider password, and because the provider sends .mkv, which no phone '
+    + 'will play. The Pi converts every finished download to MP4 — that is the '
+    + 'file Save to device hands you.';
+  box.append(why);
+
+  const dismiss = el('button', 'dl-explain-x');
+  dismiss.type = 'button';
+  dismiss.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  dismiss.title = 'Got it';
+  dismiss.setAttribute('aria-label', 'Got it');
+  dismiss.addEventListener('click', async () => {
+    box.classList.add('is-brief');
+    if (profiles.current && !profiles.data.dlExplainSeen) {
+      profiles.data.dlExplainSeen = true;
+      await profiles.save();
+    }
+  });
+  box.append(dismiss);
+  return box;
 }
 
 function renderDownloads() {
@@ -4475,12 +4590,27 @@ function renderDownloads() {
   if (!items.length) {
     empty.hidden = false;
     empty.textContent =
-      'Nothing downloaded yet. Open a movie or episode and press the download arrow.';
+      'Nothing saved yet. Open a movie or episode and press the download arrow.';
     $('#contentMeta').textContent = '';
     openSeriesFolder = null;
     return;
   }
   empty.hidden = true;
+
+  // What the two steps are for.
+  //
+  // This page used to call itself offline viewing, which was a lie: reaching
+  // the player means reaching the Pi, so a file on the Pi is exactly as
+  // unreachable as the stream when the wifi is out. What is on the Pi is a
+  // cache — no provider connection, no waiting, and several people at once —
+  // and the copy that is genuinely yours is the one Save to device makes.
+  //
+  // It cannot skip the Pi, and that is worth saying rather than leaving people
+  // to wonder: the Pi holds the provider password so your phone never has it,
+  // and the provider ships .mkv, which no phone will play. The Pi converts
+  // every finished download to MP4 and it is that file Save to device hands
+  // over.
+  grid.append(downloadsExplainer());
 
   // Drilled into one show? Render just its episodes, with a way back out.
   if (openSeriesFolder) {
@@ -7201,10 +7331,10 @@ function preparePlayer(item) {
   downloadBtn.hidden = !downloadable && item.kind !== 'series';
   downloadBtn.onclick = downloadable ? () => requestDownload(item) : null;
   if (item.kind === 'series') {
-    downloadBtn.title = 'Download the whole season';
+    downloadBtn.title = 'Save the whole season to the box';
     downloadBtn.onclick = () => requestSeasonDownload();
   } else {
-    downloadBtn.title = 'Download for offline';
+    downloadBtn.title = 'Save to the box';
   }
 
   // A previous title's remux must not leak its duration into this one — that

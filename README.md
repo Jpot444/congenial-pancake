@@ -138,16 +138,60 @@ storage, so they're identical on every device that hits the same server. That's
 the point once this lives on the Pi behind Tailscale. Favorites from the older
 localStorage-only build are migrated automatically on first load.
 
-## Downloads and offline viewing
+## Downloads: two steps, and only the second one is offline
+
+This was called "downloads and offline viewing" and that was a lie worth
+correcting rather than quietly fixing, because somebody believed it and was
+right to.
+
+**A download goes to the Pi, and the Pi is not offline.** Reaching the player
+means reaching the box, so when the wifi is out, a file sitting in `downloads/`
+is exactly as unreachable as the stream. The old tour copy went further — it
+promised a download "plays even when the wifi shits the bed" — which is simply
+false. That sentence is gone.
+
+What the box copy *is* is a **cache**, and a good one:
+
+- it costs **no provider connection**, so it does not compete with anything;
+- it starts immediately rather than waiting on the provider's ~0.58 MB/s pacing
+  and a 45-second prebuffer;
+- several people can watch the same title at once, which a one-connection
+  account otherwise forbids.
+
+**The offline copy is the second step: Save to device.** That is the one that
+lives on your phone and survives airplane mode. It is now offered the moment a
+download is ready, as an action on the toast, rather than waiting in a list
+nobody had a reason to go back to — and Downloads itself carries a short note
+saying which step is which, dismissible and remembered per profile.
+
+### Why it cannot go straight to the device
+
+Three reasons, and each on its own is enough:
+
+1. **Credentials.** Your phone never talks to the provider. The Pi holds the
+   username and password and proxies everything, so a direct download would mean
+   putting them on every device in the house.
+2. **The container.** The provider ships `.mkv`, which **no phone will play**. A
+   direct download would drop a dead file into the Files app. `prepareForBrowser`
+   converts every finished download to MP4 and sets `job.ext = 'mp4'`, and that
+   is the file `/save` hands over — which is also why the offer waits for
+   `preparing` to clear rather than firing when the bytes land.
+3. **The single connection.** A straight-through transfer holds it for the whole
+   download, with no pause and no resume. The box's version pauses itself the
+   moment somebody starts watching.
+
+So the two steps are not an accident of the design. The second step is the
+payload, and the first step is what makes the payload playable.
 
 Open a movie and press the download arrow in the player bar; for a series, each
 episode row has its own arrow. Files land in `downloads/` next to `server.js`.
 
 From the Downloads tab each finished item offers:
 
-- **Save to this device** — sends the file with `Content-Disposition:
-  attachment`. On an iPad this drops it into the Files app, where it's genuinely
-  offline and survives airplane mode.
+- **Save to device** — sends the file with `Content-Disposition: attachment`, as
+  a plain link with `download` rather than a fetch into a blob: a film is
+  gigabytes and a phone has not got them to spare. iOS puts it in Files, a Mac in
+  Downloads.
 - **Play** — streams it from local disk, using no provider connection at all.
 - **✕**, top right of the poster — deletes it and frees the space. On a series
   card at the top level that means the whole show, after a confirmation naming

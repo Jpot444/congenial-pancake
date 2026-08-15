@@ -3017,6 +3017,9 @@ async function handleApi(req, res, pathname, query) {
           // profile that has not finished the tour has not been told anything
           // yet and gets it there instead, pointed at the button itself.
           reportNoticeSeen: profile.reportNoticeSeen === true,
+          // Whether the two-step explanation at the top of Downloads has been
+          // read and put away.
+          dlExplainSeen: profile.dlExplainSeen === true,
           // Whose box this is. Sent rather than worked out from the name on
           // the client, so there is one answer to the question.
           owner: isOwnerProfile(profile),
@@ -3063,6 +3066,9 @@ async function handleApi(req, res, pathname, query) {
         }
         if (typeof incoming.reportNoticeSeen === 'boolean') {
           profile.reportNoticeSeen = incoming.reportNoticeSeen;
+        }
+        if (typeof incoming.dlExplainSeen === 'boolean') {
+          profile.dlExplainSeen = incoming.dlExplainSeen;
         }
         writeProfiles(data);
         return json(res, 200, { ok: true });
