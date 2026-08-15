@@ -600,9 +600,17 @@ svg {
   pointer-events: none;
 }
 
-/* Clear of the phone tab bar, which owns the bottom of the screen. */
+/* On a phone it is not pinned at all — it is the last line of the page.
+ *
+ * It used to be fixed above the tab bar, which worked while the bar floated
+ * over a page padded to end above it. In the frame the bar is a row of its own
+ * and that padding is gone, so a label still pinned to the viewport sat on top
+ * of the last row of posters. It is the last thing on the home view already,
+ * so letting it simply be that is both simpler and impossible to collide. */
 body.has-tabbar .home-version {
-  bottom: calc(72px + max(10px, env(safe-area-inset-bottom)));
+  position: static;
+  margin-top: 2px;
+  align-self: flex-start;
 }
 
 .home-label {
@@ -866,10 +874,26 @@ body.has-tabbar .home-version {
  * Only under `has-tabbar`, which is exactly the phone layout. A desktop keeps
  * ordinary document scrolling, its scrollbar and its sticky header. */
 body.has-tabbar {
+  /* `inset: 0`, not a height in `vh` or `dvh`.
+   *
+   * The first version of this frame was `height: 100dvh`, and on the phone it
+   * was written for — the app added to an iPhone home screen, which runs
+   * full-screen with no browser chrome — that resolved TALLER than what you can
+   * actually see. The frame overhung the bottom of the screen and took its last
+   * row with it, so the bar was not drifting any more; it was simply below the
+   * glass.
+   *
+   * A fixed box inset to zero is the layout viewport by definition. There is no
+   * unit to resolve and nothing to be wrong about, in a browser tab, in
+   * standalone, with a keyboard up, or on a device with a notch.
+   *
+   * Fixing `body` does not change where its own fixed children land: only
+   * transform, filter, perspective, contain and will-change make an ancestor a
+   * containing block for `position: fixed`, and none of those is here. */
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;   /* the visible height, not the one with the toolbars in it */
   overflow: hidden;
   overscroll-behavior: none;
 }

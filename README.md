@@ -526,17 +526,32 @@ Phone layout is a different shape, not a scaled-down desktop:
   the bounce *is* the browser moving the viewport out from under it.
 
   So the bar is not fixed any more. Under `has-tabbar`, `body` becomes a
-  full-height column that cannot scroll, `#appView` is the only thing in it
-  that does, and the bar is an ordinary row at the bottom of the column. An
+  `position: fixed; inset: 0` column that cannot scroll, `#appView` is the only
+  thing in it that does, and the bar is an ordinary row at the bottom of the
+  column.
+
+  **`inset: 0`, not `height: 100dvh`.** The first version of the frame used
+  `dvh`, and on the phone it was written for — the app added to an iPhone home
+  screen, running full-screen with no browser chrome — that resolved *taller*
+  than what you can actually see. The frame overhung the bottom of the glass
+  and took its last row with it, so the bar was no longer drifting; it was
+  simply below the screen, and the home page came up with no bar at all. A
+  fixed box inset to zero is the layout viewport by definition: no unit to
+  resolve, and so nothing to be wrong about, in a tab, in standalone, with a
+  keyboard up, or on a device with a notch. An
   element in normal flow in a container that never scrolls has nothing to drift
   against. `overscroll-behavior: contain` on the view keeps its own overscroll
   to itself and `none` on the body refuses it outright, so the bounce never
   reaches the frame at all.
 
-  Two things follow. The page no longer carries padding to end above the bar —
+  Three things follow. The page no longer carries padding to end above the bar —
   the bar sits *beside* the page now, not on top of it, and that padding would
   be a gap. And `window.scrollTo` no longer scrolls anything here, so
-  `scrollViewTop()` scrolls whichever of the two is actually the scroller.
+  `scrollViewTop()` scrolls whichever of the two is actually the scroller. And
+  the version stamp on the home screen is no longer pinned above the bar but is
+  simply the last line of the page — pinned, with the reserved padding gone, it
+  landed on top of the last row of posters.
+
   A desktop is untouched: no bar, ordinary document scrolling, sticky header.
 - **A fixed number of posters to a row**, 2, 3 or 4, set in the same panel.
   Desktop keeps `auto-fill` and takes as many as the width allows, so the
