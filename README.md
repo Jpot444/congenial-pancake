@@ -1771,11 +1771,10 @@ perfectly for the rest of the session once about ten seconds of cushion had
 accumulated on its own. The cushion was the whole story; the segment count never
 delivered one.
 
-So an **HLS** channel joins `liveSyncDuration: 18` seconds behind the edge —
-stated outright, so it does not depend on the provider's segment length or on
-how much playlist had arrived yet. The worst slow spell in that session was 6
-seconds; 18 is three times it. It then holds everything between there and the
-edge (`maxBufferLength: 45`). `lowLatencyMode` is off, because this provider
+So an **HLS** channel joins a stated number of seconds behind the edge rather
+than a segment count, and then moves to a seat measured from the channel's own
+window (see below). It holds everything between there and the edge
+(`maxBufferLength: 45`). `lowLatencyMode` is off, because this provider
 does not serve LL-HLS parts and with it on hls.js works to stay nearer the edge
 than the stream can support — stalling bought with nothing.
 `liveMaxLatencyDuration` is parked at 600 — deliberately unreachable, so hls.js
@@ -1821,10 +1820,61 @@ same one-second tick as the `LIVE` pill and asks the playlist how big it is:
 Ordinary lateness is left alone. This is not a chaser — it is the floor of the
 window, not the edge of it.
 
-What it does **not** do is invent bandwidth. 1.4 Mbit/s delivered with no
-declared headroom is a link problem, and the honest description of this fix is
-that it stops one bad minute becoming a dead stream. It does not make a starved
-link play cleanly.
+### Where to sit, and when to start
+
+Recovering from drift was the smaller half, and fixing it first is why the next
+report still stalled. The seat was the problem.
+
+`liveSyncDuration` was **18 seconds**, and this provider publishes **11-second
+segments**. So the playhead sat 1.6 segments from the edge — and a segment is
+only fetchable once it is complete, which means there was never more than about
+one segment to be had, no matter what `maxBufferLength` asked for. The measured
+session:
+
+```
++13s   first segment lands (10s of media, 13s to arrive)   play starts
++20s   playhead reaches the end of it
++21s   stalled
++28s   second segment lands (10s of media, 15s to arrive)
+```
+
+It started with **7.1 seconds** of video downloaded and spent it in seven
+seconds. That is not really a stall — it is starting before there was anything
+to start with. And at the moment it stalled, **33 seconds of playlist had been
+published and simply not been fetched yet**, so the material was there. Only
+the head start was missing.
+
+Two changes, both of them the same idea as the recovery trigger: measure
+against the playlist rather than against a number.
+
+- **The seat is `LIVE_HOLD` (55%) of the published window**, written back into
+  the engine once a real window has been read, so `liveSyncPosition` and the
+  `LIVE` pill agree with it. On the 58–60s window this provider serves that is
+  ~32 seconds back — three segments of runway instead of one and a half. The
+  config still needs a number to *join* on, before any window is known; 32 is
+  that number, and it is replaced by the measured one within a second.
+- **Live does not start until there is a cushion** — `LIVE_PREROLL`, 30% of the
+  window. The wait is visible and counts up, because a picture that has not
+  appeared is otherwise indistinguishable from a broken one, and it is capped
+  at `LIVE_WAIT_MAX` (20s), because a stall you can see the reason for still
+  beats a spinner with no end. A link fast enough to fill it never notices it.
+
+This is the "delay it a few more seconds" fix, and it is spent once at the join
+rather than as a stall a few seconds later.
+
+### What none of this fixes
+
+The delivery rate. Across three measured sessions the link carried the stream at
+**0.47×, 0.67× and 0.86× of realtime** — 13 to 15 seconds to fetch 10 seconds of
+video, at 1.4–2.2 Mbit/s. A cushion absorbs a bad patch; it cannot be *built*
+out of a link that never delivers faster than the stream plays, because the only
+thing that fills a buffer is arriving faster than 1×.
+
+So the honest description: sitting further back and starting later removes the
+stalls caused by having no head start, which is what the reports show happening
+first and worst. It does not make a starved link play cleanly, and if the link
+stays under 1× the picture will still eventually stall. That number is the
+thing to fix, and it is not in the player.
 
 An **MPEG-TS** channel gets `drain: 12, hold: 4` — the figures the old
 "balanced" mode used, and the ones that measured zero stalls and zero seeks over

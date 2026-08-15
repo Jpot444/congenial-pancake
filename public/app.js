@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '22.4';
+const VERSION = '22.5';
 
 const PAGE_SIZE = 60;
 
@@ -337,19 +337,39 @@ const img = (src) => (src ? `/img?u=${encodeURIComponent(src)}` : '');
  *
  * And it does not chase on jitter. What it does do is recover when the playhead
  * has drifted towards falling off the playlist altogether, which on a link this
- * slow it will — but that is `catchUpIfAdrift`, measured against the window the
+ * slow it will — but that is `holdLiveDistance`, measured against the window the
  * channel actually publishes rather than against a number chosen in advance.
  * The LIVE pill still shows the gap, and pressing it jumps to the edge.
+ *
+ * **Eighteen seconds was not enough, and the reason is arithmetic.** This
+ * provider publishes 11-second segments, so sitting 18 seconds back is a seat
+ * 1.6 segments from the edge — and since a segment only becomes fetchable once
+ * it is complete, the most that can ever be in hand is about one of them. A
+ * measured session started playing with **7.1 seconds** of video downloaded and
+ * stalled seven seconds later, exactly on cue. `LIVE_HOLD` is a proportion of
+ * the window instead, so the seat is always a few segments back whatever length
+ * this channel happens to use.
  */
+
+/** Where to sit, as a share of the window the channel publishes. */
+const LIVE_HOLD = 0.55;
+/** And how far is far enough to be worth a jump back to it. */
+const LIVE_ADRIFT = 0.82;
+/** How much video to have in hand before starting, as a share of the window. */
+const LIVE_PREROLL = 0.3;
+
 const LIVE_HLS = {
   lowLatencyMode: false,
-  // Seconds behind the edge to join and sit at. Not a segment count.
-  liveSyncDuration: 18,
-  // Left high on purpose: recovery is `catchUpIfAdrift`, which measures against
-  // the playlist window this channel actually publishes. A number here was the
-  // bug — 60 against a 58-second window is a safety net pitched past the end of
-  // the playlist, which can never fire. Two mechanisms racing would be worse
-  // than one, so hls.js's own is kept out of the way.
+  // Seconds behind the edge to join at, before the window is known. This
+  // provider publishes 58-60s of playlist on every channel measured, so 32 is
+  // LIVE_HOLD of it; once a real window has been read, `holdLiveDistance`
+  // replaces this with the measured figure.
+  liveSyncDuration: 32,
+  // Left high on purpose: recovery is `holdLiveDistance`, which measures
+  // against the playlist window this channel actually publishes. A number here
+  // was the bug — 60 against a 58-second window is a safety net pitched past
+  // the end of the playlist, which can never fire. Two mechanisms racing would
+  // be worse than one, so hls.js's own is kept out of the way.
   liveMaxLatencyDuration: 600,
   // Hold everything from the playhead to the edge. Costs no latency: the
   // playlist stops at the edge, so this can only fill the gap already there.
@@ -5198,6 +5218,8 @@ let engineKind = null;
 
 function teardown() {
   const video = $('#video');
+  // Whatever the old stream was waiting for, it is not coming now.
+  stopCushionWait();
   if (engine) {
     try {
       engine.destroy();
@@ -5214,6 +5236,9 @@ function status(message) {
   const node = $('#videoStatus');
   if (!message) {
     node.hidden = true;
+    // Clear it rather than just hiding it: a stale line left in the DOM comes
+    // back the next time something unhides this without setting it.
+    node.textContent = '';
     return;
   }
   node.textContent = message;
@@ -5340,6 +5365,7 @@ function attach(url, format, opts = {}) {
       );
       engine.loadSource(url);
       engine.attachMedia(video);
+      if (live) waitForCushion(video);
       engine.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) engine.startLoad();
@@ -5392,7 +5418,7 @@ function startLiveTracking() {
   reservePlayerActions();
 
   liveTimer = setInterval(() => {
-    catchUpIfAdrift();
+    holdLiveDistance();
     const behind = currentLag();
     if (behind === null) return;
     // Under ~3s is as live as this provider gets; don't nag about it.
@@ -5400,6 +5426,79 @@ function startLiveTracking() {
     pill.classList.toggle('is-behind', !atEdge);
     lag.textContent = atEdge ? 'LIVE' : `${Math.round(behind)}s behind`;
   }, 1000);
+}
+
+let cushionTimer = null;
+
+/**
+ * Don't start a live channel until there is something in hand to play.
+ *
+ * The video element starts as soon as it has one frame it can show, which on a
+ * slow link means starting with a single segment and stalling the moment it is
+ * spent. From a measured session:
+ *
+ *     +13s  first segment lands (10s of media, 13s to arrive)  play starts
+ *     +20s  playhead reaches the end of it
+ *     +21s  stalled
+ *     +28s  second segment lands (10s of media, 15s to arrive)
+ *
+ * It played the 7.1 seconds it had and then had nothing, which is not a stall
+ * in any interesting sense — it is starting before there was anything to start
+ * with. Meanwhile 33 seconds of playlist was published and simply not fetched
+ * yet, so the material was there; only the head start was missing.
+ *
+ * So live waits. It is the "delay it a few more seconds" fix, spent once at the
+ * join instead of a stall a few seconds later, and it is spent visibly — the
+ * number counts up, because a picture that does not appear is otherwise
+ * indistinguishable from a broken one.
+ *
+ * The wait is capped both ways. A link fast enough to fill it never notices;
+ * a link too slow to fill it starts anyway at `LIVE_WAIT_MAX`, because a stall
+ * you can see the reason for still beats a spinner that never ends.
+ */
+const LIVE_WAIT_MAX = 20000;
+
+function waitForCushion(video) {
+  stopCushionWait();
+  const until = Date.now() + LIVE_WAIT_MAX;
+  // Fall back to the join distance when no window has been published yet;
+  // whichever is known, the target is a few segments rather than a guess.
+  let want = LIVE_HLS.liveSyncDuration * LIVE_PREROLL;
+
+  const ahead = () => {
+    if (!video.buffered.length) return 0;
+    const from = Math.max(video.currentTime, video.buffered.start(0));
+    return Math.max(0, video.buffered.end(video.buffered.length - 1) - from);
+  };
+
+  const tick = () => {
+    if (!currentLiveItem) return stopCushionWait();
+    try {
+      const w = engine?.levels?.[engine.currentLevel]?.details?.totalduration;
+      if (Number.isFinite(w) && w > 0) want = w * LIVE_PREROLL;
+    } catch {
+      /* no window published yet — the fallback above stands */
+    }
+    const have = ahead();
+    if (have >= want || Date.now() >= until) {
+      stopCushionWait();
+      status('');
+      video.play().catch(() => {});
+      return;
+    }
+    // Keep it held. `autoplay` will start it the instant it can, so this has
+    // to actively hold rather than just decline to call play().
+    if (!video.paused) video.pause();
+    status(`Building a buffer — ${Math.round(have)}s of ${Math.round(want)}s`);
+  };
+
+  cushionTimer = setInterval(tick, 250);
+  tick();
+}
+
+function stopCushionWait() {
+  if (cushionTimer) clearInterval(cushionTimer);
+  cushionTimer = null;
 }
 
 /**
@@ -5420,38 +5519,58 @@ function startLiveTracking() {
  * having been burned by a player that seeked too eagerly, I disabled recovery
  * altogether.
  *
- * So the trigger is a proportion of whatever window this channel actually
- * publishes, read from the playlist rather than assumed. Two thirds of the way
- * to falling off is late enough that ordinary jitter never reaches it and early
- * enough to still have somewhere to jump to.
+ * So both figures are proportions of whatever window this channel actually
+ * publishes, read from the playlist rather than assumed: sit at `LIVE_HOLD` of
+ * it, and jump back to that seat on passing `LIVE_ADRIFT`. On the 58-second
+ * window measured here that is a seat 32 seconds back and a correction at 48,
+ * leaving about a segment of room before the oldest one is gone.
  *
- * It is deliberately loud. A player that seeks on its own is the "skips to the
- * end" fault this app has already been through, and the difference between that
- * and this is that this one says what it did and why.
+ * Setting the seat is the other half, and the half that was missing. The join
+ * distance was a constant, which on a channel with 11-second segments put the
+ * playhead 1.6 segments from the edge — so there was never more than one
+ * segment to be had, however much buffer the settings asked for. Writing the
+ * measured figure back into the engine makes `liveSyncPosition` — which is
+ * where the jump below aims, and what the LIVE pill reads — agree with it.
+ *
+ * The jump is deliberately loud. A player that seeks on its own is the "skips
+ * to the end" fault this app has already been through, and the difference
+ * between that and this is that this one says what it did and why.
  */
-function catchUpIfAdrift() {
+function holdLiveDistance() {
   if (engineKind !== 'hls.js' || !engine || !currentLiveItem) return;
   const video = $('#video');
   if (video.paused || video.seeking) return;
-  // Not straight after the last one: a jump needs time to show in `latency`,
-  // and without this it would fire again on the very next tick.
-  if (Date.now() - (catchUpIfAdrift.at || 0) < 20000) return;
 
   let window;
   let latency;
-  let to;
   try {
     window = engine.levels?.[engine.currentLevel]?.details?.totalduration;
     latency = engine.latency;
-    to = engine.liveSyncPosition;
   } catch {
     return;
   }
   if (!Number.isFinite(window) || !Number.isFinite(latency) || window <= 0) return;
-  if (latency < window * 0.66) return;
+
+  // Take the seat from the window this channel publishes, not from the guess
+  // made before it was known.
+  const hold = window * LIVE_HOLD;
+  try {
+    engine.config.liveSyncDuration = hold;
+  } catch {
+    /* older builds may not take it; the arithmetic below stands regardless */
+  }
+
+  if (latency < window * LIVE_ADRIFT) return;
+  // Not straight after the last one: a jump needs time to show in `latency`,
+  // and without this it would fire again on the very next tick.
+  if (Date.now() - (holdLiveDistance.at || 0) < 20000) return;
+
+  // currentTime + latency is the edge, so this is the seat — arithmetic that
+  // holds whether or not the engine took the config above.
+  const to = video.currentTime + latency - hold;
   if (!Number.isFinite(to) || to <= video.currentTime) return;
 
-  catchUpIfAdrift.at = Date.now();
+  holdLiveDistance.at = Date.now();
   const lost = Math.round(to - video.currentTime);
   video.currentTime = to;
   video.play().catch(() => {});
