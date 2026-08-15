@@ -288,66 +288,28 @@ disagree.
 
 ### What happens to a report
 
-It lands in two places, and the order matters:
+It lands in `reports.json` on the box — gitignored, `0600`, because a report
+carries whatever somebody chose to type, including how to reach them — and
+turns up in the **Reports** section of Pi health, newest first, alongside
+everything else the box is telling you. Each one carries who sent it, whether
+it is a problem or an idea, the version and page it came from, how to reach
+them if they said, and the playback report if there was one.
 
-1. **On the box**, in `reports.json` (gitignored, `0600` — a report carries
-   whatever somebody chose to type, including how to reach them). This copy
-   always exists.
-2. **On GitHub**, as an issue, when a token is configured. That is a *forward*,
-   not the record. If GitHub is unreachable, misconfigured or switched off, the
-   report is already saved and the failure is written next to it rather than
-   thrown at whoever sent it.
+That is the whole of it. There is no forward, nothing to configure and nothing
+that can be unreachable — the thing that has to work is that Hunter sees it, and
+the box he is looking at is the box it is stored on.
 
-Whoever sent it is told which of the two happened — "filed on GitHub" and
-"saved on the box" are different sentences, because "sent" covering both is how
-a report gets quietly lost. The Reports section of Pi health says the same thing
-per report, with the GitHub link when there is one and the reason when there is
-not.
+### Credentials are stripped on the way in
 
-**Turn forwarding on from the app**, in the Reports section of Pi health. The
-person who needs to set this is the person looking at that panel, and on a box
-reached over Tailscale from a phone they may have no shell on it at all — so
-asking them to hand-edit JSON over SSH was the wrong answer. The token is
-written to `config.json` exactly as a hand edit would write it, at `0600`, and
-is never sent back to the browser: the panel can say that it is set and which
-repository it points at, and nothing more.
+A bug report is very often a pasted playback report, and this provider puts the
+account password **inside every stream URL**. Nothing leaves the box now — but a
+report is a thing people copy out of the panel and paste elsewhere, which is
+exactly how those credentials got loose twice before.
 
-It is **verified before it is saved**, the same bargain the provider form
-makes. A token GitHub rejects (401) or a repository it cannot see (404 — on a
-fine-grained token, usually one that was never selected under Repository
-access) is refused now rather than discovered the first time somebody sends a
-report.
-
-What that check proves is bounded, and the bound is worth stating: it does
-**not** prove the token may open issues. The `permissions` block GitHub returns
-describes the *account's* role on the repository, not what the token was scoped
-to, so reading write access out of it would pass a token that still cannot file
-anything. A check that can give a false verdict is worse than no check, so that
-half is settled by the first report, which records exactly what GitHub said and
-shows it in the panel.
-
-Editing `config.json` by hand still works, and is the same shape:
-
-```json
-"github": { "token": "ghp_…", "repo": "owner/name", "labels": ["feedback"] }
-```
-
-`labels` is optional and defaults to `bug` or `enhancement` by kind. With no
-token the box says so plainly rather than pretending it sent. Re-running
-provider setup carries the block across — that form rebuilds `config.json` from
-its own fields, so anything it does not know about has to be carried by hand or
-setup would silently unhook forwarding.
-
-### Credentials never leave the house
-
-This is the part worth being careful about. A bug report is very often a pasted
-playback report, and this provider puts the account password **inside every
-stream URL**. Those reports get forwarded to a repository.
-
-So `redactUrl` runs over every free-text field **on the way in**, not on the way
-out — the copy on the box is redacted too, and the GitHub body is built from the
-stored record. There is no second path out of here that could forget. A URL
-survives as host plus filename, which is what makes a report readable, and the
+So `redactUrl` runs over every free-text field **at the point of storage**,
+not when something is displayed. That way no copy anywhere carries a credential:
+not the file, not the panel, not whatever gets pasted out of it. A URL survives
+as host plus filename, which is what makes a report readable, and the
 credentials in the middle of it do not survive at all.
 
 ### Being told about it

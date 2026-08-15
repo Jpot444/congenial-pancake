@@ -2610,13 +2610,11 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   white-space: pre-wrap;
 }
 
-.report-meta, .report-gh {
+.report-meta {
   margin: 0;
   font-size: 11.5px;
   color: var(--muted-dim);
 }
-.report-gh a { color: #7FD4A0; text-decoration: underline; }
-.report-gh.is-off { color: #D9A441; }
 
 .report-context { margin-top: 8px; font-size: 11.5px; color: var(--muted-dim); }
 .report-context summary { cursor: pointer; }
@@ -2632,33 +2630,6 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   white-space: pre-wrap;
   word-break: break-word;
 }
-
-/* ---- where reports get forwarded ---- */
-
-.gh-setup {
-  margin: 4px 0 12px;
-  padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, .1);
-  border-radius: 9px;
-  background: rgba(255, 255, 255, .02);
-}
-
-.gh-state { margin: 0 0 8px; font-size: 12.5px; color: var(--muted-dim); }
-.gh-state.is-on { color: #7FD4A0; }
-
-.gh-form .field { margin-bottom: 10px; }
-.gh-form input {
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, .25);
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-}
-.gh-form .hint { display: block; margin-top: 4px; font-size: 11px; line-height: 1.45; }
-.gh-actions, .gh-buttons { display: flex; gap: 8px; }
 
 /* ---- the form ---- */
 

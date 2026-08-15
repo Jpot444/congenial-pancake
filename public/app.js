@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '21.1';
+const VERSION = '21.2';
 
 const PAGE_SIZE = 60;
 
@@ -1648,8 +1648,6 @@ const health = {
     this.reportsOpen = owner;
     if (!owner) return;
 
-    this.loadGithub();
-
     const note = $('#reportsNote');
     const list = $('#reportsList');
     try {
@@ -1668,75 +1666,6 @@ const health = {
     } catch (err) {
       note.hidden = false;
       note.textContent = `Could not read the reports: ${err.message}`;
-    }
-  },
-
-  /**
-   * Where reports get forwarded, set from here rather than from a shell.
-   *
-   * Only ever reads back whether it is on and which repository — the token
-   * goes one way. The panel says what has been proved and what has not: the
-   * check confirms the token can see the repository, and whether it may open
-   * issues is settled by the first report, which records what GitHub said.
-   */
-  async loadGithub() {
-    const state = $('#ghState');
-    try {
-      const gh = await api('/api/reports/github', { profileId: profiles.current?.id || '' });
-      this.github = gh;
-      $('#ghOff').hidden = !gh.configured;
-      $('#ghEdit').textContent = gh.configured
-        ? 'Change the token' : 'Forward reports to GitHub';
-      state.textContent = gh.configured
-        ? `Forwarding to ${gh.repo}.`
-        : 'Reports stay on the box. Add a token to file them on GitHub as well.';
-      state.classList.toggle('is-on', gh.configured);
-      $('#ghRepo').value = gh.repo || 'Jpot444/congenial-pancake';
-    } catch (err) {
-      state.textContent = `Could not read the forwarding setting: ${err.message}`;
-    }
-  },
-
-  showGithubForm(show) {
-    $('#ghForm').hidden = !show;
-    $('#ghButtons').hidden = show;
-    $('#ghError').hidden = true;
-    if (show) {
-      $('#ghToken').value = '';
-      $('#ghToken').focus();
-    }
-  },
-
-  async saveGithub({ off = false } = {}) {
-    const err = $('#ghError');
-    err.hidden = true;
-    $('#ghSave').disabled = true;
-    try {
-      const res = await fetch(
-        `/api/reports/github?profileId=${encodeURIComponent(profiles.current?.id || '')}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(off
-            ? { off: true }
-            : { token: $('#ghToken').value.trim(), repo: $('#ghRepo').value.trim() }),
-        }
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `Failed (${res.status})`);
-      // Out of the field the moment it is accepted. It lives on the box now.
-      $('#ghToken').value = '';
-      this.showGithubForm(false);
-      await this.loadGithub();
-      toast(off
-        ? 'Reports will stay on the box.'
-        : `Saved. ${data.private ? 'That repository is private.' : 'That repository is public — '
-          + 'anything people write will be public too.'}`);
-    } catch (e) {
-      err.hidden = false;
-      err.textContent = e.message;
-    } finally {
-      $('#ghSave').disabled = false;
     }
   },
 
@@ -1763,29 +1692,6 @@ const health = {
     if (r.contact) bits.push(`reach them: ${r.contact}`);
     meta.textContent = bits.join(' · ');
     row.append(meta);
-
-    // Whether the forward actually happened. A report that only ever reached
-    // the box is still a report, and saying so is the difference between
-    // "filed" and "waiting for someone to look at Pi health".
-    const gh = el('p', 'report-gh');
-    if (r.github?.ok && r.github.url) {
-      const link = el('a');
-      link.href = r.github.url;
-      link.target = '_blank';
-      link.rel = 'noreferrer';
-      link.textContent = 'Filed on GitHub';
-      gh.append(link);
-    } else if (r.github?.off) {
-      gh.textContent = 'On the box only — no GitHub token configured.';
-      gh.classList.add('is-off');
-    } else if (r.github?.error) {
-      gh.textContent = `On the box only — GitHub said: ${r.github.error}`;
-      gh.classList.add('is-off');
-    } else {
-      gh.textContent = 'On the box only.';
-      gh.classList.add('is-off');
-    }
-    row.append(gh);
 
     if (r.context) {
       const box = el('details', 'report-context');
@@ -2017,10 +1923,9 @@ $('#healthClose').addEventListener('click', () => health.close());
  * everyone else the useful thing in that corner is a way to say something is
  * broken — so that is what is there instead, and only Hunter sees the pulse.
  *
- * What is sent lands on the box first and is forwarded to GitHub second. The
- * copy on the box is the record; GitHub is a convenience that is allowed to
- * fail. Whoever sent it is told which of the two happened, because "sent"
- * meaning two different things is how a report gets quietly lost.
+ * What is sent lands on the box, in the Reports section of Pi health, and
+ * nowhere else. There is nothing to configure and nothing that can be
+ * unreachable — the thing that has to work is that Hunter sees it.
  */
 const reporter = {
   kind: 'bug',
@@ -2081,8 +1986,8 @@ const reporter = {
       : '';
 
     $('#reportLead').textContent = this.isOwner()
-      ? 'Lands in reports.json on the box, and in the project\'s issue list.'
-      : 'It goes straight to Hunter, and into the project\'s issue list.';
+      ? 'Lands in the Reports section of this panel.'
+      : 'It goes to Hunter, and shows up on his Pi health screen.';
 
     $('#reportModal').hidden = false;
     $('#reportMessage').focus();
@@ -2137,11 +2042,7 @@ const reporter = {
       if (!res.ok) throw new Error(data.error || `Failed (${res.status})`);
 
       this.close();
-      // Two different outcomes, said as two different things. "Sent" covering
-      // both is how a report gets quietly lost.
-      toast(data.github?.ok
-        ? 'Sent — it is on the box and filed on GitHub.'
-        : 'Saved on the box. Hunter will see it in Pi health.');
+      toast('Sent — Hunter will see it in Pi health.');
       if (health.reportsOpen) health.loadReports();
     } catch (e) {
       err.hidden = false;
@@ -2154,13 +2055,6 @@ const reporter = {
 $('#reportBtn').addEventListener('click', () => reporter.open());
 $('#reportCancel').addEventListener('click', () => reporter.close());
 $('#reportsSend').addEventListener('click', () => { health.close(); reporter.open(); });
-$('#ghEdit').addEventListener('click', () => health.showGithubForm(true));
-$('#ghCancel').addEventListener('click', () => health.showGithubForm(false));
-$('#ghOff').addEventListener('click', () => health.saveGithub({ off: true }));
-$('#ghForm').addEventListener('submit', (event) => {
-  event.preventDefault();
-  health.saveGithub();
-});
 for (const b of document.querySelectorAll('#reportKind button')) {
   b.addEventListener('click', () => reporter.setKind(b.dataset.kind));
 }
@@ -2209,9 +2103,8 @@ const notice = {
         key: 'reportNoticeSeen',
         title: 'People can write to you now',
         body: 'Everyone else has a report button where your pulse is. What they '
-          + 'send lands in Pi health under Reports, and gets filed on GitHub as '
-          + 'well once a token is set in config.json. You can send one from '
-          + 'there too.',
+          + 'send turns up in this panel, under Reports, alongside everything '
+          + 'else the box is telling you. You can send one from there too.',
       }
       : {
         key: 'reportNoticeSeen',
