@@ -2525,14 +2525,6 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
    fade with the rest of the chrome. */
 /* ---- the walkthrough ---- */
 
-/* ------------------------------------------------------- beta mode ---- */
-
-.health-beta {
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, .1);
-}
-
 /* ---- what everyone else has sent in ---- */
 
 .reports {
@@ -2657,47 +2649,6 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   color: var(--muted);
 }
 
-.switch {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  cursor: pointer;
-}
-.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
-
-.switch-track {
-  flex: none;
-  width: 42px;
-  height: 24px;
-  margin-top: 2px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, .16);
-  transition: background .18s ease;
-}
-.switch-knob {
-  display: block;
-  width: 18px;
-  height: 18px;
-  margin: 3px;
-  border-radius: 50%;
-  background: #fff;
-  transition: transform .18s ease;
-}
-.switch input:checked + .switch-track { background: var(--brand-red); }
-.switch input:checked + .switch-track .switch-knob { transform: translateX(18px); }
-.switch input:focus-visible + .switch-track { outline: 2px solid #fff; outline-offset: 2px; }
-
-.switch-label { font-size: .95rem; line-height: 1.35; }
-.switch-label small {
-  display: block;
-  margin-top: 2px;
-  color: rgba(255, 255, 255, .55);
-  font-size: .8rem;
-}
-
-.beta-body { margin: 12px 0 0 54px; }
-.beta-body .health-note { margin: 0 0 10px; }
-
 .mv-icon { width: 15px; height: 15px; margin-right: 6px; vertical-align: -2px; }
 
 /* Lives with the other player controls, which in cinema mode sit in the
@@ -2733,17 +2684,6 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   font-size: .8rem;
   color: rgba(255, 255, 255, .55);
 }
-.mv-beta {
-  margin-left: 8px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--brand-red);
-  font-size: .62rem;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  vertical-align: 2px;
-}
-
 /* The layout follows the chosen count so there is never a blank square.
    minmax(0,1fr) throughout, so a long channel name cannot push a cell wider
    than its share. */
@@ -2825,6 +2765,94 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: .82rem;
+  /* It is a button now, because on a show it opens the episode list. Stripped
+     back to reading as the label it is everywhere else. */
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: default;
+}
+.mv-name.is-link { cursor: pointer; text-decoration: underline dotted rgba(255, 255, 255, .45); }
+.mv-name.is-link:hover { color: #fff; text-decoration-color: rgba(255, 255, 255, .9); }
+
+/* ---- the episode list, inside its own cell ----
+   Not over the whole screen: the other cells are still playing, and choosing
+   the next episode of one show is no reason to take the game away from
+   somebody. `inset: 0` here is the CELL, so it covers exactly the picture it
+   is about. */
+.mv-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  /* Opaque, not nearly so. At 96% the cell's own bar ghosted through the
+     bottom of the list, which reads as a rendering fault rather than a style. */
+  background: #0C0909;
+}
+
+.mv-sheet-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, .1);
+}
+
+.mv-sheet-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--display);
+  font-size: .9rem;
+  font-weight: 400;
+}
+
+.mv-sheet-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px 8px 10px; }
+.mv-sheet-note { margin: 10px 4px; font-size: .8rem; color: var(--muted-dim); }
+
+.mv-season {
+  margin: 10px 4px 5px;
+  font-family: var(--display);
+  font-size: .72rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+
+.mv-ep {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: .82rem;
+  text-align: left;
+  cursor: pointer;
+}
+.mv-ep:hover { background: rgba(255, 255, 255, .08); color: #fff; }
+.mv-ep.is-playing { background: rgba(224, 49, 50, .22); color: #fff; }
+.mv-ep-num { flex: none; font-variant-numeric: tabular-nums; color: var(--muted-dim); }
+.mv-ep.is-playing .mv-ep-num { color: #fff; }
+.mv-ep-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mv-ep-now {
+  flex: none;
+  font-size: .66rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .75);
 }
 .mv-btn {
   flex: none;

@@ -95,33 +95,6 @@
       </button>
     </div>
 
-    <!-- Experiments. Kept behind a switch and on this device only: what is in
-         here is being tried out, not relied on. -->
-    <div class="health-beta">
-      <!-- The input is nested, so no `for` is needed; it is also visually hidden,
-           which is why the track is what anyone (or any test) actually clicks. -->
-      <label class="switch">
-        <input type="checkbox" id="betaToggle" />
-        <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
-        <span class="switch-label">
-          Beta mode
-          <small>Unfinished things, on this device only. Nothing here is promised to work.</small>
-        </span>
-      </label>
-      <div class="beta-body" id="betaBody" hidden>
-        <p class="health-note">
-          <strong>Multi-view</strong> puts up to four live channels on one screen.
-          It works: HLS channels fetch a segment at a time and hold no connection
-          open, so the account's one-connection limit never comes into it. Switch
-          the provider to <strong>MPEG-TS</strong> and that stops being true —
-          each channel then holds a connection, and they will fight.
-        </p>
-        <button type="button" class="btn btn-ghost btn-sm" id="betaMultiview">
-          Open multi-view
-        </button>
-      </div>
-    </div>
-
     <!-- Lives here rather than in the header: it is the one destructive thing
          in the app, and a gear sitting between the controls you use every day
          is an easy thing to hit by accident on a phone. -->
@@ -237,7 +210,7 @@
   </div>
 </div>
 
-<!-- ────────────────────────────────────────────────── multi-view (beta) ─── -->
+<!-- ───────────────────────────────────────────────────────── multi-view ─── -->
 <!-- Four live channels at once. Its own player entirely: the main one keeps a
      single video element and a pile of module-level state (the film bar, the
      watchdog, the remux session), none of which survives being asked to be
@@ -249,7 +222,7 @@
       <span>Live TV</span>
     </button>
     <div class="cinema-titles">
-      <h2>Multi-view <span class="mv-beta">beta</span></h2>
+      <h2>Multi-view</h2>
     </div>
     <!-- How many cells. The grid template follows this, so three is one large
          beside two stacked rather than three across with a hole in it. -->
@@ -558,7 +531,7 @@
           <p class="content-meta" id="contentMeta"></p>
         </div>
         <span class="spacer"></span>
-        <!-- Beta only, and only on Live TV. Shown by beta.apply(). -->
+        <!-- Live TV only: four things side by side means nothing elsewhere. -->
         <button class="btn btn-ghost btn-sm" id="multiviewBtn" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true" class="mv-icon">
             <rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/>
@@ -619,8 +592,8 @@
         <button class="icon-btn" id="favBtn" title="Favorite" aria-label="Favorite">
           <svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.9-9.3-9.2C1.3 8.4 3.2 5 6.6 5c2 0 3.5 1.2 4.4 2.4l1 1.3 1-1.3C13.9 6.2 15.4 5 17.4 5c3.4 0 5.3 3.4 3.9 6.8C19.5 16.1 12 21 12 21z"/></svg>
         </button>
-        <!-- Takes the channel on screen into multi-view. Live only, and only
-             while beta is on, since that is where multi-view lives. -->
+        <!-- Takes the channel on screen into multi-view. Live only: a film has
+             nothing to put beside it. -->
         <button class="icon-btn cinema-mv" id="cinemaMultiview" hidden
                 title="Watch this in multi-view" aria-label="Watch this in multi-view">
           <svg viewBox="0 0 24 24" aria-hidden="true">

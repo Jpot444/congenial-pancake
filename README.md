@@ -1723,19 +1723,15 @@ catch up, so a speed-controller extension keeps full control. Your chosen rate
 is preserved across channel changes, which a plain `load()` would otherwise
 reset to 1×.
 
-## Beta mode
+## Multi-view
 
-A switch in **Pi health** for things that are being tried rather than relied
-on. Off by default, and stored in `localStorage` rather than the profile —
-deliberately. It is not a taste that should follow someone to the television;
-it is "I am poking at this, here, now", and it should not turn up unannounced
-on a screen somebody else is watching. Turning it off closes anything it
-opened, so a beta screen cannot outlive the switch.
+Two to four live channels on one screen, reached from a button on Live TV.
 
-### Multi-view
-
-Two to four live channels on one screen, reached from a button that appears on
-Live TV while beta is on.
+**It used to live behind a beta switch.** That switch existed to hold one
+question open — whether an account that allows a single connection could feed
+several cells at once. It answered it (see below: HLS holds no connection open),
+and once a feature works, keeping it behind a switch only makes it harder to
+find. So the switch went with it; it had nothing else in it.
 
 **How many is a choice**, and the layout follows it rather than the cells
 laying themselves out — so three is one large beside two stacked, not three
@@ -1837,6 +1833,21 @@ corner — closes the player and opens multi-view with whatever was on screen
 already in the first free cell. Live only: multi-view is four live channels,
 and a film has nothing to put beside it.
 
+**A show opens its episode list inside its own cell.** When a cell is playing an
+episode, the name in that cell's bar becomes the way into the whole show —
+seasons, every episode, and a mark on the one that is on. The name is where the
+name of the thing already is, so there is nothing new to find; it only reads as
+pressable when there is a show behind it, because on a channel or a film it is a
+label, and a label that looks pressable is a lie.
+
+It opens **inside the cell**, absolutely positioned within that box. A sheet over
+the whole screen would have been easier to build and the wrong thing to build:
+the other three cells are still playing, and choosing the next episode of one
+show is no reason to take the game away from somebody. The idle fade is held off
+while a list is open, for the same reason it is held off for the picker — chrome
+that vanishes while you are reading it is not chrome. Stopping the cell closes
+the list with it, since the show it was about is gone.
+
 **The bars get out of the way.** Cell chrome and the top bar fade after three
 seconds and return on any movement, pointer or touch — the same bargain the
 main player makes. Empty cells keep their prompt: there is no picture there to
@@ -1909,8 +1920,8 @@ It is a **separate player**, not the main one reconfigured. The main player is
 built around there being exactly one of everything — one video element, one
 engine, one film bar, one watchdog, one remux session, all module-level — and
 none of that survives being asked to be four things at once. Sharing it would
-have meant unpicking every one of those globals for something behind a beta
-switch.
+have meant unpicking every one of those globals for something that already
+worked standing on its own.
 
 Every cell starts muted and exactly one may be unmuted at a time. Four live
 channels talking at once is not a feature, and a browser will refuse to

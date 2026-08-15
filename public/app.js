@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '21.5';
+const VERSION = '22';
 
 const PAGE_SIZE = 60;
 
@@ -513,48 +513,26 @@ $('#colsSeg').addEventListener('click', (event) => {
   device.setCols(Number(button.dataset.cols));
 });
 
-/* ------------------------------------------------------------ beta mode */
+/* ------------------------------------------------------- multi-view --- */
 
 /**
- * The switch for things that are being tried rather than relied on.
+ * Multi-view is on for everyone now.
  *
- * Kept on the device rather than in the profile on purpose. It is not a taste
- * or a preference that should follow someone to the television — it is "I am
- * poking at this, here, now", and it should not turn up unannounced on a
- * screen someone else is watching.
+ * It lived behind a beta switch while the question it was built to answer was
+ * still open — whether an account that allows one connection could feed several
+ * cells at once. It can, because HLS holds no connection open, and it has run
+ * that way long enough that keeping it behind a switch was only making it
+ * harder to find. The switch went with it: it existed to hold this.
+ *
+ * The button is Live TV's, because that is the only page where putting four
+ * things side by side means anything.
  */
-const beta = {
-  on: false,
+function applyMultiviewButton() {
+  $('#multiviewBtn').hidden = state.tab !== 'live';
+}
 
-  init() {
-    this.on = localStorage.getItem('portal.beta') === '1';
-    this.apply();
-  },
-
-  apply() {
-    $('#betaToggle').checked = this.on;
-    $('#betaBody').hidden = !this.on;
-    // Only on Live TV: multi-view has nothing to show anywhere else.
-    $('#multiviewBtn').hidden = !(this.on && state.tab === 'live');
-  },
-
-  set(on) {
-    this.on = on;
-    localStorage.setItem('portal.beta', on ? '1' : '0');
-    // Leaving beta must not leave a beta screen up behind the switch.
-    if (!on) multiview.close();
-    this.apply();
-  },
-};
-
-$('#betaToggle').addEventListener('change', (event) => beta.set(event.target.checked));
-$('#betaMultiview').addEventListener('click', () => {
-  health.close();
-  multiview.open();
-});
 $('#multiviewBtn').addEventListener('click', () => multiview.open());
 
-/* ------------------------------------------------ multi-view (beta) --- */
 
 /**
  * Two to four live channels on one screen.
@@ -563,7 +541,7 @@ $('#multiviewBtn').addEventListener('click', () => multiview.open());
  * exactly one of everything — one video element, one engine, one film bar, one
  * watchdog, one remux session, all module-level — and none of that survives
  * being asked to be four things at once. Sharing it would have meant unpicking
- * every one of those globals for a feature behind a beta switch.
+ * every one of those globals for a feature that already worked here.
  *
  * It was built expecting to fail: the account allows one connection at a time.
  * It does not fail, because HLS holds no connection open — see the README. Each
@@ -664,7 +642,14 @@ const multiview = {
     };
 
     const bar = el('div', 'mv-bar');
-    const name = el('span', 'mv-name');
+    // A button rather than a label, because on a show it is the way into the
+    // episode list. It only reads as pressable when there is a show behind it.
+    const name = el('button', 'mv-name');
+    name.type = 'button';
+    name.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.openEpisodes(this.at(rec));
+    });
     // Which delivery each cell got. This is the answer to why several at once
     // works at all, so it belongs on the screen rather than in a comment.
     const tag = el('span', 'mv-tag');
@@ -695,9 +680,136 @@ const multiview = {
     const note = el('p', 'mv-status');
     note.hidden = true;   // an empty one still paints as a grey strip
 
-    box.append(video, note, bar, empty);
-    Object.assign(rec, { box, video, empty, bar, name, tag, play, sound, note });
+    // The episode list, inside the cell it belongs to.
+    //
+    // A sheet over the whole screen would be the easy way to build this and the
+    // wrong thing to build: the other three cells are still playing, and
+    // choosing the next episode of one show is not a reason to take the game
+    // away from someone. It is absolutely positioned within the cell box, so it
+    // covers exactly the picture it is about.
+    const sheet = el('div', 'mv-sheet');
+    sheet.hidden = true;
+    const sheetTop = el('div', 'mv-sheet-top');
+    const sheetTitle = el('h4', 'mv-sheet-title');
+    const sheetClose = el('button', 'mv-btn');
+    sheetClose.type = 'button';
+    sheetClose.innerHTML = '✕';
+    sheetClose.title = 'Back to the picture';
+    sheetClose.setAttribute('aria-label', sheetClose.title);
+    sheetClose.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.closeEpisodes(this.at(rec));
+    });
+    sheetTop.append(sheetTitle, sheetClose);
+    const sheetBody = el('div', 'mv-sheet-body');
+    sheet.append(sheetTop, sheetBody);
+
+    box.append(video, note, bar, empty, sheet);
+    Object.assign(rec, {
+      box, video, empty, bar, name, tag, play, sound, note,
+      sheet, sheetTitle, sheetBody,
+    });
     return box;
+  },
+
+  /* -- the episode list, inside the cell --------------------------------- */
+
+  /**
+   * Open the show that is playing in this cell, in this cell.
+   *
+   * Reached by pressing the name in the cell's own bar, which is where the
+   * name of the thing already is — so there is nothing new to find. The list
+   * is the whole show, seasons and all, not just what is next: picking an
+   * episode is the reason somebody opened it.
+   */
+  async openEpisodes(index) {
+    const cell = this.cells[index];
+    const show = cell?.item;
+    if (!show || show.kind !== 'series') return;
+
+    cell.sheet.hidden = false;
+    cell.sheetTitle.textContent = show.name;
+    cell.sheetBody.innerHTML = '';
+    this.wake();
+
+    const loading = el('p', 'mv-sheet-note');
+    loading.textContent = 'Loading episodes…';
+    cell.sheetBody.append(loading);
+
+    if (!state.seriesCache[show.id]) {
+      try {
+        state.seriesCache[show.id] =
+          await api('/api/xtream', { action: 'get_series_info', series_id: show.id });
+      } catch (err) {
+        loading.textContent = `Couldn't load episodes: ${err.message}`;
+        return;
+      }
+    }
+    // Left while it was in flight, or the cell was repointed at something else.
+    if (cell.sheet.hidden || cell.item !== show) return;
+    this.paintEpisodes(cell, show);
+  },
+
+  paintEpisodes(cell, show) {
+    const body = cell.sheetBody;
+    body.innerHTML = '';
+    const episodes = state.seriesCache[show.id]?.episodes || {};
+    const seasons = Object.keys(episodes).sort((a, b) => Number(a) - Number(b));
+    if (!seasons.length) {
+      const note = el('p', 'mv-sheet-note');
+      note.textContent = 'No episodes listed for this show.';
+      return body.append(note);
+    }
+
+    // Which one is on now, so the list says where you are rather than making
+    // you count. The override is what the cell was actually started with.
+    const playingId = String(cell.override?.id ?? '');
+
+    for (const season of seasons) {
+      const head = el('p', 'mv-season');
+      head.textContent = `Season ${season}`;
+      body.append(head);
+      for (const ep of episodes[season] || []) {
+        const row = el('button', 'mv-ep');
+        row.type = 'button';
+        const num = el('span', 'mv-ep-num');
+        num.textContent = `E${ep.episode_num}`;
+        const title = el('span', 'mv-ep-title');
+        title.textContent = ep.title || `Episode ${ep.episode_num}`;
+        row.append(num, title);
+        if (String(ep.id) === playingId) {
+          row.classList.add('is-playing');
+          const now = el('span', 'mv-ep-now');
+          now.textContent = 'Playing';
+          row.append(now);
+        }
+        row.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const at = this.at(cell);
+          this.closeEpisodes(at);
+          this.start(at, show, {
+            kind: 'series',
+            id: ep.id,
+            ext: ep.container_extension || 'mp4',
+            vcodec: ep.info?.video?.codec_name || '',
+            label: `${show.name} — S${season}E${ep.episode_num}`,
+          });
+        });
+        body.append(row);
+      }
+    }
+  },
+
+  closeEpisodes(index) {
+    const cell = this.cells[index];
+    if (!cell) return;
+    cell.sheet.hidden = true;
+    this.wake();
+  },
+
+  /** Is any cell showing its episode list? The chrome must not fade over one. */
+  sheetOpen() {
+    return this.cells.some((c) => c && !c.sheet.hidden);
   },
 
   /* -- moving cells around ---------------------------------------------- */
@@ -886,8 +998,9 @@ const multiview = {
     root.classList.remove('is-idle');
     clearTimeout(this.idleTimer);
     this.idleTimer = setTimeout(() => {
-      // Not while a menu is open over the top of it.
-      if ($('#mvPicker').hidden) root.classList.add('is-idle');
+      // Not while a menu is open over the top of it, and not while somebody is
+      // reading an episode list inside a cell.
+      if ($('#mvPicker').hidden && !this.sheetOpen()) root.classList.add('is-idle');
     }, MV_IDLE);
   },
 
@@ -913,6 +1026,13 @@ const multiview = {
       cell.bar.hidden = !live;
       cell.video.hidden = !live;
       cell.name.textContent = cell.label || cell.item?.name || '';
+      // Only a way in when there is a show behind it. On a channel or a film
+      // the name is a label, and a label that looks pressable is a lie.
+      const isShow = cell.item?.kind === 'series';
+      cell.name.classList.toggle('is-link', isShow);
+      cell.name.disabled = !isShow;
+      cell.name.title = isShow ? `All episodes of ${cell.item.name}` : '';
+      if (!isShow && !cell.sheet.hidden) cell.sheet.hidden = true;
       cell.tag.textContent = live && cell.format ? cell.format.toUpperCase() : '';
       cell.tag.hidden = !cell.tag.textContent;
       cell.tag.classList.toggle('is-held', cell.format === 'ts');
@@ -1678,6 +1798,8 @@ const multiview = {
     cell.note.hidden = true;
     cell.note.textContent = '';
     cell.pending = false;
+    // The list belongs to the show that was in this cell; there isn't one now.
+    if (cell.sheet) cell.sheet.hidden = true;
     if (this.solo === index) this.unexpand({ silent: true });
     this.paint();
   },
@@ -4178,7 +4300,7 @@ function render() {
   // The multi-view button belongs to Live TV, so it is settled per render
   // rather than once at startup. Kept out of syncTabs, which device.init()
   // reaches before this module has been initialised at all.
-  beta.apply();
+  applyMultiviewButton();
 
   if (state.tab === 'downloads') return renderDownloads();
   if (state.tab === 'home') return renderHome();
@@ -4832,7 +4954,7 @@ async function goTo(tab) {
   // Same reason as the two lines above: a tab whose library fails to load
   // returns before render(), and a Live TV button left sitting on Movies is
   // the kind of thing that only shows up when something else is broken.
-  beta.apply();
+  applyMultiviewButton();
   state.category = null;
   state.shelf = null;
   state.visible = PAGE_SIZE;
@@ -5994,7 +6116,7 @@ function enterCinema(item) {
   $('#cinemaTop').hidden = false;
   // Live only: multi-view is four live channels, and there is nothing to put
   // in a second cell when the thing on screen is a film.
-  $('#cinemaMultiview').hidden = !(beta.on && item.kind === 'live');
+  $('#cinemaMultiview').hidden = item.kind !== 'live';
   $('#cinemaTitle').textContent = item.name || '';
   $('#cinemaSub').textContent = '';
   $('#cinemaBackLabel').textContent = fromDownloads ? 'Downloads' : labels[item.kind] || 'Back';
@@ -7919,7 +8041,7 @@ async function startApp() {
 (async function boot() {
   // Before anything renders, so controls are the right size on first paint.
   device.init();
-  beta.init();
+  applyMultiviewButton();
   try {
     const config = await api('/api/config');
     if (!config.configured) return showSetup();
