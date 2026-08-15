@@ -379,6 +379,7 @@
       <a href="#/movies" data-tab="movies">Movies</a>
       <a href="#/series" data-tab="series">Series</a>
       <a href="#/favorites" data-tab="favorites">Favorites</a>
+      <a href="#/archive" data-tab="archive">Archive</a>
       <a href="#/downloads" data-tab="downloads">Downloads<span class="nav-count" id="dlCount" hidden></span></a>
     </nav>
 
@@ -546,6 +547,15 @@
       <div class="home" id="homeView" hidden></div>
       <div class="show-view" id="seriesView" hidden></div>
       <div class="downloads" id="downloadList" hidden></div>
+      <div class="archive" id="archiveView" hidden>
+        <div class="archive-bar">
+          <nav class="crumbs" id="archiveCrumbs" aria-label="Archive folders"></nav>
+          <span class="archive-status" id="archiveStatus"></span>
+        </div>
+        <div class="archive-folders" id="archiveFolders"></div>
+        <div class="grid" id="archiveGrid"></div>
+        <button class="more-btn" id="archiveMore" hidden>Show more</button>
+      </div>
       <div class="empty" id="emptyState" hidden></div>
       <button class="btn btn-ghost btn-more" id="loadMore" hidden>Show more</button>
     </section>
@@ -750,6 +760,10 @@
   <a href="#/favorites" data-tab="favorites">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7.5-4.9-9.3-9.2C1.3 8.4 3.2 5 6.6 5c2 0 3.5 1.2 4.4 2.4l1 1.3 1-1.3C13.9 6.2 15.4 5 17.4 5c3.4 0 5.3 3.4 3.9 6.8C19.5 16.1 12 21 12 21z"/></svg>
     <span>Favorites</span>
+  </a>
+  <a href="#/archive" data-tab="archive">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="13" width="20" height="7" rx="2"/><path d="M4 13l3-8h10l3 8"/><path d="M17.5 16.5h.01"/></svg>
+    <span>Archive</span>
   </a>
   <a href="#/downloads" data-tab="downloads">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg>

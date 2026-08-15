@@ -1993,6 +1993,35 @@ catch up, so a speed-controller extension keeps full control. Your chosen rate
 is preserved across channel changes, which a plain `load()` would otherwise
 reset to 1×.
 
+## The archive drive
+
+The **Archive** tab plays a 2 TB external drive plugged into the Pi — 5,853
+files, browsable by folder and searchable by title, with resume points and the
+cinema player exactly like everything else.
+
+`scripts/scan-library.js` probes the drive once and writes
+`library-index.ndjson`, recording for each file whether it can be served as-is
+(byte ranges straight off the disk — instant start, free seeking), needs its
+container converted, or needs a full video re-encode. The portal reads that
+index at boot and never guesses at play time. The index outlives the mount:
+with the drive unplugged the tab still browses and every play attempt says
+plainly that the drive is not plugged in.
+
+Roughly a third of the drive is MPEG-4 ASP (DivX/XviD in `.avi`), which no
+browser decodes. Those are encoded to H.264 on demand as they play — measured
+4.7× realtime on the Pi 4 — through the same HLS pipeline the provider streams
+use; nothing is converted up front and nothing is stored. Provider streams
+always pass through untouched and never take the encode branch.
+
+The client-supplied path is checked twice: resolved-and-prefix-checked against
+the drive root (so traversal cannot escape it), and required to exist in the
+index (so the feature cannot be used as a general file server for whatever
+else is on the disk).
+
+`ARCHIVE_ROOT` (default `/mnt/archive`) says where the drive mounts, and is
+set in `ecosystem.config.js` so it survives pm2 restarts. Setup and
+re-scanning: **[docs/archive-drive.md](docs/archive-drive.md)**.
+
 ## Multi-view
 
 Two to four live channels on one screen, reached from a button on Live TV.

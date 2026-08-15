@@ -39,12 +39,21 @@ const NATIVE_CONTAINERS = new Set(['mp4', 'm4v', 'mov']);
 const DOWNLOAD_DIR = path.join(ROOT, 'downloads');
 const DOWNLOAD_INDEX = path.join(DOWNLOAD_DIR, 'index.json');
 
+/* The external archive drive. ARCHIVE_ROOT is where it mounts — different on
+ * the Mac it was scanned from than on the Pi it plays from — while the index
+ * itself is path-relative and therefore the same file in both places. */
+const archive = require('./local-library');
+const ARCHIVE_ROOT = process.env.ARCHIVE_ROOT || '/mnt/archive';
+const ARCHIVE_INDEX = path.join(ROOT, 'library-index.ndjson');
+
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
 const MIME = {
   '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
   '.mkv': 'video/x-matroska',
   '.avi': 'video/x-msvideo',
   '.ts': 'video/mp2t',
@@ -1945,9 +1954,41 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 
     // Rebase timestamps so a seeked session still starts its playlist at zero.
     '-avoid_negative_ts', 'make_zero',
     '-map', '0:v:0',
-    '-map', '0:a:0?',
-    '-c:v', 'copy'
+    '-map', '0:a:0?'
   );
+
+  /* Copying the video is always preferable — it costs nothing and preserves
+   * the source exactly. But a third of the archive drive is MPEG-4 ASP
+   * (DivX/XviD in .avi), plus MPEG-2 and WMV, and no browser decodes any of
+   * those. Copying them produces a stream that plays as a black rectangle,
+   * so those are encoded.
+   *
+   * veryfast/CRF 23 is what makes this viable on a Pi rather than a
+   * theoretical nicety: measured at 4.7x realtime on the Pi 4 against this
+   * drive's mostly-SD material. Provider streams are always H.264/HEVC and
+   * never take this branch. */
+  // The codecs the pipeline can pass through untouched. H.264 plays
+  // everywhere; HEVC is carried by the fMP4 branch below. Everything else on
+  // the archive drive — MPEG-4 ASP, MPEG-2, WMV — no browser decodes.
+  const PASSTHROUGH_VIDEO = new Set(['h264', 'hevc', 'h265']);
+  const needsVideoEncode = videoCodec && !PASSTHROUGH_VIDEO.has(videoCodec);
+  if (needsVideoEncode) {
+    args.push(
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '23',
+      // yuv420p is the only pixel format iOS reliably decodes, and some of
+      // this material is old enough to be odd.
+      '-pix_fmt', 'yuv420p',
+      // A keyframe every couple of seconds, aligned so segments start on an
+      // IDR and seeking lands where it should.
+      '-g', '60',
+      '-keyint_min', '60',
+      '-sc_threshold', '0'
+    );
+  } else {
+    args.push('-c:v', 'copy');
+  }
 
   // Audio is always re-encoded, never copied.
   //
@@ -3902,6 +3943,102 @@ async function handleApi(req, res, pathname, query) {
     return json(res, 200, { stopped: true });
   }
 
+  /* ---- The archive drive ---- */
+
+  if (pathname === '/api/archive/status') {
+    return json(res, 200, archive.status());
+  }
+
+  if (pathname === '/api/archive/browse') {
+    return json(res, 200, archive.browse({
+      dir: query.get('dir') || '',
+      page: Math.max(0, Number(query.get('page') || 0)),
+    }));
+  }
+
+  if (pathname === '/api/archive/search') {
+    return json(res, 200, archive.search(query.get('q')));
+  }
+
+  if (pathname === '/api/archive/recent') {
+    return json(res, 200, { items: archive.recent(Number(query.get('limit') || 60)) });
+  }
+
+  /* Decide how one archive file gets on screen, and start it.
+   *
+   * Direct play is the fast path and covers most of the drive: the browser
+   * fetches byte ranges straight off the disk, so playback starts as soon as
+   * the first range lands and seeking is free. Everything else goes through
+   * the same HLS machinery the provider streams use — including the encode
+   * branch in ffmpegArgs for the codecs no browser decodes. */
+  if (pathname === '/api/archive/play') {
+    const rel = query.get('path');
+    const item = archive.entry(rel);
+    if (!item) return json(res, 404, { error: 'Not in the archive index' });
+
+    if (!archive.mounted()) {
+      return json(res, 503, {
+        error: 'The archive drive is not mounted. Check that it is plugged in and powered.',
+      });
+    }
+
+    const abs = archive.resolve(rel);
+    if (!abs) return json(res, 403, { error: 'Refused' });
+    if (!fs.existsSync(abs)) {
+      return json(res, 404, {
+        error: 'Indexed, but missing on disk. Re-run the scanner if the drive changed.',
+      });
+    }
+
+    const startSeconds = Math.max(0, Number(query.get('start') || 0));
+
+    // Resuming does not change the decision: the file is served over ranges,
+    // so the browser seeks to the resume point itself. Sending it through
+    // ffmpeg to start at an offset would be slower and produce a worse
+    // scrubber than the native one.
+    if (item.playback === 'direct') {
+      return json(res, 200, {
+        mode: 'direct',
+        url: `/archive/file?path=${encodeURIComponent(rel)}`,
+        sourceDuration: item.duration || 0,
+      });
+    }
+
+    if (!hasFfmpeg()) {
+      return json(res, 501, {
+        error: `${(item.container || '').toUpperCase()} needs ffmpeg to play, and ffmpeg is not installed.`,
+      });
+    }
+
+    try {
+      const session = await startRemux(abs, {
+        fromProvider: false,
+        videoCodec: item.vcodec || '',
+        startSeconds,
+        sourceDuration: item.duration || 0,
+      });
+      return json(res, 200, {
+        mode: 'hls',
+        url: `/hls/${session.id}/index.m3u8`,
+        format: 'm3u8',
+        session: session.id,
+        prebuffer: session.prebuffer,
+        offset: session.offset,
+        // The index knows the real duration; a transcode session does not,
+        // so the scrubber would otherwise show only what has been encoded.
+        sourceDuration: item.duration || session.sourceDuration || 0,
+        transcoding: item.playback === 'transcode',
+        subs: (session.subs || []).map((sub) => ({
+          lang: sub.lang,
+          label: subtitleLabel(sub),
+          url: `/hls/${session.id}/${sub.file}`,
+        })),
+      });
+    } catch (err) {
+      return json(res, 502, { error: err.message });
+    }
+  }
+
   /* ---- Resolve a playable, proxied URL ---- */
   if (pathname === '/api/play') {
     const kind = query.get('kind');
@@ -4078,6 +4215,13 @@ const server = http.createServer(async (req, res) => {
   try {
     if (pathname.startsWith('/api/')) return await handleApi(req, res, pathname, searchParams);
     if (pathname.startsWith('/hls/')) return serveRemux(req, res, pathname);
+    if (pathname === '/archive/file') {
+      // resolve() is the security boundary: traversal, absolute paths, and
+      // anything not in the index all come back null.
+      const abs = archive.resolve(searchParams.get('path'));
+      if (!abs) return send(res, 404, 'Not found');
+      return serveLocalFile(req, res, abs);
+    }
     if (pathname === '/stream') return await handleStream(req, res, searchParams);
     if (pathname === '/img') return await handleImage(req, res, searchParams);
     return serveStatic(req, res, pathname);
@@ -4092,6 +4236,7 @@ sweepScratch();
 recoverOrphanedDownloads();
 reportDiskSpace();
 loadLibraryCache();
+archive.configure({ root: ARCHIVE_ROOT, indexPath: ARCHIVE_INDEX });
 
 // Downloads from before the browser-native conversion existed are still .mkv;
 // bring them up to date so their playback stops depending on HLS sessions.
@@ -4108,5 +4253,17 @@ server.listen(PORT, HOST, () => {
   const paused = [...downloads.values()].filter((j) => j.status === 'paused').length;
   console.log(`\n  IPTV Portal  →  http://${HOST}:${PORT}   (${configured})`);
   if (paused) console.log(`  ${paused} download(s) paused by the last shutdown — resume from the Downloads tab.`);
+
+  const arc = archive.status();
+  if (arc.error) {
+    console.log(`  Archive: ${arc.error}`);
+  } else {
+    console.log(
+      `  Archive: ${arc.indexed} files indexed at ${arc.root} `
+        + `(${arc.mounted ? 'mounted' : 'NOT MOUNTED'}) — `
+        + `${arc.counts.direct || 0} direct, ${arc.counts.remux || 0} remux, `
+        + `${arc.counts.transcode || 0} transcode`
+    );
+  }
   console.log('');
 });
