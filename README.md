@@ -1866,20 +1866,30 @@ playhead **expires off the provider's server**; the player is forced forward
 because the material is genuinely gone.
 
 So the Pi makes its own window. When a live channel is opened, one ffmpeg per
-channel reads the provider's TS feed — **stream copy, no transcoding**, so it
-costs a Pi almost nothing — and republishes it as local HLS: ~4-second
-segments, **~2 minutes of playlist** (`LIVE_DVR` in `server.js`). The client is
-handed the local URL, marked `dvr: true`, and takes a deeper seat:
-`LIVE_DVR_SEAT`, 45 seconds. In order of importance, that buys:
+channel reads the provider's **own HLS playlist, from its oldest segment**
+(`-live_start_index 0`) — **stream copy, no transcoding**, so it costs a Pi
+almost nothing — and republishes it as local HLS: ~4-second segments, **~2
+minutes of playlist** (`LIVE_DVR` in `server.js`). The client is handed the
+local URL, marked `dvr: true`, and takes a deeper seat: `LIVE_DVR_SEAT`, 45
+seconds.
+
+Which input the ingest reads decides how fast a channel opens, and it was got
+wrong once: the TS push feed arrives at 1× realtime, and a stream copy can only
+cut segments on keyframes, so the first segments could take longer to exist
+than the readiness timeout — a measured session spent 15 silent seconds
+warming a DVR that then fell back to the direct path anyway, paying for both.
+The provider's playlist, by contrast, holds ~50 seconds of already-published
+video at any moment: ingesting it from index 0 pulls all of that at link speed,
+so the Pi's window opens ~50 seconds deep within a few seconds instead of
+growing from nothing. In order of importance, the window buys:
 
 - **Nothing expires under the viewer inside two minutes of drift.** The forced
   jump is gone from every link that is not two whole minutes slow, and two
   minutes is the ceiling on how far behind anybody can ever be.
-- **The provider's burstiness stops at the Pi.** The opening dump (31 seconds
-  in the first 6, measured) is not swallowed as the TS path does — it is
-  *banked*, becoming the first half-minute of window, so a viewer joins with a
-  real cushion the moment the channel opens. The lumpy 4–5 second delivery
-  afterwards lands on the Pi's disk, not in the viewer's buffer.
+- **The provider's burstiness stops at the Pi.** Its published backlog is
+  banked as the first ~50 seconds of window, so a viewer joins with a real
+  cushion the moment the channel opens, and the lumpy delivery afterwards
+  lands on the Pi's disk, not in the viewer's buffer.
 - **Fine-grained fetching.** ~4-second segments instead of the provider's 11,
   so a cushion can actually be assembled — with 11-second segments, "one more
   segment" was an 11-second wait for 11 seconds of video.
@@ -1902,15 +1912,21 @@ what the endpoint always returned.
 
 ### What even this does not fix
 
-The delivery rate between the **Pi and the viewer**. Across three measured
-sessions that link carried the stream at **0.47×, 0.67× and 0.86× of
-realtime** — 13 to 15 seconds to fetch 10 seconds of video, at 1.4–2.2 Mbit/s.
-The DVR removes the other failure modes (expiry, burstiness, coarse segments)
-and guarantees 45 seconds of material is always *available*; it cannot make
-that material *arrive* faster than the link carries it. If the viewer's link
-stays under 1× indefinitely, the picture still eventually stalls — and drifts,
-and at the two-minute mark the window moves on. That number lives in the
-network, and the prime suspect remains the tunnel.
+The delivery rate into the Pi. A session measured over the **direct Tailscale
+address** — no tunnel anywhere in the path — still showed 0.5–1.1 Mbit/s
+against a stream that needs ~2.5, which moves the bottleneck upstream: at that
+moment the **provider itself was starving the Pi**. Earlier sessions through
+the tunnel measured much the same, so the tunnel was a suspect and is now
+mostly exonerated; the pattern across every measured session is a provider
+that delivers around or below 1× at peak hours.
+
+The DVR removes every failure mode downstream of that — expiry, burstiness,
+coarse segments, cold starts — and guarantees 45 seconds of material is always
+*available* on the Pi. It cannot make the provider *send* faster. When the
+provider runs under 1×, the Pi's window edge advances slower than realtime,
+the viewer's cushion drains, and the picture eventually pauses — no jump, just
+a pause — until delivery resumes. That number lives with the provider, and no
+setting on either box changes it.
 
 An **MPEG-TS** channel gets `drain: 12, hold: 4` — the figures the old
 "balanced" mode used, and the ones that measured zero stalls and zero seeks over

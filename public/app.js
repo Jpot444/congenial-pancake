@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '22.7';
+const VERSION = '22.8';
 
 const PAGE_SIZE = 60;
 
@@ -7644,6 +7644,11 @@ async function openPlayer(item) {
       status('Playing your downloaded copy…');
     } else if (item.kind !== 'live' && needsRemux(item.ext || (item.sourceUrl || '').split('.').pop())) {
       status('Converting for playback — this takes a few seconds…');
+    } else if (item.kind === 'live') {
+      // The answer can take a few seconds while the Pi opens its live buffer
+      // for this channel. A blank player is indistinguishable from a broken
+      // one, which a measured session spent 15 silent seconds proving.
+      status('Tuning in — preparing the channel…');
     }
     const { url, format, seekTo, dvr } = await resolveStream(item, { startAt });
     if (myToken !== playToken) return; // player closed while we were buffering

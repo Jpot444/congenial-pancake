@@ -2335,10 +2335,20 @@ const LIVE_DVR = {
 
 function liveDvrArgs(input, dir) {
   return [
-    '-v', 'info', '-nostats', '-hide_banner',
+    '-v', 'info', '-nostats', '-hide_banner', '-y',
     // The feed drops; these ride out the transport-level ones without ffmpeg
     // exiting at all. A full exit is handled by the respawn in spawnLiveDvr.
     '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+    // The input is the provider's own HLS playlist, from its OLDEST segment.
+    // This is the whole reason startup is fast: the provider has ~50 seconds
+    // of already-published video sitting in that playlist, and starting from
+    // index 0 pulls all of it at link speed instead of waiting for a push
+    // feed to trickle in at 1x. The Pi's window opens ~50 seconds deep in the
+    // first moments rather than growing from nothing — which also means a
+    // v22.7 mistake cannot recur, where a keyframe-bound first cut on a
+    // realtime feed took longer than the readiness timeout and every tune-in
+    // paid 15 seconds to end up on the direct path anyway.
+    '-live_start_index', '0',
     '-i', input,
     // First video stream plus every audio stream; data and DVB subtitle
     // streams are dropped — they are why a bare -map 0 dies on some channels.
@@ -2401,9 +2411,9 @@ async function ensureLiveDvr(cfg, channelId) {
   }
   if (existing) killSession(id);
 
-  // Ingest reads the TS feed: one continuous connection, rather than polling
-  // the provider's own HLS playlist forever.
-  const input = buildStreamUrl(cfg, 'live', channelId, 'ts');
+  // Ingest reads the provider's HLS, not its TS push feed — see the
+  // live_start_index note in liveDvrArgs for why that decides startup time.
+  const input = buildStreamUrl(cfg, 'live', channelId, 'm3u8');
   fs.mkdirSync(HLS_DIR, { recursive: true });
   const dir = path.join(HLS_DIR, id);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -2431,14 +2441,17 @@ async function ensureLiveDvr(cfg, channelId) {
   autoPauseActiveDownload();
   spawnLiveDvr(session, input);
 
-  // Hand the URL back once there is something at it. Two segments, same as a
-  // remux — and thanks to the provider's opening dump they arrive fast.
+  // Hand the URL back the moment there is anything at it. One segment, not
+  // two: the client holds its own pre-start cushion gate, so an early answer
+  // is safe — and the banked input means the rest of the window is seconds
+  // behind the first.
   const playlist = path.join(dir, 'index.m3u8');
   const deadline = Date.now() + LIVE_DVR.startWaitMs;
   while (Date.now() < deadline) {
+    session.lastAccess = Date.now(); // warming is not idleness
     if (fs.existsSync(playlist)) {
       const text = fs.readFileSync(playlist, 'utf8');
-      if ((text.match(/\.ts/g) || []).length >= 2) return session;
+      if ((text.match(/\.ts/g) || []).length >= 1) return session;
     }
     if (session.exited && session.exitCode !== 0) {
       const detail = session._stderr.split('\n').filter(Boolean).pop() || `exit ${session.exitCode}`;
