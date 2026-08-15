@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '22.3';
+const VERSION = '22.4';
 
 const PAGE_SIZE = 60;
 
@@ -335,16 +335,22 @@ const img = (src) => (src ? `/img?u=${encodeURIComponent(src)}` : '');
  * with it on, hls.js works to stay nearer the edge than the stream can support,
  * which is stalling bought with nothing.
  *
- * And it does not chase. `liveMaxLatencyDuration` is far enough out that
- * ordinary jitter never triggers a correction — a player seeking on its own is
- * the "skips to the end" fault this app has already been through once. The LIVE
- * pill still shows the gap, and pressing it jumps to the edge deliberately.
+ * And it does not chase on jitter. What it does do is recover when the playhead
+ * has drifted towards falling off the playlist altogether, which on a link this
+ * slow it will — but that is `catchUpIfAdrift`, measured against the window the
+ * channel actually publishes rather than against a number chosen in advance.
+ * The LIVE pill still shows the gap, and pressing it jumps to the edge.
  */
 const LIVE_HLS = {
   lowLatencyMode: false,
   // Seconds behind the edge to join and sit at. Not a segment count.
   liveSyncDuration: 18,
-  liveMaxLatencyDuration: 60,
+  // Left high on purpose: recovery is `catchUpIfAdrift`, which measures against
+  // the playlist window this channel actually publishes. A number here was the
+  // bug — 60 against a 58-second window is a safety net pitched past the end of
+  // the playlist, which can never fire. Two mechanisms racing would be worse
+  // than one, so hls.js's own is kept out of the way.
+  liveMaxLatencyDuration: 600,
   // Hold everything from the playhead to the edge. Costs no latency: the
   // playlist stops at the edge, so this can only fill the gap already there.
   maxBufferLength: 45,
@@ -5386,6 +5392,7 @@ function startLiveTracking() {
   reservePlayerActions();
 
   liveTimer = setInterval(() => {
+    catchUpIfAdrift();
     const behind = currentLag();
     if (behind === null) return;
     // Under ~3s is as live as this provider gets; don't nag about it.
@@ -5393,6 +5400,62 @@ function startLiveTracking() {
     pill.classList.toggle('is-behind', !atEdge);
     lag.textContent = atEdge ? 'LIVE' : `${Math.round(behind)}s behind`;
   }, 1000);
+}
+
+/**
+ * Get back to live when the playhead has drifted towards falling off the
+ * playlist entirely.
+ *
+ * On a link that delivers a live stream at about the speed it plays, every
+ * stall costs seconds that can never be recovered: playback runs at 1× and
+ * never faster, so the gap to the live edge only grows. A measured session
+ * ended up **50.7 seconds behind in a 58-second window** — about seven seconds
+ * from the oldest segment still published, after which those segments 404 and
+ * playback simply ends.
+ *
+ * hls.js has a trigger for exactly this, and I had set it to a number instead
+ * of a proportion: `liveMaxLatencyDuration: 60`, against a window of 58. The
+ * safety net was pitched beyond the end of the playlist, so it could never fire
+ * and there was no way back. That is the opposite of the mistake before it —
+ * having been burned by a player that seeked too eagerly, I disabled recovery
+ * altogether.
+ *
+ * So the trigger is a proportion of whatever window this channel actually
+ * publishes, read from the playlist rather than assumed. Two thirds of the way
+ * to falling off is late enough that ordinary jitter never reaches it and early
+ * enough to still have somewhere to jump to.
+ *
+ * It is deliberately loud. A player that seeks on its own is the "skips to the
+ * end" fault this app has already been through, and the difference between that
+ * and this is that this one says what it did and why.
+ */
+function catchUpIfAdrift() {
+  if (engineKind !== 'hls.js' || !engine || !currentLiveItem) return;
+  const video = $('#video');
+  if (video.paused || video.seeking) return;
+  // Not straight after the last one: a jump needs time to show in `latency`,
+  // and without this it would fire again on the very next tick.
+  if (Date.now() - (catchUpIfAdrift.at || 0) < 20000) return;
+
+  let window;
+  let latency;
+  let to;
+  try {
+    window = engine.levels?.[engine.currentLevel]?.details?.totalduration;
+    latency = engine.latency;
+    to = engine.liveSyncPosition;
+  } catch {
+    return;
+  }
+  if (!Number.isFinite(window) || !Number.isFinite(latency) || window <= 0) return;
+  if (latency < window * 0.66) return;
+  if (!Number.isFinite(to) || to <= video.currentTime) return;
+
+  catchUpIfAdrift.at = Date.now();
+  const lost = Math.round(to - video.currentTime);
+  video.currentTime = to;
+  video.play().catch(() => {});
+  toast(`Fell ${Math.round(latency)}s behind — skipped ${lost}s to catch up to live.`);
 }
 
 function stopLiveTracking() {

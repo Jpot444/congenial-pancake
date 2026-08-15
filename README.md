@@ -1778,8 +1778,53 @@ seconds; 18 is three times it. It then holds everything between there and the
 edge (`maxBufferLength: 45`). `lowLatencyMode` is off, because this provider
 does not serve LL-HLS parts and with it on hls.js works to stay nearer the edge
 than the stream can support — stalling bought with nothing.
-`liveMaxLatencyDuration` is far enough out that ordinary jitter never triggers a
-correction.
+`liveMaxLatencyDuration` is parked at 600 — deliberately unreachable, so hls.js
+never seeks on its own. Getting back to live when the playhead really has fallen
+away is `catchUpIfAdrift` below, and two things racing to correct the same drift
+is how you get a stream that skips.
+
+### Falling behind, and coming back
+
+Setting `liveMaxLatencyDuration` to a number is what broke this. It was 60 —
+"far enough out that ordinary jitter never fires it", which was true and also
+useless, because the channel in question publishes a **58 second** playlist.
+A trigger pitched past the end of the playlist can never fire. So there was no
+recovery at all, and a measured session drifted to this:
+
+```
+link       1.4 Mbit/s measured
+playlist   live, 6 segments of ~11s = 58s window
+latency    50.7s behind the edge, asked for 21.0s
+```
+
+50.7 seconds behind, in a 58 second window: about seven seconds from falling off
+the oldest published segment entirely, at which point the playhead has nothing
+left to play and the stream is finished until somebody reloads it. A slow link
+puts you there — every stall costs a few seconds and none of them are ever paid
+back, because a live stream does not wait.
+
+The lesson is that **the trigger cannot be a constant**, because the thing it is
+measured against is a property of the channel. `catchUpIfAdrift` runs on the
+same one-second tick as the `LIVE` pill and asks the playlist how big it is:
+
+- fires at **66% of the published window** — 38s on a 58s playlist, 20s on a 30s
+  one — so it scales with what the channel actually offers instead of guessing;
+- **20 second cooldown**, so a link that cannot sustain the stream gets one
+  correction rather than a seek every tick;
+- **says what it did** — *"Fell 51s behind — skipped 33s to catch up to live."*
+  A silent jump is the "skips to the end" fault this has already been through
+  once; a jump you were told about is a repair;
+- does nothing at all when it cannot read a window, when the video is paused or
+  seeking, or when the target is behind where you already are. A recovery that
+  guesses is worse than no recovery.
+
+Ordinary lateness is left alone. This is not a chaser — it is the floor of the
+window, not the edge of it.
+
+What it does **not** do is invent bandwidth. 1.4 Mbit/s delivered with no
+declared headroom is a link problem, and the honest description of this fix is
+that it stops one bad minute becoming a dead stream. It does not make a starved
+link play cleanly.
 
 An **MPEG-TS** channel gets `drain: 12, hold: 4` — the figures the old
 "balanced" mode used, and the ones that measured zero stalls and zero seeks over
