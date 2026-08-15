@@ -2109,8 +2109,10 @@ async function startRemux(input, opts) {
 
   // One viewer, one session: whatever was running is now abandoned, and an
   // abandoned local-file remux would otherwise keep ffmpeg grinding through
-  // the whole film. A seek must not stack encoders on the Pi.
-  for (const id of [...remuxSessions.keys()]) killSession(id);
+  // the whole film. A seek must not stack encoders on the Pi. Live ingests
+  // are spared — a multiview film cell must not silence the live cell beside
+  // it, and an unwatched ingest reaps itself in 45 seconds anyway.
+  for (const [id, sess] of [...remuxSessions]) if (!sess.live) killSession(id);
 
   if (fromProvider) {
     // The remux is about to occupy the provider slot; playback wins.
@@ -2258,15 +2260,195 @@ async function realign(session, input, opts) {
 
 /** Reap sessions nothing has fetched from in a while. */
 setInterval(() => {
-  const cutoff = Date.now() - 5 * 60 * 1000;
-  for (const [id, s] of remuxSessions) if (s.lastAccess < cutoff) killSession(id);
-}, 60000).unref();
+  for (const [id, s] of remuxSessions) {
+    // Live ingests hold a provider connection open, so they go sooner.
+    const idle = s.idleMs || 5 * 60 * 1000;
+    if (Date.now() - s.lastAccess > idle) killSession(id);
+  }
+}, 15000).unref();
 
 for (const signal of ['exit', 'SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     for (const id of [...remuxSessions.keys()]) killSession(id);
     if (signal !== 'exit') process.exit(0);
   });
+}
+
+/* --------------------------------------------------------------- live DVR ---
+
+ * The provider publishes about 60 seconds of playlist per channel, and that
+ * number is the root of every live failure mode this app has been through: a
+ * viewer on a slow link stalls, falls behind, and within a minute the segment
+ * under the playhead expires off the provider's server — at which point the
+ * player is FORCED forward, which is the jumping-around that no client setting
+ * can prevent. The window is the provider's property, not ours.
+ *
+ * So make our own. One ffmpeg per channel reads the provider's TS feed —
+ * stream copy, no transcoding, so it costs the Pi almost nothing — and
+ * republishes it as local HLS with short segments and a window of about two
+ * minutes. What that buys, in order of importance:
+ *
+ *   - Nothing expires under the viewer inside two minutes of drift, so the
+ *     forced jump is gone from every link that is not two whole minutes slow.
+ *     Two minutes is also the ceiling on how far behind anyone can be.
+ *   - The provider's bursty delivery (measured: 31s dumped in the first 6s,
+ *     then lumpy 4-5s chunks) is absorbed by the Pi's disk instead of the
+ *     viewer's buffer. The dump is not swallowed as the TS proxy does — it is
+ *     BANKED: it becomes the first half-minute of window, so a viewer can join
+ *     with a real cushion the moment the channel opens.
+ *   - Segments are ~4 seconds instead of the provider's 11, so the client can
+ *     fetch in fine grain and hold a cushion that a coarse playlist could
+ *     never hand it.
+ *   - Everybody watching a channel shares ONE provider connection, where every
+ *     multiview cell used to cost its own.
+ *
+ * What it does not buy: bandwidth between the Pi and the viewer. A tunnel that
+ * delivers 1.4 Mbit/s still delivers 1.4 Mbit/s. But the cushion this makes
+ * possible is what a slow link needs most.
+ *
+ * Sessions live in `remuxSessions` so the existing serving, reaping and
+ * provider-busy logic all apply, marked `live: true` where the rules differ:
+ * a live playlist must never be closed with ENDLIST while the ingest can
+ * restart, and a live ingest must survive the kill-everything sweeps that VOD
+ * conversions run (a multiview film cell must not silence the live cell next
+ * to it). If the feed drops — this provider's does — ffmpeg is respawned into
+ * the same directory with `append_list`, so the playlist carries straight on
+ * and the viewer sees a hiccup, not an ending.
+ */
+const LIVE_DVR = {
+  // Requested cut length. Stream copy can only cut on keyframes, so real
+  // segments land on the channel's GOP length — usually 2-6s on this provider.
+  segmentSeconds: 4,
+  // How many of them to keep published. Together with the above this is the
+  // window: ~2 minutes, which is both the drift ceiling and the furthest
+  // behind live anybody can end up.
+  windowSegments: 30,
+  startWaitMs: 15000,
+  // Live is reaped faster than the 5-minute VOD default: an ingest holds a
+  // provider connection open, and hls.js re-fetches the playlist every few
+  // seconds, so 45 quiet seconds means nobody is watching.
+  idleMs: 45000,
+  // A drop is only worth reconnecting for an audience. After this long with
+  // no fetches, an exit is an ending.
+  restartWindowMs: 30000,
+};
+
+function liveDvrArgs(input, dir) {
+  return [
+    '-v', 'info', '-nostats', '-hide_banner',
+    // The feed drops; these ride out the transport-level ones without ffmpeg
+    // exiting at all. A full exit is handled by the respawn in spawnLiveDvr.
+    '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+    '-i', input,
+    // First video stream plus every audio stream; data and DVB subtitle
+    // streams are dropped — they are why a bare -map 0 dies on some channels.
+    '-map', '0:v:0', '-map', '0:a?',
+    '-c', 'copy',
+    '-f', 'hls',
+    '-hls_time', String(LIVE_DVR.segmentSeconds),
+    '-hls_list_size', String(LIVE_DVR.windowSegments),
+    // delete_segments keeps disk use at one window; append_list lets a respawn
+    // continue the same playlist; temp_file stops a half-written segment being
+    // served as though it were whole.
+    '-hls_flags', 'delete_segments+append_list+temp_file',
+    '-hls_segment_filename', path.join(dir, 'seg%06d.ts'),
+    path.join(dir, 'index.m3u8'),
+  ];
+}
+
+/** Start (or restart) the ingest for a live session. */
+function spawnLiveDvr(session, input) {
+  const args = liveDvrArgs(input, session.dir);
+  const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  session.proc = proc;
+  session.exited = false;
+  session.exitCode = undefined;
+  session.args = redactUrl(args.join(' '));
+  proc.stderr.on('data', (d) => {
+    const text = d.toString();
+    if (session._stderrHead.length < 6000) session._stderrHead += text;
+    session._stderr = (session._stderr + text).slice(-2000);
+  });
+  proc.on('exit', (code) => {
+    session.exited = true;
+    session.exitCode = code;
+    if (remuxSessions.get(session.id) !== session) return; // killed on purpose
+    // The feed dropped out from under an audience: reconnect. append_list
+    // makes the new run continue the same playlist, so from the player's side
+    // this is a pause in new segments, not an ending.
+    if (Date.now() - session.lastAccess > LIVE_DVR.restartWindowMs) return;
+    session.restarts = (session.restarts || 0) + 1;
+    if (session.restarts > 30) return; // a feed this dead is an ending
+    setTimeout(() => {
+      if (remuxSessions.get(session.id) !== session) return;
+      if (Date.now() - session.lastAccess > LIVE_DVR.restartWindowMs) return;
+      spawnLiveDvr(session, input);
+    }, 2000).unref();
+  });
+}
+
+/**
+ * The DVR session for a channel, started if it is not already running.
+ * Shared: a second viewer of the same channel joins the same window on the
+ * same single provider connection.
+ */
+async function ensureLiveDvr(cfg, channelId) {
+  const id = `live-${channelId}`;
+  const existing = remuxSessions.get(id);
+  if (existing && !(existing.exited && Date.now() - existing.lastAccess > LIVE_DVR.restartWindowMs)) {
+    existing.lastAccess = Date.now();
+    return existing;
+  }
+  if (existing) killSession(id);
+
+  // Ingest reads the TS feed: one continuous connection, rather than polling
+  // the provider's own HLS playlist forever.
+  const input = buildStreamUrl(cfg, 'live', channelId, 'ts');
+  fs.mkdirSync(HLS_DIR, { recursive: true });
+  const dir = path.join(HLS_DIR, id);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+
+  const session = {
+    id,
+    dir,
+    live: true,
+    lastAccess: Date.now(),
+    fromProvider: true,
+    idleMs: LIVE_DVR.idleMs,
+    offset: 0,
+    sourceDuration: 0,
+    prebuffer: 0,
+    subs: [],
+    _stderr: '',
+    _stderrHead: '',
+    stderr() { return this._stderr; },
+    stderrHead() { return this._stderrHead; },
+    args: '',
+  };
+  remuxSessions.set(id, session);
+  lastProviderActiveAt = Date.now();
+  autoPauseActiveDownload();
+  spawnLiveDvr(session, input);
+
+  // Hand the URL back once there is something at it. Two segments, same as a
+  // remux — and thanks to the provider's opening dump they arrive fast.
+  const playlist = path.join(dir, 'index.m3u8');
+  const deadline = Date.now() + LIVE_DVR.startWaitMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(playlist)) {
+      const text = fs.readFileSync(playlist, 'utf8');
+      if ((text.match(/\.ts/g) || []).length >= 2) return session;
+    }
+    if (session.exited && session.exitCode !== 0) {
+      const detail = session._stderr.split('\n').filter(Boolean).pop() || `exit ${session.exitCode}`;
+      killSession(id);
+      throw new Error(`Live ingest failed: ${redactUrl(detail)}`);
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  killSession(id);
+  throw new Error('Live ingest timed out starting');
 }
 
 /* ------------------------------------------------------------- m3u parsing */
@@ -3690,7 +3872,10 @@ async function handleApi(req, res, pathname, query) {
   }
 
   if (pathname === '/api/remux/stop') {
-    for (const id of [...remuxSessions.keys()]) killSession(id);
+    // Conversions only. Live ingests are shared across viewers and reap
+    // themselves when nobody fetches; one cell giving up on a film must not
+    // cut the channel playing next to it.
+    for (const [id, sess] of [...remuxSessions]) if (!sess.live) killSession(id);
     return json(res, 200, { stopped: true });
   }
 
@@ -3719,6 +3904,21 @@ async function handleApi(req, res, pathname, query) {
       const format = ext || cfg.preferredFormat;
       if (kind === 'live' && format === 'ts') {
         url += `&drain=${LIVE_TS.drain}&hold=${LIVE_TS.hold}`;
+      }
+      // A live HLS channel goes through the Pi's own DVR window when it can:
+      // ~2 minutes of local playlist instead of the provider's ~60 seconds,
+      // which is what stops segments expiring under a slow viewer. Any
+      // failure — no ffmpeg, a dead feed, a timeout — falls back to the
+      // direct proxy, which is exactly what this endpoint always returned.
+      if (kind === 'live' && format === 'm3u8' && hasFfmpeg() && /^[\w-]+$/.test(id)) {
+        try {
+          const session = await ensureLiveDvr(cfg, id);
+          return json(res, 200, {
+            url: `/hls/${session.id}/index.m3u8`, format: 'm3u8', dvr: true,
+          });
+        } catch {
+          /* direct proxy below */
+        }
       }
       return json(res, 200, { url, format });
     } catch (err) {
@@ -3776,7 +3976,10 @@ function serveRemux(req, res, pathname) {
         );
       }
 
-      if (session.exited) {
+      // Never for a live session: its ffmpeg respawns on a dropped feed, and
+      // an ENDLIST written during the two seconds between exit and respawn
+      // would tell every viewer the channel ended.
+      if (session.exited && !session.live) {
         if (!text.includes('#EXT-X-ENDLIST')) text = `${text.trimEnd()}\n#EXT-X-ENDLIST\n`;
         text = text.replace('#EXT-X-PLAYLIST-TYPE:EVENT', '#EXT-X-PLAYLIST-TYPE:VOD');
       }

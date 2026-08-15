@@ -1856,19 +1856,61 @@ Two changes:
 This is the "delay it a few more seconds" fix, and it is spent once at the join
 rather than as a stall a few seconds later.
 
-### What none of this fixes
+### The Pi's own live buffer
 
-The delivery rate. Across three measured sessions the link carried the stream at
-**0.47×, 0.67× and 0.86× of realtime** — 13 to 15 seconds to fetch 10 seconds of
-video, at 1.4–2.2 Mbit/s. A cushion absorbs a bad patch; it cannot be *built*
-out of a link that never delivers faster than the stream plays, because the only
-thing that fills a buffer is arriving faster than 1×.
+Everything above tunes the client against the provider's playlist, and the
+provider's playlist is the problem: it publishes **~60 seconds** per channel.
+That number caps every cushion, and it is the source of the one jump no client
+setting can prevent — drift 60 seconds behind and the segment under the
+playhead **expires off the provider's server**; the player is forced forward
+because the material is genuinely gone.
 
-So the honest description: sitting further back and starting later removes the
-stalls caused by having no head start, which is what the reports show happening
-first and worst. It does not make a starved link play cleanly, and if the link
-stays under 1× the picture will still eventually stall. That number is the
-thing to fix, and it is not in the player.
+So the Pi makes its own window. When a live channel is opened, one ffmpeg per
+channel reads the provider's TS feed — **stream copy, no transcoding**, so it
+costs a Pi almost nothing — and republishes it as local HLS: ~4-second
+segments, **~2 minutes of playlist** (`LIVE_DVR` in `server.js`). The client is
+handed the local URL, marked `dvr: true`, and takes a deeper seat:
+`LIVE_DVR_SEAT`, 45 seconds. In order of importance, that buys:
+
+- **Nothing expires under the viewer inside two minutes of drift.** The forced
+  jump is gone from every link that is not two whole minutes slow, and two
+  minutes is the ceiling on how far behind anybody can ever be.
+- **The provider's burstiness stops at the Pi.** The opening dump (31 seconds
+  in the first 6, measured) is not swallowed as the TS path does — it is
+  *banked*, becoming the first half-minute of window, so a viewer joins with a
+  real cushion the moment the channel opens. The lumpy 4–5 second delivery
+  afterwards lands on the Pi's disk, not in the viewer's buffer.
+- **Fine-grained fetching.** ~4-second segments instead of the provider's 11,
+  so a cushion can actually be assembled — with 11-second segments, "one more
+  segment" was an 11-second wait for 11 seconds of video.
+- **One provider connection per channel, shared.** Every multiview cell used
+  to cost its own.
+
+The lifecycle is the boring half and the half that has to be right. Sessions
+live in the same table as film conversions so serving, reaping and
+provider-busy logic all apply, flagged `live: true` where the rules differ: a
+live playlist is never closed with `ENDLIST` (the feed drops; ffmpeg is
+respawned into the same directory with `append_list`, so the playlist carries
+straight on and a drop is a hiccup, not an ending), the kill-everything sweeps
+that conversions run spare live sessions (a multiview film cell must not
+silence the channel beside it), and live sessions reap after **45 idle
+seconds** rather than five minutes, because an ingest holds a provider
+connection and hls.js's playlist polling keeps `lastAccess` fresh for as long
+as anybody is actually watching. Any failure — no ffmpeg on the box, a dead
+feed, a start-up timeout — falls back to the direct proxy, which is exactly
+what the endpoint always returned.
+
+### What even this does not fix
+
+The delivery rate between the **Pi and the viewer**. Across three measured
+sessions that link carried the stream at **0.47×, 0.67× and 0.86× of
+realtime** — 13 to 15 seconds to fetch 10 seconds of video, at 1.4–2.2 Mbit/s.
+The DVR removes the other failure modes (expiry, burstiness, coarse segments)
+and guarantees 45 seconds of material is always *available*; it cannot make
+that material *arrive* faster than the link carries it. If the viewer's link
+stays under 1× indefinitely, the picture still eventually stalls — and drifts,
+and at the two-minute mark the window moves on. That number lives in the
+network, and the prime suspect remains the tunnel.
 
 An **MPEG-TS** channel gets `drain: 12, hold: 4` — the figures the old
 "balanced" mode used, and the ones that measured zero stalls and zero seeks over

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '22.6';
+const VERSION = '22.7';
 
 const PAGE_SIZE = 60;
 
@@ -358,6 +358,22 @@ const img = (src) => (src ? `/img?u=${encodeURIComponent(src)}` : '');
 
 /** How much video to have in hand before starting, as a share of the window. */
 const LIVE_PREROLL = 0.3;
+/** But never more than this many seconds of waiting-room, however deep the
+ * window is — the point is a head start, not a screening delay. */
+const LIVE_PREROLL_CAP = 15;
+
+/**
+ * The seat when the Pi's own live buffer is serving the channel.
+ *
+ * The server ingests the channel once and republishes it with a window of
+ * about two minutes (see live DVR in server.js), so the two failure modes that
+ * priced the direct seat move apart: segments cannot expire under the playhead
+ * until two whole minutes of drift, and the material behind the seat is on the
+ * Pi's disk rather than subject to the provider's mood. 45 seconds back buys
+ * over ten of the Pi's ~4s segments of runway while staying well inside the
+ * two minutes behind live that is the outer limit of acceptable.
+ */
+const LIVE_DVR_SEAT = 45;
 
 const LIVE_HLS = {
   lowLatencyMode: false,
@@ -1671,7 +1687,7 @@ const multiview = {
         });
       if (stale() || !play) return;
       cell.format = play.format || '';
-      this.attach(cell, play.url, play.format, vod);
+      this.attach(cell, play.url, play.format, vod, Boolean(play.dvr));
     } catch (err) {
       if (cell.token !== mine) return;
       // The interesting failure. Said plainly rather than as a stack.
@@ -1748,7 +1764,7 @@ const multiview = {
     }
   },
 
-  attach(cell, url, format, vod = false) {
+  attach(cell, url, format, vod = false, dvr = false) {
     const video = cell.video;
     cell.note.textContent = 'Connecting…';
     video.addEventListener('playing', () => {
@@ -1799,7 +1815,7 @@ const multiview = {
           maxBufferLength: 120,
           startPosition: 0,
         }
-        : { ...LIVE_HLS });
+        : { ...LIVE_HLS, ...(dvr ? { liveSyncDuration: LIVE_DVR_SEAT } : {}) });
       cell.engine.loadSource(url);
       cell.engine.attachMedia(video);
       cell.engine.on(Hls.Events.ERROR, (_, data) => {
@@ -5338,7 +5354,7 @@ function attach(url, format, opts = {}) {
       engineKind = 'hls.js';
       engine = new Hls(
         live
-          ? { ...LIVE_HLS }
+          ? { ...LIVE_HLS, ...(opts.dvr ? { liveSyncDuration: LIVE_DVR_SEAT } : {}) }
           : {
               lowLatencyMode: false,
               // Keep everything behind the playhead. While a conversion is
@@ -5461,7 +5477,7 @@ function waitForCushion(video) {
   const until = Date.now() + LIVE_WAIT_MAX;
   // Fall back to the join distance when no window has been published yet;
   // whichever is known, the target is a few segments rather than a guess.
-  let want = LIVE_HLS.liveSyncDuration * LIVE_PREROLL;
+  let want = Math.min(LIVE_HLS.liveSyncDuration * LIVE_PREROLL, LIVE_PREROLL_CAP);
 
   const ahead = () => {
     if (!video.buffered.length) return 0;
@@ -5473,7 +5489,7 @@ function waitForCushion(video) {
     if (!currentLiveItem) return stopCushionWait();
     try {
       const w = engine?.levels?.[engine.currentLevel]?.details?.totalduration;
-      if (Number.isFinite(w) && w > 0) want = w * LIVE_PREROLL;
+      if (Number.isFinite(w) && w > 0) want = Math.min(w * LIVE_PREROLL, LIVE_PREROLL_CAP);
     } catch {
       /* no window published yet — the fallback above stands */
     }
@@ -7505,7 +7521,9 @@ async function resolveStream(item, override) {
   });
   const format =
     kind === 'live' ? data.format : /^(m3u8|ts)$/.test(data.format) ? data.format : 'file';
-  return { url: data.url, format };
+  // dvr means the Pi's own live buffer is serving this channel, which earns a
+  // deeper seat than the provider's short window could hold.
+  return { url: data.url, format, dvr: Boolean(data.dvr) };
 }
 
 function updateFavButton(item) {
@@ -7627,9 +7645,9 @@ async function openPlayer(item) {
     } else if (item.kind !== 'live' && needsRemux(item.ext || (item.sourceUrl || '').split('.').pop())) {
       status('Converting for playback — this takes a few seconds…');
     }
-    const { url, format, seekTo } = await resolveStream(item, { startAt });
+    const { url, format, seekTo, dvr } = await resolveStream(item, { startAt });
     if (myToken !== playToken) return; // player closed while we were buffering
-    attach(url, format, { seekTo });
+    attach(url, format, { seekTo, dvr });
     if (item.kind === 'live') {
       stopLeadWatch();
       hideFilmBar();
