@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '23.2';
+const VERSION = '23.3';
 
 const PAGE_SIZE = 60;
 
@@ -2244,6 +2244,12 @@ const reporter = {
     const owner = this.isOwner();
     $('#healthBtn').hidden = !owner;
     $('#reportBtn').hidden = owner;
+    // The archive is Hunter's drive, so its tab exists only on the owner
+    // profile. Inline style rather than the hidden attribute, because the tab
+    // bar styles its links with a display of their own and would win.
+    document.querySelectorAll('a[data-tab="archive"]').forEach((a) => {
+      a.style.display = owner ? '' : 'none';
+    });
   },
 
   /**
@@ -5211,13 +5217,19 @@ async function loadArchive(dir = '') {
   state.archive.dir = dir;
   state.archive.visible = PAGE_SIZE;
   state.archive.searching = false;
-  state.archive.data = await api('/api/archive/browse', { dir });
+  state.archive.data = await api('/api/archive/browse', {
+    dir,
+    profileId: profiles.current?.id || '',
+  });
 }
 
 async function searchArchive(q) {
   state.archive.searching = true;
   state.archive.visible = PAGE_SIZE;
-  const res = await api('/api/archive/search', { q });
+  const res = await api('/api/archive/search', {
+    q,
+    profileId: profiles.current?.id || '',
+  });
   state.archive.data = { dir: state.archive.dir, subdirs: [], items: res.items, total: res.total };
 }
 
@@ -5347,12 +5359,19 @@ async function goTo(tab) {
     return render();
   }
   if (tab === 'archive') {
+    // Hidden tabs can still be typed into the address bar. Not this one.
+    if (!reporter.isOwner()) {
+      location.hash = '#/home';
+      return;
+    }
     renderSkeletons();
     try {
       // Status is cheap and says up front whether the drive is actually
       // there, so a missing mount reads as a clear message rather than an
       // empty grid the user has to interpret.
-      state.archive.status = await api('/api/archive/status');
+      state.archive.status = await api('/api/archive/status', {
+        profileId: profiles.current?.id || '',
+      });
       await loadArchive(state.archive.dir || '');
     } catch (err) {
       $('#grid').innerHTML = '';
@@ -7691,7 +7710,11 @@ async function resolveStream(item, override) {
    * Direct play seeks itself; an HLS session has already been started at the
    * resume point, so its scrubber runs on the returned offset. */
   if (item.archivePath) {
-    const data = await api('/api/archive/play', { path: item.archivePath, start: startAt || '' });
+    const data = await api('/api/archive/play', {
+      path: item.archivePath,
+      start: startAt || '',
+      profileId: profiles.current?.id || '',
+    });
 
     if (data.mode === 'direct') {
       lastRemux = {};

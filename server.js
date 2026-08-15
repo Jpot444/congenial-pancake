@@ -322,7 +322,10 @@ function readProfiles() {
  * other, the box belongs to Hunter, and a `limitless: true` field on a profile
  * anyone can edit from the profile screen would be a limit in name only.
  */
-const DOWNLOAD_ALLOWANCE = 3 * 1024 * 1024 * 1024;
+// 20GB since the archive drive arrived: films that used to live on the SD
+// card's little free slice live on the drive now, so the card's space is
+// downloads' to spend.
+const DOWNLOAD_ALLOWANCE = 20 * 1024 * 1024 * 1024;
 
 /**
  * Whose box this is.
@@ -3947,6 +3950,16 @@ async function handleApi(req, res, pathname, query) {
   }
 
   /* ---- The archive drive ---- */
+
+  if (pathname.startsWith('/api/archive/')) {
+    // Same honesty as the reports gate: the box is unauthenticated by design,
+    // so this is not a security boundary and is not dressed as one. The
+    // archive is Hunter's drive; the tab is hidden from every other profile,
+    // and this keeps the API from quietly working anyway.
+    if (!isOwnerProfile(ownerOf(query.get('profileId')))) {
+      return json(res, 403, { error: 'The archive is only available on the owner profile.' });
+    }
+  }
 
   if (pathname === '/api/archive/status') {
     return json(res, 200, archive.status());

@@ -210,9 +210,9 @@ resume. Pausing keeps the partial file and resumes from the exact byte offset
 via a Range request rather than starting over. Downloads interrupted by a server
 restart come back as paused and resume the same way.
 
-### Every profile but one has a 3GB allowance
+### Every profile but one has a 20GB allowance
 
-`hunter` downloads without limit. Everyone else gets 3GB, counted across that
+`hunter` downloads without limit. Everyone else gets 20GB, counted across that
 profile's own downloads — finished files at what they weigh, running and queued
 ones at what they *will* weigh, so queueing twenty at once cannot sail past the
 line before the first of them lands.
@@ -2010,6 +2010,11 @@ The **Archive** tab plays a 2 TB external drive plugged into the Pi — 5,853
 files, browsable by folder and searchable by title, with resume points and the
 cinema player exactly like everything else.
 
+**It is Hunter's tab.** Every other profile has no Archive in either nav,
+typing the address bounces to home, and the API refuses their `profileId` —
+the same honesty-not-security gate the reports use, since the box is
+unauthenticated by design.
+
 `scripts/scan-library.js` probes the drive once and writes
 `library-index.ndjson`, recording for each file whether it can be served as-is
 (byte ranges straight off the disk — instant start, free seeking), needs its
@@ -2250,7 +2255,7 @@ nothing anybody can watch.
 - Very large libraries load fully into memory in the browser. With 57k channels
   and 178k movies, the first load of a section takes several seconds.
 - Series resume points aren't tracked yet — episodes start from zero.
-- Downloads have no disk-space guard. The 3GB per-profile allowance is not one:
+- Downloads have no disk-space guard. The 20GB per-profile allowance is not one:
   it is per profile, `hunter` is exempt from it, and nothing stops the sum of
   everyone's from outrunning the card. A 4K film here runs 4–5 GB; check the
   Pi's free space before queueing a stack of them.
