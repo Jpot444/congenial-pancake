@@ -1916,7 +1916,18 @@ that conversions run spare live sessions (a multiview film cell must not
 silence the channel beside it), and live sessions reap after **45 idle
 seconds** rather than five minutes, because an ingest holds a provider
 connection and hls.js's playlist polling keeps `lastAccess` fresh for as long
-as anybody is actually watching. Any failure — no ffmpeg on the box, a dead
+as anybody is actually watching.
+
+"Never closed with ENDLIST" has to be enforced on the way OUT, not just by
+refraining on the way in: **ffmpeg writes an `ENDLIST` itself** when its input
+runs dry and it exits cleanly. A viewer who sees it reclassifies the stream as
+finished and stops polling the playlist — so when the ingest respawns two
+seconds later, nobody is listening, and a measured session sat frozen at the
+90-second mark of a live game. `serveRemux` strips the marker from every live
+playlist it serves. The respawned run also raises `discont_start`, marking its
+first segment as a discontinuity: its timestamps restart wherever the
+provider's backlog now begins, and unmarked they would be mapped onto the old
+timeline as a visible jump. Any failure — no ffmpeg on the box, a dead
 feed, a start-up timeout — falls back to the direct proxy, which is exactly
 what the endpoint always returned.
 

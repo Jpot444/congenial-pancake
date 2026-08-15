@@ -2380,7 +2380,7 @@ const LIVE_DVR = {
   restartWindowMs: 30000,
 };
 
-function liveDvrArgs(input, dir) {
+function liveDvrArgs(input, dir, resumed = false) {
   return [
     '-v', 'info', '-nostats', '-hide_banner', '-y',
     // The feed drops; these ride out the transport-level ones without ffmpeg
@@ -2406,16 +2406,19 @@ function liveDvrArgs(input, dir) {
     '-hls_list_size', String(LIVE_DVR.windowSegments),
     // delete_segments keeps disk use at one window; append_list lets a respawn
     // continue the same playlist; temp_file stops a half-written segment being
-    // served as though it were whole.
-    '-hls_flags', 'delete_segments+append_list+temp_file',
+    // served as though it were whole. A respawned run marks its first segment
+    // as a discontinuity, because its timestamps restart wherever the
+    // provider's backlog now begins — unmarked, the player maps them onto the
+    // old timeline and the picture jumps.
+    '-hls_flags', `delete_segments+append_list+temp_file${resumed ? '+discont_start' : ''}`,
     '-hls_segment_filename', path.join(dir, 'seg%06d.ts'),
     path.join(dir, 'index.m3u8'),
   ];
 }
 
 /** Start (or restart) the ingest for a live session. */
-function spawnLiveDvr(session, input) {
-  const args = liveDvrArgs(input, session.dir);
+function spawnLiveDvr(session, input, resumed = false) {
+  const args = liveDvrArgs(input, session.dir, resumed);
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
   session.proc = proc;
   session.exited = false;
@@ -2439,7 +2442,7 @@ function spawnLiveDvr(session, input) {
     setTimeout(() => {
       if (remuxSessions.get(session.id) !== session) return;
       if (Date.now() - session.lastAccess > LIVE_DVR.restartWindowMs) return;
-      spawnLiveDvr(session, input);
+      spawnLiveDvr(session, input, true);
     }, 2000).unref();
   });
 }
@@ -4136,9 +4139,15 @@ function serveRemux(req, res, pathname) {
         );
       }
 
-      // Never for a live session: its ffmpeg respawns on a dropped feed, and
-      // an ENDLIST written during the two seconds between exit and respawn
-      // would tell every viewer the channel ended.
+      // A live playlist must never carry ENDLIST, and refraining from adding
+      // one is only half of that: ffmpeg WRITES one itself when its input
+      // runs dry and it exits. A viewer who sees it reclassifies the stream
+      // as finished and stops polling the playlist — so when the ingest
+      // respawns two seconds later, nobody is listening, and a measured
+      // session sat frozen at the 90-second mark of a live game. Strip it.
+      if (session.live) {
+        text = text.replace(/#EXT-X-ENDLIST\s*/g, '');
+      }
       if (session.exited && !session.live) {
         if (!text.includes('#EXT-X-ENDLIST')) text = `${text.trimEnd()}\n#EXT-X-ENDLIST\n`;
         text = text.replace('#EXT-X-PLAYLIST-TYPE:EVENT', '#EXT-X-PLAYLIST-TYPE:VOD');
