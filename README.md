@@ -590,15 +590,31 @@ Phone layout is a different shape, not a scaled-down desktop:
   thing in it that does, and the bar is an ordinary row at the bottom of the
   column.
 
-  **`inset: 0`, not `height: 100dvh`.** The first version of the frame used
-  `dvh`, and on the phone it was written for — the app added to an iPhone home
-  screen, running full-screen with no browser chrome — that resolved *taller*
-  than what you can actually see. The frame overhung the bottom of the glass
-  and took its last row with it, so the bar was no longer drifting; it was
-  simply below the screen, and the home page came up with no bar at all. A
-  fixed box inset to zero is the layout viewport by definition: no unit to
-  resolve, and so nothing to be wrong about, in a tab, in standalone, with a
-  keyboard up, or on a device with a notch. An
+  **The frame is sized to what you can SEE**, which is not the same box as the
+  viewport. Two earlier versions failed identically, which was the tell:
+  `height: 100dvh` and `position: fixed; inset: 0` both place the bottom edge at
+  the bottom of the *layout* viewport. Open this from an iPhone home-screen icon
+  created before the app declared itself standalone and that view carries
+  Safari's chrome, with the layout viewport running on behind its bottom
+  toolbar — so the bar was correctly at the bottom of the viewport and
+  underneath the toolbar. Invisible, twice, for the same reason.
+
+  Three things fix it, and each covers a case the others do not:
+
+  - **`--app-h`**, set from `visualViewport.height`, is the part actually on the
+    glass with browser chrome and any keyboard already subtracted. CSS has no
+    unit for that — `dvh` tracks the toolbars but is still the layout viewport
+    in this mode — so it is measured and written into a custom property on
+    `resize` (never `scroll`, which fires on every frame of a toolbar sliding).
+  - **`min-height: 0` on the frame.** `body { min-height: 100vh }` further up
+    the stylesheet defeated every height above it, and on iOS `100vh` is the
+    *large* viewport — the one including the strip behind the toolbars. The
+    frame could not be made shorter than the visible area however it was sized.
+    This was the line really holding the bar down there.
+  - **`apple-mobile-web-app-capable`**, so a home-screen icon opens with no
+    browser chrome at all and the question does not arise. iOS reads it when the
+    icon is created, so an icon added earlier keeps its old mode until it is
+    removed and re-added — which is why the two above matter regardless. An
   element in normal flow in a container that never scrolls has nothing to drift
   against. `overscroll-behavior: contain` on the view keeps its own overscroll
   to itself and `none` on the body refuses it outright, so the bounce never

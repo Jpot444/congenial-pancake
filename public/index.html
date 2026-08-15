@@ -16,6 +16,19 @@
   <!-- What the icon is called underneath. Without this iOS uses the document
        title, which is the other half of where "Portal" was coming from. -->
   <meta name="apple-mobile-web-app-title" content="Treasure Theater" />
+  <!-- Run as an app rather than as a page in a browser.
+       Without this, tapping the home-screen icon opens a Safari view WITH
+       Safari's chrome — including its bottom toolbar. The page's own viewport
+       then extends behind that toolbar, so the tab bar, correctly placed at the
+       bottom of the viewport, sits underneath it and cannot be seen. That is
+       what "no bottom bar on the home screen" was, and why sizing the frame in
+       dvh and pinning it to inset:0 both failed in exactly the same way: they
+       were both putting the bar in the same hidden place.
+       iOS reads this when the icon is created, so an icon added before this
+       existed keeps its old mode until it is removed and re-added. The frame
+       measures the visible viewport as well, so it is right either way. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js"></script>
 </head>

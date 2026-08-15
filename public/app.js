@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '21.2';
+const VERSION = '21.3';
 
 const PAGE_SIZE = 60;
 
@@ -293,6 +293,53 @@ async function api(path, params) {
 }
 
 const img = (src) => (src ? `/img?u=${encodeURIComponent(src)}` : '');
+
+/**
+ * How tall the app frame is allowed to be, in pixels on the glass.
+ *
+ * The phone frame cannot be sized in viewport units. `100dvh` and a fixed box
+ * inset to zero both describe the LAYOUT viewport, and on an iPhone opening
+ * this from a home-screen icon that predates the standalone meta tag, the
+ * layout viewport continues on behind Safari's bottom toolbar. A tab bar at the
+ * bottom of that box is underneath the toolbar and cannot be seen — which is
+ * what happened, twice, to two different-looking fixes that were making the
+ * same mistake.
+ *
+ * `visualViewport.height` is the part that is actually on the glass: browser
+ * chrome and the keyboard are already subtracted from it. There is no CSS unit
+ * for that, so it is measured and written into a custom property.
+ *
+ * Only `resize` is listened to. `scroll` fires continuously while Safari's
+ * toolbar slides and would rewrite the frame height on every frame of it;
+ * resize fires when the height actually settles, which is the moment that
+ * matters.
+ */
+const appHeight = {
+  apply() {
+    const vv = window.visualViewport;
+    const h = Math.round(vv ? vv.height : window.innerHeight);
+    if (h > 0) document.documentElement.style.setProperty('--app-h', `${h}px`);
+  },
+
+  watch() {
+    this.apply();
+    const again = () => {
+      // Two passes: iOS reports the old height for a frame or two after the
+      // chrome moves, and the second one is the true figure.
+      this.apply();
+      setTimeout(() => this.apply(), 300);
+    };
+    window.visualViewport?.addEventListener('resize', again);
+    window.addEventListener('resize', again);
+    window.addEventListener('orientationchange', again);
+    // Coming back from the background or from another app: iOS often lays out
+    // once with a stale height on the way in.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) again();
+    });
+  },
+};
+appHeight.watch();
 
 /**
  * Back to the top of whatever is actually scrolling.

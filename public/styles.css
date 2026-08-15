@@ -874,24 +874,38 @@ body.has-tabbar .home-version {
  * Only under `has-tabbar`, which is exactly the phone layout. A desktop keeps
  * ordinary document scrolling, its scrollbar and its sticky header. */
 body.has-tabbar {
-  /* `inset: 0`, not a height in `vh` or `dvh`.
+  /* Sized to what you can SEE, which is not the same box as the viewport.
    *
-   * The first version of this frame was `height: 100dvh`, and on the phone it
-   * was written for — the app added to an iPhone home screen, which runs
-   * full-screen with no browser chrome — that resolved TALLER than what you can
-   * actually see. The frame overhung the bottom of the screen and took its last
-   * row with it, so the bar was not drifting any more; it was simply below the
-   * glass.
+   * Two earlier versions of this frame failed in exactly the same way, which is
+   * the tell: `height: 100dvh` and `position: fixed; inset: 0` both place the
+   * bottom edge at the bottom of the LAYOUT viewport. On an iPhone home-screen
+   * icon created before this app declared itself standalone, that view carries
+   * Safari's chrome, and the layout viewport runs on behind its bottom toolbar.
+   * So the bar was correctly at the bottom of the viewport and underneath the
+   * toolbar — invisible, twice, for the same reason.
    *
-   * A fixed box inset to zero is the layout viewport by definition. There is no
-   * unit to resolve and nothing to be wrong about, in a browser tab, in
-   * standalone, with a keyboard up, or on a device with a notch.
+   * `--app-h` is `visualViewport.height`: the part actually on the glass, with
+   * any browser chrome and any keyboard already taken out of it. Set from JS
+   * because CSS has no unit for it — `dvh` tracks the toolbars but is still the
+   * layout viewport in this mode. The `100dvh` fallback is what a browser
+   * without visualViewport gets, and it is right there.
    *
    * Fixing `body` does not change where its own fixed children land: only
    * transform, filter, perspective, contain and will-change make an ancestor a
    * containing block for `position: fixed`, and none of those is here. */
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  height: 100dvh;
+  height: var(--app-h, 100dvh);
+  /* `body { min-height: 100vh }` further up defeats every one of the heights
+     above, and on iOS `100vh` is the LARGE viewport — the one that includes the
+     strip behind the browser's toolbars. So the frame could not be made shorter
+     than the visible area however it was sized, and its last row stayed behind
+     the toolbar. This is the line that was really holding the bar down there. */
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
