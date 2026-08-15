@@ -1881,7 +1881,17 @@ warming a DVR that then fell back to the direct path anyway, paying for both.
 The provider's playlist, by contrast, holds ~50 seconds of already-published
 video at any moment: ingesting it from index 0 pulls all of that at link speed,
 so the Pi's window opens ~50 seconds deep within a few seconds instead of
-growing from nothing. In order of importance, the window buys:
+growing from nothing.
+
+Which is also why readiness is a **speed test**: `/api/play` hands over the
+DVR only if it shows **two segments within five seconds**. A healthy feed
+banks the backlog at several times realtime and clears that bar easily. A feed
+throttled to about realtime cannot — and that is exactly the feed on which a
+shallow buffer is worse than no buffer: a measured session seated a viewer in
+a 4-second window glued to the ingest frontier, stalling every few seconds,
+strictly worse than the direct path it had replaced. Slow feeds go direct,
+fast feeds get the window, and no tune-in waits more than five seconds to find
+out which it is. In order of importance, the window buys:
 
 - **Nothing expires under the viewer inside two minutes of drift.** The forced
   jump is gone from every link that is not two whole minutes slow, and two

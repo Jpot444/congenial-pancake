@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '22.8';
+const VERSION = '22.9';
 
 const PAGE_SIZE = 60;
 
@@ -360,7 +360,7 @@ const img = (src) => (src ? `/img?u=${encodeURIComponent(src)}` : '');
 const LIVE_PREROLL = 0.3;
 /** But never more than this many seconds of waiting-room, however deep the
  * window is — the point is a head start, not a screening delay. */
-const LIVE_PREROLL_CAP = 15;
+const LIVE_PREROLL_CAP = 10;
 
 /**
  * The seat when the Pi's own live buffer is serving the channel.
@@ -5470,7 +5470,7 @@ let cushionTimer = null;
  * a link too slow to fill it starts anyway at `LIVE_WAIT_MAX`, because a stall
  * you can see the reason for still beats a spinner that never ends.
  */
-const LIVE_WAIT_MAX = 20000;
+const LIVE_WAIT_MAX = 10000;
 
 function waitForCushion(video) {
   stopCushionWait();

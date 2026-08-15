@@ -2323,7 +2323,13 @@ const LIVE_DVR = {
   // window: ~2 minutes, which is both the drift ceiling and the furthest
   // behind live anybody can end up.
   windowSegments: 30,
-  startWaitMs: 15000,
+  // How long a tune-in may wait for the buffer before being handed the plain
+  // direct stream instead. Short on purpose: on a healthy feed the first
+  // segment lands well inside it, and on a starved one the buffer would open
+  // shallow anyway — and a viewer seated in a 4-second window rides the
+  // ingest frontier, stalling every few seconds, which a measured session
+  // showed to be worse than the direct path it replaced.
+  startWaitMs: 5000,
   // Live is reaped faster than the 5-minute VOD default: an ingest holds a
   // provider connection open, and hls.js re-fetches the playlist every few
   // seconds, so 45 quiet seconds means nobody is watching.
@@ -2441,17 +2447,21 @@ async function ensureLiveDvr(cfg, channelId) {
   autoPauseActiveDownload();
   spawnLiveDvr(session, input);
 
-  // Hand the URL back the moment there is anything at it. One segment, not
-  // two: the client holds its own pre-start cushion gate, so an early answer
-  // is safe — and the banked input means the rest of the window is seconds
-  // behind the first.
+  // Two segments inside the short wait, and that bar is doing real work: it
+  // is a SPEED test, not just an existence test. A healthy feed banks the
+  // provider's backlog several times faster than realtime, so two segments
+  // appear in two or three seconds. A feed being throttled to about realtime
+  // cannot produce them in time — and that is exactly the feed on which a
+  // shallow buffer is worse than no buffer, because a viewer seated in it
+  // rides the ingest frontier, stalling every few seconds. Slow feeds belong
+  // on the direct path, and this bar is what sends them there.
   const playlist = path.join(dir, 'index.m3u8');
   const deadline = Date.now() + LIVE_DVR.startWaitMs;
   while (Date.now() < deadline) {
     session.lastAccess = Date.now(); // warming is not idleness
     if (fs.existsSync(playlist)) {
       const text = fs.readFileSync(playlist, 'utf8');
-      if ((text.match(/\.ts/g) || []).length >= 1) return session;
+      if ((text.match(/\.ts/g) || []).length >= 2) return session;
     }
     if (session.exited && session.exitCode !== 0) {
       const detail = session._stderr.split('\n').filter(Boolean).pop() || `exit ${session.exitCode}`;
