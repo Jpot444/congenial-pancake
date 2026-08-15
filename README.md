@@ -1657,13 +1657,45 @@ The portal handles this at both ends:
   out from under you. The `LIVE` pill in the player bar shows how far behind you
   are; click it to jump to the edge deliberately.
 
-Three modes, selectable in the player bar and remembered in `prefs.json`:
+**There is no latency setting.** There used to be three modes in a dropdown —
+ride the edge, balanced, don't drain at all — which asked the viewer to trade
+stalling against being behind live without giving them any way to know which
+they were about to get. The trade is real; it just has a right answer on this
+provider, so the app makes it.
 
-| Mode | Latency | Behaviour |
+The reason one setting can be both clean and close is that those two costs are
+**not on the same dial**, which the dropdown implied they were:
+
+| | set by | what it costs |
 | --- | --- | --- |
-| Lowest | ~3s | Rides the live edge. May stutter — a 5s delivery gap can outrun a 3s cushion. |
-| Balanced *(default)* | ~7s | Banks a 4s jitter buffer before starting. Measured zero stalls and zero seeks over 50s. |
-| Instant start | ~25s | No draining. Plays immediately, stays far behind live. |
+| How far behind you are | where the playhead sits relative to the end of the playlist | latency |
+| How much cushion you have | how much between the playhead and that end is downloaded | nothing |
+
+A live playlist only ever exposes up to the edge, so buffering aggressively
+cannot push you further behind — it fills in the gap you are already standing
+in. The cushion is free.
+
+So an **HLS** channel sits a fixed three segments back (`liveSyncDurationCount`,
+the figure the HLS spec itself recommends, and enough to ride out one slow
+fetch) and then holds everything between there and the edge
+(`maxBufferLength: 30`). `lowLatencyMode` is off, because this provider does not
+serve LL-HLS parts and with it on hls.js works to stay nearer the edge than the
+stream can support — stalling bought with nothing. `liveMaxLatencyDurationCount`
+is far enough out that ordinary jitter never triggers a correction.
+
+An **MPEG-TS** channel gets `drain: 12, hold: 4` — the figures the old
+"balanced" mode used, and the ones that measured zero stalls and zero seeks over
+50 seconds. The other two modes each gave up one of the two things anybody
+actually wants.
+
+Both players take the same object, `LIVE_HLS`. Multi-view constructs its own
+engine, and two copies of a tuning like this drift the moment one is touched.
+
+**The readout stays.** Removing the setting is not removing the information: the
+`LIVE` pill still shows how far behind you are, and pressing it still jumps to
+the edge. What that must never be is something the player decides on its own —
+a seek nobody asked for is the "skips to the end" fault this has already been
+through once.
 
 **Playback rate is never touched.** The portal doesn't auto-adjust speed to
 catch up, so a speed-controller extension keeps full control. Your chosen rate

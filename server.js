@@ -223,7 +223,6 @@ function readPrefsRaw() {
     return {
       pinnedCategories: Array.isArray(parsed.pinnedCategories) ? parsed.pinnedCategories : [],
       favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
-      liveLatency: parsed.liveLatency || 'balanced',
       captionTrack: typeof parsed.captionTrack === 'string' ? parsed.captionTrack : '',
       prebufferSeconds: Number(parsed.prebufferSeconds) || DEFAULT_PREBUFFER,
       filtersEnabled: parsed.filtersEnabled !== false,
@@ -247,7 +246,6 @@ function readPrefs() {
   return {
     pinnedCategories: [],
     favorites: [],
-    liveLatency: 'balanced',
     captionTrack: '',
     prebufferSeconds: DEFAULT_PREBUFFER,
     filtersEnabled: true,
@@ -3275,9 +3273,6 @@ async function handleApi(req, res, pathname, query) {
       if (Array.isArray(incoming.favorites)) {
         prefs.favorites = incoming.favorites.slice(0, 500);
       }
-      if (['low', 'balanced', 'instant'].includes(incoming.liveLatency)) {
-        prefs.liveLatency = incoming.liveLatency;
-      }
       if (typeof incoming.captionTrack === 'string') {
         prefs.captionTrack = incoming.captionTrack.slice(0, 120);
       }
@@ -3704,17 +3699,20 @@ async function handleApi(req, res, pathname, query) {
       const direct = buildStreamUrl(cfg, kind, id, ext);
       let url = proxyPath(direct);
 
-      // drain = seconds we'll spend swallowing the provider's backlog.
-      // hold  = seconds of jitter buffer banked before playback starts.
-      const MODES = {
-        low: { drain: 12, hold: 0 },
-        balanced: { drain: 12, hold: 4 },
-        instant: { drain: 0, hold: 0 },
-      };
+      // How an MPEG-TS channel is opened. One setting, not a choice.
+      //
+      // drain = seconds spent swallowing the provider's opening backlog, which
+      //         is what otherwise leaves you half a minute behind.
+      // hold  = seconds of jitter buffer banked before playback starts, which
+      //         is what absorbs this provider's lumpy 4-5s delivery.
+      //
+      // These are the figures the old "balanced" mode used, and they are here
+      // because they are the ones that measured zero stalls and zero seeks —
+      // the other two modes each gave up one of the two things a viewer wants.
+      const LIVE_TS = { drain: 12, hold: 4 };
       const format = ext || cfg.preferredFormat;
       if (kind === 'live' && format === 'ts') {
-        const mode = MODES[query.get('latency')] || MODES.balanced;
-        if (mode.drain > 0) url += `&drain=${mode.drain}&hold=${mode.hold}`;
+        url += `&drain=${LIVE_TS.drain}&hold=${LIVE_TS.hold}`;
       }
       return json(res, 200, { url, format });
     } catch (err) {

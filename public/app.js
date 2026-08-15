@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '21.3';
+const VERSION = '21.4';
 
 const PAGE_SIZE = 60;
 
@@ -75,7 +75,6 @@ const prefs = {
   data: {
     pinnedCategories: [],
     favorites: [],
-    liveLatency: 'balanced',
     filtersEnabled: true,
     filters: {},
     // The subtitle track last turned on, by label. Somebody who wants English
@@ -293,6 +292,46 @@ async function api(path, params) {
 }
 
 const img = (src) => (src ? `/img?u=${encodeURIComponent(src)}` : '');
+
+/**
+ * How a live channel is played. One setting, not a choice, and this is it.
+ *
+ * There used to be three modes in a dropdown — ride the edge, balanced, don't
+ * drain at all — which asked the viewer to trade stalling against being behind
+ * without giving them any way to know which they were about to get. The trade
+ * is real, but it has a right answer on this provider, and it is this.
+ *
+ * The important thing about live is that those two costs are NOT on the same
+ * dial, even though the dropdown implied they were:
+ *
+ *   * **How far behind you are** is set by where the playhead sits relative to
+ *     the end of the playlist — `liveSyncDurationCount`, in segments.
+ *   * **How much cushion you have** is how much of the playlist between the
+ *     playhead and that end has been downloaded — `maxBufferLength`.
+ *
+ * A live playlist only ever exposes up to the edge, so buffering aggressively
+ * cannot push you further behind: it can only fill in the gap you are already
+ * standing in. The cushion is free. So sit a fixed three segments back — the
+ * figure the HLS spec itself recommends, and enough to ride out a slow segment
+ * — and then hold everything between there and the edge.
+ *
+ * `lowLatencyMode` is off because this provider does not serve LL-HLS parts;
+ * with it on, hls.js works to stay nearer the edge than the stream can support,
+ * which is stalling bought with nothing.
+ *
+ * And it does not chase. `liveMaxLatencyDurationCount` is far enough out that
+ * ordinary jitter never triggers a correction — a player seeking on its own is
+ * the "skips to the end" fault this app has already been through once. The LIVE
+ * pill still shows the gap, and pressing it jumps to the edge deliberately.
+ */
+const LIVE_HLS = {
+  lowLatencyMode: false,
+  liveSyncDurationCount: 3,
+  liveMaxLatencyDurationCount: 12,
+  maxBufferLength: 30,
+  maxMaxBufferLength: 60,
+  backBufferLength: 60,
+};
 
 /**
  * How tall the app frame is allowed to be, in pixels on the glass.
@@ -1437,7 +1476,6 @@ const multiview = {
           kind: 'live',
           id: item.id,
           ext: item.ext || '',
-          latency: prefs.data.liveLatency,
         });
       if (stale() || !play) return;
       cell.format = play.format || '';
@@ -1569,7 +1607,7 @@ const multiview = {
           maxBufferLength: 120,
           startPosition: 0,
         }
-        : { lowLatencyMode: true, backBufferLength: 60 });
+        : { ...LIVE_HLS });
       cell.engine.loadSource(url);
       cell.engine.attachMedia(video);
       cell.engine.on(Hls.Events.ERROR, (_, data) => {
@@ -4971,7 +5009,7 @@ function attach(url, format, opts = {}) {
       engineKind = 'hls.js';
       engine = new Hls(
         live
-          ? { lowLatencyMode: true, backBufferLength: 60 }
+          ? { ...LIVE_HLS }
           : {
               lowLatencyMode: false,
               // Keep everything behind the playhead. While a conversion is
@@ -5046,7 +5084,6 @@ function startLiveTracking() {
   const pill = $('#livePill');
   const lag = $('#liveLag');
   pill.hidden = false;
-  $('#latencyMode').hidden = false;
 
   liveTimer = setInterval(() => {
     const behind = currentLag();
@@ -5062,7 +5099,6 @@ function stopLiveTracking() {
   if (liveTimer) clearInterval(liveTimer);
   liveTimer = null;
   $('#livePill').hidden = true;
-  $('#latencyMode').hidden = true;
 }
 
 /* ------------------------------------------------------ playback watchdog ---
@@ -5825,16 +5861,6 @@ $('#livePill').addEventListener('click', () => {
   const edge = video.buffered.end(video.buffered.length - 1);
   video.currentTime = Math.max(0, edge - 1.5);
   video.play().catch(() => {});
-});
-
-$('#latencyMode').addEventListener('change', async (event) => {
-  prefs.data.liveLatency = event.target.value;
-  await prefs.save();
-  if (currentLiveItem) {
-    toast('Reconnecting with the new latency setting…');
-    const { url, format } = await resolveStream(currentLiveItem);
-    attach(url, format);
-  }
 });
 
 let currentLiveItem = null;
@@ -6975,7 +7001,6 @@ async function resolveStream(item, override) {
     kind,
     id,
     ext,
-    latency: kind === 'live' ? prefs.data.liveLatency : '',
   });
   const format =
     kind === 'live' ? data.format : /^(m3u8|ts)$/.test(data.format) ? data.format : 'file';
@@ -7060,7 +7085,6 @@ async function openPlayer(item) {
   const myToken = preparePlayer(item);
 
   currentLiveItem = item.kind === 'live' ? item : null;
-  $('#latencyMode').value = prefs.data.liveLatency || 'balanced';
 
   // Know what's on disk before deciding how to play it. Live never has a
   // local copy, so don't spend a round trip on it before tuning the channel.

@@ -534,7 +534,7 @@ svg {
 .touch .dl-actions { gap: 10px; }
 .touch .resume-actions .btn { height: 54px; padding: 0 26px; font-size: 16px; }
 .touch .profile-avatar { width: 118px; height: 118px; }
-.touch .latency-select, .touch .live-pill { height: 40px; font-size: 14px; }
+.touch .live-pill { height: 40px; font-size: 14px; }
 
 .touch .modal-card .picker button { width: 50px; height: 50px; font-size: 23px; }
 
@@ -2043,20 +2043,6 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .live-pill.is-behind { color: var(--muted); }
 .live-pill.is-behind .dot { animation: none; background: var(--muted-dim); }
 .live-pill.is-behind:hover { color: var(--text); }
-
-.latency-select {
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--bg-card);
-  color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
-  outline: none;
-}
-
-.latency-select:hover { color: var(--text); border-color: #4a4a56; }
 
 .video-frame {
   position: relative;
