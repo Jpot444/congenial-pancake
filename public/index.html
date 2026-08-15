@@ -76,6 +76,42 @@
       </h3>
       <p class="health-note" id="reportsNote">Reading them…</p>
       <div class="reports-list" id="reportsList"></div>
+
+      <!-- Set from here rather than by hand-editing config.json on the box:
+           the person who needs to set it is the person looking at this panel,
+           and they may have no shell on the Pi at all. -->
+      <div class="gh-setup">
+        <p class="gh-state" id="ghState">Checking where reports go…</p>
+        <form class="gh-form" id="ghForm" hidden autocomplete="off">
+          <label class="field">
+            <span>GitHub token</span>
+            <input type="password" id="ghToken" placeholder="github_pat_…"
+                   autocomplete="new-password" />
+            <small class="hint">
+              Fine-grained, this repository only, Issues: Read and write. It is
+              written to config.json on the box and never sent back here.
+            </small>
+          </label>
+          <label class="field">
+            <span>Repository</span>
+            <input id="ghRepo" placeholder="owner/name" />
+          </label>
+          <p class="form-error" id="ghError" hidden></p>
+          <div class="gh-actions">
+            <button type="submit" class="btn btn-primary btn-sm" id="ghSave">Check and save</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="ghCancel">Cancel</button>
+          </div>
+        </form>
+        <div class="gh-buttons" id="ghButtons">
+          <button type="button" class="btn btn-ghost btn-sm" id="ghEdit">
+            Forward reports to GitHub
+          </button>
+          <button type="button" class="btn btn-ghost btn-sm" id="ghOff" hidden>
+            Stop forwarding
+          </button>
+        </div>
+      </div>
+
       <button type="button" class="btn btn-ghost btn-sm" id="reportsSend">
         Send one yourself
       </button>

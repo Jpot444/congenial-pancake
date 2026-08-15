@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '21';
+const VERSION = '21.1';
 
 const PAGE_SIZE = 60;
 
@@ -1648,6 +1648,8 @@ const health = {
     this.reportsOpen = owner;
     if (!owner) return;
 
+    this.loadGithub();
+
     const note = $('#reportsNote');
     const list = $('#reportsList');
     try {
@@ -1666,6 +1668,75 @@ const health = {
     } catch (err) {
       note.hidden = false;
       note.textContent = `Could not read the reports: ${err.message}`;
+    }
+  },
+
+  /**
+   * Where reports get forwarded, set from here rather than from a shell.
+   *
+   * Only ever reads back whether it is on and which repository — the token
+   * goes one way. The panel says what has been proved and what has not: the
+   * check confirms the token can see the repository, and whether it may open
+   * issues is settled by the first report, which records what GitHub said.
+   */
+  async loadGithub() {
+    const state = $('#ghState');
+    try {
+      const gh = await api('/api/reports/github', { profileId: profiles.current?.id || '' });
+      this.github = gh;
+      $('#ghOff').hidden = !gh.configured;
+      $('#ghEdit').textContent = gh.configured
+        ? 'Change the token' : 'Forward reports to GitHub';
+      state.textContent = gh.configured
+        ? `Forwarding to ${gh.repo}.`
+        : 'Reports stay on the box. Add a token to file them on GitHub as well.';
+      state.classList.toggle('is-on', gh.configured);
+      $('#ghRepo').value = gh.repo || 'Jpot444/congenial-pancake';
+    } catch (err) {
+      state.textContent = `Could not read the forwarding setting: ${err.message}`;
+    }
+  },
+
+  showGithubForm(show) {
+    $('#ghForm').hidden = !show;
+    $('#ghButtons').hidden = show;
+    $('#ghError').hidden = true;
+    if (show) {
+      $('#ghToken').value = '';
+      $('#ghToken').focus();
+    }
+  },
+
+  async saveGithub({ off = false } = {}) {
+    const err = $('#ghError');
+    err.hidden = true;
+    $('#ghSave').disabled = true;
+    try {
+      const res = await fetch(
+        `/api/reports/github?profileId=${encodeURIComponent(profiles.current?.id || '')}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(off
+            ? { off: true }
+            : { token: $('#ghToken').value.trim(), repo: $('#ghRepo').value.trim() }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Failed (${res.status})`);
+      // Out of the field the moment it is accepted. It lives on the box now.
+      $('#ghToken').value = '';
+      this.showGithubForm(false);
+      await this.loadGithub();
+      toast(off
+        ? 'Reports will stay on the box.'
+        : `Saved. ${data.private ? 'That repository is private.' : 'That repository is public — '
+          + 'anything people write will be public too.'}`);
+    } catch (e) {
+      err.hidden = false;
+      err.textContent = e.message;
+    } finally {
+      $('#ghSave').disabled = false;
     }
   },
 
@@ -2083,6 +2154,13 @@ const reporter = {
 $('#reportBtn').addEventListener('click', () => reporter.open());
 $('#reportCancel').addEventListener('click', () => reporter.close());
 $('#reportsSend').addEventListener('click', () => { health.close(); reporter.open(); });
+$('#ghEdit').addEventListener('click', () => health.showGithubForm(true));
+$('#ghCancel').addEventListener('click', () => health.showGithubForm(false));
+$('#ghOff').addEventListener('click', () => health.saveGithub({ off: true }));
+$('#ghForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  health.saveGithub();
+});
 for (const b of document.querySelectorAll('#reportKind button')) {
   b.addEventListener('click', () => reporter.setKind(b.dataset.kind));
 }

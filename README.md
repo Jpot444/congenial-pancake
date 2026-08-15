@@ -304,14 +304,39 @@ a report gets quietly lost. The Reports section of Pi health says the same thing
 per report, with the GitHub link when there is one and the reason when there is
 not.
 
-Turn the forwarding on in `config.json`:
+**Turn forwarding on from the app**, in the Reports section of Pi health. The
+person who needs to set this is the person looking at that panel, and on a box
+reached over Tailscale from a phone they may have no shell on it at all — so
+asking them to hand-edit JSON over SSH was the wrong answer. The token is
+written to `config.json` exactly as a hand edit would write it, at `0600`, and
+is never sent back to the browser: the panel can say that it is set and which
+repository it points at, and nothing more.
+
+It is **verified before it is saved**, the same bargain the provider form
+makes. A token GitHub rejects (401) or a repository it cannot see (404 — on a
+fine-grained token, usually one that was never selected under Repository
+access) is refused now rather than discovered the first time somebody sends a
+report.
+
+What that check proves is bounded, and the bound is worth stating: it does
+**not** prove the token may open issues. The `permissions` block GitHub returns
+describes the *account's* role on the repository, not what the token was scoped
+to, so reading write access out of it would pass a token that still cannot file
+anything. A check that can give a false verdict is worse than no check, so that
+half is settled by the first report, which records exactly what GitHub said and
+shows it in the panel.
+
+Editing `config.json` by hand still works, and is the same shape:
 
 ```json
 "github": { "token": "ghp_…", "repo": "owner/name", "labels": ["feedback"] }
 ```
 
 `labels` is optional and defaults to `bug` or `enhancement` by kind. With no
-token the box says so plainly rather than pretending it sent.
+token the box says so plainly rather than pretending it sent. Re-running
+provider setup carries the block across — that form rebuilds `config.json` from
+its own fields, so anything it does not know about has to be carried by hand or
+setup would silently unhook forwarding.
 
 ### Credentials never leave the house
 

@@ -497,6 +497,76 @@ function sendReportToGithub(report) {
   });
 }
 
+/**
+ * Can this token see this repository?
+ *
+ * Asked as a read, not by opening a test issue: a check that leaves litter in
+ * somebody's issue list is not one anyone wants to run twice.
+ *
+ * What it proves is bounded, and the bound is worth stating. It catches the two
+ * failures that actually happen — a token that did not paste whole (401) and a
+ * fine-grained token that never had this repository selected (404). It does NOT
+ * prove the token may open issues: the `permissions` block GitHub returns
+ * describes the ACCOUNT's role on the repo, not what this token was scoped to,
+ * so reading write access out of it would pass a token that still cannot file
+ * anything. A check that can give a false verdict is worse than no check, so
+ * that half is left to the first report, which records exactly what GitHub said
+ * and shows it in the panel.
+ */
+function githubRepoCheck(token, repo) {
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'api.github.com',
+      path: `/repos/${repo}`,
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+        'x-github-api-version': '2022-11-28',
+        'user-agent': 'treasure-theater',
+      },
+      timeout: 15000,
+    }, async (res) => {
+      let text = '';
+      try {
+        text = (await readBody(res)).toString('utf8');
+      } catch {
+        /* the status carries the answer */
+      }
+      if (res.statusCode === 401) {
+        return resolve({ ok: false, error: 'GitHub rejected that token (401). Check it pasted whole.' });
+      }
+      if (res.statusCode === 404) {
+        return resolve({
+          ok: false,
+          error: `GitHub cannot see ${repo} with that token (404). On a fine-grained token, `
+            + 'the repository has to be selected under Repository access.',
+        });
+      }
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        let why = `GitHub returned ${res.statusCode}`;
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed.message) why = `${why}: ${parsed.message}`;
+        } catch {
+          /* keep the status line */
+        }
+        return resolve({ ok: false, error: why });
+      }
+      let repoInfo = {};
+      try {
+        repoInfo = JSON.parse(text);
+      } catch {
+        /* an unreadable 200 is still a 200 */
+      }
+      resolve({ ok: true, private: repoInfo.private === true });
+    });
+    req.on('timeout', () => req.destroy(new Error('GitHub timed out')));
+    req.on('error', (err) => resolve({ ok: false, error: err.message }));
+    req.end();
+  });
+}
+
 /** Public shape — never leaks the auth block or the full history blob. */
 function publicProfile(p) {
   return {
@@ -2943,6 +3013,10 @@ async function handleApi(req, res, pathname, query) {
         mode: incoming.mode === 'm3u' ? 'm3u' : 'xtream',
         preferredFormat: incoming.preferredFormat === 'ts' ? 'ts' : 'm3u8',
       };
+      // This form is about the provider and rebuilds the file from scratch, so
+      // anything it does not know about has to be carried across by hand or
+      // re-running setup would silently unhook report forwarding.
+      if (cfg?.github) next.github = cfg.github;
 
       if (next.mode === 'xtream') {
         if (!incoming.host || !incoming.username || !incoming.password) {
@@ -3298,6 +3372,64 @@ async function handleApi(req, res, pathname, query) {
       data.profiles = data.profiles.filter((p) => p.id !== profile.id);
       writeProfiles(data);
       return json(res, 200, { removed: true });
+    }
+
+    return json(res, 405, { error: 'Method not allowed' });
+  }
+
+  /* ---- Where reports get forwarded ----
+   *
+   * Set from the app rather than by editing config.json, because the person
+   * who needs to set it is the person looking at the Reports panel and they
+   * may well have no shell on this box at all. The token is written to
+   * config.json exactly as a hand edit would write it.
+   *
+   * Verified before it is saved, the same bargain the provider form makes: a
+   * token that cannot see the repository is better refused now than discovered
+   * the first time somebody sends a report.
+   *
+   * The token is never sent back. Once it is in, the panel can say that it is
+   * in and which repository it points at, and nothing more.
+   */
+  if (pathname === '/api/reports/github') {
+    if (!isOwnerProfile(ownerOf(query.get('profileId')))) {
+      return json(res, 403, { error: 'Only the owner profile can change this.' });
+    }
+
+    if (req.method === 'GET') {
+      const gh = (readConfig() || {}).github || {};
+      return json(res, 200, { configured: Boolean(gh.token && gh.repo), repo: gh.repo || '' });
+    }
+
+    if (req.method === 'POST') {
+      let incoming;
+      try {
+        incoming = JSON.parse((await collectRequestBody(req)).toString('utf8') || '{}');
+      } catch {
+        return json(res, 400, { error: 'Bad JSON' });
+      }
+
+      const current = readConfig();
+      if (!current) return json(res, 400, { error: 'No provider configured yet.' });
+
+      if (incoming.off === true) {
+        const { github, ...rest } = current;
+        writeConfig(rest);
+        return json(res, 200, { configured: false, repo: '' });
+      }
+
+      const token = String(incoming.token || '').trim();
+      const repo = String(incoming.repo || '').trim().replace(/^https?:\/\/github\.com\//i, '');
+      if (!token) return json(res, 400, { error: 'Paste a token first.' });
+      if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+        return json(res, 400, { error: 'The repository should read owner/name.' });
+      }
+
+      const check = await githubRepoCheck(token, repo);
+      if (!check.ok) return json(res, 400, { error: check.error });
+
+      writeConfig({ ...current, github: { token, repo } });
+      return json(res, 200, { configured: true, repo, private: check.private });
     }
 
     return json(res, 405, { error: 'Method not allowed' });
