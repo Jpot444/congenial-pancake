@@ -516,8 +516,28 @@ Phone layout is a different shape, not a scaled-down desktop:
   Saved sit where a thumb reaches, the way a native app puts them, and the
   hamburger and its dropdown are hidden — two routes to the same five places is
   one too many. The bar clears the home indicator with
-  `env(safe-area-inset-bottom)`, and the page ends above it rather than
-  scrolling underneath.
+  `env(safe-area-inset-bottom)`.
+- **The document does not scroll; the view inside it does.** The bar used to be
+  `position: fixed; bottom: 0` over a scrolling page, which is correct
+  everywhere except the one place this runs. WebKit detaches fixed elements
+  during momentum scrolling and rubber-banding, so scrolling past the end of a
+  shelf bounced the whole page and dragged the bar up into the middle of the
+  screen with it. Nothing can hold a fixed element still through that bounce —
+  the bounce *is* the browser moving the viewport out from under it.
+
+  So the bar is not fixed any more. Under `has-tabbar`, `body` becomes a
+  full-height column that cannot scroll, `#appView` is the only thing in it
+  that does, and the bar is an ordinary row at the bottom of the column. An
+  element in normal flow in a container that never scrolls has nothing to drift
+  against. `overscroll-behavior: contain` on the view keeps its own overscroll
+  to itself and `none` on the body refuses it outright, so the bounce never
+  reaches the frame at all.
+
+  Two things follow. The page no longer carries padding to end above the bar —
+  the bar sits *beside* the page now, not on top of it, and that padding would
+  be a gap. And `window.scrollTo` no longer scrolls anything here, so
+  `scrollViewTop()` scrolls whichever of the two is actually the scroller.
+  A desktop is untouched: no bar, ordinary document scrolling, sticky header.
 - **A fixed number of posters to a row**, 2, 3 or 4, set in the same panel.
   Desktop keeps `auto-fill` and takes as many as the width allows, so the
   choice only appears in phone layout.

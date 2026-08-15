@@ -842,11 +842,58 @@ body.has-tabbar .home-version {
   text-align: center;
 }
 
-/* The bar floats over the page, so the page has to end above it. */
-body.has-tabbar .app-shell,
-body.has-tabbar .setup,
-body.has-tabbar #rowsView {
-  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+/* ---- the phone frame ----
+ *
+ * On a phone the DOCUMENT does not scroll; the view inside it does.
+ *
+ * The bar used to be `position: fixed; bottom: 0` over a scrolling document,
+ * which is correct everywhere except the one place it runs — iOS. WebKit
+ * detaches fixed elements during momentum scrolling and rubber-banding, so
+ * scrolling past the end of a shelf bounced the whole page and dragged the bar
+ * up into the middle of the screen with it. There is no way to hold a fixed
+ * element still through that bounce, because the bounce is the browser moving
+ * the viewport out from under it.
+ *
+ * So the bar is not fixed any more. `body` becomes the frame — a full-height
+ * column that cannot scroll — the view is the only thing in it that scrolls,
+ * and the bar is an ordinary row at the bottom of the column. An element in
+ * normal flow in a container that never scrolls has nothing to drift against.
+ *
+ * `overscroll-behavior` on both stops the bounce reaching the frame at all:
+ * `contain` on the view keeps its own overscroll to itself, `none` on the body
+ * refuses it outright.
+ *
+ * Only under `has-tabbar`, which is exactly the phone layout. A desktop keeps
+ * ordinary document scrolling, its scrollbar and its sticky header. */
+body.has-tabbar {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;   /* the visible height, not the one with the toolbars in it */
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Only the view scrolls. `min-height: 0` because a flex item will not shrink
+   below its content otherwise, which would push the bar off the bottom — the
+   very thing this is fixing. */
+body.has-tabbar > #appView,
+body.has-tabbar > #setupView {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.has-tabbar > #siteHeader { flex: none; }
+
+/* In the column rather than over it. The page no longer has to end above the
+   bar, because the bar is not on top of the page any more. */
+body.has-tabbar > .tabbar {
+  position: static;
+  flex: none;
+  z-index: auto;
 }
 
 /* Phone layout navigates from the bar, so the hamburger and its dropdown are

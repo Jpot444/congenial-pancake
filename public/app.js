@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '20.5';
+const VERSION = '20.6';
 
 const PAGE_SIZE = 60;
 
@@ -290,6 +290,22 @@ async function api(path, params) {
 }
 
 const img = (src) => (src ? `/img?u=${encodeURIComponent(src)}` : '');
+
+/**
+ * Back to the top of whatever is actually scrolling.
+ *
+ * On a desktop that is the document. On a phone it is the view: the document
+ * is pinned to the screen so nothing can rubber-band the tab bar out of the
+ * bottom of it, which means `window.scrollTo` there scrolls something that
+ * never moves.
+ */
+function scrollViewTop() {
+  const view = document.body.classList.contains('has-tabbar')
+    ? document.querySelector('#appView:not([hidden])')
+    : null;
+  if (view) view.scrollTop = 0;
+  else window.scrollTo({ top: 0 });
+}
 
 /* ----------------------------------------------------------- this device
 
@@ -2651,7 +2667,7 @@ function renderRows() {
       state.shelf = row.title;
       state.visible = PAGE_SIZE;
       render();
-      window.scrollTo({ top: 0 });
+      scrollViewTop();
     });
 
     const rail = el('div', 'rail');
