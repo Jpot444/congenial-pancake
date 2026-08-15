@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '23.5';
+const VERSION = '23.6';
 
 const PAGE_SIZE = 60;
 
@@ -7429,6 +7429,66 @@ function goFullscreen() {
 $('#vodFull').addEventListener('click', goFullscreen);
 $('#liveFull').addEventListener('click', goFullscreen);
 
+/* ------------------------------------------------------ picture in picture ---
+ *
+ * One button, two APIs. Desktop Chrome speaks the standard —
+ * requestPictureInPicture on the element, pictureInPictureElement on the
+ * document. iOS (and therefore every browser on iOS, Chrome included — they
+ * are all WebKit) speaks presentation modes instead:
+ * webkitSetPresentationMode('picture-in-picture'). Same floating window,
+ * different spelling, so the difference lives here and nowhere else.
+ *
+ * The button only exists when one of the two dialects is spoken at all;
+ * everything else — starting, ending, and the pressed state — funnels through
+ * this one object so the two APIs cannot drift apart in behaviour.
+ */
+const pip = {
+  supported() {
+    const video = $('#video');
+    if (document.pictureInPictureEnabled && !video.disablePictureInPicture) return true;
+    return typeof video.webkitSetPresentationMode === 'function'
+      && video.webkitSupportsPresentationMode?.('picture-in-picture') === true;
+  },
+
+  active() {
+    const video = $('#video');
+    return document.pictureInPictureElement === video
+      || video.webkitPresentationMode === 'picture-in-picture';
+  },
+
+  async toggle() {
+    const video = $('#video');
+    try {
+      if (this.active()) {
+        if (document.pictureInPictureElement === video) await document.exitPictureInPicture();
+        else video.webkitSetPresentationMode('inline');
+        return;
+      }
+      // The standard API first: on platforms that speak both it is the one
+      // with a promise, so failures can be said out loud instead of ignored.
+      if (document.pictureInPictureEnabled && typeof video.requestPictureInPicture === 'function') {
+        await video.requestPictureInPicture();
+      } else {
+        video.webkitSetPresentationMode('picture-in-picture');
+      }
+    } catch (err) {
+      // Most commonly: no video is loaded yet, or the browser wants a fresher
+      // gesture. Either way the honest answer is words, not a dead button.
+      toast(`Couldn't pop the picture out — ${err.message}`);
+    }
+  },
+
+  /** The button reflects the floating window, whichever API opened it. */
+  paint() {
+    $('#pipBtn').classList.toggle('is-on', this.active());
+  },
+};
+
+$('#pipBtn').addEventListener('click', () => pip.toggle());
+for (const evt of ['enterpictureinpicture', 'leavepictureinpicture', 'webkitpresentationmodechanged']) {
+  $('#video').addEventListener(evt, () => pip.paint());
+}
+
 /* Apple's player is the only thing on screen while it is up, so our bar just
  * sits behind it competing for the same taps on the way out. Stand down for the
  * duration and take the film back on exit.
@@ -7898,6 +7958,13 @@ function preparePlayer(item) {
     downloadable && Boolean(downloadJobFor('movie', item.id)?.status === 'done'));
   if (downloadBtn.classList.contains('is-saved')) downloadBtn.title = 'Already downloaded';
 
+  // Picture in picture, when this browser can do it at all. Decided per open
+  // rather than once at startup for the same reason as the buttons above: the
+  // answer belongs to the element, and the bar reserves width from what shows.
+  $('#pipBtn').hidden = !pip.supported();
+  pip.paint();
+  reservePlayerActions();
+
   // A previous title's remux must not leak its duration into this one — that
   // put the wrong runtime on the scrubber for anything that plays natively.
   lastRemux = {};
@@ -8310,6 +8377,12 @@ async function renderSeries(item, mount, onInfo) {
 
 function closePlayer() {
   playToken += 1; // cancel any open/episode pick still awaiting its stream
+  // The floating window shows the stream this close is about to tear down, so
+  // it goes too. Both dialects, same as the button.
+  if (pip.active()) {
+    if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
+    else $('#video').webkitSetPresentationMode?.('inline');
+  }
   upNext.clear();
   endHistory();
   hideFilmBar();

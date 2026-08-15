@@ -871,6 +871,24 @@ keeps its controls up.
 
 Live TV keeps the old windowed player; the cinema layout is only for VOD.
 
+### Picture in picture
+
+One button in the player bar, two APIs underneath. Desktop Chrome speaks the
+standard — `requestPictureInPicture()` on the element,
+`pictureInPictureElement` on the document. iOS speaks presentation modes —
+`webkitSetPresentationMode('picture-in-picture')` — and so does every browser
+on iOS, Chrome included, because they are all WebKit underneath. Same floating
+window, different spelling; the difference lives in one `pip` object and
+nowhere else, and the button only exists at all when one of the two dialects
+is spoken.
+
+The button lights while the picture floats, driven by the events rather than
+by what was clicked, so it stays honest when the window is closed from the
+floating window's own controls. Closing the player closes the floating window
+with it — it was showing the stream the close just tore down. A failed
+request (no video loaded yet, or the browser wanting a fresher tap) is said
+in words rather than swallowed by a dead button.
+
 ### A gradient is not a button
 
 The strip across the top of the player — back button, title, and a gradient to
