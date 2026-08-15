@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '21.4';
+const VERSION = '21.5';
 
 const PAGE_SIZE = 60;
 
@@ -311,25 +311,44 @@ const img = (src) => (src ? `/img?u=${encodeURIComponent(src)}` : '');
  *
  * A live playlist only ever exposes up to the edge, so buffering aggressively
  * cannot push you further behind: it can only fill in the gap you are already
- * standing in. The cushion is free. So sit a fixed three segments back — the
- * figure the HLS spec itself recommends, and enough to ride out a slow segment
- * — and then hold everything between there and the edge.
+ * standing in. The cushion is free.
+ *
+ * **The distance is in seconds, not segments, and that is the whole of the
+ * fix for the stalls.** It was `liveSyncDurationCount: 3` — three segments back
+ * — which reads like a cushion and is not one. That count multiplies the
+ * playlist's own `targetDuration` and is then clamped into whatever playlist
+ * happens to exist at the moment of joining, and a measured session joined
+ * **2.8 seconds** from the end of the loaded data. It stalled the instant the
+ * playhead caught up, twice, and then played perfectly for the rest of the
+ * session once around ten seconds of cushion had accumulated on its own:
+ *
+ *     joined  pos 27.2  buf 30   2.8s ahead   stalled 6s
+ *             pos 30.6  buf 40   9.4s ahead
+ *             pos 40.0  buf 40   0.0s ahead   stalled 3s
+ *             pos 44.5  buf 60  15.5s ahead   smooth to the end
+ *
+ * `liveSyncDuration` is that distance stated outright, so it does not depend on
+ * the provider's segment length or on how much playlist had arrived yet. The
+ * worst slow spell in that session was 6 seconds; 18 is three times it.
  *
  * `lowLatencyMode` is off because this provider does not serve LL-HLS parts;
  * with it on, hls.js works to stay nearer the edge than the stream can support,
  * which is stalling bought with nothing.
  *
- * And it does not chase. `liveMaxLatencyDurationCount` is far enough out that
+ * And it does not chase. `liveMaxLatencyDuration` is far enough out that
  * ordinary jitter never triggers a correction — a player seeking on its own is
  * the "skips to the end" fault this app has already been through once. The LIVE
  * pill still shows the gap, and pressing it jumps to the edge deliberately.
  */
 const LIVE_HLS = {
   lowLatencyMode: false,
-  liveSyncDurationCount: 3,
-  liveMaxLatencyDurationCount: 12,
-  maxBufferLength: 30,
-  maxMaxBufferLength: 60,
+  // Seconds behind the edge to join and sit at. Not a segment count.
+  liveSyncDuration: 18,
+  liveMaxLatencyDuration: 60,
+  // Hold everything from the playhead to the edge. Costs no latency: the
+  // playlist stops at the edge, so this can only fill the gap already there.
+  maxBufferLength: 45,
+  maxMaxBufferLength: 90,
   backBufferLength: 60,
 };
 

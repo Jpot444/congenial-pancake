@@ -1675,13 +1675,34 @@ A live playlist only ever exposes up to the edge, so buffering aggressively
 cannot push you further behind — it fills in the gap you are already standing
 in. The cushion is free.
 
-So an **HLS** channel sits a fixed three segments back (`liveSyncDurationCount`,
-the figure the HLS spec itself recommends, and enough to ride out one slow
-fetch) and then holds everything between there and the edge
-(`maxBufferLength: 30`). `lowLatencyMode` is off, because this provider does not
-serve LL-HLS parts and with it on hls.js works to stay nearer the edge than the
-stream can support — stalling bought with nothing. `liveMaxLatencyDurationCount`
-is far enough out that ordinary jitter never triggers a correction.
+**The distance is in seconds, not segments.** This was got wrong once and the
+measurement is worth keeping. It was `liveSyncDurationCount: 3` — three segments
+back — which reads like a cushion and is not one: that count multiplies the
+playlist's own `targetDuration` and is then clamped into whatever playlist
+happens to exist at the moment of joining. A measured session joined **2.8
+seconds** from the end of the loaded data:
+
+| | playhead | buffered to | cushion | |
+| --- | --- | --- | --- | --- |
+| joined | 27.2 | 30 | 2.8s | **stalled 6s** |
+| | 30.6 | 40 | 9.4s | |
+| | 40.0 | 40 | 0.0s | **stalled 3s** |
+| | 44.5 | 60 | 15.5s | smooth to the end |
+
+It stalled the instant the playhead caught the buffer, twice, and then played
+perfectly for the rest of the session once about ten seconds of cushion had
+accumulated on its own. The cushion was the whole story; the segment count never
+delivered one.
+
+So an **HLS** channel joins `liveSyncDuration: 18` seconds behind the edge —
+stated outright, so it does not depend on the provider's segment length or on
+how much playlist had arrived yet. The worst slow spell in that session was 6
+seconds; 18 is three times it. It then holds everything between there and the
+edge (`maxBufferLength: 45`). `lowLatencyMode` is off, because this provider
+does not serve LL-HLS parts and with it on hls.js works to stay nearer the edge
+than the stream can support — stalling bought with nothing.
+`liveMaxLatencyDuration` is far enough out that ordinary jitter never triggers a
+correction.
 
 An **MPEG-TS** channel gets `drain: 12, hold: 4` — the figures the old
 "balanced" mode used, and the ones that measured zero stalls and zero seeks over
