@@ -5,13 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Portal — Live TV, Movies &amp; Series</title>
   <link rel="stylesheet" href="/styles.css" />
-  <!-- The same bison the app puts on the profile gate and the loading screen,
-       the file itself rather than a copy made for the purpose.
-       Added to an iPhone home screen, a site with no apple-touch-icon gets a
-       screenshot or the first letter of its title on a plate — which is where
-       the "P" for Portal came from. iOS ignores SVG icons for this entirely,
-       so the emoji below it cannot stand in. -->
-  <link rel="apple-touch-icon" href="/bison.png" />
+  <!-- The bison, manufactured into the shape iOS actually wants: square,
+       opaque, 180x180, on the app's own background. The raw logo was the icon
+       for a while and the iPad said no — public/bison.png is 219x148 with a
+       transparent background, which an iPhone quietly pads and fills but
+       iPadOS renders as a blank white tile. Rebuilt from the logo by
+       scripts/make-app-icon.js whenever the logo changes, so the two cannot
+       drift apart. iOS ignores SVG icons for this entirely. -->
+  <link rel="apple-touch-icon" sizes="180x180" href="/app-icon.png" />
   <link rel="icon" type="image/png" href="/bison.png" />
   <!-- What the icon is called underneath. Without this iOS uses the document
        title, which is the other half of where "Portal" was coming from. -->

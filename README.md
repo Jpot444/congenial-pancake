@@ -23,31 +23,31 @@ surface so the header doesn't sit on top of an unrelated grey app.
 
 No npm install, no build step — one Node file and three static files.
 
-### On an iPhone home screen
+### On a home screen
 
 Added to the home screen from Safari, this used to come up as a **"P"** on a
 grey tile. A site with no `apple-touch-icon` gets a screenshot or the first
 letter of its document title, and the title still begins "Portal" — so both
 halves of that were the same omission.
 
-`public/bison.png` is now the icon, and deliberately **the same file** the
-profile gate and the loading screen already show rather than a copy made for
-the purpose, which is one more thing to keep in step. The `<link rel="icon">`
-points at it too, so the browser tab carries the mark instead of a TV emoji.
-`apple-mobile-web-app-title` names it *Treasure Theater*, which is what the app
-is called everywhere except its `<title>`.
+The icon is `public/app-icon.png` — the bison **manufactured into the shape
+iOS actually wants**: square, opaque, 180×180, centered on the app's own dark
+background with margin so the rounded-corner mask cannot clip it. The raw
+logo was the icon for a while, on the deliberate theory that the mark itself,
+unaltered, was the honest choice. **The iPad disproved it.** `bison.png` is
+219×148 with a transparent background; an iPhone quietly pads and fills that,
+but iPadOS renders a non-square, transparent touch icon as a blank white
+tile.
 
-Two things about that file decide what the tile actually looks like, and
-neither is visible from the markup:
-
-- **It carries transparency, and iOS paints that black.** The mark is a white
-  silhouette on nothing, so the tile is white-on-black rather than white on the
-  brand crimson.
-- **It is 219×148, not square.** iOS fits a non-square icon to the square tile.
-
-Both are consequences of using the mark itself, unaltered. If the shape looks
-wrong on the phone, the fix is to centre those exact pixels on a square canvas
-— no recolouring and no resampling, so still the same bison.
+So the logo stays the logo — still the favicon, still the profile gate and
+loading screen — and the icon is a build product of it, made by
+`scripts/make-app-icon.js`. Change the logo, run the script, and the two are
+in step again; the test suite checks the committed icon is byte-for-byte what
+the script produces, so they cannot drift silently. The same bytes also sit
+at `/apple-touch-icon.png` and `/apple-touch-icon-precomposed.png`, the bare
+paths iPadOS requests on its own when it ignores the link tags.
+`apple-mobile-web-app-title` names it *Treasure Theater*, which is what the
+app is called everywhere except its `<title>`.
 
 iOS caches home-screen icons hard: an existing shortcut keeps the old tile
 until it is removed and added again.
