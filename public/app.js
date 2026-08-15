@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '22.5';
+const VERSION = '22.6';
 
 const PAGE_SIZE = 60;
 
@@ -335,41 +335,40 @@ const img = (src) => (src ? `/img?u=${encodeURIComponent(src)}` : '');
  * with it on, hls.js works to stay nearer the edge than the stream can support,
  * which is stalling bought with nothing.
  *
- * And it does not chase on jitter. What it does do is recover when the playhead
- * has drifted towards falling off the playlist altogether, which on a link this
- * slow it will — but that is `holdLiveDistance`, measured against the window the
- * channel actually publishes rather than against a number chosen in advance.
- * The LIVE pill still shows the gap, and pressing it jumps to the edge.
+ * **And nothing chases the edge — not on jitter, not ever.** How far behind
+ * you are is not a fault to be corrected. Seeking forward to close a gap
+ * throws away the downloaded video that was keeping the picture up and buys a
+ * position nearer an edge the link cannot keep up with, which starves again
+ * within seconds: one stall becomes a stall plus a jump. A channel that stays
+ * forty seconds behind and keeps playing is the better outcome, and it is the
+ * one this aims for.
  *
- * **Eighteen seconds was not enough, and the reason is arithmetic.** This
- * provider publishes 11-second segments, so sitting 18 seconds back is a seat
- * 1.6 segments from the edge — and since a segment only becomes fetchable once
- * it is complete, the most that can ever be in hand is about one of them. A
- * measured session started playing with **7.1 seconds** of video downloaded and
- * stalled seven seconds later, exactly on cue. `LIVE_HOLD` is a proportion of
- * the window instead, so the seat is always a few segments back whatever length
- * this channel happens to use.
+ * **Eighteen seconds was not far enough back, and the reason is arithmetic.**
+ * This provider publishes 11-second segments, so sitting 18 seconds back is a
+ * seat 1.6 segments from the edge — and since a segment only becomes fetchable
+ * once it is complete, the most that can ever be in hand is about one of them.
+ * A measured session started playing with **7.1 seconds** of video downloaded
+ * and stalled seven seconds later, exactly on cue.
+ *
+ * So the seat is a middle. Too near the edge and there is never a cushion; too
+ * far back and the oldest segments expire out of the playlist under the
+ * playhead, which forces a jump nobody chose. Roughly half of the window is
+ * the seat that trades those off, and on this provider that is ~32 seconds.
  */
 
-/** Where to sit, as a share of the window the channel publishes. */
-const LIVE_HOLD = 0.55;
-/** And how far is far enough to be worth a jump back to it. */
-const LIVE_ADRIFT = 0.82;
 /** How much video to have in hand before starting, as a share of the window. */
 const LIVE_PREROLL = 0.3;
 
 const LIVE_HLS = {
   lowLatencyMode: false,
-  // Seconds behind the edge to join at, before the window is known. This
-  // provider publishes 58-60s of playlist on every channel measured, so 32 is
-  // LIVE_HOLD of it; once a real window has been read, `holdLiveDistance`
-  // replaces this with the measured figure.
+  // Seconds behind the edge to join at. This provider publishes 58-60s of
+  // playlist on every channel measured, so this is about half of it: enough
+  // room ahead to hold a real cushion, enough behind that segments do not
+  // expire under the playhead.
   liveSyncDuration: 32,
-  // Left high on purpose: recovery is `holdLiveDistance`, which measures
-  // against the playlist window this channel actually publishes. A number here
-  // was the bug — 60 against a 58-second window is a safety net pitched past
-  // the end of the playlist, which can never fire. Two mechanisms racing would
-  // be worse than one, so hls.js's own is kept out of the way.
+  // Parked out of reach on purpose. This is hls.js's own latency chaser, and
+  // a stream that keeps playing while running late is exactly what is wanted
+  // here — there is nothing for it to fix.
   liveMaxLatencyDuration: 600,
   // Hold everything from the playhead to the edge. Costs no latency: the
   // playlist stops at the edge, so this can only fill the gap already there.
@@ -5418,7 +5417,6 @@ function startLiveTracking() {
   reservePlayerActions();
 
   liveTimer = setInterval(() => {
-    holdLiveDistance();
     const behind = currentLag();
     if (behind === null) return;
     // Under ~3s is as live as this provider gets; don't nag about it.
@@ -5501,81 +5499,34 @@ function stopCushionWait() {
   cushionTimer = null;
 }
 
-/**
- * Get back to live when the playhead has drifted towards falling off the
- * playlist entirely.
+/*
+ * There is no catch-up here, on purpose.
  *
- * On a link that delivers a live stream at about the speed it plays, every
- * stall costs seconds that can never be recovered: playback runs at 1× and
- * never faster, so the gap to the live edge only grows. A measured session
- * ended up **50.7 seconds behind in a 58-second window** — about seven seconds
- * from the oldest segment still published, after which those segments 404 and
- * playback simply ends.
+ * There was, for two versions, and it was wrong twice in opposite directions:
+ * first a `liveMaxLatencyDuration` pitched past the end of the playlist so it
+ * could never fire, then a correction of our own that fired and jumped the
+ * picture forward with a message saying so. Both were built on the assumption
+ * that being far behind live is a fault worth interrupting the picture to fix.
  *
- * hls.js has a trigger for exactly this, and I had set it to a number instead
- * of a proportion: `liveMaxLatencyDuration: 60`, against a window of 58. The
- * safety net was pitched beyond the end of the playlist, so it could never fire
- * and there was no way back. That is the opposite of the mistake before it —
- * having been burned by a player that seeked too eagerly, I disabled recovery
- * altogether.
+ * It is not. On a slow link the sequence is: the buffer runs dry, playback
+ * stalls, and the gap to the live edge grows by however long the stall lasted.
+ * Seeking forward to close that gap throws away the only thing that was
+ * keeping the picture up — the video already downloaded — and buys a position
+ * nearer an edge the link cannot keep up with anyway, which starves again
+ * within seconds. It converts one stall into a stall plus a jump.
  *
- * So both figures are proportions of whatever window this channel actually
- * publishes, read from the playlist rather than assumed: sit at `LIVE_HOLD` of
- * it, and jump back to that seat on passing `LIVE_ADRIFT`. On the 58-second
- * window measured here that is a seat 32 seconds back and a correction at 48,
- * leaving about a segment of room before the oldest one is gone.
+ * What is actually wanted from a channel is that it keeps playing. Being
+ * thirty or fifty seconds behind costs nothing on anything but a live score,
+ * and nothing about it is worth a jump or a message. So nothing here moves the
+ * playhead. `liveMaxLatencyDuration` stays parked so hls.js does not do it
+ * either, and the `LIVE` pill still shows the gap and still jumps to the edge
+ * when it is pressed — deliberately, by a person who wanted it.
  *
- * Setting the seat is the other half, and the half that was missing. The join
- * distance was a constant, which on a channel with 11-second segments put the
- * playhead 1.6 segments from the edge — so there was never more than one
- * segment to be had, however much buffer the settings asked for. Writing the
- * measured figure back into the engine makes `liveSyncPosition` — which is
- * where the jump below aims, and what the LIVE pill reads — agree with it.
- *
- * The jump is deliberately loud. A player that seeks on its own is the "skips
- * to the end" fault this app has already been through, and the difference
- * between that and this is that this one says what it did and why.
+ * hls.js's own stall and gap recovery is left alone, and that is a different
+ * thing: it steps over a hole in the media, which is the difference between a
+ * picture that continues and one that is frozen for good. It is not latency
+ * chasing and switching it off would freeze the stream, not steady it.
  */
-function holdLiveDistance() {
-  if (engineKind !== 'hls.js' || !engine || !currentLiveItem) return;
-  const video = $('#video');
-  if (video.paused || video.seeking) return;
-
-  let window;
-  let latency;
-  try {
-    window = engine.levels?.[engine.currentLevel]?.details?.totalduration;
-    latency = engine.latency;
-  } catch {
-    return;
-  }
-  if (!Number.isFinite(window) || !Number.isFinite(latency) || window <= 0) return;
-
-  // Take the seat from the window this channel publishes, not from the guess
-  // made before it was known.
-  const hold = window * LIVE_HOLD;
-  try {
-    engine.config.liveSyncDuration = hold;
-  } catch {
-    /* older builds may not take it; the arithmetic below stands regardless */
-  }
-
-  if (latency < window * LIVE_ADRIFT) return;
-  // Not straight after the last one: a jump needs time to show in `latency`,
-  // and without this it would fire again on the very next tick.
-  if (Date.now() - (holdLiveDistance.at || 0) < 20000) return;
-
-  // currentTime + latency is the edge, so this is the seat — arithmetic that
-  // holds whether or not the engine took the config above.
-  const to = video.currentTime + latency - hold;
-  if (!Number.isFinite(to) || to <= video.currentTime) return;
-
-  holdLiveDistance.at = Date.now();
-  const lost = Math.round(to - video.currentTime);
-  video.currentTime = to;
-  video.play().catch(() => {});
-  toast(`Fell ${Math.round(latency)}s behind — skipped ${lost}s to catch up to live.`);
-}
 
 function stopLiveTracking() {
   if (liveTimer) clearInterval(liveTimer);

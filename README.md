@@ -1732,7 +1732,8 @@ The portal handles this at both ends:
   appears constantly inside payload data and would desync the demuxer).
 - The client **disables latency chasing entirely**, so playback is never seeked
   out from under you. The `LIVE` pill in the player bar shows how far behind you
-  are; click it to jump to the edge deliberately.
+  are; click it to jump to the edge deliberately. This got walked back twice and
+  walked back again — see below.
 
 **There is no latency setting.** There used to be three modes in a dropdown —
 ride the edge, balanced, don't drain at all — which asked the viewer to trade
@@ -1778,47 +1779,41 @@ window (see below). It holds everything between there and the edge
 does not serve LL-HLS parts and with it on hls.js works to stay nearer the edge
 than the stream can support — stalling bought with nothing.
 `liveMaxLatencyDuration` is parked at 600 — deliberately unreachable, so hls.js
-never seeks on its own. Getting back to live when the playhead really has fallen
-away is `catchUpIfAdrift` below, and two things racing to correct the same drift
-is how you get a stream that skips.
+never seeks on its own. Nothing else seeks either; see below for why the two
+attempts at getting back to live were both worse than staying put.
 
-### Falling behind, and coming back
+### Nothing chases the live edge
 
-Setting `liveMaxLatencyDuration` to a number is what broke this. It was 60 —
-"far enough out that ordinary jitter never fires it", which was true and also
-useless, because the channel in question publishes a **58 second** playlist.
-A trigger pitched past the end of the playlist can never fire. So there was no
-recovery at all, and a measured session drifted to this:
+This was wrong twice, in opposite directions, and the second one shipped.
 
-```
-link       1.4 Mbit/s measured
-playlist   live, 6 segments of ~11s = 58s window
-latency    50.7s behind the edge, asked for 21.0s
-```
+First `liveMaxLatencyDuration: 60` against a channel that publishes a
+**58-second** playlist — a safety net pitched past the end of the playlist,
+which can never fire. Then a correction of our own, measured against the window
+so it *would* fire, which jumped the picture forward and put a message on screen
+saying it had.
 
-50.7 seconds behind, in a 58 second window: about seven seconds from falling off
-the oldest published segment entirely, at which point the playhead has nothing
-left to play and the stream is finished until somebody reloads it. A slow link
-puts you there — every stall costs a few seconds and none of them are ever paid
-back, because a live stream does not wait.
+Both were built on the assumption that being far behind live is a fault worth
+interrupting the picture to fix. **It is not.** On a slow link the sequence is:
+the buffer runs dry, playback stalls, and the gap to the live edge grows by
+however long the stall lasted. Seeking forward to close that gap throws away the
+one thing keeping the picture up — the video already downloaded — and buys a
+seat nearer an edge the link cannot keep up with, which starves again within
+seconds. It turns one stall into a stall plus a jump.
 
-The lesson is that **the trigger cannot be a constant**, because the thing it is
-measured against is a property of the channel. `catchUpIfAdrift` runs on the
-same one-second tick as the `LIVE` pill and asks the playlist how big it is:
+What is wanted from a channel is that it keeps playing. Forty seconds behind
+costs nothing except on a live score, and nothing about it is worth a jump or a
+message. So **nothing moves the playhead**: no correction of ours, and
+`liveMaxLatencyDuration` parked at 600 so hls.js does not do it either. The
+`LIVE` pill still shows the gap and still jumps to the edge when pressed —
+deliberately, by somebody who wanted it.
 
-- fires at **66% of the published window** — 38s on a 58s playlist, 20s on a 30s
-  one — so it scales with what the channel actually offers instead of guessing;
-- **20 second cooldown**, so a link that cannot sustain the stream gets one
-  correction rather than a seek every tick;
-- **says what it did** — *"Fell 51s behind — skipped 33s to catch up to live."*
-  A silent jump is the "skips to the end" fault this has already been through
-  once; a jump you were told about is a repair;
-- does nothing at all when it cannot read a window, when the video is paused or
-  seeking, or when the target is behind where you already are. A recovery that
-  guesses is worse than no recovery.
-
-Ordinary lateness is left alone. This is not a chaser — it is the floor of the
-window, not the edge of it.
+hls.js's own **stall and gap recovery is left alone**, and that is a different
+thing: it steps over a hole in the media, which is the difference between a
+picture that continues and one frozen for good. Switching it off would freeze
+the stream, not steady it. A forced jump can still happen for a reason no
+client controls — if the playhead falls so far behind that the oldest segments
+expire out of the playlist, the material under it is gone and the player has
+nowhere to stand. That is the link, not a setting.
 
 ### Where to sit, and when to start
 
@@ -1844,15 +1839,14 @@ to start with. And at the moment it stalled, **33 seconds of playlist had been
 published and simply not been fetched yet**, so the material was there. Only
 the head start was missing.
 
-Two changes, both of them the same idea as the recovery trigger: measure
-against the playlist rather than against a number.
+Two changes:
 
-- **The seat is `LIVE_HOLD` (55%) of the published window**, written back into
-  the engine once a real window has been read, so `liveSyncPosition` and the
-  `LIVE` pill agree with it. On the 58–60s window this provider serves that is
-  ~32 seconds back — three segments of runway instead of one and a half. The
-  config still needs a number to *join* on, before any window is known; 32 is
-  that number, and it is replaced by the measured one within a second.
+- **The seat moves back to ~32 seconds**, about half the window this provider
+  publishes. It is a middle rather than a maximum, because the two failure
+  modes pull opposite ways: too near the edge and there is never a cushion, too
+  far back and the oldest segments expire out of the playlist under the
+  playhead — which forces a jump nobody chose, and is the one kind of jump the
+  client cannot prevent.
 - **Live does not start until there is a cushion** — `LIVE_PREROLL`, 30% of the
   window. The wait is visible and counts up, because a picture that has not
   appeared is otherwise indistinguishable from a broken one, and it is capped
