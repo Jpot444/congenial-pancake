@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '22.2';
+const VERSION = '22.3';
 
 const PAGE_SIZE = 60;
 
@@ -5683,6 +5683,59 @@ const playback = {
    * the iPhone" and "Safari on the iPhone" are the same engine, and the iOS
    * branches in this file apply to both.
    */
+  /**
+   * What hls.js knows and the timeline cannot show.
+   *
+   * A report can say the buffer ran out; it cannot say why, and the two
+   * candidates want opposite fixes. Either the link is not delivering the
+   * stream faster than it plays — in which case no amount of tuning invents
+   * bandwidth — or it is, and the player is sitting too close to the live edge
+   * to have anything in hand. Guessing between those is how this got tuned
+   * twice in the wrong direction.
+   *
+   * Four numbers settle it:
+   *
+   *   link vs stream   what the player measured against what the feed needs.
+   *                    Below 1.0x, nothing else matters.
+   *   window           how much of the playlist is published and therefore
+   *                    fetchable. It is the ceiling on any cushion: you cannot
+   *                    buffer past the live edge, so a short window means a
+   *                    small cushion however it is configured.
+   *   latency          how far behind the edge we actually are, against where
+   *                    we asked to be. If those disagree, the setting is not
+   *                    doing what it says.
+   */
+  hlsLines() {
+    if (engineKind !== 'hls.js' || !engine) return [];
+    const out = [];
+    try {
+      const level = engine.levels?.[engine.currentLevel];
+      const bits = engine.bandwidthEstimate;
+      const need = level?.bitrate;
+      if (bits && need) {
+        out.push(`link vs stream  ${(bits / 1e6).toFixed(1)} Mbit/s measured, `
+          + `${(need / 1e6).toFixed(1)} Mbit/s needed  →  `
+          + `${(bits / need).toFixed(2)}x headroom`);
+      } else if (bits) {
+        out.push(`link            ${(bits / 1e6).toFixed(1)} Mbit/s measured`);
+      }
+
+      const d = level?.details;
+      if (d) {
+        out.push(`playlist        ${d.live ? 'live' : 'vod'}, `
+          + `${(d.fragments || []).length} segments of ~${d.targetduration}s `
+          + `= ${Math.round(d.totalduration)}s window`);
+      }
+      if (Number.isFinite(engine.latency)) {
+        out.push(`latency         ${engine.latency.toFixed(1)}s behind the edge, `
+          + `asked for ${Number(engine.targetLatency ?? LIVE_HLS.liveSyncDuration).toFixed(1)}s`);
+      }
+    } catch {
+      // A report that cannot read the engine is still a report.
+    }
+    return out;
+  },
+
   browserLines() {
     const ua = navigator.userAgent || 'unknown';
     const video = $('#video');
@@ -5832,6 +5885,7 @@ const playback = {
       `events          waiting ${this.events.waiting}, stalled ${this.events.stalled}, ` +
         `error ${this.events.error}, ratechange ${this.events.ratechange}, seeked ${this.events.seeked}`,
       `engine          ${engineKind || 'none'}`,
+      ...this.hlsLines(),
       ...this.browserLines(),
       `audio device    ${this.deviceSampleRate() || 'unknown'}Hz output`,
       ...this.buffers().map((line, i) => `${i === 0 ? 'buffers' : ''}`.padEnd(16) + line),

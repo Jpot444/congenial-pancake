@@ -1789,6 +1789,36 @@ actually wants.
 Both players take the same object, `LIVE_HLS`. Multi-view constructs its own
 engine, and two copies of a tuning like this drift the moment one is touched.
 
+### The report says why, not just that
+
+A timeline can say the buffer ran out. It cannot say **why**, and the two
+candidates want opposite fixes: either the link is not delivering the stream
+faster than it plays — in which case no amount of tuning invents bandwidth — or
+it is, and the player is sitting too close to the live edge to have anything in
+hand. This was tuned twice on inference and moved in the wrong direction both
+times, so the numbers that separate them are in the playback report:
+
+```
+link vs stream  9.4 Mbit/s measured, 11.2 Mbit/s needed  →  0.84x headroom
+playlist        live, 3 segments of ~10s = 30s window
+latency         21.4s behind the edge, asked for 18.0s
+```
+
+- **headroom** below 1.0× means the stream is arriving no faster than it plays,
+  and nothing configurable fixes that. Above it, the cushion is buildable and
+  the settings are the thing to look at.
+- **window** is the ceiling on any cushion. You cannot buffer past the live
+  edge, so a playlist that publishes 30 seconds cannot give you 45 however
+  `maxBufferLength` is set.
+- **latency** against what was asked for says whether the join distance is doing
+  what it claims. They disagreed once already, which is what
+  `liveSyncDurationCount` turned out to be.
+
+They come from hls.js itself — `bandwidthEstimate`, the level's `bitrate`, the
+level's `details`, and `latency`/`targetLatency` — and the block prints nothing
+at all on a non-hls.js engine or an engine with nothing to say, because a
+diagnostic must never be the reason a report fails.
+
 **The readout stays.** Removing the setting is not removing the information: the
 `LIVE` pill still shows how far behind you are, and pressing it still jumps to
 the edge. What that must never be is something the player decides on its own —
