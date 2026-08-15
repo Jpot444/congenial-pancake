@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '20.7';
+const VERSION = '21';
 
 const PAGE_SIZE = 60;
 
@@ -142,6 +142,9 @@ const profiles = {
     $('#chipAvatar').style.background = profile.color;
     $('#chipName').textContent = profile.name;
     $('#profileChip').hidden = false;
+    // Which of the two lives in the corner depends on who is watching, so it
+    // is decided here rather than once at startup.
+    reporter.applyButtons();
     if (!silent) toast(`Watching as ${profile.name}.`);
   },
 
@@ -1614,16 +1617,115 @@ document.addEventListener('fullscreenchange', () => {
 const health = {
   timer: null,
   lastBad: false,
+  reportsOpen: false,
 
   async open() {
     $('#healthModal').hidden = false;
     this.paintPlayback();
+    this.loadReports();
     await this.refresh();
     clearInterval(this.timer);
     this.timer = setInterval(() => {
       this.refresh();
       this.paintPlayback();
     }, 4000);
+  },
+
+  /**
+   * What everyone else has sent in.
+   *
+   * Fetched once when the panel opens rather than on the four-second poll: the
+   * rest of this panel is a live reading of the box and reports are a list
+   * that changes when somebody types something, which is not every four
+   * seconds. Fetched at all only for the owner, since the server will refuse
+   * anyone else — and that refusal is the ordinary case, not an error worth
+   * shouting about.
+   */
+  async loadReports() {
+    const panel = $('#reportsPanel');
+    const owner = reporter.isOwner();
+    panel.hidden = !owner;
+    this.reportsOpen = owner;
+    if (!owner) return;
+
+    const note = $('#reportsNote');
+    const list = $('#reportsList');
+    try {
+      const data = await api('/api/reports', { profileId: profiles.current?.id || '' });
+      const reports = data.reports || [];
+      $('#reportsCount').textContent = reports.length ? String(reports.length) : '';
+      list.innerHTML = '';
+      if (!reports.length) {
+        note.hidden = false;
+        note.textContent = 'Nothing yet. Everyone else has a button for this where '
+          + 'your pulse is.';
+        return;
+      }
+      note.hidden = true;
+      for (const r of reports) list.append(this.reportRow(r));
+    } catch (err) {
+      note.hidden = false;
+      note.textContent = `Could not read the reports: ${err.message}`;
+    }
+  },
+
+  reportRow(r) {
+    const row = el('div', `report ${r.kind === 'bug' ? 'is-bug' : 'is-idea'}`);
+
+    const head = el('div', 'report-head');
+    const who = el('span', 'report-who');
+    who.textContent = r.profile || 'someone';
+    const tag = el('span', 'report-tag');
+    tag.textContent = r.kind === 'bug' ? 'Problem' : 'Idea';
+    const when = el('span', 'report-when');
+    const at = new Date(r.at);
+    when.textContent = Number.isNaN(at.getTime()) ? '' : at.toLocaleString();
+    head.append(tag, who, when);
+
+    const body = el('p', 'report-body');
+    body.textContent = r.message;
+
+    row.append(head, body);
+
+    const meta = el('p', 'report-meta');
+    const bits = [`v${r.version || '?'}`, r.page || ''].filter(Boolean);
+    if (r.contact) bits.push(`reach them: ${r.contact}`);
+    meta.textContent = bits.join(' · ');
+    row.append(meta);
+
+    // Whether the forward actually happened. A report that only ever reached
+    // the box is still a report, and saying so is the difference between
+    // "filed" and "waiting for someone to look at Pi health".
+    const gh = el('p', 'report-gh');
+    if (r.github?.ok && r.github.url) {
+      const link = el('a');
+      link.href = r.github.url;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.textContent = 'Filed on GitHub';
+      gh.append(link);
+    } else if (r.github?.off) {
+      gh.textContent = 'On the box only — no GitHub token configured.';
+      gh.classList.add('is-off');
+    } else if (r.github?.error) {
+      gh.textContent = `On the box only — GitHub said: ${r.github.error}`;
+      gh.classList.add('is-off');
+    } else {
+      gh.textContent = 'On the box only.';
+      gh.classList.add('is-off');
+    }
+    row.append(gh);
+
+    if (r.context) {
+      const box = el('details', 'report-context');
+      const sum = el('summary');
+      sum.textContent = 'What was on screen';
+      const pre = el('pre');
+      pre.textContent = r.context;
+      box.append(sum, pre);
+      row.append(box);
+    }
+    return row;
   },
 
   /**
@@ -1837,6 +1939,216 @@ setInterval(watchHealthBadge, 60000);
 
 $('#healthBtn').addEventListener('click', () => health.open());
 $('#healthClose').addEventListener('click', () => health.close());
+
+/* --------------------------------------------------- the suggestion box ---
+ *
+ * The pulse in the corner is a diagnostic for whoever runs the box. For
+ * everyone else the useful thing in that corner is a way to say something is
+ * broken — so that is what is there instead, and only Hunter sees the pulse.
+ *
+ * What is sent lands on the box first and is forwarded to GitHub second. The
+ * copy on the box is the record; GitHub is a convenience that is allowed to
+ * fail. Whoever sent it is told which of the two happened, because "sent"
+ * meaning two different things is how a report gets quietly lost.
+ */
+const reporter = {
+  kind: 'bug',
+
+  /**
+   * Whose box this is. Everyone else gets the suggestion box.
+   *
+   * The server decides and sends the answer with the profile's prefs, so there
+   * is one place that knows rather than two that could disagree. The name check
+   * is only the fallback for the moment before those have arrived.
+   */
+  isOwner() {
+    if (typeof profiles.data?.owner === 'boolean') return profiles.data.owner;
+    return String(profiles.current?.name || '').trim().toLowerCase() === 'hunter';
+  },
+
+  /** Which of the two buttons belongs in the header for whoever is watching. */
+  applyButtons() {
+    const owner = this.isOwner();
+    $('#healthBtn').hidden = !owner;
+    $('#reportBtn').hidden = owner;
+  },
+
+  /**
+   * What is going along with the message.
+   *
+   * Read from the same places the playback report comes from, because a bug
+   * report that says "it broke" and a bug report that carries the last thing
+   * the watchdog saw are worth very different amounts. Shown in the form
+   * before it is sent: nothing should be attached to somebody's words that
+   * they cannot read first.
+   */
+  context() {
+    const parts = [];
+    const snap = playback.last;
+    const live = !$('#playerOverlay').hidden && $('#video').currentSrc;
+    if (live) {
+      parts.push('— playing now —', playback.reportWithWorst());
+    } else if (snap) {
+      const age = Math.round((Date.now() - snap.at) / 1000);
+      parts.push(`— the last thing that played, ${age}s ago —`, snap.verdict, '', snap.report);
+    }
+    return parts.join('\n').trim();
+  },
+
+  open({ kind = 'bug' } = {}) {
+    this.setKind(kind);
+    $('#reportMessage').value = '';
+    $('#reportContact').value = '';
+    $('#reportError').hidden = true;
+    $('#reportSubmit').disabled = false;
+
+    const ctx = this.context();
+    $('#reportContextBox').hidden = !ctx;
+    $('#reportContext').textContent = ctx;
+    $('#reportContextHint').textContent = ctx
+      ? '— the last playback report, with the addresses stripped out'
+      : '';
+
+    $('#reportLead').textContent = this.isOwner()
+      ? 'Lands in reports.json on the box, and in the project\'s issue list.'
+      : 'It goes straight to Hunter, and into the project\'s issue list.';
+
+    $('#reportModal').hidden = false;
+    $('#reportMessage').focus();
+  },
+
+  close() {
+    $('#reportModal').hidden = true;
+  },
+
+  setKind(kind) {
+    this.kind = kind === 'idea' ? 'idea' : 'bug';
+    for (const b of document.querySelectorAll('#reportKind button')) {
+      b.classList.toggle('is-on', b.dataset.kind === this.kind);
+    }
+    $('#reportTitle').textContent = this.kind === 'bug' ? 'Report a problem' : 'Suggest something';
+    $('#reportPrompt').textContent = this.kind === 'bug'
+      ? 'What happened?'
+      : 'What should it do?';
+    $('#reportMessage').placeholder = this.kind === 'bug'
+      ? 'What you were watching, what it did, and what you expected instead.'
+      : 'Anything. Small things count.';
+  },
+
+  async send() {
+    const message = $('#reportMessage').value.trim();
+    const err = $('#reportError');
+    if (!message) {
+      err.hidden = false;
+      err.textContent = 'Say something about it first.';
+      return;
+    }
+    $('#reportSubmit').disabled = true;
+    err.hidden = true;
+
+    try {
+      const res = await fetch('/api/reports', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          profileId: profiles.current?.id || '',
+          profileName: profiles.current?.name || '',
+          kind: this.kind,
+          message,
+          contact: $('#reportContact').value.trim(),
+          context: this.context(),
+          page: location.hash || '#/home',
+          version: VERSION,
+          device: navigator.userAgent,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Failed (${res.status})`);
+
+      this.close();
+      // Two different outcomes, said as two different things. "Sent" covering
+      // both is how a report gets quietly lost.
+      toast(data.github?.ok
+        ? 'Sent — it is on the box and filed on GitHub.'
+        : 'Saved on the box. Hunter will see it in Pi health.');
+      if (health.reportsOpen) health.loadReports();
+    } catch (e) {
+      err.hidden = false;
+      err.textContent = `Could not send it: ${e.message}`;
+      $('#reportSubmit').disabled = false;
+    }
+  },
+};
+
+$('#reportBtn').addEventListener('click', () => reporter.open());
+$('#reportCancel').addEventListener('click', () => reporter.close());
+$('#reportsSend').addEventListener('click', () => { health.close(); reporter.open(); });
+for (const b of document.querySelectorAll('#reportKind button')) {
+  b.addEventListener('click', () => reporter.setKind(b.dataset.kind));
+}
+$('#reportForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  reporter.send();
+});
+
+/**
+ * The one-time explanation.
+ *
+ * A button that changed under somebody is worth a sentence, and the people who
+ * most need to know there is now a way to report a problem are exactly the
+ * ones who were here before there was. Shown once per profile and written down
+ * on the profile, so it does not come back on the next device.
+ *
+ * A new profile does not see this: the tour explains the same button while
+ * pointing at it, which is better, and two explanations of one button is one
+ * too many.
+ */
+const notice = {
+  show({ title, body, key }) {
+    $('#noticeTitle').textContent = title;
+    $('#noticeBody').textContent = body;
+    $('#noticeModal').hidden = false;
+    this.key = key;
+  },
+
+  async close() {
+    $('#noticeModal').hidden = true;
+    if (this.key && profiles.current && !profiles.data[this.key]) {
+      profiles.data[this.key] = true;
+      await profiles.save();
+    }
+    this.key = null;
+  },
+
+  /** Nothing to say to a profile that has not finished the tour — it is next. */
+  maybeShow() {
+    if (!profiles.current || !profiles.data) return false;
+    if (profiles.data.reportNoticeSeen) return false;
+    if (!profiles.data.tourDone) return false;
+
+    this.show(reporter.isOwner()
+      ? {
+        key: 'reportNoticeSeen',
+        title: 'People can write to you now',
+        body: 'Everyone else has a report button where your pulse is. What they '
+          + 'send lands in Pi health under Reports, and gets filed on GitHub as '
+          + 'well once a token is set in config.json. You can send one from '
+          + 'there too.',
+      }
+      : {
+        key: 'reportNoticeSeen',
+        title: 'Tell Hunter when it breaks',
+        body: 'The pulse in the corner is gone — it was only ever useful to '
+          + 'whoever runs the box. In its place is a report button: press it '
+          + 'when something is broken, or when you have thought of something '
+          + 'this should do. It goes straight to Hunter, and it brings the last '
+          + 'playback report with it so he does not have to ask what happened.',
+      });
+    return true;
+  },
+};
+
+$('#noticeClose').addEventListener('click', () => notice.close());
 /* --------------------------------------------------- connection test ---
  *
  * The health panel reports what the Pi sees of its own link. From outside the
@@ -1979,7 +2291,7 @@ const TOUR = [
   {
     target: '.nav a[href="#/downloads"], .tabbar a[href="#/downloads"]',
     title: 'Downloads',
-    body: '',   // filled in below: the allowance depends on who is watching
+    copy: 'downloads',   // the allowance depends on who is watching
   },
   {
     target: '#profileChip',
@@ -1989,11 +2301,11 @@ const TOUR = [
       + 'judgement.',
   },
   {
-    target: '#healthBtn',
+    // Whichever of the two is actually in the corner for this profile. The
+    // step is dropped entirely if neither is, which is what `visible` is for.
+    target: '#reportBtn:not([hidden]), #healthBtn:not([hidden])',
     title: 'When it inevitably breaks',
-    body: 'The pulse shows what the Pi is doing. If playback goes to hell, open '
-      + 'it, hit Copy report, and send that to Hunter. He genuinely enjoys '
-      + 'reading them, which says a lot about him.',
+    copy: 'report',      // so does which button is in that corner
   },
 ];
 
@@ -2194,7 +2506,7 @@ const tour = {
     hole.style.height = `${box.height + pad * 2}px`;
 
     $('#tourTitle').textContent = step.title;
-    $('#tourBody').textContent = step.body || tourDownloadCopy();
+    $('#tourBody').textContent = step.body || TOUR_COPY[step.copy]?.() || '';
     const left = this.steps.length - this.at - 1;
     $('#tourLeft').textContent = left
       ? `${left} more ${left === 1 ? 'thing' : 'things'}`
@@ -2228,6 +2540,16 @@ const tour = {
   },
 };
 
+/**
+ * Steps whose words are not the same for everybody. Named rather than left as
+ * an empty body: there are two of them now, and "whichever step has no body"
+ * stopped being an identity the moment there was a second one.
+ */
+const TOUR_COPY = {
+  downloads: () => tourDownloadCopy(),
+  report: () => tourReportCopy(),
+};
+
 /** The Downloads step, which reads differently depending on the allowance. */
 function tourDownloadCopy() {
   const limit = profiles.data?.downloadLimit;
@@ -2239,6 +2561,18 @@ function tourDownloadCopy() {
         + 'season of something you will never watch. Delete things with the X on '
         + 'the poster.'
       : 'No limit for you, obviously. Everyone else gets 3GB.');
+}
+
+/** The corner button, which is not the same button for everybody. */
+function tourReportCopy() {
+  return reporter.isOwner()
+    ? 'The pulse shows what the Pi is doing — memory, temperature, what is '
+      + 'converting. Everyone else has a report button here instead, and what '
+      + 'they send turns up in this panel under Reports.'
+    : 'Press this when something breaks, or when you have thought of something '
+      + 'this should do. It goes straight to Hunter and it takes the last '
+      + 'playback report with it, so he does not have to ask you what happened. '
+      + 'Ideas count too — the box is not finished.';
 }
 
 $('#tourNext').addEventListener('click', () => tour.next());
@@ -7497,7 +7831,20 @@ async function startApp() {
 
   // After the first page has drawn, or the tour would be pointing at things
   // that are not there yet.
-  if (profiles.current && profiles.data && !profiles.data.tourDone) tour.start();
+  reporter.applyButtons();
+  if (profiles.current && profiles.data && !profiles.data.tourDone) {
+    // A new profile gets the report button explained by the tour, pointing at
+    // it. Nothing else to say afterwards, so the notice is marked seen rather
+    // than queued up behind it.
+    if (profiles.current) {
+      profiles.data.reportNoticeSeen = true;
+      profiles.save();
+    }
+    tour.start();
+  } else {
+    // Everyone who was already here. The button changed under them.
+    notice.maybeShow();
+  }
 
   // Keep the progress bars and the nav badge honest while anything is running.
   setInterval(() => {

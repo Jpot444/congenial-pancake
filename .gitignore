@@ -1,6 +1,7 @@
 config.json
 prefs.json
 profiles.json
+reports.json
 library-cache.json
 downloads/
 hls/

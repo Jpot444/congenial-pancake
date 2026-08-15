@@ -66,6 +66,21 @@
       <p class="health-note" id="speedResult" hidden></p>
     </div>
 
+    <!-- What everyone else has sent in. Sits outside #healthBody for the same
+         reason the connection test does: that block is replaced wholesale by
+         the poll every few seconds. -->
+    <div class="reports" id="reportsPanel">
+      <h3>
+        Reports
+        <span class="reports-count" id="reportsCount"></span>
+      </h3>
+      <p class="health-note" id="reportsNote">Reading them…</p>
+      <div class="reports-list" id="reportsList"></div>
+      <button type="button" class="btn btn-ghost btn-sm" id="reportsSend">
+        Send one yourself
+      </button>
+    </div>
+
     <!-- Experiments. Kept behind a switch and on this device only: what is in
          here is being tried out, not relied on. -->
     <div class="health-beta">
@@ -142,6 +157,70 @@
       <button type="submit" class="btn btn-primary" id="profileSubmit">Create profile</button>
     </div>
   </form>
+</div>
+
+<!-- ─────────────────────────────────────────────── suggestion box ─── -->
+<!-- One form for both a bug and an idea, because making somebody decide which
+     one they have before they can type is a good way to get neither. -->
+<div class="modal" id="reportModal" hidden>
+  <form class="modal-card" id="reportForm" autocomplete="off">
+    <h2 id="reportTitle">Report a problem</h2>
+    <p class="report-lead" id="reportLead">
+      It goes straight to Hunter and to the project's issue list.
+    </p>
+
+    <div class="field">
+      <span>What is this?</span>
+      <div class="mv-count-seg" id="reportKind" role="group" aria-label="What is this">
+        <button type="button" data-kind="bug" class="is-on">Something is broken</button>
+        <button type="button" data-kind="idea">An idea</button>
+      </div>
+    </div>
+
+    <label class="field">
+      <span id="reportPrompt">What happened?</span>
+      <!-- No `required`: the browser's own bubble would pre-empt the form's
+           error line, and then there would be two ways this form says no. -->
+      <textarea name="message" id="reportMessage" rows="5" maxlength="4000"
+                placeholder="The more you say, the better the odds of it getting fixed."
+      ></textarea>
+    </label>
+
+    <label class="field">
+      <span>How to reach you <small class="hint-inline">— optional</small></span>
+      <input name="contact" id="reportContact" maxlength="200"
+             placeholder="Only if you want to be asked about it" />
+    </label>
+
+    <!-- Shown, not hidden. Anything attached to what somebody sends should be
+         something they can read before they send it. -->
+    <details class="report-context" id="reportContextBox">
+      <summary>What gets attached <span id="reportContextHint"></span></summary>
+      <pre id="reportContext"></pre>
+    </details>
+
+    <p class="form-error" id="reportError" hidden></p>
+
+    <div class="modal-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-ghost" id="reportCancel">Cancel</button>
+      <button type="submit" class="btn btn-primary" id="reportSubmit">Send it</button>
+    </div>
+  </form>
+</div>
+
+<!-- The one-time explanation. Shown once per profile, the first time it signs
+     in after this arrived, because a button that changed under somebody is
+     worth a sentence. -->
+<div class="modal" id="noticeModal" hidden>
+  <div class="modal-card notice-card">
+    <h2 id="noticeTitle">Something new</h2>
+    <p id="noticeBody"></p>
+    <div class="modal-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-primary" id="noticeClose">Got it</button>
+    </div>
+  </div>
 </div>
 
 <!-- ────────────────────────────────────────────────── multi-view (beta) ─── -->
@@ -326,11 +405,22 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
         <input id="searchInput" type="search" placeholder="Search everything…" autocomplete="off" />
       </label>
-      <button class="icon-btn" id="healthBtn" title="Server health" aria-label="Server health">
+      <button class="icon-btn" id="healthBtn" title="Server health" aria-label="Server health" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M3 12h4l2.5-6 4 12L16 12h5"/>
         </svg>
         <span class="btn-dot" id="healthDot" hidden></span>
+      </button>
+      <!-- Everyone who is not Hunter gets this where the pulse would be. The
+           pulse is a diagnostic for whoever runs the box; for everyone else the
+           useful thing in that corner is a way to say something is broken. -->
+      <button class="icon-btn" id="reportBtn" hidden
+              title="Report a problem or suggest something"
+              aria-label="Report a problem or suggest something">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M21 12a8 8 0 1 1-3.2-6.4"/>
+          <path d="M12 8v5M12 16.2v.1"/>
+        </svg>
       </button>
       <button class="icon-btn" id="touchToggle" aria-pressed="false"
               title="This device — phone or desktop layout, and how many posters to a row"

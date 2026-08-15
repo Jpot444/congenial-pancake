@@ -270,6 +270,79 @@ and restart — it re-seeds.
 The first profile created inherits whatever was already favorited and pinned
 before profiles existed, so nothing is lost on upgrade.
 
+## The suggestion box
+
+**The pulse in the corner is Hunter's.** It reports memory, temperature, load
+and what is converting — a diagnostic for whoever runs the box, and nothing
+anybody else can act on. So for every other profile that button is not the
+pulse: it is a way to say something is broken, or to ask for something. Swapped,
+not added beside — one button lives in that corner and which one depends on who
+is watching.
+
+Ownership is by **name**, `hunter`, the same way the download allowance is, and
+for the same reason: this is a house of a few people who all know each other,
+and an `owner: true` field on a profile anyone can edit from the profile screen
+would be ownership in name only. The server decides it and sends the answer with
+the profile's prefs, so there is one place that knows rather than two that could
+disagree.
+
+### What happens to a report
+
+It lands in two places, and the order matters:
+
+1. **On the box**, in `reports.json` (gitignored, `0600` — a report carries
+   whatever somebody chose to type, including how to reach them). This copy
+   always exists.
+2. **On GitHub**, as an issue, when a token is configured. That is a *forward*,
+   not the record. If GitHub is unreachable, misconfigured or switched off, the
+   report is already saved and the failure is written next to it rather than
+   thrown at whoever sent it.
+
+Whoever sent it is told which of the two happened — "filed on GitHub" and
+"saved on the box" are different sentences, because "sent" covering both is how
+a report gets quietly lost. The Reports section of Pi health says the same thing
+per report, with the GitHub link when there is one and the reason when there is
+not.
+
+Turn the forwarding on in `config.json`:
+
+```json
+"github": { "token": "ghp_…", "repo": "owner/name", "labels": ["feedback"] }
+```
+
+`labels` is optional and defaults to `bug` or `enhancement` by kind. With no
+token the box says so plainly rather than pretending it sent.
+
+### Credentials never leave the house
+
+This is the part worth being careful about. A bug report is very often a pasted
+playback report, and this provider puts the account password **inside every
+stream URL**. Those reports get forwarded to a repository.
+
+So `redactUrl` runs over every free-text field **on the way in**, not on the way
+out — the copy on the box is redacted too, and the GitHub body is built from the
+stored record. There is no second path out of here that could forget. A URL
+survives as host plus filename, which is what makes a report readable, and the
+credentials in the middle of it do not survive at all.
+
+### Being told about it
+
+A profile that was already here gets **one modal, once**, the next time it signs
+in — a button changing under somebody is worth a sentence, and the people who
+most need to know there is now a way to report a problem are exactly the ones
+who were here before there was. Written down on the profile
+(`reportNoticeSeen`), so it does not come back on the next device.
+
+A **new** profile does not see it. The tour explains the same button while
+pointing at it, which is better, and two explanations of one button is one too
+many — so the tour step is marked seen on the way past. That step reads
+differently depending on which button is actually in the corner, the same way
+the Downloads step reads differently depending on the allowance.
+
+Hunter can send a report too, from inside the Reports section. He is not the
+only one who finds bugs, and a suggestion box he cannot use is a strange thing
+to own.
+
 ## The walkthrough
 
 A new profile gets a guided tour on its first load: a dimmed screen with a hole

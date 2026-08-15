@@ -2533,6 +2533,132 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   border-top: 1px solid rgba(255, 255, 255, .1);
 }
 
+/* ---- what everyone else has sent in ---- */
+
+.reports {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, .1);
+}
+
+.reports h3 {
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: .04em;
+}
+
+.reports-count {
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--brand-red);
+  font-family: var(--sans, inherit);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.reports-count:empty { display: none; }
+
+/* Capped and scrolled: this sits inside a modal that already has a job, and a
+   year of reports would push everything under it off the screen. */
+.reports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+.reports-list:empty { margin-bottom: 0; }
+
+.report {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-left: 3px solid rgba(255, 255, 255, .25);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .03);
+}
+.report.is-bug { border-left-color: var(--brand-red); }
+.report.is-idea { border-left-color: #6FA8DC; }
+
+.report-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.report-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .1);
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.report-who { font-weight: 600; }
+.report-when { margin-left: auto; color: var(--muted-dim); font-size: 11px; }
+
+.report-body {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.report-meta, .report-gh {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted-dim);
+}
+.report-gh a { color: #7FD4A0; text-decoration: underline; }
+.report-gh.is-off { color: #D9A441; }
+
+.report-context { margin-top: 8px; font-size: 11.5px; color: var(--muted-dim); }
+.report-context summary { cursor: pointer; }
+.report-context pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, .35);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- the form ---- */
+
+.report-lead { margin: -4px 0 16px; font-size: 13px; color: var(--muted); }
+
+#reportMessage {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, .25);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.hint-inline { color: var(--muted-dim); font-weight: 400; }
+
+.notice-card p {
+  margin: 0 0 4px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
 .switch {
   display: flex;
   align-items: flex-start;

@@ -29,6 +29,10 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const CONFIG_PATH = path.join(ROOT, 'config.json');
 const PREFS_PATH = path.join(ROOT, 'prefs.json');
 const PROFILES_PATH = path.join(ROOT, 'profiles.json');
+/* Feedback and bug reports. Kept out of version control and 0600 like the
+   other state: a report can carry whatever somebody chose to type into it,
+   including how to reach them. */
+const REPORTS_PATH = path.join(ROOT, 'reports.json');
 const HLS_DIR = path.join(ROOT, 'hls');
 /** Containers a browser will open directly. Anything else needs remuxing. */
 const NATIVE_CONTAINERS = new Set(['mp4', 'm4v', 'mov']);
@@ -312,11 +316,22 @@ function readProfiles() {
  * anyone can edit from the profile screen would be a limit in name only.
  */
 const DOWNLOAD_ALLOWANCE = 3 * 1024 * 1024 * 1024;
-const UNLIMITED_PROFILE = 'hunter';
+
+/**
+ * Whose box this is.
+ *
+ * By name, for the same reason the allowance is: this is a house of a few
+ * people who all know each other, and a `owner: true` field on a profile
+ * anyone can edit from the profile screen would be ownership in name only.
+ */
+const OWNER_PROFILE = 'hunter';
+
+function isOwnerProfile(profile) {
+  return String(profile?.name || '').trim().toLowerCase() === OWNER_PROFILE;
+}
 
 function downloadLimitFor(profile) {
-  const name = String(profile?.name || '').trim().toLowerCase();
-  return name === UNLIMITED_PROFILE ? Infinity : DOWNLOAD_ALLOWANCE;
+  return isOwnerProfile(profile) ? Infinity : DOWNLOAD_ALLOWANCE;
 }
 
 /**
@@ -347,6 +362,139 @@ function writeProfiles(data) {
   } catch {
     /* best effort */
   }
+}
+
+/* --------------------------------------------------------------- reports ---
+ *
+ * Everyone who is not Hunter gets a suggestion box where the Pi health button
+ * would be. What they send lands in two places, on purpose:
+ *
+ *   * **On the box**, in `reports.json`, which is what the Reports section of
+ *     Pi health reads. This is the copy that always exists.
+ *   * **On GitHub**, as an issue, when a token is configured. That one is a
+ *     forward, not the record — if GitHub is unreachable, misconfigured or
+ *     switched off, the report is already saved and the failure is written
+ *     next to it rather than thrown at whoever sent it.
+ *
+ * A report is never worth losing. Somebody typing out what went wrong has
+ * already done the hard part.
+ */
+
+const MAX_REPORTS = 300;
+const REPORT_LIMITS = { message: 4000, contact: 200, context: 8000, page: 120 };
+
+function readReports() {
+  try {
+    const data = readJsonState(REPORTS_PATH, 'reports.json');
+    return Array.isArray(data?.reports) ? data.reports : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeReports(reports) {
+  writeJsonAtomic(REPORTS_PATH, { reports: reports.slice(0, MAX_REPORTS) }, { mode: 0o600 });
+  try {
+    fs.chmodSync(REPORTS_PATH, 0o600);
+  } catch {
+    /* best effort */
+  }
+}
+
+/**
+ * The issue body, as GitHub will show it.
+ *
+ * `redactUrl` runs over every free-text field on the way in, not on the way
+ * out. A bug report is very often a pasted playback report, and this provider
+ * puts the account password inside every stream URL — so the one thing that
+ * must not happen is a credential travelling to a repository. Redacting at the
+ * point of storage means the copy on the box is clean too, and there is no
+ * second path out of here that could forget to do it.
+ */
+function reportIssueBody(report) {
+  const lines = [
+    report.message,
+    '',
+    '---',
+    `**From** ${report.profile || 'unknown'}`,
+    `**Kind** ${report.kind}`,
+    `**Version** ${report.version || 'unknown'}`,
+    `**Device** ${report.device || 'unknown'}`,
+    `**Page** ${report.page || 'unknown'}`,
+    `**Sent** ${report.at}`,
+  ];
+  if (report.contact) lines.push(`**Contact** ${report.contact}`);
+  if (report.context) lines.push('', '<details><summary>What was on screen</summary>', '',
+    '```', report.context, '```', '', '</details>');
+  return lines.join('\n');
+}
+
+/**
+ * Forward one report to GitHub. Resolves to what happened rather than throwing:
+ * the caller has already stored the report and is only recording the outcome.
+ *
+ * Configured in `config.json` as `{ "github": { "token": "…", "repo": "owner/name" } }`.
+ * With no token this is off, and says so, which is a different thing from
+ * failing.
+ */
+function sendReportToGithub(report) {
+  const cfg = readConfig() || {};
+  const gh = cfg.github || {};
+  if (!gh.token || !gh.repo) {
+    return Promise.resolve({ ok: false, off: true, error: 'No GitHub token configured' });
+  }
+
+  const payload = JSON.stringify({
+    title: `[${report.kind === 'bug' ? 'Bug' : 'Suggestion'}] ${report.title}`,
+    body: reportIssueBody(report),
+    labels: Array.isArray(gh.labels) && gh.labels.length
+      ? gh.labels
+      : [report.kind === 'bug' ? 'bug' : 'enhancement'],
+  });
+
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'api.github.com',
+      path: `/repos/${gh.repo}/issues`,
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${gh.token}`,
+        accept: 'application/vnd.github+json',
+        'x-github-api-version': '2022-11-28',
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(payload),
+        'user-agent': 'treasure-theater',
+      },
+      timeout: 15000,
+    }, async (res) => {
+      let text = '';
+      try {
+        text = (await readBody(res)).toString('utf8');
+      } catch {
+        /* the status is the answer either way */
+      }
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        let url = '';
+        try {
+          url = JSON.parse(text).html_url || '';
+        } catch {
+          /* an issue without a link is still an issue */
+        }
+        return resolve({ ok: true, url });
+      }
+      let why = `GitHub returned ${res.statusCode}`;
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed.message) why = `${why}: ${parsed.message}`;
+      } catch {
+        /* keep the status line */
+      }
+      resolve({ ok: false, error: why });
+    });
+    req.on('timeout', () => req.destroy(new Error('GitHub timed out')));
+    req.on('error', (err) => resolve({ ok: false, error: err.message }));
+    req.end(payload);
+  });
 }
 
 /** Public shape — never leaks the auth block or the full history blob. */
@@ -2965,6 +3113,13 @@ async function handleApi(req, res, pathname, query) {
           // note above so clearing one does not silently re-run the other.
           livePinsSeeded: profile.livePinsSeeded
             ?? (profile.pinnedCategories || []).some((key) => key.startsWith('live:')),
+          // Whether this profile has been told the corner button changed. A
+          // profile that has not finished the tour has not been told anything
+          // yet and gets it there instead, pointed at the button itself.
+          reportNoticeSeen: profile.reportNoticeSeen === true,
+          // Whose box this is. Sent rather than worked out from the name on
+          // the client, so there is one answer to the question.
+          owner: isOwnerProfile(profile),
           // Everyone but Hunter has a download allowance. Sent so the UI can
           // show what is left rather than only finding out by being refused.
           downloadLimit: downloadLimitFor(profile),
@@ -3005,6 +3160,9 @@ async function handleApi(req, res, pathname, query) {
         if (typeof incoming.liveTourDone === 'boolean') profile.liveTourDone = incoming.liveTourDone;
         if (typeof incoming.livePinsSeeded === 'boolean') {
           profile.livePinsSeeded = incoming.livePinsSeeded;
+        }
+        if (typeof incoming.reportNoticeSeen === 'boolean') {
+          profile.reportNoticeSeen = incoming.reportNoticeSeen;
         }
         writeProfiles(data);
         return json(res, 200, { ok: true });
@@ -3140,6 +3298,68 @@ async function handleApi(req, res, pathname, query) {
       data.profiles = data.profiles.filter((p) => p.id !== profile.id);
       writeProfiles(data);
       return json(res, 200, { removed: true });
+    }
+
+    return json(res, 405, { error: 'Method not allowed' });
+  }
+
+  /* ---- Feedback and bug reports ---- */
+  if (pathname === '/api/reports') {
+    if (req.method === 'POST') {
+      let incoming;
+      try {
+        incoming = JSON.parse((await collectRequestBody(req)).toString('utf8') || '{}');
+      } catch {
+        return json(res, 400, { error: 'Bad JSON' });
+      }
+
+      const clip = (value, max) => redactUrl(String(value ?? '').trim()).slice(0, max);
+      const message = clip(incoming.message, REPORT_LIMITS.message);
+      if (!message) return json(res, 400, { error: 'Say something about it first.' });
+
+      const profile = ownerOf(incoming.profileId);
+      const report = {
+        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        at: new Date().toISOString(),
+        kind: incoming.kind === 'bug' ? 'bug' : 'idea',
+        // The first line is the title; the whole thing is still the body, so
+        // nothing is lost to making it readable in a list.
+        title: message.split('\n')[0].slice(0, 90),
+        message,
+        contact: clip(incoming.contact, REPORT_LIMITS.contact),
+        context: clip(incoming.context, REPORT_LIMITS.context),
+        page: clip(incoming.page, REPORT_LIMITS.page),
+        version: clip(incoming.version, 20),
+        device: clip(incoming.device, 200),
+        profile: profile?.name || clip(incoming.profileName, 60) || 'unknown',
+        profileId: profile?.id || '',
+      };
+
+      // Stored first, forwarded second. A report that reached the box is not
+      // allowed to depend on GitHub being reachable.
+      const reports = readReports();
+      reports.unshift(report);
+      writeReports(reports);
+
+      const sent = await sendReportToGithub(report);
+      report.github = sent;
+      const after = readReports();
+      const at = after.findIndex((r) => r.id === report.id);
+      if (at >= 0) after[at] = report;
+      writeReports(after);
+
+      return json(res, 200, { ok: true, id: report.id, github: sent });
+    }
+
+    if (req.method === 'GET') {
+      // The box is unauthenticated by design — see the README — so this is not
+      // a security boundary and is not dressed as one. It stops one household
+      // member idly reading another's reports through the UI, which is the
+      // only thing it could honestly do.
+      if (!isOwnerProfile(ownerOf(query.get('profileId')))) {
+        return json(res, 403, { error: 'Reports are only shown to the owner profile.' });
+      }
+      return json(res, 200, { reports: readReports() });
     }
 
     return json(res, 405, { error: 'Method not allowed' });
