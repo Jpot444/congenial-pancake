@@ -122,11 +122,29 @@ can't touch them directly. Everything is proxied through the local server:
   key comes back through the proxy too; `Range` headers pass through for
   seeking in movies.
 - `/img?u=…` — logo and poster proxy, so http-only artwork still loads.
+- `/archive/file?path=…` — byte-range serving for files on the archive drive.
 
 Playback engine is chosen by format: [hls.js](https://github.com/video-dev/hls.js)
 for `.m3u8`, [mpegts.js](https://github.com/xqq/mpegts.js) for `.ts`, native
 `<video>` for MP4. Both libraries load from jsDelivr, so the first load needs
 internet.
+
+## The archive drive
+
+The **Archive** tab plays a 2 TB external drive plugged into the Pi — 5,853
+files, 3,203 hours, 1987–2020 — browsable by folder and searchable by title.
+
+`scripts/scan-library.js` probes the drive once and writes
+`library-index.ndjson`, recording for each file whether it can be served as-is,
+needs its audio converted, or needs a full video re-encode. The portal reads
+that index at boot and never guesses at play time.
+
+Roughly a third of the drive is MPEG-4 ASP (DivX/XviD in `.avi`), which no
+browser decodes. Those are encoded to H.264 on demand as they play, through the
+same HLS pipeline the provider streams use — nothing is converted up front and
+nothing is stored.
+
+Setup, the download-storage decision, and re-scanning: **[docs/archive-drive.md](docs/archive-drive.md)**.
 
 ## Profiles
 

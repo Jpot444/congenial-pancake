@@ -35,6 +35,8 @@ const state = {
   filtered: [],
   downloads: { items: [], active: null, queued: 0 },
   recentlyWatched: [],
+  /** The archive drive: current folder, what's in it, and how much is shown. */
+  archive: { dir: '', data: null, status: null, visible: PAGE_SIZE, searching: false },
 };
 
 /* ------------------------------------------------------- prefs (server) */
@@ -1001,6 +1003,7 @@ function render() {
     movies: 'Movies',
     series: 'Series',
     favorites: 'Favorites',
+    archive: 'Archive',
     downloads: 'Downloads',
   };
   $('#contentTitle').textContent = titles[state.tab];
@@ -1010,8 +1013,10 @@ function render() {
   });
 
   if (state.tab === 'downloads') return renderDownloads();
+  if (state.tab === 'archive') return renderArchive();
 
   $('#downloadList').hidden = true;
+  $('#archiveView').hidden = true;
   $('#rowsView').hidden = true;
   $('#grid').hidden = false;
 
@@ -1111,6 +1116,7 @@ function renderDownloads() {
   // render() hides this too, but only after its early return for this tab —
   // so arriving from Movies or Series left their shelves showing underneath.
   $('#rowsView').hidden = true;
+  $('#archiveView').hidden = true;
   $('#loadMore').hidden = true;
   document.querySelector('.app-shell').classList.add('no-sidebar');
 
@@ -1524,6 +1530,179 @@ async function requestDownload(item, episode, { quiet = false } = {}) {
   }
 }
 
+/* --------------------------------------------------------------- archive
+
+ * The external drive. Unlike the provider tabs there's no catalogue to fetch
+ * and cache — the server holds a pre-built index, so browsing is one cheap
+ * request per folder and search is instant across all of it.
+ */
+
+const ARCHIVE_MODE_LABEL = {
+  direct: '',                    // plays as-is; nothing worth saying
+  remux: '',                     // ~1s of ffmpeg; not worth a badge either
+  transcode: 'Converts on play',
+};
+
+function archiveItemToPlayable(entry) {
+  // Shape an index record into something openPlayer already understands.
+  return {
+    kind: 'movie',
+    id: `archive:${entry.path}`,
+    name: entry.title,
+    archivePath: entry.path,
+    archiveMode: entry.playback,
+    localOnly: true,
+    resumeKey: `archive:${entry.path}`,
+    duration: entry.duration,
+    plot: [
+      entry.date ? entry.date.replace(/-/g, '.') : '',
+      entry.tags && entry.tags.length ? entry.tags.join(' · ') : '',
+      entry.width ? `${entry.width}×${entry.height}` : '',
+      entry.size ? `${(entry.size / 1024 / 1024 / 1024).toFixed(2)} GB` : '',
+    ]
+      .filter(Boolean)
+      .join('  ·  '),
+  };
+}
+
+function archiveCard(entry) {
+  const el = document.createElement('button');
+  el.className = 'card archive-card';
+  el.type = 'button';
+
+  const mins = entry.duration ? `${Math.round(entry.duration / 60)} min` : '';
+  const badge = ARCHIVE_MODE_LABEL[entry.playback] || '';
+
+  el.innerHTML = `
+    <span class="archive-card-date">${entry.date ? entry.date.replace(/-/g, '.') : ''}</span>
+    <span class="archive-card-title"></span>
+    <span class="archive-card-meta">${[mins, entry.tags?.[entry.tags.length - 1] || '']
+      .filter(Boolean)
+      .join(' · ')}</span>
+    ${badge ? `<span class="archive-card-badge">${badge}</span>` : ''}
+  `;
+  // Titles come from filenames on a drive of unknown provenance — set as text
+  // so a stray angle bracket in a filename can never become markup.
+  el.querySelector('.archive-card-title').textContent = entry.title;
+
+  el.onclick = () => openPlayer(archiveItemToPlayable(entry));
+  return el;
+}
+
+async function loadArchive(dir = '') {
+  state.archive.dir = dir;
+  state.archive.visible = PAGE_SIZE;
+  state.archive.searching = false;
+  state.archive.data = await api('/api/archive/browse', { dir });
+}
+
+async function searchArchive(q) {
+  state.archive.searching = true;
+  state.archive.visible = PAGE_SIZE;
+  const res = await api('/api/archive/search', { q });
+  state.archive.data = { dir: state.archive.dir, subdirs: [], items: res.items, total: res.total };
+}
+
+function renderArchive() {
+  $('#grid').hidden = true;
+  $('#rowsView').hidden = true;
+  $('#downloadList').hidden = true;
+  $('#loadMore').hidden = true;
+  $('#archiveView').hidden = false;
+  document.querySelector('.app-shell').classList.add('no-sidebar');
+
+  const st = state.archive.status;
+  const statusEl = $('#archiveStatus');
+  if (st && st.error) {
+    statusEl.textContent = st.error;
+    statusEl.className = 'archive-status is-warn';
+  } else if (st && !st.mounted) {
+    statusEl.textContent = 'Drive not mounted — nothing will play until it is plugged in.';
+    statusEl.className = 'archive-status is-warn';
+  } else if (st) {
+    statusEl.textContent = `${st.indexed.toLocaleString()} files`;
+    statusEl.className = 'archive-status';
+  }
+
+  // Breadcrumbs
+  const crumbs = $('#archiveCrumbs');
+  crumbs.innerHTML = '';
+  const mk = (label, dir) => {
+    const a = document.createElement('button');
+    a.type = 'button';
+    a.className = 'crumb';
+    a.textContent = label;
+    a.onclick = async () => {
+      await loadArchive(dir);
+      render();
+    };
+    return a;
+  };
+  crumbs.append(mk('Archive', ''));
+  if (!state.archive.searching) {
+    const parts = state.archive.dir ? state.archive.dir.split('/') : [];
+    parts.forEach((part, i) => {
+      crumbs.append(Object.assign(document.createElement('span'), {
+        className: 'crumb-sep',
+        textContent: '›',
+      }));
+      crumbs.append(mk(part, parts.slice(0, i + 1).join('/')));
+    });
+  } else {
+    crumbs.append(Object.assign(document.createElement('span'), {
+      className: 'crumb-sep',
+      textContent: '›',
+    }));
+    crumbs.append(Object.assign(document.createElement('span'), {
+      className: 'crumb is-static',
+      textContent: `Search results (${state.archive.data?.total ?? 0})`,
+    }));
+  }
+
+  const data = state.archive.data || { subdirs: [], items: [], total: 0 };
+
+  // Folders
+  const folders = $('#archiveFolders');
+  folders.innerHTML = '';
+  for (const sub of data.subdirs) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'folder-chip';
+    b.innerHTML = `<span class="folder-name"></span><span class="folder-count">${sub.count.toLocaleString()}</span>`;
+    b.querySelector('.folder-name').textContent = sub.name;
+    b.onclick = async () => {
+      await loadArchive(sub.dir);
+      render();
+    };
+    folders.append(b);
+  }
+
+  // Items
+  const grid = $('#archiveGrid');
+  grid.innerHTML = '';
+  const slice = data.items.slice(0, state.archive.visible);
+  const frag = document.createDocumentFragment();
+  for (const entry of slice) frag.append(archiveCard(entry));
+  grid.append(frag);
+
+  const more = $('#archiveMore');
+  more.hidden = data.items.length <= state.archive.visible;
+  more.onclick = () => {
+    state.archive.visible += PAGE_SIZE;
+    renderArchive();
+  };
+
+  const empty = $('#emptyState');
+  if (!data.subdirs.length && !data.items.length) {
+    empty.hidden = false;
+    empty.textContent = state.archive.searching
+      ? 'Nothing in the archive matches that.'
+      : 'This folder is empty.';
+  } else {
+    empty.hidden = true;
+  }
+}
+
 /* ---------------------------------------------------------------- router */
 
 async function goTo(tab) {
@@ -1537,6 +1716,25 @@ async function goTo(tab) {
 
   if (tab === 'downloads') {
     await refreshDownloads();
+    return render();
+  }
+  if (tab === 'archive') {
+    renderSkeletons();
+    try {
+      // Status is cheap and tells us up front whether the drive is actually
+      // there, so a missing mount reads as a clear message instead of an
+      // empty grid the user has to interpret.
+      state.archive.status = await api('/api/archive/status');
+      await loadArchive(state.archive.dir || '');
+    } catch (err) {
+      $('#grid').innerHTML = '';
+      const empty = $('#emptyState');
+      empty.hidden = false;
+      empty.textContent = `Couldn't read the archive: ${err.message}`;
+      return;
+    } finally {
+      loader.hide();
+    }
     return render();
   }
   if (tab === 'favorites') return render();
@@ -1563,7 +1761,9 @@ async function goTo(tab) {
 
 function routeFromHash() {
   const tab = (location.hash.replace('#/', '') || 'live').toLowerCase();
-  return ['live', 'movies', 'series', 'favorites', 'downloads'].includes(tab) ? tab : 'live';
+  return ['live', 'movies', 'series', 'favorites', 'archive', 'downloads'].includes(tab)
+    ? tab
+    : 'live';
 }
 
 window.addEventListener('hashchange', () => goTo(routeFromHash()));
@@ -1885,17 +2085,24 @@ function enterCinema(item) {
   overlay.classList.add('cinema');
   overlay.classList.remove('chrome-hidden');
 
-  // Launched from the Downloads grid? Back returns there, not to Movies.
+  // Launched from the Downloads grid? Back returns there, not to Movies. Same
+  // for the archive — an archive title is a 'movie' to the player, so without
+  // this the exit drops you into the provider's film grid.
   const fromDownloads = Boolean(item.downloadId && item.localOnly);
+  const fromArchive = Boolean(item.archivePath);
   const labels = { series: 'Series', live: 'Live TV', movie: 'Movies' };
-  cinemaReturnHash = fromDownloads
-    ? '#/downloads'
-    : item.kind === 'series' ? '#/series' : item.kind === 'live' ? '#/live' : '#/movies';
+  cinemaReturnHash = fromArchive
+    ? '#/archive'
+    : fromDownloads
+      ? '#/downloads'
+      : item.kind === 'series' ? '#/series' : item.kind === 'live' ? '#/live' : '#/movies';
 
   $('#cinemaTop').hidden = false;
   $('#cinemaTitle').textContent = item.name || '';
   $('#cinemaSub').textContent = '';
-  $('#cinemaBackLabel').textContent = fromDownloads ? 'Downloads' : labels[item.kind] || 'Back';
+  $('#cinemaBackLabel').textContent = fromArchive
+    ? 'Archive'
+    : fromDownloads ? 'Downloads' : labels[item.kind] || 'Back';
   document.body.style.overflow = 'hidden';
   showChrome();
 }
@@ -2541,6 +2748,24 @@ function needsRemux(ext) {
 async function resolveStream(item, override) {
   const startAt = Math.floor(override?.startAt || 0);
 
+  /* A file on the archive drive. The server decides between serving the bytes
+   * and running it through ffmpeg — the client only has to honour what comes
+   * back. Direct play seeks itself; an HLS session has already been started at
+   * the resume point, so its scrubber runs on the returned offset. */
+  if (item.archivePath) {
+    const data = await api('/api/archive/play', { path: item.archivePath, start: startAt || '' });
+
+    if (data.mode === 'direct') {
+      lastRemux = {};
+      return { url: data.url, format: 'file', local: true, seekTo: startAt };
+    }
+
+    lastRemux = data;
+    film.offset = data.offset || 0;
+    await waitForPrebuffer(data);
+    return { url: data.url, format: 'm3u8', local: true };
+  }
+
   if (item.directUrl) {
     const source = item.sourceUrl || '';
     const localExt = (source.split('.').pop() || '').toLowerCase();
@@ -2713,10 +2938,18 @@ async function openPlayer(item) {
         // Provider metadata first, ffprobe's reading of the source second.
         // Local files get it too — the probe runs against the file on disk,
         // so the runtime is there without touching the provider.
-        const runtime = parseRuntime(vodInfo) || lastRemux.sourceDuration || 0;
+        // item.duration is the archive index's own reading, which is the only
+        // runtime available when a drive file plays directly — there's no
+        // remux session to report one and no provider metadata to ask.
+        const runtime = parseRuntime(vodInfo) || lastRemux.sourceDuration || item.duration || 0;
         showFilmBar(item, runtime);
         applyVodInfo(vodInfo);
-        if (localCopy || item.localOnly) {
+        if (item.archivePath) {
+          $('#cinemaSub').textContent =
+            item.archiveMode === 'transcode'
+              ? 'Playing from the archive drive — converting as it plays'
+              : 'Playing from the archive drive';
+        } else if (localCopy || item.localOnly) {
           $('#cinemaSub').textContent = 'Playing from your downloads';
         }
       }
@@ -3000,7 +3233,20 @@ let searchTimer;
 $('#searchInput').addEventListener('input', (event) => {
   clearTimeout(searchTimer);
   const value = event.target.value.trim();
-  searchTimer = setTimeout(() => {
+  searchTimer = setTimeout(async () => {
+    // The archive is indexed server-side, so its search is a request rather
+    // than a filter over an already-loaded page. Clearing the box returns to
+    // whatever folder was being browsed.
+    if (state.tab === 'archive') {
+      try {
+        if (value.length >= 2) await searchArchive(value);
+        else await loadArchive(state.archive.dir);
+      } catch (err) {
+        toast(err.message);
+        return;
+      }
+      return renderArchive();
+    }
     state.query = value;
     state.visible = PAGE_SIZE;
     render();

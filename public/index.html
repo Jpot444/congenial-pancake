@@ -165,6 +165,7 @@
       <a href="#/movies" data-tab="movies">Movies</a>
       <a href="#/series" data-tab="series">Series</a>
       <a href="#/favorites" data-tab="favorites">Favorites</a>
+      <a href="#/archive" data-tab="archive">Archive</a>
       <a href="#/downloads" data-tab="downloads">Downloads<span class="nav-count" id="dlCount" hidden></span></a>
     </nav>
 
@@ -312,6 +313,15 @@
       <div class="grid" id="grid"></div>
       <div class="rows" id="rowsView" hidden></div>
       <div class="downloads" id="downloadList" hidden></div>
+      <div class="archive" id="archiveView" hidden>
+        <div class="archive-bar">
+          <nav class="crumbs" id="archiveCrumbs" aria-label="Archive folders"></nav>
+          <span class="archive-status" id="archiveStatus"></span>
+        </div>
+        <div class="archive-folders" id="archiveFolders"></div>
+        <div class="grid" id="archiveGrid"></div>
+        <button class="more-btn" id="archiveMore" hidden>Show more</button>
+      </div>
       <div class="empty" id="emptyState" hidden></div>
       <button class="btn btn-ghost btn-more" id="loadMore" hidden>Show more</button>
     </section>

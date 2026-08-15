@@ -2197,3 +2197,173 @@ svg {
   .health-row { grid-template-columns: 84px 1fr; }
   .health-row .health-pill { grid-column: 2; justify-self: start; margin-top: 4px; }
 }
+
+/* ------------------------------------------------------------------ archive
+
+   The drive tab. These items have no artwork — they're filenames off an
+   external disk — so the card carries typography instead of a poster: date
+   above, title in the display face, runtime below. A grid of identical
+   placeholder rectangles would look broken; this reads as an index. */
+
+.archive-bar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.crumbs {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.crumb {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 15px;
+  padding: 2px 0;
+  cursor: pointer;
+  transition: color .15s var(--ease);
+}
+
+.crumb:hover { color: var(--text); }
+.crumb:last-child, .crumb.is-static { color: var(--text); cursor: default; }
+.crumb-sep { color: var(--muted-dim); font-size: 13px; }
+
+.archive-status {
+  color: var(--muted-dim);
+  font-size: 13px;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+
+.archive-status.is-warn { color: var(--live); }
+
+.archive-folders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-bottom: 26px;
+}
+
+.folder-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 15px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color .15s var(--ease), background .15s var(--ease);
+}
+
+.folder-chip:hover {
+  border-color: var(--brand-red);
+  background: var(--bg-card);
+}
+
+.folder-count {
+  color: var(--muted-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+#archiveGrid {
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 4px 10px;
+}
+
+.archive-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 13px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s var(--ease), border-color .15s var(--ease);
+}
+
+.archive-card:hover {
+  background: var(--bg-card);
+  border-color: var(--line);
+}
+
+.archive-card-date {
+  color: var(--brand-red);
+  font-size: 11px;
+  letter-spacing: .09em;
+  font-variant-numeric: tabular-nums;
+  min-height: 14px;
+}
+
+.archive-card-title {
+  font-family: var(--display);
+  font-size: 19px;
+  line-height: 1.16;
+  letter-spacing: .01em;
+  color: var(--text);
+  /* Some of these filenames run very long. Three lines, then ellipsis. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  /* Underscore-joined filenames have no spaces to break at and would
+     otherwise run straight out of the card. */
+  overflow-wrap: anywhere;
+}
+
+.archive-card-meta {
+  color: var(--muted-dim);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.archive-card-badge {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--line-soft);
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.more-btn {
+  display: block;
+  margin: 30px auto 0;
+  padding: 11px 26px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color .15s var(--ease);
+}
+
+.more-btn:hover { border-color: var(--brand-red); }
+
+@media (max-width: 640px) {
+  #archiveGrid { grid-template-columns: 1fr; }
+  .archive-bar { margin-bottom: 14px; }
+}
