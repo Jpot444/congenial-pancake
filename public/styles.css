@@ -2102,6 +2102,9 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   position: absolute;
   top: 0; right: 0;
   z-index: 4;
+  /* Same reasoning as .cinema-top: the padding around these buttons is not a
+     button either. */
+  pointer-events: none;
   padding: 26px 32px;
   padding-top: max(26px, env(safe-area-inset-top));
   padding-right: max(32px, env(safe-area-inset-right));
@@ -2111,6 +2114,7 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 }
 
 .cinema .player-titles { display: none; }
+.cinema .player-bar > *, .cinema .player-bar-actions > * { pointer-events: auto; }
 .cinema .player-bar .icon-btn {
   background: rgba(0, 0, 0, .42);
   border-color: rgba(255, 255, 255, .26);
@@ -2135,12 +2139,29 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   display: flex;
   align-items: flex-start;
   gap: 20px;
-  padding: 26px 200px 60px 32px; /* clear of the action buttons top-right */
+  padding: 26px 200px 60px 32px;
+  /* Room for the buttons in the opposite corner, measured rather than guessed.
+     It was a flat 200px, which was right for the four buttons there when it was
+     written and wrong the moment a fifth arrived — the channel name simply ran
+     on underneath them. `--player-actions-w` is that row's real width, set from
+     JS whenever it changes, and the name ellipsises against it. */
+  padding-right: calc(var(--player-actions-w, 200px) + 44px);
   padding-top: max(26px, env(safe-area-inset-top));
   padding-left: max(32px, env(safe-area-inset-left));
   background: linear-gradient(180deg, rgba(0, 0, 0, .82) 0%, rgba(0, 0, 0, 0) 100%);
   transition: opacity .28s var(--ease);
+  /* A gradient is not a button.
+     This is a full-width strip across the top of the picture, and most of it is
+     empty — but it was still swallowing every tap that landed on it. On a live
+     channel the video keeps the browser's own controls, and on iOS those put
+     fullscreen and picture-in-picture in exactly this corner: underneath. The
+     back button looked like it was blocking them and it was the invisible strip
+     around it. Decoration passes taps through; the controls in it take their
+     own. */
+  pointer-events: none;
 }
+
+.cinema-top > * { pointer-events: auto; }
 
 .cinema-back {
   display: inline-flex;

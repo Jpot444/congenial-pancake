@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '22.1';
+const VERSION = '22.2';
 
 const PAGE_SIZE = 60;
 
@@ -372,6 +372,33 @@ const LIVE_HLS = {
  * resize fires when the height actually settles, which is the moment that
  * matters.
  */
+/**
+ * How much room the player's buttons need, so the title can stop short of them.
+ *
+ * The top strip reserved a flat 200px for that corner. That was right for the
+ * four buttons there when it was written, and wrong the moment a fifth arrived:
+ * the channel name ran on underneath the LIVE pill. Which buttons are up
+ * depends on what is playing — live has a pill and a multi-view button a film
+ * does not — so the figure cannot be a constant. It is measured.
+ *
+ * Watched rather than merely called, because the widest of those controls is
+ * the LIVE pill and its text changes every second: "LIVE" one moment and
+ * "118s behind" the next. Anything that measured on open alone would be wrong
+ * a second later, which is how the name ended up under the pill in the first
+ * place.
+ */
+function reservePlayerActions() {
+  const bar = document.querySelector('.player-bar-actions');
+  if (!bar) return;
+  const w = Math.ceil(bar.getBoundingClientRect().width);
+  if (w > 0) document.documentElement.style.setProperty('--player-actions-w', `${w}px`);
+}
+
+if (window.ResizeObserver) {
+  const bar = document.querySelector('.player-bar-actions');
+  if (bar) new ResizeObserver(reservePlayerActions).observe(bar);
+}
+
 const appHeight = {
   apply() {
     const vv = window.visualViewport;
@@ -385,7 +412,8 @@ const appHeight = {
       // Two passes: iOS reports the old height for a frame or two after the
       // chrome moves, and the second one is the true figure.
       this.apply();
-      setTimeout(() => this.apply(), 300);
+      reservePlayerActions();
+      setTimeout(() => { this.apply(); reservePlayerActions(); }, 300);
     };
     window.visualViewport?.addEventListener('resize', again);
     window.addEventListener('resize', again);
@@ -5355,6 +5383,7 @@ function startLiveTracking() {
   const pill = $('#livePill');
   const lag = $('#liveLag');
   pill.hidden = false;
+  reservePlayerActions();
 
   liveTimer = setInterval(() => {
     const behind = currentLag();
@@ -5370,6 +5399,7 @@ function stopLiveTracking() {
   if (liveTimer) clearInterval(liveTimer);
   liveTimer = null;
   $('#livePill').hidden = true;
+  reservePlayerActions();
 }
 
 /* ------------------------------------------------------ playback watchdog ---
@@ -6247,6 +6277,9 @@ function enterCinema(item) {
   // Live only: multi-view is four live channels, and there is nothing to put
   // in a second cell when the thing on screen is a film.
   $('#cinemaMultiview').hidden = item.kind !== 'live';
+  // A film has its own fullscreen button in the film bar; this is live's.
+  $('#liveFull').hidden = item.kind !== 'live';
+  reservePlayerActions();
   $('#cinemaTitle').textContent = item.name || '';
   $('#cinemaSub').textContent = '';
   $('#cinemaBackLabel').textContent = fromDownloads ? 'Downloads' : labels[item.kind] || 'Back';
@@ -6879,7 +6912,14 @@ function enterNativeFullscreen(video) {
   video.webkitEnterFullscreen();
 }
 
-$('#vodFull').addEventListener('click', () => {
+/**
+ * Full screen, from whichever button asked for it.
+ *
+ * Two buttons, one behaviour: the film bar's, and the live player's — which
+ * exists because live keeps the browser's own controls and iOS puts its
+ * fullscreen button in the one corner our chrome already occupies.
+ */
+function goFullscreen() {
   const video = $('#video');
 
   // On iPhone the element Fullscreen API does not exist at all, so fullscreening
@@ -6895,7 +6935,10 @@ $('#vodFull').addEventListener('click', () => {
   const target = document.querySelector('.player-shell') || document.querySelector('.video-frame');
   if (document.fullscreenElement) document.exitFullscreen();
   else target.requestFullscreen?.();
-});
+}
+
+$('#vodFull').addEventListener('click', goFullscreen);
+$('#liveFull').addEventListener('click', goFullscreen);
 
 /* Apple's player is the only thing on screen while it is up, so our bar just
  * sits behind it competing for the same taps on the way out. Stand down for the

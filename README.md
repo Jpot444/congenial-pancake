@@ -852,6 +852,39 @@ keeps its controls up.
 
 Live TV keeps the old windowed player; the cinema layout is only for VOD.
 
+### A gradient is not a button
+
+The strip across the top of the player — back button, title, and a gradient to
+lift them off the picture — was `position: absolute; top: 0; left: 0; right: 0`,
+so its box covered the whole top of the frame and **took every tap that landed
+on it**, gradient included.
+
+That only mattered once somebody tried to use the controls underneath it. A live
+channel keeps the browser's own video controls, and on iOS those are drawn in the
+**top-left corner of the picture** — fullscreen and picture-in-picture, exactly
+where our back button and channel name are. They looked like they were covering
+the buttons. They were not; the invisible strip around them was.
+
+So the strip is `pointer-events: none` and the controls inside it are
+`pointer-events: auto`. Same for the actions in the opposite corner, whose 26px
+of padding was swallowing taps for the same reason. Decoration passes taps
+through; controls take their own.
+
+**Live also gets a fullscreen button of our own**, in the top-right with the
+other controls — the opposite corner from the one iOS uses, so the two can never
+argue. It runs the same `goFullscreen()` as the film bar's, including the iOS
+path that hands over to Apple's player. A film does not get a second one; it has
+one in the film bar already.
+
+**The room reserved for that corner is measured, not guessed.** The strip used a
+flat `padding-right: 200px`, which was right for the four buttons there when it
+was written and wrong the moment a fifth arrived — the channel name simply ran on
+underneath the LIVE pill. `--player-actions-w` is that row's real width, kept up
+to date by a `ResizeObserver`, because the widest control in it is the LIVE pill
+and its text changes every second between "LIVE" and "118s behind". Anything
+measured only on open would be wrong a second later, which is how the name got
+under the pill in the first place.
+
 ### Subtitles
 
 A **CC button in the bottom bar**, next to mute, listing every track the player
