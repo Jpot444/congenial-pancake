@@ -4031,3 +4031,30 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   #archiveGrid { grid-template-columns: 1fr; }
   .archive-bar { margin-bottom: 14px; }
 }
+
+/* ------------------------------------------------- download-state marks
+
+   An episode or film already on the box says so where the download arrow
+   was. Green for saved, dim for on-its-way — the press explains instead of
+   queueing a second copy, so the mark is the honest UI for it. */
+
+.ep-dl.is-saved { color: #4caf7d; }
+.ep-dl.is-saved:hover { color: #4caf7d; }
+.ep-dl.is-queued { color: var(--muted-dim); }
+
+#downloadBtn.is-saved { color: #4caf7d; }
+
+.season-dl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+}
+
+.season-dl svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '23.3';
+const VERSION = '23.4';
 
 const PAGE_SIZE = 60;
 
@@ -2076,6 +2076,28 @@ const health = {
         pill: [tone, tone === 'ok' ? 'Healthy' : tone === 'warn' ? 'Getting full' : 'Full'],
         bar: [tone, usedPct],
       }));
+    }
+
+    /* ---- the archive drive, when there is one ---- */
+    if (d.archive) {
+      if (!d.archive.mounted) {
+        rows.push(row('Archive drive', {
+          value: 'Not plugged in',
+          sub: 'The library still browses; nothing will play until it is back.',
+          pill: ['warn', 'Unplugged'],
+        }));
+      } else if (d.archive.free != null) {
+        const total = d.archive.total || 0;
+        const usedPct = total ? Math.min(100, ((total - d.archive.free) / total) * 100) : 0;
+        rows.push(row('Archive drive', {
+          value: `${gb(d.archive.free)} free`,
+          sub: total ? `${gb(total - d.archive.free)} used of ${gb(total)}` : '',
+          pill: ['ok', 'Mounted'],
+          bar: ['ok', usedPct],
+        }));
+      } else {
+        rows.push(row('Archive drive', { value: 'Mounted', pill: ['ok', 'Mounted'] }));
+      }
     }
 
     /* ---- network strength ---- */
@@ -5040,6 +5062,18 @@ let currentSeason = null;
  * or already queued. They run one at a time — the provider allows a single
  * connection — so this is a queue, not a parallel burst.
  */
+/**
+ * The download that already covers this title, in any state that still
+ * counts — a failed one does not, because failing is exactly when asking
+ * again should work.
+ */
+function downloadJobFor(kind, streamId) {
+  const want = kind === 'series' ? 'series' : 'movie';
+  return (state.downloads.items || []).find(
+    (j) => j.kind === want && String(j.streamId) === String(streamId) && j.status !== 'error'
+  );
+}
+
 async function requestSeasonDownload() {
   if (!currentSeason || !currentSeason.episodes.length) {
     return toast('No season is open.');
@@ -5047,10 +5081,9 @@ async function requestSeasonDownload() {
   const { item, season, episodes } = currentSeason;
 
   await refreshDownloads();
-  const already = new Set(
-    (state.downloads.items || []).map((j) => String(j.streamId))
-  );
-  const pending = episodes.filter((e) => !already.has(String(e.id)));
+  // Anything already saved or on its way is skipped; a failed attempt is
+  // not, since asking again is the whole point after a failure.
+  const pending = episodes.filter((e) => !downloadJobFor('series', e.id));
 
   if (!pending.length) {
     return toast(`Season ${season} is already downloaded.`);
@@ -5089,6 +5122,16 @@ async function requestSeasonDownload() {
 }
 
 async function requestDownload(item, episode, { quiet = false } = {}) {
+  // Never twice. The server refuses duplicates too; catching it here makes
+  // the answer instant and phrased for the button that was pressed.
+  const dup = downloadJobFor(episode ? 'series' : item.kind, episode ? episode.id : item.id);
+  if (dup) {
+    const said = dup.status === 'done'
+      ? 'Already downloaded — it\'s in Downloads.'
+      : 'Already in the download queue.';
+    if (!quiet) toast(said);
+    return { ok: false, error: said };
+  }
   // Keep the artwork with the job so the Downloads grid has a poster even
   // before the library has been loaded in this session.
   const poster = item.logo && item.logo.startsWith('/img?u=')
@@ -7849,6 +7892,11 @@ function preparePlayer(item) {
   } else {
     downloadBtn.title = 'Save to the box';
   }
+  // A film that is already on the box says so on the button itself; pressing
+  // it explains rather than queueing a copy (requestDownload guards too).
+  downloadBtn.classList.toggle('is-saved',
+    downloadable && Boolean(downloadJobFor('movie', item.id)?.status === 'done'));
+  if (downloadBtn.classList.contains('is-saved')) downloadBtn.title = 'Already downloaded';
 
   // A previous title's remux must not leak its duration into this one — that
   // put the wrong runtime on the scrubber for anything that plays natively.
@@ -8190,12 +8238,30 @@ async function renderSeries(item, mount, onInfo) {
       name.textContent = episode.title || `Episode ${episode.episode_num}`;
 
       const grab = el('button', 'ep-dl');
-      grab.title = 'Download this episode';
-      grab.setAttribute('aria-label', 'Download this episode');
-      grab.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg>';
-      grab.addEventListener('click', (event) => {
+      // Say what is already true before it is asked for again: a saved
+      // episode shows a check, one on its way shows so, and pressing either
+      // explains instead of queueing a second copy.
+      const have = downloadJobFor('series', episode.id);
+      if (have && have.status === 'done') {
+        grab.classList.add('is-saved');
+        grab.title = 'Already downloaded';
+        grab.setAttribute('aria-label', 'Already downloaded');
+        grab.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 13l4 4 10-10"/></svg>';
+      } else if (have) {
+        grab.classList.add('is-queued');
+        grab.title = 'Already in the download queue';
+        grab.setAttribute('aria-label', 'Already in the download queue');
+        grab.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="9"/></svg>';
+      } else {
+        grab.title = 'Download this episode';
+        grab.setAttribute('aria-label', 'Download this episode');
+        grab.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg>';
+      }
+      grab.addEventListener('click', async (event) => {
         event.stopPropagation();
-        requestDownload(item, { ...episode, season });
+        const done = await requestDownload(item, { ...episode, season });
+        // Repaint so the row's mark reflects what just happened.
+        if (done.ok) showSeason(season);
       });
 
       row.append(num, name, grab);
@@ -8211,6 +8277,20 @@ async function renderSeries(item, mount, onInfo) {
     chip.addEventListener('click', () => showSeason(season));
     picker.append(chip);
   });
+
+  // The whole open season, one press. requestSeasonDownload reads
+  // currentSeason, skips anything already saved or queued, and asks before
+  // committing the Pi to twenty episodes.
+  const seasonDl = el('button', 'season-chip season-dl');
+  seasonDl.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg>'
+    + '<span>Download season</span>';
+  seasonDl.title = 'Save every episode of the open season to the box';
+  seasonDl.addEventListener('click', async () => {
+    await requestSeasonDownload();
+    // Repaint the rows so fresh queue marks show without leaving the page.
+    if (currentSeason) showSeason(currentSeason.season);
+  });
+  picker.append(seasonDl);
 
   showSeason(seasons[0]);
 

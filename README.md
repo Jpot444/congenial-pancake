@@ -210,6 +210,25 @@ resume. Pausing keeps the partial file and resumes from the exact byte offset
 via a Range request rather than starting over. Downloads interrupted by a server
 restart come back as paused and resume the same way.
 
+### Downloading, once
+
+The same title is never saved twice, and both ends enforce it: the client
+turns the request into an explanation ("Already downloaded — it's in
+Downloads." / "Already in the download queue.") before asking, and the server
+refuses a duplicate with a 409 in case anything asks anyway. Matched on what
+the title IS — kind plus provider stream id — never on the name, and a FAILED
+attempt does not count, because failing is exactly when asking again should
+work. On a show's card, every episode already saved wears a green check where
+its download arrow was, and one on its way says so; pressing either explains
+instead of queueing a copy.
+
+**A whole season is one press** — the "Download season" button beside the
+season chips (and the download button in the player does the same for the
+open season). It skips everything already saved or queued, then asks before
+committing the box, saying exactly how many episodes it is about to queue and
+how many it is skipping. They download one at a time — the provider allows a
+single connection — and pause automatically while anybody is watching.
+
 ### Every profile but one has a 20GB allowance
 
 `hunter` downloads without limit. Everyone else gets 20GB, counted across that
@@ -2037,6 +2056,11 @@ else is on the disk).
 `ARCHIVE_ROOT` (default `/mnt/archive`) says where the drive mounts, and is
 set in `ecosystem.config.js` so it survives pm2 restarts. Setup and
 re-scanning: **[docs/archive-drive.md](docs/archive-drive.md)**.
+
+Pi health carries an **Archive drive** row: free and used space with a bar
+when mounted, a plain "Not plugged in" when it isn't, and no row at all on a
+box that has never had an index. Read live on the panel's four-second poll,
+because "is the drive still there" is half of what the row is for.
 
 ## Multi-view
 

@@ -962,6 +962,33 @@ async function readHealth() {
   const jobs = [...downloads.values()];
   const rate = currentThroughput();
 
+  // The archive drive's space, when the feature is in use at all. Read live
+  // rather than cached: the panel polls every four seconds and "is the drive
+  // still there" is half of what this row is for.
+  let archiveDisk = null;
+  {
+    const st = archive.status();
+    if (st.indexed || st.mounted) {
+      if (!st.mounted) {
+        archiveDisk = { mounted: false, free: null, total: null };
+      } else {
+        let total = null;
+        try {
+          const f = fs.statfsSync(ARCHIVE_ROOT);
+          total = f.blocks * f.bsize;
+        } catch {
+          /* mounted but unreadable — show what we can */
+        }
+        const archFree = diskFree(ARCHIVE_ROOT);
+        archiveDisk = {
+          mounted: true,
+          free: Number.isFinite(archFree) ? archFree : null,
+          total,
+        };
+      }
+    }
+  }
+
   return {
     disk: {
       free: Number.isFinite(free) ? free : null,
@@ -969,6 +996,7 @@ async function readHealth() {
       reserve: SPACE_RESERVE,
       low: Number.isFinite(free) && free < SPACE_RESERVE,
     },
+    archive: archiveDisk,
     network: net || { kind: 'wired', level: 'good' },
     provider: {
       streaming: providerStreams > 0,
@@ -3647,6 +3675,25 @@ async function handleApi(req, res, pathname, query) {
               + 'Delete something from Downloads to make room.',
             used,
             limit: allowance,
+          });
+        }
+      }
+
+      // The same title is never saved twice. Matched on what it IS (kind +
+      // provider stream id), not on the name, and a failed attempt does not
+      // count — failure is exactly when asking again should work.
+      const wantId = incoming.streamId ? String(incoming.streamId) : '';
+      const wantKind = incoming.kind === 'series' ? 'series' : 'movie';
+      if (wantId) {
+        const dup = [...downloads.values()].find((j) => j.kind === wantKind
+          && j.streamId === wantId && j.status !== 'error');
+        if (dup) {
+          return json(res, 409, {
+            error: dup.status === 'done'
+              ? 'Already downloaded — it\'s in Downloads.'
+              : 'Already in the download queue.',
+            id: dup.id,
+            status: dup.status,
           });
         }
       }
