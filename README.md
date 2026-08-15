@@ -1976,9 +1976,15 @@ level's `details`, and `latency`/`targetLatency` — and the block prints nothin
 at all on a non-hls.js engine or an engine with nothing to say, because a
 diagnostic must never be the reason a report fails.
 
-**The readout stays.** Removing the setting is not removing the information: the
-`LIVE` pill still shows how far behind you are, and pressing it still jumps to
-the edge. What that must never be is something the player decides on its own —
+**The readout stays, and it measures the right thing.** The pill shows the
+distance to the **live edge** — the newest moment the playlist publishes, read
+from the engine — as "Ns delay". It used to show the distance to the end of the
+*downloaded buffer*, which is a different number that lies at exactly the worst
+moment: a starved link drains the buffer, the gap to it reads zero, and the
+pill said `LIVE` to a viewer half a minute behind with no cushion at all. The
+seat is 30–45 seconds back by design, so a delay is the normal, healthy state
+and is shown as a plain fact; the word `LIVE` is reserved for genuinely riding
+the edge. Pressing it still jumps to the edge. What that must never be is something the player decides on its own —
 a seek nobody asked for is the "skips to the end" fault this has already been
 through once.
 

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '22.9';
+const VERSION = '23.0';
 
 const PAGE_SIZE = 60;
 
@@ -5420,6 +5420,21 @@ let liveTimer = null;
 
 /** How far behind the live edge we currently are, in seconds. */
 function currentLag() {
+  // The distance that matters is to the LIVE EDGE — the newest moment the
+  // playlist publishes — and hls.js can say it directly. The old measure was
+  // to the end of the DOWNLOADED buffer, which is a different number that
+  // lies in exactly the worst moment: on a starved link the buffer runs dry,
+  // the gap to it reads zero, and the pill said "LIVE" to a viewer who was
+  // half a minute behind with no cushion at all. The delay is deliberate;
+  // the pill's job is to show it, not to hide it behind the buffer state.
+  if (engineKind === 'hls.js' && engine) {
+    try {
+      const edge = engine.latency;
+      if (Number.isFinite(edge) && edge > 0) return edge;
+    } catch {
+      /* fall through to the buffered measure */
+    }
+  }
   const video = $('#video');
   if (!video.buffered.length) return null;
   return video.buffered.end(video.buffered.length - 1) - video.currentTime;
@@ -5435,10 +5450,13 @@ function startLiveTracking() {
   liveTimer = setInterval(() => {
     const behind = currentLag();
     if (behind === null) return;
-    // Under ~3s is as live as this provider gets; don't nag about it.
-    const atEdge = behind < 3;
+    // The seat is 30-45 seconds back BY DESIGN, so "behind" is the normal,
+    // healthy state and is shown as a plain fact rather than a warning. The
+    // word LIVE is reserved for genuinely riding the edge, which the seat
+    // means should essentially never be claimed.
+    const atEdge = behind < 5;
     pill.classList.toggle('is-behind', !atEdge);
-    lag.textContent = atEdge ? 'LIVE' : `${Math.round(behind)}s behind`;
+    lag.textContent = atEdge ? 'LIVE' : `${Math.round(behind)}s delay`;
   }, 1000);
 }
 
