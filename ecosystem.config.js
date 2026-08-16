@@ -39,9 +39,14 @@ module.exports = {
         // crowd the disk. Default 10.
         // ARCHIVE_CACHE_GB: '6',
       },
-      // The transcoder is a child process, so the portal's own memory stays
-      // small; a ceiling this high only trips on a genuine leak.
-      max_memory_restart: '512M',
+      // The transcoder is a child process, so the portal itself is mostly
+      // the library catalog held in memory — and that legitimately spikes
+      // past 512M during a refresh: pm2's log shows kills at 596-651M, and
+      // those kills are SILENT (nothing in the app's error log), which made
+      // an August 2026 outage look like a mystery crash. The box has 4GB and
+      // runs nothing else, so give the portal an honest gigabyte; this
+      // ceiling now only trips on a genuine runaway.
+      max_memory_restart: '1G',
       autorestart: true,
     },
   ],
