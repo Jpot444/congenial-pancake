@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.7';
+const VERSION = '24.8';
 
 const PAGE_SIZE = 60;
 
@@ -5721,8 +5721,11 @@ function attach(url, format, opts = {}) {
               maxBufferSize: 200 * 1000 * 1000,
               // A remux in progress has no ENDLIST yet, so hls.js reads it as
               // live and would join at the edge — i.e. however many seconds we
-              // prebuffered into the film. Films start at the beginning.
-              startPosition: 0,
+              // prebuffered into the film. Films start at the beginning —
+              // except an archive resume, where the conversion always runs
+              // from the top and the resume point is a place INSIDE the
+              // output, handed here to start playback at.
+              startPosition: opts.seekTo > 0 ? opts.seekTo : 0,
             }
       );
       engine.loadSource(url);
@@ -5737,9 +5740,11 @@ function attach(url, format, opts = {}) {
       return;
     }
     // Safari plays HLS natively. Same live-edge trap applies on iOS, so pin a
-    // remuxed film to the start once metadata lands.
+    // remuxed film to the start once metadata lands — unless this attach
+    // carries a resume point, in which case the seekTo listener above has
+    // already moved the playhead on purpose and pinning would undo it.
     video.src = url;
-    if (!currentLiveItem) {
+    if (!currentLiveItem && !(opts.seekTo > 0)) {
       video.addEventListener(
         'loadedmetadata',
         () => {
@@ -7049,18 +7054,45 @@ async function seekFilm(target, { force = false } = {}) {
   loader.show(`Jumping to ${hms(clamped)}…`, '');
 
   try {
-    // A downloads-backed title seeks against the file on disk — fast, and no
-    // provider connection spent. Everything else restarts the provider remux.
-    // Three sources, three endpoints. A file on the archive drive was
-    // missing from this list entirely, so seeking one asked /api/remux for a
-    // provider title whose id was `archive:<path>` and got nothing back.
-    const remux = film.item?.archivePath
-      ? await api('/api/archive/play', {
+    if (film.item?.archivePath) {
+      // An archive conversion is the WHOLE episode, running from the top —
+      // the only arrangement these rips hold sync in. Seeking never restarts
+      // it: ask the server for the file's session (the one already running
+      // comes straight back), wait for the conversion to pass the mark, and
+      // jump there inside the same output.
+      const remux = await api('/api/archive/play', {
         path: film.item.archivePath,
-        start: Math.floor(clamped),
         profileId: profiles.current?.id || '',
-      })
-      : await api(
+      });
+      const sameSession = Boolean(remux.session) && lastRemux.session === remux.session;
+      if (remux.mode === 'direct') {
+        // The drive's file plays natively; the browser seeks it itself.
+        lastRemux = { sourceDuration: remux.sourceDuration || 0 };
+        film.offset = 0;
+        attach(remux.url, 'file', { seekTo: clamped });
+      } else {
+        lastRemux = remux;
+        await waitForConversionSpan(remux, clamped);
+        film.offset = 0;
+        if (sameSession) {
+          // Same growing playlist the player is already attached to; the
+          // jump is nothing more than a currentTime.
+          video.currentTime = clamped;
+          video.play().catch(() => {});
+        } else {
+          // The old session lapsed — another title took the encoder, or the
+          // server restarted — so a fresh one is running from the top, and
+          // this attach starts playback at the mark inside it.
+          film.ready = 0;
+          attach(remux.url, 'm3u8', { seekTo: clamped });
+        }
+      }
+      startLeadWatch();
+    } else {
+      // A downloads-backed title seeks against the file on disk — fast, and
+      // no provider connection spent. Everything else restarts the provider
+      // remux at the mark.
+      const remux = await api(
         '/api/remux',
         film.item?.downloadId
           ? {
@@ -7075,18 +7107,19 @@ async function seekFilm(target, { force = false } = {}) {
             start: Math.floor(clamped),
           }
       );
-    lastRemux = remux;
+      lastRemux = remux;
 
-    await waitForPrebuffer(remux);
-    // Swapped in together, and not before now. Setting the offset when the
-    // request came back left it describing the incoming session while the
-    // outgoing one played on through the whole buffering wait — the scrubber
-    // jumped forward by the distance of the seek several seconds early, and
-    // any position saved in that window was wrong by the same amount.
-    film.offset = remux.offset || 0;
-    film.ready = 0;
-    attach(remux.url, 'm3u8');
-    startLeadWatch();
+      await waitForPrebuffer(remux);
+      // Swapped in together, and not before now. Setting the offset when the
+      // request came back left it describing the incoming session while the
+      // outgoing one played on through the whole buffering wait — the scrubber
+      // jumped forward by the distance of the seek several seconds early, and
+      // any position saved in that window was wrong by the same amount.
+      film.offset = remux.offset || 0;
+      film.ready = 0;
+      attach(remux.url, 'm3u8');
+      startLeadWatch();
+    }
   } catch (err) {
     toast(`Couldn't jump there: ${err.message}`);
     // The jump failed, so the old stream is still the one loaded and still
@@ -7924,6 +7957,51 @@ async function waitForPrebuffer(remux) {
   loader.hide();
 }
 
+/**
+ * Wait until the conversion has run PAST a point in the episode.
+ *
+ * An archive title converts whole, from the top — the one path these old rips
+ * have never drifted on — so a resume or a deep seek is not a new conversion
+ * at an offset, it is a wait for the one conversion to reach the mark, and
+ * then a plain jump inside its output. A file already converted this session
+ * sails through here instantly; a deep first resume honestly costs minutes,
+ * and the loader says which minute it is on.
+ */
+async function waitForConversionSpan(remux, wantSeconds) {
+  if (!remux.session) return;
+  // A cushion past the mark, so playback lands on written segments rather
+  // than on the conversion frontier itself.
+  const target = wantSeconds + 8;
+  activeRemux = { session: remux.session, target };
+
+  loader.show('Loading the whole episode so nothing falls out of sync', '');
+  const startedAt = Date.now();
+  let firstSeconds = null;
+
+  for (;;) {
+    let status;
+    try {
+      status = await api('/api/remux/status', { id: remux.session });
+    } catch {
+      return; // Session vanished; let the player try regardless.
+    }
+
+    if (status.failed) throw new Error(status.error || 'Conversion failed');
+    if (status.seconds >= target || status.complete) break;
+
+    if (firstSeconds === null) firstSeconds = status.seconds;
+    const elapsed = (Date.now() - startedAt) / 1000;
+    const eta = bankingEta(status.seconds - firstSeconds, elapsed, target - status.seconds);
+    loader.set(Math.min(1, status.seconds / target),
+      `${hms(Math.floor(status.seconds))} of ${hms(Math.floor(target))} ready${eta}`);
+
+    await new Promise((r) => setTimeout(r, 600));
+  }
+
+  loader.set(1, 'Ready');
+  loader.hide();
+}
+
 /* ------------------------------------------------------------- resume ---
 
  * Playback already reports its position against the active profile, so the
@@ -8036,12 +8114,13 @@ async function resolveStream(item, override) {
 
   /* A file on the archive drive. The server decides between serving the bytes
    * and running it through ffmpeg — the client only honours what comes back.
-   * Direct play seeks itself; an HLS session has already been started at the
-   * resume point, so its scrubber runs on the returned offset. */
+   * Direct play seeks itself. A conversion always runs the WHOLE file from
+   * the top (the only arrangement these rips hold sync in), so a resume is a
+   * wait for the conversion to pass the mark and then a player-side seek —
+   * never a second conversion started at an offset. */
   if (item.archivePath) {
     const data = await api('/api/archive/play', {
       path: item.archivePath,
-      start: startAt || '',
       profileId: profiles.current?.id || '',
     });
 
@@ -8053,7 +8132,11 @@ async function resolveStream(item, override) {
     }
 
     lastRemux = data;
-    film.offset = data.offset || 0;
+    film.offset = 0;
+    if (startAt > 3) {
+      await waitForConversionSpan(data, startAt);
+      return { url: data.url, format: 'm3u8', seekTo: startAt };
+    }
     await waitForPrebuffer(data);
     return { url: data.url, format: 'm3u8' };
   }

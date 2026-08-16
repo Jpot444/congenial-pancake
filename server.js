@@ -2291,7 +2291,7 @@ const LANGUAGE_NAMES = {
 async function startRemux(input, opts) {
   const { fromProvider, videoCodec, startSeconds = 0, audioDelayMs = 0,
     audioPadSeconds = 0, audioTempo = 0, seekMode = 'input', aligned = false,
-    subs = [], noSubs = false, sourceDuration = 0 } = opts;
+    subs = [], noSubs = false, sourceDuration = 0, id: wantId = '' } = opts;
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed on this machine');
 
   // One viewer, one session: whatever was running is now abandoned, and an
@@ -2317,7 +2317,10 @@ async function startRemux(input, opts) {
   const codec = probed.codec;
 
   fs.mkdirSync(HLS_DIR, { recursive: true });
-  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  // A caller may name the session. Archive playback does: one session per
+  // file, keyed by the file, so a resume finds the conversion already running
+  // instead of starting a rival.
+  const id = wantId || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const dir = path.join(HLS_DIR, id);
   fs.mkdirSync(dir, { recursive: true });
 
@@ -4295,8 +4298,6 @@ async function handleApi(req, res, pathname, query) {
       });
     }
 
-    const startSeconds = Math.max(0, Number(query.get('start') || 0));
-
     // Resuming does not change the decision: the file is served over ranges,
     // so the browser seeks to the resume point itself. Sending it through
     // ffmpeg to start at an offset would be slower and produce a worse
@@ -4315,34 +4316,58 @@ async function handleApi(req, res, pathname, query) {
       });
     }
 
+    // THE WHOLE EPISODE, EVERY TIME. This endpoint used to start the
+    // conversion at the resume point, and a season of lip-sync faults traces
+    // back to exactly that: on these decades-old rips, any way of asking
+    // ffmpeg to begin mid-file — demuxer seek, sequential read-and-discard,
+    // content-clock rebuild — lands the two tracks apart in some file
+    // eventually. Playing from the top has never once drifted. So the top is
+    // the only place a conversion is allowed to begin: one session per file,
+    // keyed by the file, converting start to finish, and the PLAYER seeks
+    // within the growing output to reach a resume point. A second request for
+    // the same file — a resume, a seek past the frontier, a reopen — joins
+    // the session already running rather than starting a rival.
+    const sessionKey = `arc-${crypto.createHash('sha1').update(rel).digest('hex').slice(0, 12)}`;
+    const asResponse = (session) => ({
+      mode: 'hls',
+      url: `/hls/${session.id}/index.m3u8`,
+      format: 'm3u8',
+      session: session.id,
+      prebuffer: session.prebuffer,
+      offset: 0,
+      // The index knows the real duration; a transcode session does not,
+      // so the scrubber would otherwise show only what has been encoded.
+      sourceDuration: item.duration || session.sourceDuration || 0,
+      transcoding: item.playback === 'transcode',
+      subs: (session.subs || []).map((sub) => ({
+        lang: sub.lang,
+        label: subtitleLabel(sub),
+        url: `/hls/${session.id}/${sub.file}`,
+      })),
+    });
+
+    const running = remuxSessions.get(sessionKey);
+    if (running && !(running.exited && running.exitCode !== 0)) {
+      running.lastAccess = Date.now();
+      return json(res, 200, asResponse(running));
+    }
+    if (running) killSession(sessionKey);
+
     try {
       const session = await startRemux(abs, {
         fromProvider: false,
         videoCodec: item.vcodec || '',
-        startSeconds,
-        // Archive files are resumed by reading from the top and discarding,
-        // never by trusting a decades-old file's seek index — see the
-        // seekMode note in ffmpegArgs for the lip-sync fault this closes.
+        // From zero, unconditionally. Never reintroduce a start offset here:
+        // it is the fault the whole design above exists to remove.
+        startSeconds: 0,
+        // Not seeking, but 'demux' also selects the content clock — audio
+        // timestamps rebuilt from the samples themselves — which is the
+        // arrangement the from-the-top path has always held sync with.
         seekMode: 'demux',
         sourceDuration: item.duration || 0,
+        id: sessionKey,
       });
-      return json(res, 200, {
-        mode: 'hls',
-        url: `/hls/${session.id}/index.m3u8`,
-        format: 'm3u8',
-        session: session.id,
-        prebuffer: session.prebuffer,
-        offset: session.offset,
-        // The index knows the real duration; a transcode session does not,
-        // so the scrubber would otherwise show only what has been encoded.
-        sourceDuration: item.duration || session.sourceDuration || 0,
-        transcoding: item.playback === 'transcode',
-        subs: (session.subs || []).map((sub) => ({
-          lang: sub.lang,
-          label: subtitleLabel(sub),
-          url: `/hls/${session.id}/${sub.file}`,
-        })),
-      });
+      return json(res, 200, asResponse(session));
     } catch (err) {
       return json(res, 502, { error: err.message });
     }

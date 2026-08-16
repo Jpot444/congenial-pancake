@@ -1597,6 +1597,44 @@ correctness is not negotiable. Provider streams and our own downloads keep
 the input-side jump: their indexes are sane, and over HTTP a jump is the only
 affordable move.
 
+### The last fault standing, and the end of the saga (v24.8)
+
+The sequential cut *with* the content clock still failed. A third file, a
+resume, audio ahead of picture again — and its report showed the shape one
+more time: video starting 5.7 seconds into its timeline, audio at zero,
+audio extending past the video's end. The pattern across every iteration of
+this saga is now unmissable: **each fix moved the mid-file start to a more
+honest mechanism, and some file on the drive defeated each one.** Demuxer
+seek, sequential read-and-discard, content-clock rebuild — on rips this old
+there is always another way for "start in the middle" to land the tracks
+apart. Playing from the top has never failed once, in any report, on any
+file.
+
+So mid-file starts are abolished rather than repaired. The owner called the
+design himself: *load the entire episode and play them together.*
+
+* **One conversion per file, from zero, always.** `/api/archive/play` keys
+  the session by a hash of the file's path (`arc-…`). The first request
+  starts ffmpeg at the top — no `-ss` anywhere, output or input — and every
+  later request for the same file, whatever resume point it carries, joins
+  the session already running (or already finished) instead of starting a
+  rival. The content clock stays: it is the arrangement the from-the-top
+  path has always held sync in.
+* **Resume and seek are player-side jumps inside that one output.** The
+  client waits — with an honest progress loader — until the conversion has
+  run past the mark, then sets `currentTime` (or attaches with hls.js's
+  `startPosition` at the mark). Seeking backward, or within the converted
+  span, is instant. Seeking forward waits only for the frontier to pass.
+* **The cost is stated, not hidden.** A deep first resume into an
+  unconverted file waits while ffmpeg winds there from the top — minutes,
+  on a long transcode. That price bought the only property that matters:
+  resume *is* pressing play, so it cannot be out of sync. Repeat seeks in
+  the same sitting are free, because the episode is already there.
+
+`archive.test.js` pins all three claims against a live server instance: the
+same file twice is one ffmpeg, a `start=` in the request changes nothing,
+and no invocation ever carries `-ss`.
+
 ### Drift is not the same fault as an offset### Drift is not the same fault as an offset
 
 The probe reports both, and they need telling apart.
