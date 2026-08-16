@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.9';
+const VERSION = '24.10';
 
 const PAGE_SIZE = 60;
 
@@ -3941,12 +3941,11 @@ function homeFavColumn({ title, items, hash, empty, shown }) {
 }
 
 function renderHome() {
+  // render() hides everything before its branches now; this list survives
+  // only as a belt for any future direct call.
   $('#grid').hidden = true;
   $('#rowsView').hidden = true;
   $('#downloadList').hidden = true;
-  // render() hides this too, but only on the path AFTER its early return for
-  // home — so arriving from the Archive left its folders and grid sitting
-  // under the home screen.
   $('#archiveView').hidden = true;
   $('#emptyState').hidden = true;
   $('#loadMore').hidden = true;
@@ -4046,12 +4045,15 @@ function renderHome() {
  * thing it is for, and the library keeps the browsing.
  */
 function detailCard(item, backHash, backLabel) {
+  // render() hides everything before its branches now, but the card is also
+  // reached by direct calls; the list stays so those arrive clean too.
   $('#grid').hidden = true;
   $('#rowsView').hidden = true;
   $('#downloadList').hidden = true;
   $('#emptyState').hidden = true;
   $('#loadMore').hidden = true;
   $('#homeView').hidden = true;
+  $('#archiveView').hidden = true;
   document.querySelectorAll('.folder-back').forEach((b) => b.remove());
 
   const view = $('#seriesView');
@@ -4203,6 +4205,7 @@ function missingTitle(message) {
   $('#grid').hidden = true;
   $('#rowsView').hidden = true;
   $('#homeView').hidden = true;
+  $('#archiveView').hidden = true;
   view.hidden = false;
   view.innerHTML = '';
   const note = el('p', 'show-note');
@@ -4433,13 +4436,37 @@ function liveCategoryCard(cat, count, cover, { onOpen = null, bin: withBin = tru
   return card;
 }
 
+/**
+ * Take the stage: every view off, grid included, ready for whoever renders
+ * next to show only their own. Shared by render() and the skeleton page,
+ * because the two are the only ways a tab change reaches the screen — and
+ * when each caller kept its own hide-list, every list was missing something.
+ */
+function clearStage() {
+  $('#homeView').hidden = true;
+  $('#seriesView').hidden = true;
+  $('#downloadList').hidden = true;
+  $('#archiveView').hidden = true;
+  $('#rowsView').hidden = true;
+  $('#grid').hidden = true;
+  $('#emptyState').hidden = true;
+  $('#loadMore').hidden = true;
+  // The back button lives outside #grid, so clearing the grid alone leaves
+  // it behind.
+  document.querySelectorAll('.folder-back').forEach((b) => b.remove());
+}
+
 function renderSkeletons() {
+  // A real page, not just a paint: while a library loads, this IS what is on
+  // screen — so it takes the stage like any other view. Without this, the
+  // page you left (the archive's folders, say) sat visible beneath the
+  // shimmer for the whole load, and for ever if the load failed.
+  clearStage();
   const grid = $('#grid');
+  grid.hidden = false;
   grid.innerHTML = '';
   grid.classList.toggle('is-live', state.tab === 'live');
   for (let i = 0; i < 18; i += 1) grid.append(el('div', 'skeleton'));
-  $('#emptyState').hidden = true;
-  $('#loadMore').hidden = true;
 }
 
 function render() {
@@ -4465,21 +4492,22 @@ function render() {
   // reaches before this module has been initialised at all.
   applyMultiviewButton();
 
+  // EVERY tab's furniture goes away here, before the per-tab branches — not
+  // inside them. Each branch used to hide its neighbours for itself, and
+  // every branch that forgot one taught the same lesson again: Home left
+  // showing under Downloads, then the Archive's folders bleeding into
+  // whatever page came after it. Hiding the lot up front means a branch can
+  // only forget to SHOW its own view — which is a bug you see instantly —
+  // never to hide somebody else's, which is one you meet weeks later.
+  clearStage();
+
   if (state.tab === 'downloads') return renderDownloads();
   if (state.tab === 'archive') return renderArchive();
   if (state.tab === 'home') return renderHome();
   if (state.tab === 'series' && state.seriesId) return renderShowCard();
   if (state.tab === 'movies' && state.movieId) return renderMovieCard();
-  $('#homeView').hidden = true;
-  $('#seriesView').hidden = true;
 
-  $('#downloadList').hidden = true;
-  $('#archiveView').hidden = true;
-  $('#rowsView').hidden = true;
   $('#grid').hidden = false;
-  // It sits outside #grid, so emptying the grid leaves it behind — including on
-  // the way out of a Downloads folder into another tab.
-  document.querySelectorAll('.folder-back').forEach((b) => b.remove());
 
   // Movies browse as named shelves. A search collapses back to a flat grid,
   // since rows make no sense when you're looking for one specific title.
@@ -4713,10 +4741,14 @@ function downloadsExplainer() {
 }
 
 function renderDownloads() {
+  // render() hides everything before its branches now, but the download poll
+  // re-renders this page directly; the list stays so those repaints stay
+  // self-contained.
   $('#downloadList').hidden = true;
-  // render() hides this too, but only after its early return for this tab —
-  // so arriving from Movies or Series left their shelves showing underneath.
   $('#rowsView').hidden = true;
+  $('#archiveView').hidden = true;
+  $('#homeView').hidden = true;
+  $('#seriesView').hidden = true;
   $('#loadMore').hidden = true;
   document.querySelector('.app-shell').classList.add('no-sidebar');
 
