@@ -4121,3 +4121,10 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 }
 
 .show-dl.is-saved { color: #4caf7d; border-color: rgba(76, 175, 125, .4); }
+
+/* One press wakes every paused download; spans the grid rather than posing
+   as a card. */
+.resume-all {
+  grid-column: 1 / -1;
+  justify-self: start;
+}

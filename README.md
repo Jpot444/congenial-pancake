@@ -229,6 +229,12 @@ committing the box, saying exactly how many episodes it is about to queue and
 how many it is skipping. They download one at a time — the provider allows a
 single connection — and pause automatically while anybody is watching.
 
+**Resume all** sits at the top of the Downloads page whenever anything is
+paused, saying how many it will wake. Paused only — a failed download has a
+Retry of its own, and sweeping failures into the button would re-run
+known-broken downloads on every press. Resumes are sequential, in card
+order, since the queue runs one at a time anyway.
+
 ### Every profile but one has a 20GB allowance
 
 `hunter` downloads without limit. Everyone else gets 20GB, counted across that

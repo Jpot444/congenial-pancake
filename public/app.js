@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '23.9';
+const VERSION = '24.0';
 
 const PAGE_SIZE = 60;
 
@@ -4787,6 +4787,31 @@ function renderDownloads() {
   const done = items.filter((j) => j.status === 'done').length;
   $('#contentMeta').textContent =
     `${done} ready${state.downloads.queued ? ` · ${state.downloads.queued} queued` : ''}`;
+
+  // Paused work gets one button back to running, not a hunt through the
+  // cards. Paused only: failed jobs have a Retry of their own, and sweeping
+  // them into this would re-run known-broken downloads on every press.
+  const paused = items.filter((j) => j.status === 'paused');
+  if (paused.length) {
+    const all = el('button', 'btn btn-ghost resume-all');
+    all.textContent = `Resume all (${paused.length})`;
+    all.addEventListener('click', async () => {
+      all.disabled = true;
+      let woke = 0;
+      for (const job of paused) {
+        // Sequential on purpose: the queue runs one at a time anyway, and
+        // this keeps its order the order the cards show.
+        // eslint-disable-next-line no-await-in-loop
+        const res = await fetch(`/api/downloads/${job.id}/retry`, { method: 'POST' });
+        if (res.ok) woke += 1;
+      }
+      await refreshDownloads({ rerender: true });
+      toast(woke === paused.length
+        ? `Resumed ${woke} download${woke === 1 ? '' : 's'}.`
+        : `Resumed ${woke} of ${paused.length} — the rest had already moved on.`);
+    });
+    grid.append(all);
+  }
 
   const frag = document.createDocumentFragment();
 
