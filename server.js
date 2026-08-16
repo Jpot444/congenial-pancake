@@ -1856,15 +1856,19 @@ function killSession(id) {
  *
  * Whole-episode conversions are worth keeping (that is what makes a second
  * resume instant) but not worth unbounded disk: oldest-touched episodes go
- * first once the cache passes its cap. Directories a live session still owns
- * are never touched, and an unfinished directory with no session behind it is
- * a crash leftover — unusable, because its frontier will never advance — so
- * it is removed on sight.
+ * first once the cache passes its cap — OR once the card's free space falls
+ * under what the caller says it needs, whichever bites first. The cap alone
+ * is not enough on this Pi: the default allowance is close to the whole free
+ * card, and a cache that "fits its cap" while the disk hits zero takes the
+ * portal down with it. The free-space floor outranks the cap, always.
+ * Directories a live session still owns are never touched, and an unfinished
+ * directory with no session behind it is a crash leftover — unusable,
+ * because its frontier will never advance — so it is removed on sight.
  */
 const ARCHIVE_CACHE_BYTES =
   Math.max(0, Number(process.env.ARCHIVE_CACHE_GB || 10)) * 1024 ** 3;
 
-function pruneArchiveCache() {
+function pruneArchiveCache(needFreeBytes = 0) {
   let names = [];
   try {
     names = fs.readdirSync(HLS_DIR);
@@ -1893,7 +1897,13 @@ function pruneArchiveCache() {
   }
   kept.sort((a, b) => a.mtime - b.mtime);
   let total = kept.reduce((sum, e) => sum + e.bytes, 0);
-  while (kept.length && total > ARCHIVE_CACHE_BYTES) {
+  const overCap = () => total > ARCHIVE_CACHE_BYTES;
+  const underFloor = () => {
+    if (!needFreeBytes) return false;
+    const free = diskFree(HLS_DIR);
+    return Number.isFinite(free) && free < needFreeBytes;
+  };
+  while (kept.length && (overCap() || underFloor())) {
     const oldest = kept.shift();
     try {
       fs.rmSync(oldest.dir, { recursive: true, force: true });
@@ -4473,6 +4483,15 @@ async function handleApi(req, res, pathname, query) {
     }
 
     try {
+      // The conversion about to start will write on the order of the source
+      // file's size. Make room FIRST — evicting old episodes down to a floor
+      // of the space reserve plus the expected output — because an ENOSPC
+      // halfway through a two-hour transcode wastes the whole run and, far
+      // worse, crowds the card every other feature lives on. If the cache is
+      // already empty and space is still short, the conversion is allowed to
+      // try: it fails with a plain error rather than being refused on a
+      // guess.
+      pruneArchiveCache(SPACE_RESERVE + Math.max(2 * 1024 ** 3, item.size || 0));
       const session = await startRemux(abs, {
         fromProvider: false,
         videoCodec: item.vcodec || '',

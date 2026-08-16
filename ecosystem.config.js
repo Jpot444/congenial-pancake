@@ -33,6 +33,11 @@ module.exports = {
         // Copy the old downloads folder there first, then restart with
         // --update-env. Everything follows this path automatically.
         // DOWNLOADS_ROOT: '/mnt/downloads',
+        // Allowance for finished archive conversions kept on disk (GB).
+        // Whatever this says, the cache always yields before the card's
+        // free space floor — the setting caps the best case, it cannot
+        // crowd the disk. Default 10.
+        // ARCHIVE_CACHE_GB: '6',
       },
       // The transcoder is a child process, so the portal's own memory stays
       // small; a ceiling this high only trips on a genuine leak.
