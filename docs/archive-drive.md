@@ -109,8 +109,12 @@ copy" belong in the same sentence, so:
 
    Leaves ~300 GB of free space after the HFS+ volume, and ~170 GB of
    headroom inside it.
-3. On the Pi, create and format the new partition in that free space, then
-   mount it read-write and point `DOWNLOAD_DIR` at it.
+3. On the Pi, create and format the new partition in that free space (ext4),
+   mount it read-write with an fstab entry, copy the existing downloads
+   folder onto it, then set `DOWNLOADS_ROOT` in `ecosystem.config.js` (a
+   commented-out line is already there) and
+   `pm2 restart iptv-portal --update-env`. Every space gate, the allowance,
+   and the health panel follow the new location automatically.
 
 If you'd rather not touch the partition table at all, the alternative is to
 leave downloads on the Pi's own storage. The portal already guards against

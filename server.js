@@ -36,7 +36,12 @@ const REPORTS_PATH = path.join(ROOT, 'reports.json');
 const HLS_DIR = path.join(ROOT, 'hls');
 /** Containers a browser will open directly. Anything else needs remuxing. */
 const NATIVE_CONTAINERS = new Set(['mp4', 'm4v', 'mov']);
-const DOWNLOAD_DIR = path.join(ROOT, 'downloads');
+// Where downloads land. Overridable so a future writable partition on the
+// external drive can take them (docs/archive-drive.md, "Using the drive for
+// downloads") — set DOWNLOADS_ROOT in ecosystem.config.js and restart; every
+// gate, the allowance, and the health panel follow it automatically, because
+// they all measure this directory rather than assuming the SD card.
+const DOWNLOAD_DIR = process.env.DOWNLOADS_ROOT || path.join(ROOT, 'downloads');
 const DOWNLOAD_INDEX = path.join(DOWNLOAD_DIR, 'index.json');
 
 /* The external archive drive. ARCHIVE_ROOT is where it mounts — different on
@@ -119,7 +124,11 @@ function writeJsonAtomic(file, value, opts = {}) {
  * writes then breaks at once, including the JSON state files.
  */
 
-const SPACE_RESERVE = 2 * 1024 * 1024 * 1024; // keep 2 GB for the OS and state
+// The floor under the Pi's own storage: this much stays free, always. Every
+// download is refused up front if it would dip under it, a running conversion
+// checks it before starting, and incoming work is parked when the disk
+// reaches it — the SD card can never be crowded to the brim by this app.
+const SPACE_RESERVE = 2 * 1024 * 1024 * 1024;
 
 function diskFree(dir) {
   try {

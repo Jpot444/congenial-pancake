@@ -229,6 +229,17 @@ committing the box, saying exactly how many episodes it is about to queue and
 how many it is skipping. They download one at a time — the provider allows a
 single connection — and pause automatically while anybody is watching.
 
+**The Pi's storage keeps a hard floor of 2 GB free, always.** Every download
+is refused up front if finishing it would dip under the floor, a conversion
+checks before it starts, and incoming work is parked the moment the disk
+reaches it — this app can never crowd the SD card to the brim. Downloads
+cannot move to the archive drive automatically: it is mounted **read-only on
+purpose** (Journaled HFS+ — Linux's write support for it corrupts
+filesystems, and it holds the only copy of 1.4 TB of material). The
+supported path is a second, Linux-native partition and `DOWNLOADS_ROOT` —
+see docs/archive-drive.md, "Using the drive for downloads"; every gate, the
+allowance, and the health panel follow that setting automatically.
+
 **Resume all** sits at the top of the Downloads page whenever anything is
 paused, saying how many it will wake. Paused only — a failed download has a
 Retry of its own, and sweeping failures into the button would re-run
