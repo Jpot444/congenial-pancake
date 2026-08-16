@@ -1530,39 +1530,40 @@ the **video's** timeline it argues with — audio spanning 3.2% less timeline
 than video over the same content — and `aresample` only ever matches audio to
 audio.
 
-**And then a second report arrived, which is why the fix is gated.** A
-commercial release — six language tracks, forty-two subtitle tracks — measured
-**-6.86%**, which would put its audio two minutes early by the end of its
-runtime. A master like that is unusable on every player ever made, not just
-this one. Two unrelated titles reporting large drift within a day of each
-other says the measurement deserves as much suspicion as the files.
+**And then the same file was reported twice, which ended the experiment for
+good.** Same archive rip, same resume point, two sessions:
 
-The flaw was that drift was measured from **two** points, and two points
-always define a rate. So it is measured from **three** now, and the two
-half-rates must agree before anything is corrected: a genuine mastering drift
-is linear by definition — the same slope early as late — while an artefact,
-or a ragged edge that differs at the ends, is not. Both halves appear in the
-playback report next to the rate, so the next report says which it was rather
-than leaving it to be argued about. `linear: null` (too little written to
-judge yet) is not a pass — nothing is corrected until a straight line has
-actually been shown.
+```
+02:13   gap 9.030s over 279.0s   ->  "32.4ms/s"
+02:49   gap 9.031s over 299.4s   ->  "30.2ms/s"
+```
 
-The asymmetry is what decides it: leaving a rare broken file broken is a
-disappointment, while acting on a wrong measurement plays a perfectly good
-film several percent slow for its whole length — a worse fault than the one
-being repaired, and harder to recognise as ours.
+The gap is identical to the millisecond. Only the span grew, so the "rate"
+shrank to match — **a constant divided by a growing number**, which is the
+exact artefact the section above warned about, wearing a new disguise. And
+the arithmetic finishes it: that 9.03s gap was reported *inside a segment
+holding 2.475 seconds of content*, 3.6× the segment's own length. Impossible.
+`endOf(audio)` and `endOf(video)` are not measuring the same thing across an
+fMP4 fragment, so their difference was never a drift rate and no correction
+could ever be built from it.
 
-So the fix went where the experiment said it belonged: `realign`, which was
-already measuring drift rate off the first segments, now reruns the
-conversion with `atempo` at exactly **one-plus-the-measured-rate** —
-pitch-preserved, applied once, visible on the command line every playback
-report carries. This is the one licensed tempo change, and everything the
-original ban stood for still holds: no *standing* licence, no silent
-stretching, a measured correction or none at all. Rates under 0.5% are noise
-and left alone; rates over 10% mean the measurement is broken, not the audio,
-and are refused twice — in `realign` and again in `audioFilter`.
+**So the automatic tempo correction is gone**, and `drift.rate` is a
+diagnostic only. What the constant probably is: `9.031 / 2135 = 0.42%` — the
+two tracks' timescales disagreeing, so seeking to "2135s" lands them apart in
+**content** while both still begin at timestamp 0. Which is precisely why
+every probe reads `offset 0ms` while the viewer hears otherwise: by the time
+anything is measured, the streams *are* aligned — to the wrong material.
 
-### Drift is not the same fault as an offset
+That fault is invisible to measurement by construction, so it is handled by a
+person instead: an **audio-sync control in the film bar**, set by ear,
+remembered per title, and carried on every rebuild. It applies where the
+alignment is really decided — ffmpeg's `adelay` — so changing it rebuilds the
+conversion from where you are, which is why it moves in named steps rather
+than a slider that would rebuild on every pixel. This is the same control an
+earlier version removed from the top bar; the top bar was the wrong place for
+it, not the idea.
+
+### Drift is not the same fault as an offset### Drift is not the same fault as an offset
 
 The probe reports both, and they need telling apart.
 

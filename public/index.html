@@ -759,6 +759,23 @@
         <div class="cc-menu" id="ccMenu" role="menu" hidden></div>
       </div>
 
+      <!-- Lip-sync, by ear. A seek into a file whose audio and video tracks
+           carry disagreeing timescales lands them apart in CONTENT while both
+           still start at timestamp 0 — invisible to any probe taken
+           afterwards, and plain to anybody watching. So the ear decides.
+           Films and episodes only; a live channel has no conversion to
+           rebuild. -->
+      <div class="cc-wrap sync-wrap" id="syncWrap" hidden>
+        <button class="vod-btn" id="syncBtn" aria-label="Audio sync"
+                title="Audio sync" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 9v6h3l4 3V6L7 9H4z"/>
+            <path d="M15 7l4 5-4 5"/>
+          </svg>
+        </button>
+        <div class="cc-menu sync-menu" id="syncMenu" role="menu" hidden></div>
+      </div>
+
       <button class="vod-btn" id="vodMute" aria-label="Mute">
         <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 9a4 4 0 010 6"/></svg>
       </button>

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.4';
+const VERSION = '24.5';
 
 const PAGE_SIZE = 60;
 
@@ -83,6 +83,8 @@ const prefs = {
     // subtitles wants them on the next film too, and being asked again every
     // time is the thing this remembers them to avoid.
     captionTrack: '',
+    // Per-title lip-sync nudges, in milliseconds, keyed by resume key.
+    avSync: {},
   },
 
   async load() {
@@ -6950,6 +6952,7 @@ function showFilmBar(item, duration, override) {
   paintFilmBar();
   // The CC button lives in this bar, so it can only appear once the bar has.
   captions.paint();
+  avSync.attach(resumeKeyFor(item, override?.episode, override?.season));
 }
 
 function hideFilmBar() {
@@ -6967,6 +6970,7 @@ function hideFilmBar() {
   // with the film bar — a channel can carry captions too.
   captions.close();
   captions.paint();
+  avSync.attach('');
 }
 
 function paintFilmBar() {
@@ -7051,21 +7055,36 @@ async function seekFilm(target, { force = false } = {}) {
   try {
     // A downloads-backed title seeks against the file on disk — fast, and no
     // provider connection spent. Everything else restarts the provider remux.
-    const remux = await api(
-      '/api/remux',
-      film.item?.downloadId
-        ? {
+    // The viewer's own lip-sync nudge for this title, carried on every
+    // rebuild — including the rebuild that setting it triggers.
+    const adelay = avSync.ms || '';
+    // Three sources, three endpoints. A file on the archive drive was
+    // missing from this list entirely, so seeking one asked /api/remux for a
+    // provider title whose id was `archive:<path>` and got nothing back.
+    const remux = film.item?.archivePath
+      ? await api('/api/archive/play', {
+        path: film.item.archivePath,
+        start: Math.floor(clamped),
+        adelay,
+        profileId: profiles.current?.id || '',
+      })
+      : await api(
+        '/api/remux',
+        film.item?.downloadId
+          ? {
             download: film.item.downloadId,
             start: Math.floor(clamped),
+            adelay,
           }
-        : {
+          : {
             kind: film.override?.kind || (film.item.kind === 'movie' ? 'movie' : film.item.kind),
             id: film.override?.id ?? film.item.id,
             ext: film.override?.ext ?? film.item.ext ?? '',
             vcodec: film.override?.vcodec || film.item.vcodec || '',
             start: Math.floor(clamped),
+            adelay,
           }
-    );
+      );
     lastRemux = remux;
 
     await waitForPrebuffer(remux);
@@ -7451,6 +7470,141 @@ const captions = {
     $('#ccBtn')?.setAttribute('aria-expanded', 'false');
   },
 };
+
+/* ------------------------------------------------------------ audio sync ---
+ *
+ * A nudge you set by ear, remembered per title.
+ *
+ * This exists because the automatic version could not be made honest. The
+ * conversion measures its own output and reported a "drift rate" for an
+ * archive rip; two sessions of the SAME file at the SAME resume point then
+ * showed a gap identical to the millisecond (9.030s and 9.031s) over
+ * different spans, so the rate was a constant divided by a growing number and
+ * meant nothing. Worse, that 9s gap was reported inside a segment holding
+ * 2.475s — impossible, so the two ends were never comparable in the first
+ * place.
+ *
+ * The likely truth is worse for measurement, not better: 9.031/2135 = 0.42%,
+ * two tracks whose timescales disagree, so seeking to "2135s" lands them
+ * apart in CONTENT while both still begin at timestamp 0. Every probe taken
+ * after the seek sees a perfectly aligned start, because by then it is. Only
+ * a person watching can see it.
+ *
+ * So: a control, not a guess. It is applied where the alignment is actually
+ * decided — ffmpeg's own filter chain, via the `adelay` the server already
+ * took — which means changing it rebuilds the conversion from where you are.
+ * That costs a few seconds, which is why it moves in steps you choose rather
+ * than a slider that would rebuild on every pixel.
+ */
+const avSync = {
+  key: '',
+
+  get ms() {
+    return Number(prefs.data.avSync?.[this.key]) || 0;
+  },
+
+  set ms(value) {
+    if (!prefs.data.avSync) prefs.data.avSync = {};
+    const clamped = Math.max(-5000, Math.min(5000, Math.round(value) || 0));
+    if (clamped) prefs.data.avSync[this.key] = clamped;
+    else delete prefs.data.avSync[this.key];
+    prefs.save();
+  },
+
+  /** A title is opening: remember whose offset we are editing. */
+  attach(key) {
+    this.key = key || '';
+    this.close();
+    this.paint();
+  },
+
+  paint() {
+    const wrap = $('#syncWrap');
+    // Films and episodes only. A live channel has no conversion to rebuild,
+    // and an archive file played straight off the disk has none either.
+    const can = !$('#playerOverlay').hidden && film.active
+      && Boolean(this.key) && Boolean(lastRemux.session);
+    wrap.hidden = !can;
+    if (!can) return;
+    const at = this.ms;
+    $('#syncBtn').classList.toggle('is-on', at !== 0);
+    $('#syncBtn').title = at ? `Audio ${at > 0 ? 'delayed' : 'advanced'} `
+      + `${Math.abs(at)}ms` : 'Audio sync';
+    if (!$('#syncMenu').hidden) this.renderMenu();
+  },
+
+  renderMenu() {
+    const menu = $('#syncMenu');
+    menu.innerHTML = '';
+    const at = this.ms;
+
+    const note = el('p', 'cc-none');
+    note.textContent = at === 0
+      ? 'Audio and video look right? Leave this alone. If the voices run '
+        + 'ahead of the mouths, delay them.'
+      : `Audio ${at > 0 ? 'delayed' : 'advanced'} by ${Math.abs(at)}ms.`;
+    menu.append(note);
+
+    const row = (label, delta) => {
+      const b = el('button', 'cc-item');
+      b.type = 'button';
+      b.textContent = label;
+      b.addEventListener('click', () => this.nudge(delta));
+      menu.append(b);
+    };
+    row('Delay audio 1s', 1000);
+    row('Delay audio 250ms', 250);
+    row('Advance audio 250ms', -250);
+    row('Advance audio 1s', -1000);
+    if (at !== 0) {
+      const reset = el('button', 'cc-item is-on');
+      reset.type = 'button';
+      reset.textContent = 'Back to none';
+      reset.addEventListener('click', () => this.nudge(-at));
+      menu.append(reset);
+    }
+  },
+
+  /** Change it, then rebuild from where we are so it can be heard. */
+  async nudge(delta) {
+    const was = this.ms;
+    this.ms = was + delta;
+    const now = this.ms;
+    this.close();
+    this.paint();
+    if (now === was) return;
+    toast(`Audio ${now > 0 ? 'delayed' : now < 0 ? 'advanced' : 'aligned'}`
+      + `${now ? ` ${Math.abs(now)}ms` : ''} — rebuilding from here…`);
+    // The offset lives in ffmpeg's filter chain, so hearing it means a new
+    // conversion. A forced seek to where we already are is exactly that path,
+    // and it keeps the position.
+    await seekFilm(filmPosition(), { force: true });
+  },
+
+  toggleMenu() {
+    if ($('#syncMenu').hidden) {
+      this.renderMenu();
+      $('#syncMenu').hidden = false;
+      $('#syncBtn').setAttribute('aria-expanded', 'true');
+    } else {
+      this.close();
+    }
+  },
+
+  close() {
+    $('#syncMenu').hidden = true;
+    $('#syncBtn')?.setAttribute('aria-expanded', 'false');
+  },
+};
+
+$('#syncBtn').addEventListener('click', (event) => {
+  event.stopPropagation();
+  avSync.toggleMenu();
+  showChrome();
+});
+document.addEventListener('click', (event) => {
+  if (!$('#syncWrap').contains(event.target)) avSync.close();
+});
 
 /** How often a still-converting subtitle file is re-read. */
 const CC_REFRESH = 20000;
@@ -8033,6 +8187,7 @@ async function resolveStream(item, override) {
     const data = await api('/api/archive/play', {
       path: item.archivePath,
       start: startAt || '',
+      adelay: Number(prefs.data.avSync?.[item.resumeKey || `movie:${item.id}`]) || '',
       profileId: profiles.current?.id || '',
     });
 

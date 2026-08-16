@@ -4169,3 +4169,7 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 /* The caption text sits above the strip, not behind it. */
 .cc-overlay { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+
+/* The audio-sync control borrows the captions menu's shape; only its width
+   differs, since its rows are sentences rather than language names. */
+.sync-menu { min-width: 236px; }

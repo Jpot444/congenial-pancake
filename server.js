@@ -1981,19 +1981,11 @@ function audioFilter(delayMs = 0, padSeconds = 0, tempo = 0) {
   const chain = [
     `aresample=async=1:min_hard_comp=0.100:first_pts=${pad ? -pad : 0}`,
   ];
-  // The one licensed tempo change, and it is measured, not standing. A source
-  // whose two streams genuinely disagree in rate — an archive rip drifted
-  // -32.4ms per second, audio 9s short of video by the five-minute mark —
-  // cannot be repaired by any amount of filling or trimming, because the
-  // audio stream agrees with its own timestamps; it is the video's timeline
-  // it argues with. realign measures the rate off the first segments and
-  // reruns with exactly this factor, once, pitch-preserved, and the command
-  // line in the playback report says so. Out-of-range factors mean the
-  // measurement is wrong, not the audio, and are refused here.
-  const rate = Number(tempo) || 0;
-  if (rate && Math.abs(rate - 1) > 0.0005 && rate >= 0.9 && rate <= 1.1) {
-    chain.push(`atempo=${rate.toFixed(5)}`);
-  }
+  // No tempo arm. One was added when a measured "drift rate" looked real, and
+  // removed when two reports of the same file proved that number to be a
+  // constant gap divided by a growing span — see realign. A remux does not
+  // change tempo, and nothing here is allowed to on evidence that thin.
+  void tempo;
   const ms = Math.max(-5000, Math.min(5000, Math.round(Number(delayMs) || 0)));
   if (ms > 0) chain.push(`adelay=${ms}:all=1`);
   else if (ms < 0) chain.push(`atrim=start=${(-ms / 1000).toFixed(3)}`, 'asetpts=PTS-STARTPTS');
@@ -2407,27 +2399,35 @@ async function realign(session, input, opts) {
   // pitch-preserved, and the ends meet. Rates beyond 10% mean the measurement
   // is wrong, not the audio, and are left alone.
   //
-  // The tempo arm additionally requires the rate to be CORROBORATED: measured
-  // the same in the first half of the session as in the second. Two points
-  // always define a rate, and acting on one that is really a measurement
-  // artefact does not leave a file as it was — it plays a perfectly good film
-  // several percent slow for its whole length, which is a worse fault than the
-  // one being repaired and harder to notice as ours. A straight line is cheap
-  // to demand and is what a real mastering drift looks like.
+  // THE TEMPO CORRECTION IS GONE, and the reason is worth keeping. It was
+  // driven by `drift.rate`, and two reports of the same file at the same
+  // resume point settled what that number really is:
+  //
+  //     02:13   gap 9.030s over 279.0s  ->  "32.4ms/s"
+  //     02:49   gap 9.031s over 299.4s  ->  "30.2ms/s"
+  //
+  // The GAP is identical to the millisecond; only the span grew, so the
+  // "rate" shrank to match. It is a constant divided by a growing number —
+  // the very artefact this file's own comments warned about, in a new
+  // disguise. The halves said so outright once they existed: -53.8ms/s and
+  // then flat 0.0. And the arithmetic finishes it — a 9.03s gap was reported
+  // INSIDE a segment holding 2.475s of content, 3.6x the segment's whole
+  // length, which is impossible. `endOf(audio)` and `endOf(video)` are not
+  // measuring the same thing across an fMP4 fragment, so their difference was
+  // never a drift rate and nothing may be corrected from it.
+  //
+  // What the constant probably is: 9.031 / 2135 = 0.42%, the two tracks'
+  // timescales disagreeing, so seeking to "2135s" lands them 9s apart in
+  // CONTENT while both still start at timestamp 0 — which is exactly why the
+  // report reads "offset 0ms" while the viewer hears otherwise. A start
+  // offset we can see is corrected below; one hidden inside the seek is not
+  // visible to any measurement taken after it, and is handled by the manual
+  // control instead.
   const wantPad = Number.isFinite(gap) && gap > 0.1;
-  const wantTempo = Number.isFinite(rate) && linear === true
-    && Math.abs(rate) >= 0.005 && Math.abs(rate) <= 0.1;
-  if (!wantPad && !wantTempo) return session;
+  if (!wantPad) return session;
 
   killSession(session.id);
-  return startRemux(input, {
-    ...opts,
-    audioPadSeconds: wantPad ? gap : 0,
-    // gap = audioEnd - videoEnd per second of video: audio short of video is
-    // a negative rate, and 1 + rate is the speed that makes the ends meet.
-    audioTempo: wantTempo ? 1 + rate : 0,
-    aligned: true,
-  });
+  return startRemux(input, { ...opts, audioPadSeconds: gap, aligned: true });
 }
 
 /** Reap sessions nothing has fetched from in a while. */
@@ -4264,6 +4264,12 @@ async function handleApi(req, res, pathname, query) {
         fromProvider: false,
         videoCodec: item.vcodec || '',
         startSeconds,
+        // The viewer's own lip-sync nudge for this title, in ms. Positive
+        // delays the audio, negative pulls it earlier. Seeking into a file
+        // whose tracks carry disagreeing timescales lands them apart in
+        // content while both still start at timestamp 0, which no probe
+        // taken afterwards can see — so the ear decides and this carries it.
+        audioDelayMs: Number(query.get('adelay') || 0),
         sourceDuration: item.duration || 0,
       });
       return json(res, 200, {
