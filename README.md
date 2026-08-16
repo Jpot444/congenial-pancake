@@ -882,6 +882,12 @@ window, different spelling; the difference lives in one `pip` object and
 nowhere else, and the button only exists at all when one of the two dialects
 is spoken.
 
+An iPad advertises **both** dialects and then refuses the standard one — "the
+video element does not support the Picture-in-Picture mode", measured — so on
+Apple hardware Apple's own dialect goes first, and either dialect is the
+other's fallback rather than a dead end. Only when both have refused is the
+failure worth words.
+
 The button lights while the picture floats, driven by the events rather than
 by what was clicked, so it stays honest when the window is closed from the
 floating window's own controls. Closing the player closes the floating window

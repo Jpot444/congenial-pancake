@@ -3189,6 +3189,9 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 }
 
 .show-fav { align-self: flex-start; margin: 0 0 16px; }
+/* Inside the action row the spacing belongs to the row. */
+.show-actions { margin: 0 0 16px; }
+.show-actions .show-fav { margin: 0; align-self: auto; }
 
 /* The list scrolls inside the card rather than running the page long, so the
    poster and the seasons bar stay put while you look down a long season. */
@@ -4108,3 +4111,13 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   text-align: center;
   text-wrap: balance;
 }
+
+/* The film card's action row: favorites and download side by side. */
+.show-actions {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.show-dl.is-saved { color: #4caf7d; border-color: rgba(76, 175, 125, .4); }

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '23.8';
+const VERSION = '23.9';
 
 const PAGE_SIZE = 60;
 
@@ -3944,6 +3944,10 @@ function renderHome() {
   $('#grid').hidden = true;
   $('#rowsView').hidden = true;
   $('#downloadList').hidden = true;
+  // render() hides this too, but only on the path AFTER its early return for
+  // home — so arriving from the Archive left its folders and grid sitting
+  // under the home screen.
+  $('#archiveView').hidden = true;
   $('#emptyState').hidden = true;
   $('#loadMore').hidden = true;
   document.querySelectorAll('.folder-back').forEach((b) => b.remove());
@@ -4098,8 +4102,30 @@ function detailCard(item, backHash, backLabel) {
     toast(added ? 'Added to favorites.' : 'Removed from favorites.');
   });
 
+  const actions = el('div', 'show-actions');
+  actions.append(fav);
+
+  // Films get a download beside it. Shows manage theirs per episode and per
+  // season down in the list, and the archive is already on the box.
+  if (item.kind === 'movie' && !item.archivePath && !item.localOnly) {
+    const dl = el('button', 'btn btn-ghost btn-sm show-dl');
+    const paintDl = () => {
+      const have = downloadJobFor('movie', item.id);
+      dl.textContent = have
+        ? have.status === 'done' ? 'Downloaded' : 'In the queue'
+        : 'Download';
+      dl.classList.toggle('is-saved', have?.status === 'done');
+    };
+    paintDl();
+    dl.addEventListener('click', async () => {
+      await requestDownload(item);
+      paintDl();
+    });
+    actions.append(dl);
+  }
+
   const mount = el('div', 'show-episodes');
-  body.append(heading, meta, plot, fav, mount);
+  body.append(heading, meta, plot, actions, mount);
   card.append(posterWrap, body);
   view.append(back, card);
 
@@ -7561,23 +7587,45 @@ const pip = {
 
   async toggle() {
     const video = $('#video');
-    try {
-      if (this.active()) {
+    if (this.active()) {
+      try {
         if (document.pictureInPictureElement === video) await document.exitPictureInPicture();
         else video.webkitSetPresentationMode('inline');
-        return;
+      } catch {
+        /* already back inline */
       }
-      // The standard API first: on platforms that speak both it is the one
-      // with a promise, so failures can be said out loud instead of ignored.
-      if (document.pictureInPictureEnabled && typeof video.requestPictureInPicture === 'function') {
-        await video.requestPictureInPicture();
-      } else {
-        video.webkitSetPresentationMode('picture-in-picture');
+      return;
+    }
+    // An iPad advertises BOTH dialects and then refuses the standard one —
+    // "the video element does not support the Picture-in-Picture mode",
+    // measured — so on Apple hardware Apple's own dialect goes first, and
+    // either dialect is the other's fallback rather than a dead end. Only
+    // when both have refused is the failure worth words.
+    const webkitFirst = isIOS() && typeof video.webkitSetPresentationMode === 'function';
+    const standard = async () => {
+      if (!document.pictureInPictureEnabled
+        || typeof video.requestPictureInPicture !== 'function') {
+        throw new Error('no standard API');
       }
-    } catch (err) {
-      // Most commonly: no video is loaded yet, or the browser wants a fresher
-      // gesture. Either way the honest answer is words, not a dead button.
-      toast(`Couldn't pop the picture out — ${err.message}`);
+      await video.requestPictureInPicture();
+    };
+    const webkit = async () => {
+      if (typeof video.webkitSetPresentationMode !== 'function') {
+        throw new Error('no webkit API');
+      }
+      video.webkitSetPresentationMode('picture-in-picture');
+    };
+    const [first, second] = webkitFirst ? [webkit, standard] : [standard, webkit];
+    try {
+      await first();
+    } catch (firstErr) {
+      try {
+        await second();
+      } catch {
+        // Most commonly: no video loaded yet, or the browser wants a fresher
+        // gesture. The honest answer is words, not a dead button.
+        toast(`Couldn't pop the picture out — ${firstErr.message}`);
+      }
     }
   },
 
