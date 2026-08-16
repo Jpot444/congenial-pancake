@@ -1530,6 +1530,28 @@ the **video's** timeline it argues with — audio spanning 3.2% less timeline
 than video over the same content — and `aresample` only ever matches audio to
 audio.
 
+**And then a second report arrived, which is why the fix is gated.** A
+commercial release — six language tracks, forty-two subtitle tracks — measured
+**-6.86%**, which would put its audio two minutes early by the end of its
+runtime. A master like that is unusable on every player ever made, not just
+this one. Two unrelated titles reporting large drift within a day of each
+other says the measurement deserves as much suspicion as the files.
+
+The flaw was that drift was measured from **two** points, and two points
+always define a rate. So it is measured from **three** now, and the two
+half-rates must agree before anything is corrected: a genuine mastering drift
+is linear by definition — the same slope early as late — while an artefact,
+or a ragged edge that differs at the ends, is not. Both halves appear in the
+playback report next to the rate, so the next report says which it was rather
+than leaving it to be argued about. `linear: null` (too little written to
+judge yet) is not a pass — nothing is corrected until a straight line has
+actually been shown.
+
+The asymmetry is what decides it: leaving a rare broken file broken is a
+disappointment, while acting on a wrong measurement plays a perfectly good
+film several percent slow for its whole length — a worse fault than the one
+being repaired, and harder to recognise as ours.
+
 So the fix went where the experiment said it belonged: `realign`, which was
 already measuring drift rate off the first segments, now reruns the
 conversion with `atempo` at exactly **one-plus-the-measured-rate** —

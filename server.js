@@ -1592,12 +1592,17 @@ function probeOutput(session) {
   }
   if (!segments.length) return Promise.resolve({ error: 'nothing written yet' });
 
-  // Two segments answer two different questions. The first one carries the
-  // start of each stream, which is where an audio/video offset introduced by
-  // seeking shows up. A recent one says whether the timeline still matches its
-  // contents. The newest of all is very likely still being written.
+  // Three segments answer three questions. The first carries the start of
+  // each stream, which is where an audio/video offset introduced by seeking
+  // shows up. A recent one says whether the timeline still matches its
+  // contents. The newest of all is very likely still being written, so it is
+  // skipped. The MIDDLE one exists only to check the drift is a straight
+  // line — see the two half-rates below, which is what stops a measurement
+  // artefact from being corrected as though it were a fault.
   const first = segments[0];
   const recent = segments[segments.length - (segments.length > 1 ? 2 : 1)];
+  const middleAt = Math.floor((segments.length - (segments.length > 1 ? 2 : 1)) / 2);
+  const middle = segments[middleAt];
 
   /**
    * ffprobe one segment. A fragmented-MP4 segment carries no headers of its
@@ -1668,7 +1673,9 @@ function probeOutput(session) {
   return Promise.all([
     probeSegment(recent.name, 'recent'),
     first.name === recent.name ? null : probeSegment(first.name, 'first'),
-  ]).then(([now, opening]) => {
+    middle && middle.name !== first.name && middle.name !== recent.name
+      ? probeSegment(middle.name, 'middle') : null,
+  ]).then(([now, opening, midway]) => {
     if (!now) return { error: 'ffprobe returned nothing readable' };
     const video = streamOf(now, 'video');
     const audio = streamOf(now, 'audio');
@@ -1740,6 +1747,38 @@ function probeOutput(session) {
       }
     }
 
+    /* Is that rate a straight line, or two points with a story drawn through
+     * them?
+     *
+     * Two points always define a rate — that is the whole problem with them.
+     * A genuine mastering drift is LINEAR: the same slope in the first half of
+     * the session as in the second. A measurement artefact is not, and neither
+     * is a per-segment ragged edge that happens to differ at the ends.
+     *
+     * This exists because two unrelated titles reported large drift within a
+     * day of each other — a 2008 home rip at 3.24%, which the viewer could
+     * hear, and a commercial release with six language tracks at 6.86%, which
+     * would put its audio two minutes early by the end and be unusable on
+     * every player ever made, not just this one. One of those is a fault and
+     * one is a reading. A third point tells them apart, and nothing corrects
+     * anything until it has. */
+    let halfEarly = null;
+    let halfLate = null;
+    let driftLinear = null;
+    const mid = midway ? gapOf(midway) : null;
+    if (driftRate !== null && mid && mid.gap !== null && Number.isFinite(mid.vEnd)) {
+      const spanA = mid.vEnd - early.vEnd;
+      const spanB = late.vEnd - mid.vEnd;
+      if (spanA >= 4 && spanB >= 4) {
+        halfEarly = (mid.gap - early.gap) / spanA;
+        halfLate = (late.gap - mid.gap) / spanB;
+        // Agreement to within a quarter of the rate itself, plus a floor so
+        // two tiny halves are not judged on rounding noise.
+        const tolerance = Math.max(Math.abs(driftRate) * 0.25, 0.002);
+        driftLinear = Math.abs(halfLate - halfEarly) <= tolerance;
+      }
+    }
+
     return {
       declaredTotal,
       segment: {
@@ -1757,6 +1796,12 @@ function probeOutput(session) {
         firstGap: early ? early.gap : null,
         rate: driftRate,
         span: driftSpan,
+        // The corroboration. `linear` null means it could not be judged —
+        // too few segments yet — which is not the same as judged and failed,
+        // and neither of them is a licence to change anybody's audio.
+        halfEarly,
+        halfLate,
+        linear: driftLinear,
       },
       video: {
         codec: video.codec_name || '',
@@ -2342,10 +2387,12 @@ async function startRemux(input, opts) {
 async function realign(session, input, opts) {
   let gap = null;
   let rate = null;
+  let linear = null;
   try {
     const probe = await probeOutput(session);
     gap = probe?.start?.sync ?? null;
     rate = probe?.drift?.rate ?? null;
+    linear = probe?.drift?.linear ?? null;
   } catch {
     return session;   // measuring is a bonus; never fail the session over it
   }
@@ -2359,8 +2406,17 @@ async function realign(session, input, opts) {
   // 3.2% less timeline than video, so it is played 3.2% slower,
   // pitch-preserved, and the ends meet. Rates beyond 10% mean the measurement
   // is wrong, not the audio, and are left alone.
+  //
+  // The tempo arm additionally requires the rate to be CORROBORATED: measured
+  // the same in the first half of the session as in the second. Two points
+  // always define a rate, and acting on one that is really a measurement
+  // artefact does not leave a file as it was — it plays a perfectly good film
+  // several percent slow for its whole length, which is a worse fault than the
+  // one being repaired and harder to notice as ours. A straight line is cheap
+  // to demand and is what a real mastering drift looks like.
   const wantPad = Number.isFinite(gap) && gap > 0.1;
-  const wantTempo = Number.isFinite(rate) && Math.abs(rate) >= 0.005 && Math.abs(rate) <= 0.1;
+  const wantTempo = Number.isFinite(rate) && linear === true
+    && Math.abs(rate) >= 0.005 && Math.abs(rate) <= 0.1;
   if (!wantPad && !wantTempo) return session;
 
   killSession(session.id);

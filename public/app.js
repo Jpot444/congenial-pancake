@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.3';
+const VERSION = '24.4';
 
 const PAGE_SIZE = 60;
 
@@ -6450,6 +6450,14 @@ const playback = {
       `  the same gap  ${Number.isFinite(p.drift?.firstGap)
         ? `${(p.drift.firstGap * 1000).toFixed(0)}ms in the first segment`
         : 'not measured — only one segment so far'}`,
+      // Both halves, because the pair is what decides whether the rate is a
+      // fault or a reading — and only a straight line is ever corrected.
+      `  each half     ${Number.isFinite(p.drift?.halfEarly) && Number.isFinite(p.drift?.halfLate)
+        ? `${(p.drift.halfEarly * 1000).toFixed(1)}ms/s then `
+          + `${(p.drift.halfLate * 1000).toFixed(1)}ms/s  → `
+          + `${p.drift.linear ? 'a straight line, so it is corrected'
+            : 'not a straight line, so nothing is changed'}`
+        : 'not enough of the conversion yet to say'}`,
       `  drift rate    ${Number.isFinite(p.drift?.rate)
         ? `${(p.drift.rate * 1000).toFixed(1)}ms per second (${(p.drift.rate * 100).toFixed(2)}%)`
           + ` measured over ${Number(p.drift.span || 0).toFixed(1)}s`
