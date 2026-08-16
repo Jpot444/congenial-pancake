@@ -1565,6 +1565,25 @@ them seconds apart, deterministically per resume point. Every measurement
 taken afterwards reads "aligned", because by then the streams are aligned: to
 the wrong material.
 
+**And the sequential read alone was not enough.** A different 2007 rip,
+resumed sequentially, still came back with the sound ahead of the picture —
+and its probe caught the fault in the act this time: within 26 seconds of
+output the audio stream extended 2.2 seconds further than the video. The last
+piece of container metadata still being trusted was the audio track's own
+timestamps, which `aresample`'s gap-filling chases — and in these files the
+audio timeline and the audio content disagree, so chasing the timeline packs
+the content in wrong.
+
+So in demux mode the audio runs on the **content clock**: decode the samples,
+resample to 48kHz, and rebuild every timestamp from the running sample count
+(`asetpts=N/SR/TB`) — the one clock that cannot lie, because it is the
+content itself. No `async`, no `first_pts`, no delay and no pad: each of
+those exists to reconcile audio with container claims this mode refuses to
+hear. A continuous recording (and a 2007 TV capture is one) lands exactly
+where playing the file from the start would put it, at any cut point; the
+video is a copy on an exact 30000/1001 grid and keeps its own stamps, and the
+output-side `-ss` cuts both clocks at the same instant.
+
 So archive files are never asked to jump. **Resume reads the file from the
 top in one sequential pass and discards everything before the mark** — the
 `-ss` moves to the output side (`seekMode: 'demux'`), so both tracks travel

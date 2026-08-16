@@ -1967,7 +1967,33 @@ function parseProbe(out) {
  * own audio and video were mastered apart. Positive delays the audio with
  * silence; negative trims the front off so it plays earlier.
  */
-function audioFilter(delayMs = 0, padSeconds = 0, tempo = 0) {
+function audioFilter(delayMs = 0, padSeconds = 0, tempo = 0, clock = 'container') {
+  /* The content clock, for the archive drive's old rips.
+   *
+   * Every earlier attempt at their lip-sync trusted SOMETHING the file
+   * claimed: the seek index (wrong), the measured drift (an artefact), and
+   * finally — after the seek was made sequential — the audio track's own
+   * timestamps, which aresample's async chases. A sequential resume still
+   * came back with the sound ahead of the picture, and its probe showed the
+   * audio stream extending 2.2s further than the video within 26s of output:
+   * the container's audio timeline and its audio content disagree, and
+   * chasing the timeline packs the content in wrong.
+   *
+   * So for these files nothing the container says about audio is used at
+   * all. Decode the samples, resample to 48k, and REBUILD every timestamp
+   * from the running sample count — asetpts=N/SR/TB, the one clock that
+   * cannot lie, because it is the content itself. Contiguous audio (and a
+   * 2007 TV capture is one continuous recording) then lands exactly where
+   * playing the file from the start would put it, at any cut point. Video is
+   * a copy on an exact 30000/1001 grid and keeps its own stamps; the output
+   * -ss then cuts both clocks at the same instant.
+   *
+   * No async, no first_pts, no delay and no pad in this mode: each of those
+   * exists to reconcile audio with container claims this mode is refusing to
+   * hear. */
+  if (clock === 'content') {
+    return 'aresample=48000,asetpts=N/SR/TB';
+  }
   // first_pts is where the track is told to begin, in samples at the output
   // rate. Zero means "start at the head of what I was given". A negative value
   // says the track really begins that far EARLIER, so pad the difference with
@@ -2131,7 +2157,8 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 
     '-ac', '2',
     '-ar', '48000',
     '-b:a', '160k',
-    '-af', audioFilter(audioDelayMs, audioPadSeconds, audioTempo)
+    '-af', audioFilter(audioDelayMs, audioPadSeconds, audioTempo,
+      seekMode === 'demux' ? 'content' : 'container')
   );
 
   // Fragmented MP4 for everything, not just HEVC.
