@@ -951,6 +951,14 @@ fullscreen, where DOM overlays cannot be seen at all: on the way in the
 chosen track flips to `showing` and the platform draws, on the way out it
 flips back.
 
+**On Apple touch devices, live controls split top and bottom.** The top row
+was carrying eight controls on a phone — crowded to the point of the CC badge
+overlapping the back button, measured by screenshot — so play/pause sits in a
+strip at the bottom of the screen where a thumb already is, with the captions
+button docked at the strip's right edge. The strip passes taps through, hides
+with the rest of the chrome when idle, and the caption text sits above it.
+Desktop live keeps captions in the top bar, which has the room.
+
 **Live on Apple touch devices runs on the app's own chrome alone.** The
 native control strip draws its fullscreen and captions buttons in the
 top-left corner of the picture — directly under the back button, which eats

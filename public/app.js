@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.0';
+const VERSION = '24.1';
 
 const PAGE_SIZE = 60;
 
@@ -6852,8 +6852,9 @@ function enterCinema(item) {
   $('#cinemaMultiview').hidden = item.kind !== 'live';
   // A film has its own fullscreen button in the film bar; this is live's.
   $('#liveFull').hidden = item.kind !== 'live';
-  // Play/pause exists exactly where the native strip does not.
-  $('#livePlay').hidden = !(item.kind === 'live' && isIOS());
+  // The bottom strip — play/pause and captions — exists exactly where the
+  // native control strip does not.
+  $('#liveBar').hidden = !(item.kind === 'live' && isIOS());
   reservePlayerActions();
   $('#cinemaTitle').textContent = item.name || '';
   $('#cinemaSub').textContent = '';
@@ -7366,18 +7367,25 @@ const captions = {
     if (playing) {
       // Moving the node keeps its listeners, its menu and its state — only its
       // parent changes. The menu has to flip which way it opens with it.
-      const top = !film.active;
-      const home = top ? $('.player-bar-actions') : $('#vodBar');
+      //
+      // Three homes now, not two. A film's CC sits in its bottom bar. Live on
+      // Apple touch docks it bottom-right in the live strip — the top row was
+      // carrying eight controls on a phone, crowded to the point of the CC
+      // badge overlapping the back button. Live everywhere else keeps the top
+      // bar, which has the room.
+      const liveTouch = !film.active && Boolean(currentLiveItem) && isIOS();
+      const top = !film.active && !liveTouch;
+      const home = film.active ? $('#vodBar') : liveTouch ? $('#liveBar') : $('.player-bar-actions');
       // Ahead of the heart in the top bar, not against the edge: multi-view and
-      // close are the two ways OUT of the player and they keep the corner.
-      // Slotting captions between them pushed multi-view off it.
-      const before = top ? $('#favBtn') : $('#vodMute');
+      // close are the two ways OUT of the player and they keep the corner. In
+      // the live strip it goes last, which the layout pins to the right edge.
+      const before = film.active ? $('#vodMute') : top ? $('#favBtn') : null;
       if (wrap.parentElement !== home || wrap.nextElementSibling !== before) {
         home.insertBefore(wrap, before);
       }
       wrap.classList.toggle('cc-top', top);
-      $('#ccBtn').classList.toggle('icon-btn', top);
-      $('#ccBtn').classList.toggle('vod-btn', !top);
+      $('#ccBtn').classList.toggle('icon-btn', top || liveTouch);
+      $('#ccBtn').classList.toggle('vod-btn', film.active);
     }
     const on = Boolean(this.chosen) && this.list().some((t) => t.label === this.chosen);
     $('#ccBtn').classList.toggle('is-on', on);

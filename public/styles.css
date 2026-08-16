@@ -1983,6 +1983,7 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 @keyframes fade { from { opacity: 0; } }
 
 .player-shell {
+  position: relative; /* the live strip anchors to the shell's bottom */
   width: 100%;
   max-width: 1180px;
   border: 1px solid var(--line);
@@ -4128,3 +4129,43 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   grid-column: 1 / -1;
   justify-self: start;
 }
+
+/* --------------------------------------------------------- live strip
+
+   Live on Apple touch devices: play/pause at the bottom of the screen where
+   a thumb already is, captions docked at the right edge. The strip itself
+   passes taps through; only its buttons take them. */
+
+.live-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  z-index: 7;
+  pointer-events: none;
+}
+
+.live-bar > * { pointer-events: auto; }
+
+.live-bar .live-play {
+  width: 54px;
+  height: 54px;
+}
+
+.live-bar .live-play svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Idle while playing: the strip gets out of the way with the rest. */
+.cinema.chrome-hidden .live-bar {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The caption text sits above the strip, not behind it. */
+.cc-overlay { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
