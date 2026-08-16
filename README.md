@@ -1511,6 +1511,24 @@ soft compensation off, the next report separates the two. If the drift is gone
 it was the filter. If it is unchanged at 2.18%, the source drifts and
 `aresample` was faithfully reproducing it, and the fix belongs somewhere else.
 
+**The experiment returned its answer.** An archive rip resumed mid-film
+drifted at **-32.4ms per second** with soft compensation off — so the source
+drifts, and the striking part is *why no amount of filling or trimming can
+touch it*: the audio stream agrees with its own timestamps perfectly. It is
+the **video's** timeline it argues with — audio spanning 3.2% less timeline
+than video over the same content — and `aresample` only ever matches audio to
+audio.
+
+So the fix went where the experiment said it belonged: `realign`, which was
+already measuring drift rate off the first segments, now reruns the
+conversion with `atempo` at exactly **one-plus-the-measured-rate** —
+pitch-preserved, applied once, visible on the command line every playback
+report carries. This is the one licensed tempo change, and everything the
+original ban stood for still holds: no *standing* licence, no silent
+stretching, a measured correction or none at all. Rates under 0.5% are noise
+and left alone; rates over 10% mean the measurement is broken, not the audio,
+and are refused twice — in `realign` and again in `audioFilter`.
+
 ### Drift is not the same fault as an offset
 
 The probe reports both, and they need telling apart.

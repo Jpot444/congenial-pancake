@@ -1913,7 +1913,7 @@ function parseProbe(out) {
  * own audio and video were mastered apart. Positive delays the audio with
  * silence; negative trims the front off so it plays earlier.
  */
-function audioFilter(delayMs = 0, padSeconds = 0) {
+function audioFilter(delayMs = 0, padSeconds = 0, tempo = 0) {
   // first_pts is where the track is told to begin, in samples at the output
   // rate. Zero means "start at the head of what I was given". A negative value
   // says the track really begins that far EARLIER, so pad the difference with
@@ -1923,10 +1923,23 @@ function audioFilter(delayMs = 0, padSeconds = 0) {
   // async=1 is a MODE, not a rate: it turns on filling and trimming — silence
   // inserted, samples dropped — and leaves the tempo alone. Anything above 1
   // additionally licenses stretching and squeezing by that many samples per
-  // second, and a remux must never do that. See the README.
+  // second, and a remux must never do that SILENTLY. See the README.
   const chain = [
     `aresample=async=1:min_hard_comp=0.100:first_pts=${pad ? -pad : 0}`,
   ];
+  // The one licensed tempo change, and it is measured, not standing. A source
+  // whose two streams genuinely disagree in rate — an archive rip drifted
+  // -32.4ms per second, audio 9s short of video by the five-minute mark —
+  // cannot be repaired by any amount of filling or trimming, because the
+  // audio stream agrees with its own timestamps; it is the video's timeline
+  // it argues with. realign measures the rate off the first segments and
+  // reruns with exactly this factor, once, pitch-preserved, and the command
+  // line in the playback report says so. Out-of-range factors mean the
+  // measurement is wrong, not the audio, and are refused here.
+  const rate = Number(tempo) || 0;
+  if (rate && Math.abs(rate - 1) > 0.0005 && rate >= 0.9 && rate <= 1.1) {
+    chain.push(`atempo=${rate.toFixed(5)}`);
+  }
   const ms = Math.max(-5000, Math.min(5000, Math.round(Number(delayMs) || 0)));
   if (ms > 0) chain.push(`adelay=${ms}:all=1`);
   else if (ms < 0) chain.push(`atrim=start=${(-ms / 1000).toFixed(3)}`, 'asetpts=PTS-STARTPTS');
@@ -1934,7 +1947,7 @@ function audioFilter(delayMs = 0, padSeconds = 0) {
 }
 
 function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 0,
-  audioPadSeconds = 0, subs = []) {
+  audioPadSeconds = 0, subs = [], audioTempo = 0) {
   const args = [];
   if (/^https?:/i.test(input)) {
     // This provider paces VOD at barely above realtime and drops the socket
@@ -2043,7 +2056,7 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 
     '-ac', '2',
     '-ar', '48000',
     '-b:a', '160k',
-    '-af', audioFilter(audioDelayMs, audioPadSeconds)
+    '-af', audioFilter(audioDelayMs, audioPadSeconds, audioTempo)
   );
 
   // Fragmented MP4 for everything, not just HEVC.
@@ -2175,7 +2188,7 @@ const LANGUAGE_NAMES = {
  */
 async function startRemux(input, opts) {
   const { fromProvider, videoCodec, startSeconds = 0, audioDelayMs = 0,
-    audioPadSeconds = 0, aligned = false, subs = [], noSubs = false,
+    audioPadSeconds = 0, audioTempo = 0, aligned = false, subs = [], noSubs = false,
     sourceDuration = 0 } = opts;
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed on this machine');
 
@@ -2213,7 +2226,8 @@ async function startRemux(input, opts) {
   // probe. `-nostats` keeps the per-frame progress spew out of it.
   const wanted = noSubs ? [] : subs;
   const args = ['-v', 'info', '-nostats', '-hide_banner', '-y',
-    ...ffmpegArgs(input, dir, codec, startSeconds, audioDelayMs, audioPadSeconds, wanted)];
+    ...ffmpegArgs(input, dir, codec, startSeconds, audioDelayMs, audioPadSeconds, wanted,
+      audioTempo)];
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
   let stderr = '';
@@ -2318,16 +2332,37 @@ async function startRemux(input, opts) {
  */
 async function realign(session, input, opts) {
   let gap = null;
+  let rate = null;
   try {
     const probe = await probeOutput(session);
     gap = probe?.start?.sync ?? null;
+    rate = probe?.drift?.rate ?? null;
   } catch {
     return session;   // measuring is a bonus; never fail the session over it
   }
-  if (!Number.isFinite(gap) || gap <= 0.1) return session;
+
+  // Two distinct faults, measured apart and corrected apart. An OFFSET —
+  // tracks parallel but shifted — is repaired with silence up front. A DRIFT
+  // RATE — tracks pulling apart steadily — cannot be: the audio agrees with
+  // its own timestamps, it is the video's timeline it argues with, so no
+  // amount of filling or trimming converges. The repair is atempo at exactly
+  // the measured factor: an archive rip drifting -32.4ms/s means audio spans
+  // 3.2% less timeline than video, so it is played 3.2% slower,
+  // pitch-preserved, and the ends meet. Rates beyond 10% mean the measurement
+  // is wrong, not the audio, and are left alone.
+  const wantPad = Number.isFinite(gap) && gap > 0.1;
+  const wantTempo = Number.isFinite(rate) && Math.abs(rate) >= 0.005 && Math.abs(rate) <= 0.1;
+  if (!wantPad && !wantTempo) return session;
 
   killSession(session.id);
-  return startRemux(input, { ...opts, audioPadSeconds: gap, aligned: true });
+  return startRemux(input, {
+    ...opts,
+    audioPadSeconds: wantPad ? gap : 0,
+    // gap = audioEnd - videoEnd per second of video: audio short of video is
+    // a negative rate, and 1 + rate is the speed that makes the ends meet.
+    audioTempo: wantTempo ? 1 + rate : 0,
+    aligned: true,
+  });
 }
 
 /** Reap sessions nothing has fetched from in a while. */
