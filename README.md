@@ -1554,14 +1554,29 @@ two tracks' timescales disagreeing, so seeking to "2135s" lands them apart in
 every probe reads `offset 0ms` while the viewer hears otherwise: by the time
 anything is measured, the streams *are* aligned — to the wrong material.
 
-That fault is invisible to measurement by construction, so it is handled by a
-person instead: an **audio-sync control in the film bar**, set by ear,
-remembered per title, and carried on every rebuild. It applies where the
-alignment is really decided — ffmpeg's `adelay` — so changing it rebuilds the
-conversion from where you are, which is why it moves in named steps rather
-than a slider that would rebuild on every pixel. This is the same control an
-earlier version removed from the top bar; the top bar was the wrong place for
-it, not the idea.
+A manual by-ear control shipped for one version at this point and was
+removed at the owner's request — rightly. The decisive observation was his:
+**the file holds sync for its whole runtime when played from the start.** It
+breaks *only on resume*. That is not a drifting file and not a job for a
+nudge button; it is a **seek fault**. Jumping into the middle of a file means
+trusting its internal seek index to land both streams at the same moment, and
+this 2008 mp3-in-mp4 rip — a combination that never had a good index — lands
+them seconds apart, deterministically per resume point. Every measurement
+taken afterwards reads "aligned", because by then the streams are aligned: to
+the wrong material.
+
+So archive files are never asked to jump. **Resume reads the file from the
+top in one sequential pass and discards everything before the mark** — the
+`-ss` moves to the output side (`seekMode: 'demux'`), so both tracks travel
+one pipe and are cut at the same instant, and there is nothing for a broken
+index to disagree about. Resume is exactly as in-sync as pressing play,
+because it *is* pressing play with the first act thrown away. The cost is
+winding through the skipped span at demux speed — video is a copy and is
+discarded without decoding; the audio decode is what a deep resume spends its
+extra seconds on — which for these small local files is affordable, and
+correctness is not negotiable. Provider streams and our own downloads keep
+the input-side jump: their indexes are sane, and over HTTP a jump is the only
+affordable move.
 
 ### Drift is not the same fault as an offset### Drift is not the same fault as an offset
 

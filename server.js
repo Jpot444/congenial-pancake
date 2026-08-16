@@ -1993,7 +1993,7 @@ function audioFilter(delayMs = 0, padSeconds = 0, tempo = 0) {
 }
 
 function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 0,
-  audioPadSeconds = 0, subs = [], audioTempo = 0) {
+  audioPadSeconds = 0, subs = [], audioTempo = 0, seekMode = 'input') {
   const args = [];
   if (/^https?:/i.test(input)) {
     // This provider paces VOD at barely above realtime and drops the socket
@@ -2037,7 +2037,30 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 
   // spot you asked for, which puts the scrubber out by about a second. That is
   // the better error of the two: an early start is barely noticeable, and
   // audio against the wrong picture is unwatchable.
-  if (startSeconds > 0) args.push('-ss', String(startSeconds), '-noaccurate_seek');
+  // Two ways to reach the middle of a file, and which one is safe depends on
+  // whose file it is.
+  //
+  // 'input' — the -ss before -i — asks the DEMUXER to jump there, which
+  // means trusting the file's own seek index to land both streams at the
+  // same moment. Our own conversions and the provider's masters have sane
+  // indexes, and over HTTP jumping is the only affordable move.
+  //
+  // 'demux' reads the file from the top in one sequential pass and discards
+  // everything before the mark (the -ss after -i). Both tracks travel the
+  // same pipe and are cut at the same instant, so there is nothing for a
+  // broken index to disagree about. This is for the archive drive: a 2008
+  // rip resumed mid-file came back seconds out of lip-sync every time, at
+  // an offset that was constant for a given resume point — the shape of a
+  // bad audio seek table (mp3-in-mp4, a combination that never had a good
+  // one), not of a drifting file, since playing the same file from the
+  // start held sync for its whole runtime. Sequential reading never asks
+  // the table anything. It costs reading the skipped span at demux speed,
+  // which for these small local files is seconds, and it buys resume being
+  // exactly as in-sync as pressing play — because it IS pressing play, with
+  // the first act thrown away.
+  if (startSeconds > 0 && seekMode !== 'demux') {
+    args.push('-ss', String(startSeconds), '-noaccurate_seek');
+  }
 
   args.push(
     '-i', input,
@@ -2046,6 +2069,12 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 
     '-map', '0:v:0',
     '-map', '0:a:0?'
   );
+  // The sequential cut. Video is a copy, so its discarded span is demuxed
+  // and dropped without decoding; audio decodes as it winds, which is what
+  // the wait on a deep resume is spent on.
+  if (startSeconds > 0 && seekMode === 'demux') {
+    args.push('-ss', String(startSeconds));
+  }
 
   /* Copying the video is always preferable — it costs nothing and preserves
    * the source exactly. But a third of the archive drive is MPEG-4 ASP
@@ -2234,8 +2263,8 @@ const LANGUAGE_NAMES = {
  */
 async function startRemux(input, opts) {
   const { fromProvider, videoCodec, startSeconds = 0, audioDelayMs = 0,
-    audioPadSeconds = 0, audioTempo = 0, aligned = false, subs = [], noSubs = false,
-    sourceDuration = 0 } = opts;
+    audioPadSeconds = 0, audioTempo = 0, seekMode = 'input', aligned = false,
+    subs = [], noSubs = false, sourceDuration = 0 } = opts;
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed on this machine');
 
   // One viewer, one session: whatever was running is now abandoned, and an
@@ -2273,7 +2302,7 @@ async function startRemux(input, opts) {
   const wanted = noSubs ? [] : subs;
   const args = ['-v', 'info', '-nostats', '-hide_banner', '-y',
     ...ffmpegArgs(input, dir, codec, startSeconds, audioDelayMs, audioPadSeconds, wanted,
-      audioTempo)];
+      audioTempo, seekMode)];
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
   let stderr = '';
@@ -4264,12 +4293,10 @@ async function handleApi(req, res, pathname, query) {
         fromProvider: false,
         videoCodec: item.vcodec || '',
         startSeconds,
-        // The viewer's own lip-sync nudge for this title, in ms. Positive
-        // delays the audio, negative pulls it earlier. Seeking into a file
-        // whose tracks carry disagreeing timescales lands them apart in
-        // content while both still start at timestamp 0, which no probe
-        // taken afterwards can see — so the ear decides and this carries it.
-        audioDelayMs: Number(query.get('adelay') || 0),
+        // Archive files are resumed by reading from the top and discarding,
+        // never by trusting a decades-old file's seek index — see the
+        // seekMode note in ffmpegArgs for the lip-sync fault this closes.
+        seekMode: 'demux',
         sourceDuration: item.duration || 0,
       });
       return json(res, 200, {
