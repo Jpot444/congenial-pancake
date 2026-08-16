@@ -1831,11 +1831,77 @@ function killSession(id) {
     /* already gone */
   }
   try {
-    fs.rmSync(session.dir, { recursive: true, force: true });
+    // A FINISHED archive conversion is a cache, not debris. Converting the
+    // whole episode from the top is what keeps these old rips in sync, and
+    // the first deep resume pays for it in minutes of waiting — so a
+    // completed conversion is kept on disk, and the next resume of that
+    // episode joins it instantly instead of paying again. Anything
+    // unfinished (or not an archive title) is swept as before.
+    const finished = id.startsWith('arc-')
+      && fs.readFileSync(path.join(session.dir, 'index.m3u8'), 'utf8')
+        .includes('#EXT-X-ENDLIST');
+    if (!finished) fs.rmSync(session.dir, { recursive: true, force: true });
   } catch {
-    /* best effort */
+    try {
+      fs.rmSync(session.dir, { recursive: true, force: true });
+    } catch {
+      /* best effort */
+    }
   }
   remuxSessions.delete(id);
+}
+
+/**
+ * Keep the finished-conversion cache within its allowance.
+ *
+ * Whole-episode conversions are worth keeping (that is what makes a second
+ * resume instant) but not worth unbounded disk: oldest-touched episodes go
+ * first once the cache passes its cap. Directories a live session still owns
+ * are never touched, and an unfinished directory with no session behind it is
+ * a crash leftover — unusable, because its frontier will never advance — so
+ * it is removed on sight.
+ */
+const ARCHIVE_CACHE_BYTES =
+  Math.max(0, Number(process.env.ARCHIVE_CACHE_GB || 10)) * 1024 ** 3;
+
+function pruneArchiveCache() {
+  let names = [];
+  try {
+    names = fs.readdirSync(HLS_DIR);
+  } catch {
+    return;
+  }
+  const kept = [];
+  for (const name of names) {
+    if (!name.startsWith('arc-') || remuxSessions.has(name)) continue;
+    const dir = path.join(HLS_DIR, name);
+    try {
+      const playlist = fs.readFileSync(path.join(dir, 'index.m3u8'), 'utf8');
+      if (!playlist.includes('#EXT-X-ENDLIST')) throw new Error('unfinished');
+      let bytes = 0;
+      for (const f of fs.readdirSync(dir)) {
+        bytes += fs.statSync(path.join(dir, f)).size;
+      }
+      kept.push({ dir, mtime: fs.statSync(dir).mtimeMs, bytes });
+    } catch {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+  }
+  kept.sort((a, b) => a.mtime - b.mtime);
+  let total = kept.reduce((sum, e) => sum + e.bytes, 0);
+  while (kept.length && total > ARCHIVE_CACHE_BYTES) {
+    const oldest = kept.shift();
+    try {
+      fs.rmSync(oldest.dir, { recursive: true, force: true });
+    } catch {
+      /* best effort */
+    }
+    total -= oldest.bytes;
+  }
 }
 
 /**
@@ -2492,6 +2558,13 @@ async function realign(session, input, opts) {
 /** Reap sessions nothing has fetched from in a while. */
 setInterval(() => {
   for (const [id, s] of remuxSessions) {
+    // An archive conversion runs to the END even with nobody watching: the
+    // finished output is the cache that makes the next resume instant, and
+    // abandoning it half-done would throw that work away. It reads a local
+    // file and holds no provider connection, so letting it finish costs
+    // only CPU — and the moment any other title needs the encoder, the
+    // sweep in startRemux takes it anyway.
+    if (id.startsWith('arc-') && !s.exited) continue;
     // Live ingests hold a provider connection open, so they go sooner.
     const idle = s.idleMs || 5 * 60 * 1000;
     if (Date.now() - s.lastAccess > idle) killSession(id);
@@ -4353,6 +4426,52 @@ async function handleApi(req, res, pathname, query) {
     }
     if (running) killSession(sessionKey);
 
+    // Already converted, in this sitting or any earlier one? killSession
+    // keeps a FINISHED conversion's directory on disk precisely for this
+    // moment: the episode is resurrected as a session and the resume is
+    // instant — no ffmpeg, no wait, across server restarts too.
+    const cachedDir = path.join(HLS_DIR, sessionKey);
+    try {
+      const playlist = fs.readFileSync(path.join(cachedDir, 'index.m3u8'), 'utf8');
+      if (playlist.includes('#EXT-X-ENDLIST')) {
+        let meta = {};
+        try {
+          meta = JSON.parse(fs.readFileSync(path.join(cachedDir, 'meta.json'), 'utf8'));
+        } catch {
+          /* the playlist is the cache; the meta is a bonus */
+        }
+        const now = new Date();
+        try {
+          fs.utimesSync(cachedDir, now, now);   // freshly watched = last pruned
+        } catch {
+          /* best effort */
+        }
+        const session = {
+          id: sessionKey,
+          dir: cachedDir,
+          proc: { kill() {} },
+          exited: true,
+          exitCode: 0,
+          lastAccess: Date.now(),
+          fromProvider: false,
+          offset: 0,
+          sourceDuration: meta.sourceDuration || item.duration || 0,
+          prebuffer: readPrefs().prebufferSeconds || DEFAULT_PREBUFFER,
+          stderr: () => '',
+          stderrHead: () => '',
+          args: 'served from the finished-conversion cache',
+          subs: meta.subs || [],
+        };
+        remuxSessions.set(sessionKey, session);
+        return json(res, 200, asResponse(session));
+      }
+      // An unfinished directory with no session behind it is a crash
+      // leftover whose frontier will never move; clear it and convert anew.
+      fs.rmSync(cachedDir, { recursive: true, force: true });
+    } catch {
+      /* nothing cached — convert */
+    }
+
     try {
       const session = await startRemux(abs, {
         fromProvider: false,
@@ -4367,6 +4486,19 @@ async function handleApi(req, res, pathname, query) {
         sourceDuration: item.duration || 0,
         id: sessionKey,
       });
+      // What the cache cannot recover from the files alone, written beside
+      // them: the true runtime and the subtitle listing.
+      try {
+        fs.writeFileSync(path.join(session.dir, 'meta.json'), JSON.stringify({
+          sourceDuration: item.duration || session.sourceDuration || 0,
+          subs: session.subs || [],
+        }));
+      } catch {
+        /* best effort */
+      }
+      // With the new conversion underway, make room by letting the oldest
+      // finished episodes go if the cache has outgrown its allowance.
+      pruneArchiveCache();
       return json(res, 200, asResponse(session));
     } catch (err) {
       return json(res, 502, { error: err.message });

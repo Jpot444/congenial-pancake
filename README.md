@@ -1635,6 +1635,40 @@ design himself: *load the entire episode and play them together.*
 same file twice is one ffmpeg, a `start=` in the request changes nothing,
 and no invocation ever carries `-ss`.
 
+### Paying the whole-episode price once (v24.9)
+
+The design above bought correctness with waiting, and the first report back
+was exactly that: sync fixed, resumes slow. The waiting was worse than it
+had to be, because the work kept being thrown away — walk away from an
+episode and the idle reaper killed the conversion five minutes later *and
+deleted the output*, so the next "resume" re-converted material the Pi had
+already converted. Three changes make the price a one-time payment per
+episode:
+
+* **Conversions run to completion.** The idle reaper now leaves an archive
+  session alone while its ffmpeg is still working — it reads a local file
+  and holds no provider connection, so an absent viewer costs only CPU.
+  Start an episode, watch two minutes, leave: the Pi quietly finishes the
+  whole thing. (Starting any *other* remux still takes the encoder — the
+  one-viewer sweep in `startRemux` is unchanged — a live channel does not,
+  since live DVR ingest never touches `startRemux`.)
+* **Finished episodes are kept.** `killSession` spares the directory of any
+  `arc-` session whose playlist carries `#EXT-X-ENDLIST` — through idle
+  reaping, the one-viewer sweep, and server shutdown alike. A later
+  `/api/archive/play` for that file finds the directory, resurrects it as a
+  ready-complete session (a `meta.json` beside the segments carries the
+  runtime and subtitle listing), and the resume is instant — days later,
+  across reboots.
+* **Bounded, oldest-first.** The cache lives under `hls/arc-*` and is
+  pruned when a new conversion starts: unfinished leftovers from crashes go
+  on sight, and finished episodes go oldest-watched-first once the total
+  passes `ARCHIVE_CACHE_GB` (default 10, env-overridable in
+  `ecosystem.config.js`). A directory a live session owns is never touched.
+
+So the slow resume happens once per episode at most — and not at all if any
+part of the episode was played first, since the conversion finishes on its
+own from the moment play starts.
+
 ### Drift is not the same fault as an offset### Drift is not the same fault as an offset
 
 The probe reports both, and they need telling apart.
