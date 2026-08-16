@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '23.7';
+const VERSION = '23.8';
 
 const PAGE_SIZE = 60;
 
@@ -6801,6 +6801,8 @@ function enterCinema(item) {
   $('#cinemaMultiview').hidden = item.kind !== 'live';
   // A film has its own fullscreen button in the film bar; this is live's.
   $('#liveFull').hidden = item.kind !== 'live';
+  // Play/pause exists exactly where the native strip does not.
+  $('#livePlay').hidden = !(item.kind === 'live' && isIOS());
   reservePlayerActions();
   $('#cinemaTitle').textContent = item.name || '';
   $('#cinemaSub').textContent = '';
@@ -6895,7 +6897,12 @@ function hideFilmBar() {
   film.active = false;
   film.item = null;
   $('#vodBar').hidden = true;
-  $('#video').controls = true;
+  // On Apple touch devices a live channel runs on OUR chrome alone. The
+  // native strip draws its fullscreen and captions buttons in the top-left
+  // corner of the picture — directly under our back button, which eats the
+  // tap — and everything it offers is already in the top bar: play/pause,
+  // captions, PiP, fullscreen, the LIVE pill. Everywhere else it stays.
+  $('#video').controls = !(currentLiveItem && isIOS());
   // The button moves up to the live player's top bar rather than going away
   // with the film bar — a channel can carry captions too.
   captions.close();
@@ -7105,8 +7112,65 @@ const captions = {
     // Anything the engine put there is the engine's to remove, but it must not
     // be left showing over the next title.
     for (const track of $('#video').textTracks) track.mode = 'disabled';
+    this.drawCues(null);
     this.close();
     this.paint();
+  },
+
+  /**
+   * Draw the chosen track's active cues into our own overlay.
+   *
+   * The browser can render cues itself, and for a long time it was left to —
+   * which worked on desktop Chrome and produced NOTHING on an iPad, for live
+   * and films alike. WebKit's cue painting differs by device and disappears
+   * entirely behind some of its player chrome. So the chosen track runs in
+   * 'hidden' mode — cues load, cuechange fires, the browser draws nothing —
+   * and the words are painted here, the same way on every platform.
+   *
+   * The one place the browser is better placed than us is iOS native
+   * fullscreen, where the DOM overlay cannot be seen at all; nativeMode()
+   * flips the chosen track to 'showing' for the duration and back after.
+   */
+  drawCues(track) {
+    const box = $('#ccOverlay');
+    box.innerHTML = '';
+    const cues = track?.activeCues;
+    if (!cues || !cues.length || track.mode === 'disabled') {
+      box.hidden = true;
+      return;
+    }
+    for (const cue of [...cues]) {
+      const line = el('span', 'cc-line');
+      // getCueAsHTML understands VTT markup (<i>, <b>, voice tags) and yields
+      // nodes, never raw markup from the stream.
+      if (typeof cue.getCueAsHTML === 'function') line.append(cue.getCueAsHTML());
+      else line.textContent = cue.text || '';
+      box.append(line);
+    }
+    box.hidden = box.childElementCount === 0;
+  },
+
+  /** Follow one track's cues; unhooks whatever was followed before. */
+  follow(track) {
+    if (this.followed && this.followed !== track) this.followed.oncuechange = null;
+    this.followed = track || null;
+    if (track) track.oncuechange = () => this.drawCues(track);
+    this.drawCues(track);
+  },
+
+  /**
+   * iOS native fullscreen cannot show our overlay, so hand the cues to the
+   * platform for the duration: 'showing' on the way in, 'hidden' on the way
+   * out, the overlay parked while the platform draws.
+   */
+  nativeMode(on) {
+    const track = this.followed;
+    if (track) {
+      track.mode = on ? 'showing' : 'hidden';
+      if (on) this.lift(track);
+    }
+    if (on) $('#ccOverlay').hidden = true;
+    else this.drawCues(track);
   },
 
   /**
@@ -7203,26 +7267,30 @@ const captions = {
   restore() {
     if (!this.chosen) return;
     // A newly added track starts disabled, and setting a mode is what makes a
-    // browser load its cues at all.
+    // browser load its cues at all. 'hidden', not 'showing': the cues load
+    // and fire, and drawCues is what puts them on screen.
     for (const track of this.list()) {
-      track.mode = track.label === this.chosen ? 'showing' : 'disabled';
-      if (track.mode === 'showing') this.lift(track);
+      track.mode = track.label === this.chosen ? 'hidden' : 'disabled';
+      if (track.mode === 'hidden') this.follow(track);
     }
   },
 
   /** Choose a track by label, or '' to turn captions off. */
   choose(label) {
     this.chosen = label || '';
+    let followed = null;
     for (const track of this.list()) {
-      track.mode = track.label === this.chosen ? 'showing' : 'disabled';
-      if (track.mode === 'showing') this.lift(track);
+      track.mode = track.label === this.chosen ? 'hidden' : 'disabled';
+      if (track.mode === 'hidden') followed = track;
     }
-    // hls.js keeps its own idea of which subtitle rendition is on, and for an
-    // in-band track that is the switch that actually matters.
+    this.follow(followed);
+    // hls.js keeps its own idea of which subtitle rendition is loading, and
+    // for an in-band track that is the switch that matters. Display stays off
+    // always — drawing is ours.
     if (engine && engineKind === 'hls.js' && Array.isArray(engine.subtitleTracks)) {
       const at = engine.subtitleTracks.findIndex((t) => t.name === this.chosen);
       engine.subtitleTrack = at;
-      engine.subtitleDisplay = at >= 0;
+      engine.subtitleDisplay = false;
     }
     prefs.save();
     this.close();
@@ -7519,6 +7587,23 @@ const pip = {
   },
 };
 
+$('#livePlay').addEventListener('click', () => {
+  const video = $('#video');
+  if (video.paused) video.play().catch(() => {});
+  else video.pause();
+});
+// The icon follows the element, not the click — a stall or an ended stream
+// moves it too.
+const paintLivePlay = () => {
+  const paused = $('#video').paused;
+  $('#livePlay').innerHTML = paused
+    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg>'
+    : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>';
+  $('#livePlay').title = paused ? 'Play' : 'Pause';
+  $('#livePlay').setAttribute('aria-label', paused ? 'Play' : 'Pause');
+};
+for (const evt of ['play', 'pause']) $('#video').addEventListener(evt, paintLivePlay);
+
 $('#pipBtn').addEventListener('click', () => pip.toggle());
 for (const evt of ['enterpictureinpicture', 'leavepictureinpicture', 'webkitpresentationmodechanged']) {
   $('#video').addEventListener(evt, () => pip.paint());
@@ -7534,6 +7619,9 @@ for (const evt of ['enterpictureinpicture', 'leavepictureinpicture', 'webkitpres
 $('#video').addEventListener('webkitbeginfullscreen', () => {
   $('#video').controls = true;
   if (film.active) $('#vodBar').hidden = true;
+  // Our caption overlay is DOM and the native player cannot show it; hand the
+  // cues to the platform for the duration.
+  captions.nativeMode(true);
 });
 
 $('#video').addEventListener('webkitendfullscreen', () => {
@@ -7541,7 +7629,12 @@ $('#video').addEventListener('webkitendfullscreen', () => {
     $('#video').controls = false;
     $('#vodBar').hidden = false;
     paintFilmBar();
+  } else {
+    // Back inline on live: on Apple touch devices the native strip stays off
+    // (its buttons render under our back button), everywhere else it returns.
+    $('#video').controls = !(currentLiveItem && isIOS());
   }
+  captions.nativeMode(false);
   showChrome();
 });
 

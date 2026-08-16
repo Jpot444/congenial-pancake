@@ -4076,3 +4076,35 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   stroke: currentColor;
   stroke-width: 2;
 }
+
+/* ------------------------------------------------------ caption overlay
+
+   Captions are drawn here by the app, not by the browser's own cue renderer
+   — WebKit's differs per device and on an iPad produced nothing at all.
+   Bottom-centre, above the bars, and never a tap target. */
+
+.cc-overlay {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.cc-line {
+  display: inline-block;
+  max-width: 100%;
+  padding: 3px 10px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, .72);
+  color: #fff;
+  font-size: clamp(15px, 2.6vw, 24px);
+  line-height: 1.35;
+  text-align: center;
+  text-wrap: balance;
+}

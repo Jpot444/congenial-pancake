@@ -603,6 +603,16 @@
         <button class="icon-btn" id="favBtn" title="Favorite" aria-label="Favorite">
           <svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.9-9.3-9.2C1.3 8.4 3.2 5 6.6 5c2 0 3.5 1.2 4.4 2.4l1 1.3 1-1.3C13.9 6.2 15.4 5 17.4 5c3.4 0 5.3 3.4 3.9 6.8C19.5 16.1 12 21 12 21z"/></svg>
         </button>
+        <!-- Play/pause for live on Apple touch devices, where the native
+             control strip is switched off — its buttons render in the top-left
+             corner, under our back button, and everything else it offered is
+             already in this bar. -->
+        <button class="icon-btn" id="livePlay" hidden
+                title="Pause" aria-label="Pause">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 5v14M15 5v14"/>
+          </svg>
+        </button>
         <!-- Pop the picture out into a floating window that survives leaving
              the tab (or the app, on a phone). Hidden when the browser cannot
              do it at all; everything else about it is decided in app.js,
@@ -644,6 +654,11 @@
 
     <div class="video-frame">
       <video id="video" controls playsinline autoplay></video>
+      <!-- Captions are drawn here, by us, from the track's cues — not by the
+           browser's own cue renderer, which differs per WebKit device and on
+           an iPad produced nothing at all. Inside the frame, so it rides
+           along into element-fullscreen. -->
+      <div class="cc-overlay" id="ccOverlay" aria-live="off" hidden></div>
       <div class="video-status" id="videoStatus" hidden></div>
     </div>
 

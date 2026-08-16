@@ -924,6 +924,31 @@ under the pill in the first place.
 
 ### Subtitles
 
+**The app draws its own captions.** For a long time the chosen track ran in
+`showing` mode and the browser's built-in cue renderer put the words on
+screen — which worked on desktop Chrome and produced **nothing at all on an
+iPad**, live and films alike. WebKit's cue painting differs by device and
+vanishes behind some of its player chrome, so it is no longer trusted with
+the job: the chosen track runs `hidden` (cues load, `cuechange` fires, the
+browser draws nothing) and the app paints the active cues into its own
+overlay inside the video frame — the same way on every platform, riding along
+into element-fullscreen. Cue markup goes through `getCueAsHTML()`, so a
+stream's `<i>` and voice tags work and raw markup from a stream never can.
+The one place the platform is better placed than the app is iOS native
+fullscreen, where DOM overlays cannot be seen at all: on the way in the
+chosen track flips to `showing` and the platform draws, on the way out it
+flips back.
+
+**Live on Apple touch devices runs on the app's own chrome alone.** The
+native control strip draws its fullscreen and captions buttons in the
+top-left corner of the picture — directly under the back button, which eats
+the tap — and everything it offered is in the top bar now: play/pause (a
+button that exists exactly where the strip does not), captions, PiP,
+fullscreen, and the LIVE pill. Desktop keeps the native strip, where it works
+and overlaps nothing.
+
+#### The old subtitle notes
+
 A **CC button in the bottom bar**, next to mute, listing every track the player
 has plus Off. The choice is remembered on the profile, so a film opens with the
 same subtitles as the last one.
