@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.10';
+const VERSION = '24.11';
 
 const PAGE_SIZE = 60;
 
@@ -7236,10 +7236,13 @@ const captions = {
     prefs.data.captionTrack = value || '';
   },
   timer: null,
+  /** Whether any fetch has yet returned actual cues — decides the cadence. */
+  gotWords: false,
 
   /** A film or channel is starting: forget the last one's tracks entirely. */
   reset() {
     this.sidecars = [];
+    this.gotWords = false;
     clearInterval(this.timer);
     this.timer = null;
     for (const el of [...$('#video').querySelectorAll('track')]) el.remove();
@@ -7316,13 +7319,29 @@ const captions = {
    */
   attach(remux) {
     this.sidecars = (remux?.subs || []).filter((s) => s && s.url);
+    // A new title means new files: whatever the LAST film's tracks held says
+    // nothing about whether this one's have words yet.
+    this.gotWords = false;
     if (!this.sidecars.length) return this.paint();
     this.build();
+    this.armRefresh();
+  },
 
-    // Re-read while it is still being written. Stops as soon as the conversion
-    // finishes, with one last pass to pick up the tail.
+  /**
+   * Re-read the files while the conversion is still writing them. Stops as
+   * soon as it finishes, with one last pass to pick up the tail.
+   *
+   * The cadence answers a real complaint. At the start of a conversion the
+   * subtitle file exists but is still EMPTY — ffmpeg has not reached the
+   * first line of dialogue — so captions turned on in that window fetch a
+   * file with nothing in it, and on a flat 20-second interval the words
+   * arrived up to half a minute after the menu said they were on. Until a
+   * fetch comes back with actual cues in it the re-read runs quick; from
+   * then on it relaxes to the slow beat.
+   */
+  armRefresh() {
     clearInterval(this.timer);
-    this.timer = setInterval(async () => {
+    this.timer = setTimeout(async () => {
       if (!lastRemux.session) return this.stopRefreshing();
       let done = false;
       try {
@@ -7332,8 +7351,8 @@ const captions = {
         return this.stopRefreshing();   // session gone; what we have is all there is
       }
       this.build();
-      if (done) this.stopRefreshing();
-    }, CC_REFRESH);
+      if (!done) this.armRefresh();
+    }, this.gotWords ? CC_REFRESH : CC_REFRESH_EAGER);
   },
 
   stopRefreshing() {
@@ -7360,8 +7379,12 @@ const captions = {
       if (sub.lang) el.srclang = sub.lang;
       el.src = `${sub.url}?t=${stamp}`;
       // Cues only exist once the file has been fetched, so this is the moment
-      // they can be moved off the control bar.
-      el.addEventListener('load', () => this.lift(el.track));
+      // they can be moved off the control bar — and the first fetch that
+      // brings real cues back is the signal to relax the refresh cadence.
+      el.addEventListener('load', () => {
+        this.lift(el.track);
+        if (el.track?.cues?.length) this.gotWords = true;
+      });
       video.append(el);
     }
     this.restore();
@@ -7528,6 +7551,8 @@ const captions = {
 
 /** How often a still-converting subtitle file is re-read. */
 const CC_REFRESH = 20000;
+/** Until the first words arrive, the growing file is re-read this often. */
+const CC_REFRESH_EAGER = 2500;
 
 $('#ccBtn').addEventListener('click', (event) => {
   event.stopPropagation();

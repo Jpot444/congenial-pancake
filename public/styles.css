@@ -4103,11 +4103,15 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .cc-line {
   display: inline-block;
   max-width: 100%;
-  padding: 3px 10px;
-  border-radius: 5px;
+  padding: 4px 12px;
+  border-radius: 6px;
   background: rgba(0, 0, 0, .72);
   color: #fff;
-  font-size: clamp(15px, 2.6vw, 24px);
+  /* Sized for the far side of the room, not the near side of a laptop: a
+     20px floor keeps phones readable, and the ceiling is what a caption
+     occupies on broadcast TV — the old 24px cap read as fine print from a
+     couch. */
+  font-size: clamp(20px, 3.4vw, 44px);
   line-height: 1.35;
   text-align: center;
   text-wrap: balance;
