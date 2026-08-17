@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.12';
+const VERSION = '24.13';
 
 const PAGE_SIZE = 60;
 
@@ -7341,6 +7341,9 @@ const captions = {
    */
   armRefresh() {
     clearInterval(this.timer);
+    // Quick only while somebody is WAITING on words: a track chosen and no
+    // cues yet. With captions off there is nothing to hurry for.
+    const eager = this.chosen && !this.gotWords;
     this.timer = setTimeout(async () => {
       if (!lastRemux.session) return this.stopRefreshing();
       let done = false;
@@ -7350,9 +7353,16 @@ const captions = {
       } catch {
         return this.stopRefreshing();   // session gone; what we have is all there is
       }
-      this.build();
-      if (!done) this.armRefresh();
-    }, this.gotWords ? CC_REFRESH : CC_REFRESH_EAGER);
+      // Never yank the file out from under its own fetch. Replacing a
+      // <track> aborts its load, and on a slow link the quick cadence
+      // aborted every attempt — the viewer reported captions arriving only
+      // when the conversion FINISHED, minutes in, because that is when the
+      // churn stopped. If the last swap is still loading, let it land.
+      const loading = [...$('#video').querySelectorAll('track')]
+        .some((t) => t.readyState === 1);
+      if (!loading) this.build();
+      if (!done || loading) this.armRefresh();
+    }, eager ? CC_REFRESH_EAGER : CC_REFRESH);
   },
 
   stopRefreshing() {
@@ -7450,6 +7460,9 @@ const captions = {
       engine.subtitleDisplay = false;
     }
     prefs.save();
+    // Turning captions on mid-conversion re-paces the refresher: the beat in
+    // flight was armed at the relaxed cadence when nothing was chosen.
+    if (this.timer) this.armRefresh();
     this.close();
     this.paint();
   },

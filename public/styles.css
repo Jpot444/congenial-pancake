@@ -318,16 +318,20 @@ svg {
 .charge-scene {
   position: relative;
   width: 100%;
-  height: min(30vh, 200px);
+  /* Taller than the mark needs, on purpose: the extra headroom is sky for
+     the popcorn to arc through. At 200px his hump nearly touched the
+     ceiling and every pop clipped instead of clearing him. */
+  height: min(34vh, 230px);
   display: grid;
   place-items: center;
   overflow: hidden;
 }
 
 /* The mark holds still: it's a logo, and scaling it even slightly to fake a
-   gallop visibly distorted it. */
+   gallop visibly distorted it. 68% of the taller stage is the same size he
+   has always been — the stage grew, not him. */
 .charge-bison {
-  height: 78%;
+  height: 68%;
   width: auto;
   max-width: 88%;
   object-fit: contain;
@@ -369,18 +373,22 @@ svg {
 .corn.md { width: 21px; height: 20px; }
 .corn.sm { width: 15px; height: 14px; }
 
-/* Kernels jump out of the pile and drop back into it. --h caps the height so
-   nothing clears the bison's back. */
-.corn.hop {
-  animation: hop 3.4s cubic-bezier(.3, .7, .4, 1) var(--d, 0s) infinite;
+/* The machine: kernels launch from behind the bull's back, clear his
+   silhouette, drift a little sideways, and fall back into the mound. The
+   launch is quick and the fall is most of the flight, which is what a real
+   pop looks like. They rest occluded behind his body, so the reset between
+   cycles happens where nobody can see it. */
+.corn.pop {
+  animation: pop var(--t, 3.2s) linear var(--d, 0s) infinite;
 }
 
-@keyframes hop {
-  0%, 62%  { transform: translateY(0) rotate(0deg); }
-  70%      { transform: translateY(calc(var(--h, 32px) * -1)) rotate(28deg); }
-  78%      { transform: translateY(calc(var(--h, 32px) * -.45)) rotate(-16deg); }
-  85%      { transform: translateY(calc(var(--h, 32px) * -.16)) rotate(9deg); }
-  92%, 100% { transform: translateY(0) rotate(0deg); }
+@keyframes pop {
+  0%, 6%    { transform: translate(0, 0) rotate(0deg); }
+  14%       { transform: translate(calc(var(--dx, 0px) * .4), calc(var(--h, 130px) * -.88)) rotate(52deg); }
+  21%       { transform: translate(calc(var(--dx, 0px) * .7), calc(var(--h, 130px) * -1)) rotate(96deg); }
+  32%       { transform: translate(var(--dx, 0px), calc(var(--h, 130px) * -.62)) rotate(148deg); }
+  44%       { transform: translate(calc(var(--dx, 0px) * 1.15), calc(var(--h, 130px) * -.14)) rotate(184deg); }
+  50%, 100% { transform: translate(calc(var(--dx, 0px) * 1.2), 0) rotate(196deg); }
 }
 
 .loader-title {
@@ -431,7 +439,7 @@ svg {
 #loaderPct { font-weight: 700; color: #fff; }
 
 @media (prefers-reduced-motion: reduce) {
-  .corn.hop { animation: none; }
+  .corn.pop { animation: none; }
 }
 
 /* ---- display face: chrome, headings and numerals ---- */
