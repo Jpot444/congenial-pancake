@@ -34,6 +34,10 @@ const PROFILES_PATH = path.join(ROOT, 'profiles.json');
    including how to reach them. */
 const REPORTS_PATH = path.join(ROOT, 'reports.json');
 const HLS_DIR = path.join(ROOT, 'hls');
+/* A conversion fetched from this recently has somebody watching it, so it is
+   never cleared away to make room for a new one. Comfortably longer than a
+   segment, short enough that an abandoned encode stops wasting the Pi. */
+const SESSION_ACTIVE_MS = 25_000;
 /** Containers a browser will open directly. Anything else needs remuxing. */
 const NATIVE_CONTAINERS = new Set(['mp4', 'm4v', 'mov']);
 // Where downloads land. Overridable so a future writable partition on the
@@ -2397,15 +2401,30 @@ const LANGUAGE_NAMES = {
 async function startRemux(input, opts) {
   const { fromProvider, videoCodec, startSeconds = 0, audioDelayMs = 0,
     audioPadSeconds = 0, audioTempo = 0, seekMode = 'input', aligned = false,
-    subs = [], noSubs = false, sourceDuration = 0, id: wantId = '' } = opts;
+    subs = [], noSubs = false, sourceDuration = 0, id: wantId = '',
+    replaces = '' } = opts;
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed on this machine');
 
-  // One viewer, one session: whatever was running is now abandoned, and an
-  // abandoned local-file remux would otherwise keep ffmpeg grinding through
-  // the whole film. A seek must not stack encoders on the Pi. Live ingests
-  // are spared — a multiview film cell must not silence the live cell beside
-  // it, and an unwatched ingest reaps itself in 45 seconds anyway.
-  for (const [id, sess] of [...remuxSessions]) if (!sess.live) killSession(id);
+  // Clear the way for this conversion — without cutting off anybody else's.
+  //
+  // This used to kill EVERY conversion on the box, on the reasoning that
+  // there is one viewer, so anything else running must be abandoned. In
+  // multiview that reasoning is simply false: the second converted title
+  // killed the first, whose cell then played on out of its buffer for a
+  // couple of minutes and died with a fragment it could no longer load.
+  // Same for a seek, which is why the caller names the session it is
+  // replacing rather than the server guessing.
+  //
+  // So: the named session goes, and so does anything nobody has fetched
+  // from lately — an abandoned local-file remux really would keep ffmpeg
+  // grinding through a whole film. A session someone is actively watching
+  // is left alone, and live ingests reap themselves in 45 seconds.
+  for (const [id, sess] of [...remuxSessions]) {
+    if (sess.live) continue;
+    if (id === replaces) { killSession(id); continue; }
+    if (Date.now() - sess.lastAccess < SESSION_ACTIVE_MS) continue;
+    killSession(id);
+  }
 
   if (fromProvider) {
     // The remux is about to occupy the provider slot; playback wins.
@@ -4249,6 +4268,11 @@ async function handleApi(req, res, pathname, query) {
         audioDelayMs: Number(query.get('adelay') || 0),
         sourceDuration: probed.duration,
         subs: probed.subs,
+        // Which session this one supersedes — a seek replacing its own
+        // conversion, or a cell replacing what it was showing. Named by the
+        // caller because only the caller knows; everything else that happens
+        // to be running belongs to somebody else's screen.
+        replaces: query.get('replaces') || '',
       });
       return json(res, 200, {
         url: `/hls/${session.id}/index.m3u8`,
@@ -4313,6 +4337,18 @@ async function handleApi(req, res, pathname, query) {
     // Conversions only. Live ingests are shared across viewers and reap
     // themselves when nobody fetches; one cell giving up on a film must not
     // cut the channel playing next to it.
+    //
+    // With an id, only that session stops. Without one it is still the old
+    // blanket sweep, because the player closing really does mean "nothing I
+    // started is wanted any more" — but a multiview cell closing means only
+    // itself, and unqualified it was stopping every other cell's conversion
+    // as well. That is half of why a cell would die minutes later.
+    const only = query.get('id');
+    if (only) {
+      const sess = remuxSessions.get(only);
+      if (sess && !sess.live) killSession(only);
+      return json(res, 200, { stopped: true, id: only });
+    }
     for (const [id, sess] of [...remuxSessions]) if (!sess.live) killSession(id);
     return json(res, 200, { stopped: true });
   }

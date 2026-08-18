@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.15';
+const VERSION = '24.16';
 
 const PAGE_SIZE = 60;
 
@@ -376,6 +376,17 @@ const LIVE_PREROLL_CAP = 10;
  * two minutes behind live that is the outer limit of acceptable.
  */
 const LIVE_DVR_SEAT = 45;
+
+/**
+ * How many times a multiview cell will pick itself back up before giving in.
+ *
+ * Four cells share one link and one box, so a cell being starved long enough
+ * to lose its place is ordinary rather than exceptional — and it used to end
+ * that cell for the rest of the sitting. The budget refills as soon as the
+ * cell is genuinely playing again, so this is five failures in a row, not
+ * five all evening.
+ */
+const MV_RECOVER_TRIES = 5;
 
 const LIVE_HLS = {
   lowLatencyMode: false,
@@ -1723,17 +1734,24 @@ const multiview = {
       return { url: `/api/downloads/${local.id}/file`, format: 'file' };
     }
 
+    // `replaces` is this cell's own previous conversion, if it had one. The
+    // server clears that one away and leaves the other cells alone; without
+    // it, opening a second converted title killed the first.
+    const replaces = cell.remux || '';
     const remuxed = local
-      ? await api('/api/remux', { download: local.id })
+      ? await api('/api/remux', { download: local.id, replaces })
       : await api('/api/remux', {
         kind,
         id,
         ext,
         vcodec: override?.vcodec || item.vcodec || '',
+        replaces,
       });
     if (stale()) {
-      // Nothing is going to watch it, so do not leave ffmpeg grinding.
-      fetch('/api/remux/stop').catch(() => {});
+      // Nothing is going to watch it, so do not leave ffmpeg grinding — but
+      // only this one, not whatever the other cells are running.
+      const mine = remuxed.session;
+      if (mine) fetch(`/api/remux/stop?id=${encodeURIComponent(mine)}`).catch(() => {});
       return null;
     }
     cell.remux = remuxed.session || '';
@@ -1825,17 +1843,64 @@ const multiview = {
         : { ...LIVE_HLS, ...(dvr ? { liveSyncDuration: LIVE_DVR_SEAT } : {}) });
       cell.engine.loadSource(url);
       cell.engine.attachMedia(video);
+
+      // A cell that has been playing a while is worth saving.
+      //
+      // Every fatal error used to end the cell for good, on reasoning
+      // borrowed from the MPEG-TS path (a reconnect there would take the
+      // provider connection off another cell). It does not hold here, and
+      // the cost was that ordinary bad luck — a segment that expired while
+      // this cell was starved of bandwidth by the three beside it, a
+      // dropped connection — read as "Stream failed" and stayed that way.
+      //
+      // Recover in place instead: reload from the live edge for a channel,
+      // from where it stands for a conversion, backing off each time. The
+      // budget resets once it is genuinely playing again, so a stream that
+      // hiccups every twenty minutes recovers every time, while one that is
+      // truly gone still stops rather than retrying for ever.
+      cell.tries = 0;
+      cell.engine.on(Hls.Events.FRAG_BUFFERED, () => { cell.tries = 0; });
       cell.engine.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
+        const engine = cell.engine;
+        if (!engine) return;
+
+        const fatalEnd = (why) => {
+          cell.note.hidden = false;
+          cell.note.textContent = `Stream failed — ${why}`;
+          cell.ok = false;
+          this.paint();
+          try { engine.destroy(); } catch { /* already gone */ }
+          if (cell.engine === engine) cell.engine = null;
+        };
+
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          cell.tries += 1;
+          if (cell.tries > MV_RECOVER_TRIES) return fatalEnd(data.details);
+          try { engine.recoverMediaError(); } catch { fatalEnd(data.details); }
+          return;
+        }
+
+        if (data.type !== Hls.ErrorTypes.NETWORK_ERROR) return fatalEnd(data.details);
+
+        cell.tries += 1;
+        if (cell.tries > MV_RECOVER_TRIES) return fatalEnd(data.details);
         cell.note.hidden = false;
-        cell.note.textContent = `Stream failed — ${data.details}`;
+        cell.note.textContent = `Reconnecting… (${cell.tries} of ${MV_RECOVER_TRIES})`;
         cell.ok = false;
         this.paint();
-        // No retry loop here on purpose. On MPEG-TS a quiet reconnect would
-        // take the connection off whichever cell currently has it, and the
-        // order of who held it when is the thing being watched.
-        cell.engine?.destroy();
-        cell.engine = null;
+        setTimeout(() => {
+          // Gone from under us while we waited — closed, or swapped for
+          // another title.
+          if (cell.engine !== engine) return;
+          try {
+            // -1 is the live edge: a channel that fell off the back of the
+            // playlist has to rejoin at the front, not where it was.
+            engine.startLoad(vod ? undefined : -1);
+          } catch {
+            fatalEnd(data.details);
+          }
+        }, Math.min(1000 * 2 ** (cell.tries - 1), 8000));
       });
       return;
     }
@@ -1857,9 +1922,11 @@ const multiview = {
     }
     // A conversion is a process on the box, not just a socket in the browser.
     // Left running it keeps ffmpeg grinding through a film nobody is watching
-    // and keeps the provider connection with it.
+    // and keeps the provider connection with it. Named, always: unqualified,
+    // this stopped every OTHER cell's conversion too, and those cells then
+    // played on out of their buffers and died a couple of minutes later.
     if (cell.remux) {
-      fetch('/api/remux/stop').catch(() => {});
+      fetch(`/api/remux/stop?id=${encodeURIComponent(cell.remux)}`).catch(() => {});
       cell.remux = '';
     }
     cell.video.removeAttribute('src');
@@ -7174,12 +7241,17 @@ async function seekFilm(target, { force = false } = {}) {
       // A downloads-backed title seeks against the file on disk — fast, and
       // no provider connection spent. Everything else restarts the provider
       // remux at the mark.
+      // This seek supersedes the conversion it is seeking within, and says
+      // so: the server no longer guesses by clearing every conversion on the
+      // box, which is what used to cut off a multiview cell.
+      const replaces = lastRemux.session || '';
       const remux = await api(
         '/api/remux',
         film.item?.downloadId
           ? {
             download: film.item.downloadId,
             start: Math.floor(clamped),
+            replaces,
           }
           : {
             kind: film.override?.kind || (film.item.kind === 'movie' ? 'movie' : film.item.kind),
@@ -7187,6 +7259,7 @@ async function seekFilm(target, { force = false } = {}) {
             ext: film.override?.ext ?? film.item.ext ?? '',
             vcodec: film.override?.vcodec || film.item.vcodec || '',
             start: Math.floor(clamped),
+            replaces,
           }
       );
       lastRemux = remux;
@@ -8338,6 +8411,8 @@ async function resolveStream(item, override) {
       ext,
       vcodec: override?.vcodec || item.vcodec || '',
       start: startAt || '',
+      // Whatever this player was showing before is finished with.
+      replaces: lastRemux.session || '',
     });
     lastRemux = remuxed;
     await waitForPrebuffer(remuxed);
