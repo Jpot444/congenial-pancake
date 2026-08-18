@@ -24,13 +24,48 @@ PORT="${PORT:-8420}"
 # Restart even if something is playing. Off by default.
 FORCE="${FORCE:-0}"
 # How long a busy box may defer an update before it is applied regardless.
-HOLD_LIMIT="${HOLD_LIMIT:-1800}"
+#
+# Was half an hour, which is most of a film — and since a restart is far
+# cheaper than it used to be (downloads resume from their byte offset,
+# finished archive conversions are kept and re-served from cache), waiting
+# that long buys very little and made deploys feel like they were never
+# arriving. Ten minutes still covers the gap between episodes.
+HOLD_LIMIT="${HOLD_LIMIT:-600}"
 
 cd "$(dirname "$0")/.."
 REPO_DIR="$PWD"
 LOG="${LOG:-$REPO_DIR/auto-update.log}"
 
 log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG"; }
+
+# What the Pi health panel reads.
+#
+# How long a push takes to land was invisible from inside the app: the only
+# record was this log, over SSH. So every run leaves its verdict here — up
+# to date, holding for someone watching, or blocked — and the panel turns it
+# into a sentence. A stale timestamp is itself the answer when the updater
+# has stopped running at all, which has happened.
+STATE_FILE="$REPO_DIR/.auto-update-state.json"
+
+# write_state <state> [local] [remote] [held-since-epoch]
+write_state() {
+  node -e '
+    const fs = require("fs");
+    const [file, state, local, remote, heldSince] = process.argv.slice(1);
+    let prev = {};
+    try { prev = JSON.parse(fs.readFileSync(file, "utf8")); } catch { /* first run */ }
+    const applied = state === "applied";
+    fs.writeFileSync(file, JSON.stringify({
+      at: Date.now(),
+      state,
+      local,
+      remote,
+      heldSince: (Number(heldSince) || 0) * 1000,
+      appliedAt: applied ? Date.now() : (prev.appliedAt || 0),
+      appliedSha: applied ? remote : (prev.appliedSha || ""),
+    }));
+  ' "$STATE_FILE" "$1" "${2:-}" "${3:-}" "${4:-0}" 2>/dev/null || true
+}
 
 # A slow fetch can still be running when the next tick fires. One at a time.
 exec 9>"$REPO_DIR/.auto-update.lock"
@@ -65,6 +100,7 @@ if ! fetch_err=$(git fetch --quiet origin "$BRANCH" 2>&1); then
       log "BLOCKED: updates have stopped until this is fixed — see scripts/README.md"
       : >"$BLOCKED_FLAG"
     fi
+    write_state blocked "$(git rev-parse --short HEAD 2>/dev/null || true)" "" 0
   fi
   exit 0
 fi
@@ -74,6 +110,7 @@ local_sha=$(git rev-parse HEAD)
 remote_sha=$(git rev-parse "origin/$BRANCH")
 
 if [[ "$local_sha" == "$remote_sha" ]]; then
+  write_state current "${local_sha:0:7}" "${remote_sha:0:7}" 0
   exit 0
 fi
 
@@ -106,10 +143,12 @@ if [[ "$FORCE" != "1" ]] && portal_busy; then
     printf '%s' "$now" >"$HELD_FLAG"
     # Logged once, not every couple of minutes for as long as it lasts.
     log "holding ${remote_sha:0:7} — portal in use"
+    write_state held "${local_sha:0:7}" "${remote_sha:0:7}" "$now"
     exit 0
   fi
 
   if (( now - since < HOLD_LIMIT )); then
+    write_state held "${local_sha:0:7}" "${remote_sha:0:7}" "$since"
     exit 0
   fi
 
@@ -131,6 +170,7 @@ log "updated ${local_sha:0:7} -> ${remote_sha:0:7}  $(git log -1 --pretty=%s)"
 
 pm2 restart "$PM2_APP" >/dev/null
 log "restarted $PM2_APP"
+write_state applied "${remote_sha:0:7}" "${remote_sha:0:7}" 0
 
 # Unattended and append-only, so it needs its own ceiling.
 if [[ $(wc -l <"$LOG") -gt 500 ]]; then

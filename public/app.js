@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.14';
+const VERSION = '24.15';
 
 const PAGE_SIZE = 60;
 
@@ -2179,6 +2179,49 @@ const health = {
       value: duration(d.uptime.host),
       sub: `portal running ${duration(d.uptime.server)}`,
     }));
+
+    /* ---- where a pushed update has got to ----
+     *
+     * The box updates itself, which means the gap between a change being
+     * published and it arriving here was unaccounted for: it could be
+     * seconds, or half an hour of deliberate waiting for a film to end, or
+     * the updater having quietly stopped — and all three looked identical
+     * from the sofa. This row is the difference. */
+    const u = d.update;
+    if (u) {
+      const mins = (ms) => Math.max(0, Math.round(ms / 60000));
+      const since = mins(Date.now() - u.at);
+      const landed = u.appliedAt
+        ? `last update landed ${duration((Date.now() - u.appliedAt) / 1000)} ago`
+        : '';
+      if (Date.now() - u.at > 10 * 60 * 1000) {
+        // It runs every two minutes; ten quiet ones means it is not running.
+        rows.push(row('Updates', {
+          value: 'Updater is not checking in',
+          sub: `last heard from it ${since} min ago — new versions will not arrive`,
+          pill: ['bad', 'Stalled'],
+        }));
+      } else if (u.state === 'blocked') {
+        rows.push(row('Updates', {
+          value: 'Blocked',
+          sub: 'the box cannot reach the repository — nothing new can arrive',
+          pill: ['bad', 'Blocked'],
+        }));
+      } else if (u.state === 'held') {
+        const waited = u.heldSince ? mins(Date.now() - u.heldSince) : 0;
+        rows.push(row('Updates', {
+          value: `A new version is waiting${waited ? ` — ${waited} min` : ''}`,
+          sub: 'held back while somebody is watching; it installs itself once the box is idle',
+          pill: ['warn', 'Waiting'],
+        }));
+      } else {
+        rows.push(row('Updates', {
+          value: u.state === 'applied' ? 'Just updated' : 'Up to date',
+          sub: [u.local ? `version ${u.local}` : '', landed].filter(Boolean).join(' · '),
+          pill: ['ok', 'Current'],
+        }));
+      }
+    }
 
     /* ---- power: reads like a network fault, isn't one ---- */
     let note = '';

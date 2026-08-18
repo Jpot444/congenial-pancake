@@ -11,4 +11,5 @@ auto-update.log
 .auto-update.lock
 .auto-update-blocked
 .auto-update-held
+.auto-update-state.json
 thumbs/

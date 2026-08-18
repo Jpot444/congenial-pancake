@@ -1028,8 +1028,38 @@ async function readHealth() {
       failed: jobs.filter((j) => j.status === 'error').length,
     },
     uptime: { host: os.uptime(), server: process.uptime() },
+    update: readUpdateState(),
     now: Date.now(),
   };
+}
+
+/**
+ * What the auto-updater last did, if it is running at all.
+ *
+ * Written by scripts/auto-update.sh every couple of minutes. Read rather
+ * than computed here on purpose: answering "is there a newer commit?" from
+ * inside the server would mean spawning git and talking to GitHub on every
+ * health poll, and the updater already knows.
+ *
+ * A missing or stale file is itself the answer — the panel says the updater
+ * has stopped checking, which is a thing that has happened and was
+ * invisible for a whole evening.
+ */
+function readUpdateState() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(ROOT, '.auto-update-state.json'), 'utf8'));
+    return {
+      at: Number(raw.at) || 0,
+      state: String(raw.state || ''),
+      local: String(raw.local || ''),
+      remote: String(raw.remote || ''),
+      heldSince: Number(raw.heldSince) || 0,
+      appliedAt: Number(raw.appliedAt) || 0,
+      appliedSha: String(raw.appliedSha || ''),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function recoverOrphanedDownloads() {
