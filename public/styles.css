@@ -3503,6 +3503,52 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .ep-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ep.is-playing .ep-name { font-weight: 600; }
 
+/* Where the show was left. The strip up top carries the words and the Resume
+   button; the row itself wears an accent and a small mark, so the episode is
+   findable while scrolling the season too. */
+.ep.is-last { box-shadow: inset 3px 0 0 var(--brand-red); background: var(--bg-card); }
+.ep-last {
+  display: inline-block;
+  margin-left: 9px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--brand-red);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+
+.last-watched {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+}
+.last-watched-words { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.last-watched-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+.last-watched-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.last-watched-note { font-size: 12.5px; color: var(--muted-dim); }
+.last-watched-go { flex-shrink: 0; }
+
 .epg-row {
   display: flex;
   gap: 14px;

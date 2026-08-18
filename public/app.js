@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.13';
+const VERSION = '24.14';
 
 const PAGE_SIZE = 60;
 
@@ -393,6 +393,11 @@ const LIVE_HLS = {
   maxBufferLength: 45,
   maxMaxBufferLength: 90,
   backBufferLength: 60,
+  // hls.js never draws cues itself. The captions module runs every track in
+  // 'hidden' mode and paints its own overlay; left true, hls.js flips its
+  // in-band track to 'showing' on its own schedule — which is one of the
+  // ways captions came back after being turned off.
+  subtitleDisplay: false,
 };
 
 /**
@@ -5751,6 +5756,8 @@ function attach(url, format, opts = {}) {
               maxBufferLength: 120,
               maxMaxBufferLength: 300,
               maxBufferSize: 200 * 1000 * 1000,
+              // Drawing captions is the captions module's job, never hls.js's.
+              subtitleDisplay: false,
               // A remux in progress has no ENDLIST yet, so hls.js reads it as
               // live and would join at the edge — i.e. however many seconds we
               // prebuffered into the film. Films start at the beginning —
@@ -7238,6 +7245,8 @@ const captions = {
   timer: null,
   /** Whether any fetch has yet returned actual cues — decides the cadence. */
   gotWords: false,
+  /** True while iOS native fullscreen legitimately holds a track showing. */
+  native: false,
 
   /** A film or channel is starting: forget the last one's tracks entirely. */
   reset() {
@@ -7301,6 +7310,9 @@ const captions = {
    * out, the overlay parked while the platform draws.
    */
   nativeMode(on) {
+    // Flagged before any mode is touched, so enforce() knows these flips are
+    // sanctioned rather than something to undo.
+    this.native = on;
     const track = this.followed;
     if (track) {
       track.mode = on ? 'showing' : 'hidden';
@@ -7308,6 +7320,26 @@ const captions = {
     }
     if (on) $('#ccOverlay').hidden = true;
     else this.drawCues(track);
+  },
+
+  /**
+   * Our menu is the only authority on caption state. The browser and the
+   * engines flip TextTrack modes on their own — hls.js manages its in-band
+   * tracks as renditions load, and WebKit surfaces its own caption picker —
+   * and any of those flips used to bring captions back after Off, from a
+   * place no button press had touched. Every mode change anywhere lands
+   * here, and anything that disagrees with the menu is put back on the
+   * spot. iOS native fullscreen is the one sanctioned exception: nativeMode
+   * deliberately holds the chosen track in 'showing' while the platform
+   * draws it.
+   */
+  enforce() {
+    if (this.native) return;
+    for (const track of this.list()) {
+      const want = this.chosen && track.label === this.chosen ? 'hidden' : 'disabled';
+      if (track.mode !== want) track.mode = want;
+    }
+    if (!this.chosen && this.followed) this.follow(null);
   },
 
   /**
@@ -7561,6 +7593,13 @@ const captions = {
     $('#ccBtn')?.setAttribute('aria-expanded', 'false');
   },
 };
+
+// Every TextTrack mode flip on the player — ours, hls.js's, the browser's
+// own caption picker — fires this one event, so the menu's choice is
+// re-asserted at the very moment something else overrides it. This is what
+// keeps captions OFF meaning off: they used to come back on their own when
+// an engine re-enabled a track long after the button was pressed.
+$('#video').textTracks.addEventListener('change', () => captions.enforce());
 
 /** How often a still-converting subtitle file is re-read. */
 const CC_REFRESH = 20000;
@@ -8604,6 +8643,56 @@ async function renderSeries(item, mount, onInfo) {
   const episodeLabel = (season, episode) =>
     `S${season} · E${episode.episode_num} — ${episode.title || `Episode ${episode.episode_num}`}`;
 
+  // Where you left the show. The newest history row for this series names
+  // the exact episode, so the card can say so out loud instead of making
+  // you reconstruct it from the home screen: a strip up top with a Resume
+  // button, the list opening on that season, and the episode row itself
+  // wearing a mark.
+  const lastRow = (state.recentlyWatched || []).find(
+    (r) => r.kind === 'series'
+      && String(r.seriesId ?? r.id) === String(item.id)
+      && r.season != null && r.episode != null
+  );
+  let lastMark = null;   // { season, episode } — what showSeason points out
+  if (lastRow) {
+    const season = String(lastRow.season);
+    const eps = episodes[season] || [];
+    const index = eps.findIndex((ep) => Number(ep.episode_num) === Number(lastRow.episode));
+    if (index >= 0) {
+      lastMark = { season, episode: Number(lastRow.episode) };
+      const finished = Boolean(lastRow.completed)
+        || (lastRow.duration && lastRow.position
+          && lastRow.position / lastRow.duration > RESUME_MAX_RATIO);
+
+      const strip = el('div', 'last-watched');
+      const words = el('div', 'last-watched-words');
+      const label = el('span', 'last-watched-label');
+      label.textContent = finished ? 'Last watched' : 'You are on';
+      const title = el('span', 'last-watched-title');
+      title.textContent = episodeLabel(season, eps[index]);
+      words.append(label, title);
+      const note = el('span', 'last-watched-note');
+      if (finished) note.textContent = 'Finished';
+      else if (lastRow.duration && lastRow.position) {
+        note.textContent = `${hms(Math.max(0, Math.round(lastRow.duration - lastRow.position)))} left`;
+      }
+      if (note.textContent) words.append(note);
+
+      const go = el('button', 'btn btn-primary btn-sm last-watched-go');
+      go.textContent = finished ? 'Play the next one' : 'Resume';
+      go.addEventListener('click', () => {
+        if (finished) {
+          const after = episodeAfter(season, index);
+          if (after) return startEpisode(after.season, after.index);
+        }
+        startEpisode(season, index);
+      });
+
+      strip.append(words, go);
+      mount.insertBefore(strip, picker);
+    }
+  }
+
   /**
    * Play one episode of the open series. A named function rather than the
    * click handler it used to be, because the up-next button has to start an
@@ -8684,6 +8773,13 @@ async function renderSeries(item, mount, onInfo) {
       num.textContent = String(episode.episode_num).padStart(2, '0');
       const name = el('span', 'ep-name');
       name.textContent = episode.title || `Episode ${episode.episode_num}`;
+      if (lastMark && lastMark.season === season
+          && Number(episode.episode_num) === lastMark.episode) {
+        row.classList.add('is-last');
+        const mark = el('span', 'ep-last');
+        mark.textContent = 'Last watched';
+        name.append(mark);
+      }
 
       const grab = el('button', 'ep-dl');
       // Say what is already true before it is asked for again: a saved
@@ -8740,7 +8836,8 @@ async function renderSeries(item, mount, onInfo) {
   });
   picker.append(seasonDl);
 
-  showSeason(seasons[0]);
+  // Open on the season you are actually in, when the show knows it.
+  showSeason(lastMark ? lastMark.season : seasons[0]);
 
   // The Continue watching hand-off. It has to be here, at the bottom of the
   // one function that has both the episode list and the machinery to play
