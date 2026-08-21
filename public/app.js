@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.16';
+const VERSION = '24.17';
 
 const PAGE_SIZE = 60;
 
@@ -5418,6 +5418,118 @@ async function requestDownload(item, episode, { quiet = false } = {}) {
  * request per folder and search is instant across all of it.
  */
 
+/** Containers a phone opens as they arrive. Everything else needs converting. */
+const ARCHIVE_NATIVE = new Set(['mp4', 'm4v', 'mov']);
+
+/** The identity an archive title carries through the downloads machinery. */
+const archiveStreamId = (entry) => `archive:${entry.path}`;
+
+/**
+ * Put an archive title on the device you are holding.
+ *
+ * Two roads, because the drive holds two kinds of file and pretending
+ * otherwise would either waste the box's disk or hand you something your
+ * phone will not open:
+ *
+ *   * **mp4, m4v, mov** — already exactly what you want. The bytes come
+ *     straight off the drive with a filename on them: instant, and it costs
+ *     the box nothing at all. No queue, no copy, no allowance spent.
+ *   * **everything else** — .avi and .mkv are most of the drive and no phone
+ *     opens either. The box converts it once into Downloads, and from there
+ *     the same button hands it over. That costs time and some of the
+ *     allowance, which is why it is not done for files that never needed it.
+ *
+ * The drive itself is only ever read. Nothing here writes to it.
+ */
+function saveArchiveToDevice(entry) {
+  const a = document.createElement('a');
+  a.href = `/archive/file?path=${encodeURIComponent(entry.path)}&save=1`;
+  a.download = `${entry.title || 'video'}.${entry.container || 'mp4'}`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+
+async function requestArchiveDownload(entry) {
+  const payload = {
+    kind: 'movie',
+    archivePath: entry.path,
+    name: entry.title || entry.path,
+    resumeKey: `archive:${entry.path}`,
+    profileId: profiles.current?.id || '',
+  };
+  try {
+    const res = await fetch('/api/downloads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not queue that.');
+    await refreshDownloads({ rerender: true });
+    toast(`Converting “${payload.name}” — it appears in Downloads, ready to save.`);
+    return true;
+  } catch (err) {
+    toast(err.message);
+    return false;
+  }
+}
+
+/**
+ * The button on an archive card. What it does depends on where the file
+ * already is, and it says so rather than looking the same in every state.
+ */
+function archiveSaveButton(entry) {
+  const btn = el('button', 'icon-btn archive-dl');
+  const native = ARCHIVE_NATIVE.has(String(entry.container || '').toLowerCase());
+  const job = downloadJobFor('movie', archiveStreamId(entry));
+  const arrow = '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg>';
+
+  const say = (title) => {
+    btn.title = title;
+    btn.setAttribute('aria-label', title);
+  };
+
+  if (job && job.status === 'done') {
+    btn.classList.add('is-saved');
+    btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 13l4 4 10-10"/></svg>';
+    say('Converted and ready — save it to this device');
+    btn.onclick = (event) => {
+      event.stopPropagation();
+      saveToDevice(job);
+      toast(`Saving “${job.name}” to this device.`);
+    };
+  } else if (job) {
+    btn.classList.add('is-queued');
+    btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="9"/></svg>';
+    say('Being converted on the box — watch it in Downloads');
+    btn.onclick = (event) => {
+      event.stopPropagation();
+      toast('Already converting. It shows up in Downloads when it is ready.');
+    };
+  } else if (native) {
+    btn.innerHTML = arrow;
+    say('Save to this device');
+    btn.onclick = (event) => {
+      event.stopPropagation();
+      saveArchiveToDevice(entry);
+      toast(`Saving “${entry.title}” to this device.`);
+    };
+  } else {
+    btn.innerHTML = arrow;
+    say(`Convert this ${String(entry.container || '').toUpperCase()} on the box, then save it`);
+    btn.onclick = async (event) => {
+      event.stopPropagation();
+      btn.disabled = true;
+      const ok = await requestArchiveDownload(entry);
+      btn.disabled = false;
+      // Repaint the grid so the mark on this card reflects what just happened.
+      if (ok && state.tab === 'archive') renderArchive();
+    };
+  }
+  return btn;
+}
+
 const ARCHIVE_MODE_LABEL = {
   direct: '',                    // plays as-is; nothing worth saying
   remux: '',                     // ~1s of ffmpeg; not worth a badge either
@@ -5484,6 +5596,12 @@ function archiveCard(entry) {
   face.src = archiveThumbUrl(entry.path);
   face.addEventListener('error', () => card.querySelector('.archive-card-art')?.remove());
   card.querySelector('.archive-card-art').append(face);
+
+  // A child of the CARD, not of the artwork: a frame that cannot be cut
+  // removes the art box entirely, and the way to save a file must not
+  // disappear along with its thumbnail. Its own click never reaches the card
+  // underneath — saving a film and playing it are different intentions.
+  card.append(archiveSaveButton(entry));
 
   card.onclick = () => openPlayer(archiveItemToPlayable(entry));
   return card;

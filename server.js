@@ -1154,7 +1154,160 @@ function jobSourceUrl(job) {
   return buildStreamUrl(cfg, job.kind === 'series' ? 'series' : 'movie', job.streamId, job.ext);
 }
 
+/**
+ * Save an archive title to the box, in something a phone will actually play.
+ *
+ * The drive holds 5,853 files and most of them are .avi and .mkv, which no
+ * phone opens — so "save this to my device" cannot just hand over the bytes
+ * on the drive for those. It converts, once, into the downloads folder, and
+ * from there the ordinary Save to device button puts a plain .mp4 in Files
+ * or the camera roll.
+ *
+ * Straight from the drive to the finished file: no copy first, so it needs
+ * room for one output rather than two, and one pass rather than a fetch and
+ * then a conversion. The drive is mounted read-only and is only ever read
+ * here — nothing about this writes to it.
+ *
+ * A conversion cannot resume from the middle the way a download resumes from
+ * a byte offset, so pausing one and starting it again starts it again. It is
+ * a local file, which is the one case where that costs only time.
+ */
+async function runArchiveJob(job) {
+  if (!hasFfmpeg()) throw new Error('ffmpeg is not installed, so this cannot be converted.');
+  if (!archive.mounted()) throw new Error('The archive drive is not plugged in.');
+  const abs = archive.resolve(job.archivePath);
+  if (!abs || !fs.existsSync(abs)) {
+    throw new Error('That file is not on the drive any more.');
+  }
+  const entry = archive.entry(job.archivePath) || {};
+
+  let srcSize = 0;
+  try {
+    srcSize = fs.statSync(abs).size;
+  } catch {
+    /* the size is an estimate; carry on without one */
+  }
+
+  // The same two guards a provider download gets, for the same reasons: an
+  // allowance is per profile, and the card must not be filled to the brim.
+  // Checked against the SOURCE size, which for a conversion is an upper
+  // bound worth trusting — the output is usually smaller.
+  if (srcSize > 0) {
+    const allowance = downloadLimitFor(ownerOf(job.profileId));
+    const used = downloadBytesFor(job.profileId, job.id);
+    if (Number.isFinite(allowance) && used + srcSize > allowance) {
+      throw new Error(
+        `${job.name || 'That'} is ${gb(srcSize)} and you have `
+        + `${gb(Math.max(0, allowance - used))} of your ${gb(allowance)} left. `
+        + 'Delete something from Downloads to make room.'
+      );
+    }
+    const free = diskFree(DOWNLOAD_DIR);
+    if (free < srcSize + SPACE_RESERVE) {
+      const err = new Error(`Not enough disk space — needs ${gb(srcSize)}, only ${gb(free)} free`);
+      err.code = 'ENOSPC';
+      throw err;
+    }
+  }
+
+  const out = path.join(DOWNLOAD_DIR, `${job.id}.mp4`);
+  try {
+    fs.unlinkSync(out);   // whatever a stopped attempt left behind
+  } catch {
+    /* nothing there */
+  }
+
+  job.status = 'downloading';
+  job.error = '';
+  job.bytes = 0;
+  job.total = srcSize;
+  persistDownloads();
+
+  // Copy the picture when the phone can already decode it, encode when it
+  // cannot — the same decision playback makes, for the same reason: a third
+  // of this drive is MPEG-4 ASP, which copies through to a black rectangle.
+  const codec = String(entry.vcodec || (await probeSource(abs)).codec || '').toLowerCase();
+  const args = ['-v', 'error', '-nostats', '-hide_banner', '-y',
+    '-i', abs, '-map', '0:v:0', '-map', '0:a:0?'];
+  if (['h264', 'hevc', 'h265'].includes(codec)) {
+    args.push('-c:v', 'copy');
+    if (codec !== 'h264') args.push('-tag:v', 'hvc1');
+  } else {
+    args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p');
+  }
+  args.push(
+    '-c:a', 'aac', '-profile:a', 'aac_low', '-ac', '2', '-ar', '48000', '-b:a', '160k',
+    // moov at the front, so the file is seekable the moment it opens.
+    '-movflags', '+faststart',
+    out
+  );
+
+  const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  // Pause, cancel and the auto-pause when a stream starts all reach a
+  // running download by destroying `activeRequest`. Wearing the same shape
+  // means every one of those paths works here without knowing what this is.
+  activeRequest = { destroy: () => { try { proc.kill('SIGKILL'); } catch { /* gone */ } } };
+
+  let stderr = '';
+  proc.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
+
+  // There is no byte counter to read, so the growing file is the progress.
+  const ticker = setInterval(() => {
+    try {
+      job.bytes = fs.statSync(out).size;
+    } catch {
+      /* not written yet */
+    }
+    persistDownloads();
+  }, 1500);
+  ticker.unref?.();
+
+  const code = await new Promise((resolve) => {
+    proc.on('exit', resolve);
+    proc.on('error', () => resolve(-1));
+  });
+  clearInterval(ticker);
+  activeRequest = null;
+
+  // Stopped on purpose: the half-written file is no use to anybody, and
+  // unlike a partial download it cannot be continued.
+  if (job.status === 'cancelled' || job.status === 'paused') {
+    try {
+      fs.unlinkSync(out);
+    } catch {
+      /* already gone */
+    }
+    return;
+  }
+
+  if (code !== 0) {
+    try {
+      fs.unlinkSync(out);
+    } catch {
+      /* already gone */
+    }
+    throw new Error(stderr.split('\n').filter(Boolean).pop() || `ffmpeg exited ${code}`);
+  }
+
+  job.file = path.basename(out);
+  job.ext = 'mp4';
+  job.status = 'done';
+  try {
+    job.bytes = fs.statSync(out).size;
+  } catch {
+    /* keep the last tick's figure */
+  }
+  job.total = job.bytes;
+  job.finishedAt = Date.now();
+  persistDownloads();
+  // No queuePrepare: this came out as mp4 by construction.
+}
+
 async function runJob(job) {
+  // A title off the archive drive has no provider URL behind it — it is
+  // converted from the file itself.
+  if (job.archivePath) return runArchiveJob(job);
+
   const { part, final } = jobPaths(job);
   const start = partSize(job);
 
@@ -3998,7 +4151,17 @@ async function handleApi(req, res, pathname, query) {
         return json(res, 400, { error: 'Invalid JSON' });
       }
       if (!incoming.name) return json(res, 400, { error: 'A name is required' });
-      if (!incoming.streamId && !incoming.sourceUrl) {
+
+      // A third kind of source: a file on the archive drive. Identified by
+      // its path within the index rather than by a provider id, and checked
+      // against the index here — resolve() refuses traversal, and a path the
+      // index does not list is not a thing this will convert.
+      const archivePath = String(incoming.archivePath || '');
+      if (archivePath) {
+        if (!archive.entry(archivePath) || !archive.resolve(archivePath)) {
+          return json(res, 404, { error: 'Not in the archive index' });
+        }
+      } else if (!incoming.streamId && !incoming.sourceUrl) {
         return json(res, 400, { error: 'streamId or sourceUrl is required' });
       }
 
@@ -4022,7 +4185,11 @@ async function handleApi(req, res, pathname, query) {
       // The same title is never saved twice. Matched on what it IS (kind +
       // provider stream id), not on the name, and a failed attempt does not
       // count — failure is exactly when asking again should work.
-      const wantId = incoming.streamId ? String(incoming.streamId) : '';
+      // An archive file's identity is its path on the drive, which slots
+      // into the same duplicate check every other title uses.
+      const wantId = archivePath
+        ? `archive:${archivePath}`
+        : (incoming.streamId ? String(incoming.streamId) : '');
       const wantKind = incoming.kind === 'series' ? 'series' : 'movie';
       if (wantId) {
         const dup = [...downloads.values()].find((j) => j.kind === wantKind
@@ -4043,9 +4210,13 @@ async function handleApi(req, res, pathname, query) {
         id,
         name: safeName(incoming.name),
         kind: incoming.kind === 'series' ? 'series' : 'movie',
-        streamId: incoming.streamId ? String(incoming.streamId) : '',
+        streamId: wantId,
         sourceUrl: incoming.sourceUrl || '',
-        ext: (incoming.ext || 'mp4').replace(/[^a-z0-9]/gi, '') || 'mp4',
+        // Where on the drive this came from, and the flag the worker branches
+        // on. Empty for everything that comes off the provider.
+        archivePath,
+        // Archive titles always land as mp4, whatever they started as.
+        ext: archivePath ? 'mp4' : ((incoming.ext || 'mp4').replace(/[^a-z0-9]/gi, '') || 'mp4'),
         poster: incoming.poster || '',
         // Ties the offline copy to the same watch position as the stream.
         resumeKey: incoming.resumeKey || '',
@@ -4775,9 +4946,23 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/archive/file') {
       // resolve() is the security boundary: traversal, absolute paths, and
       // anything not in the index all come back null.
-      const abs = archive.resolve(searchParams.get('path'));
+      const rel = searchParams.get('path');
+      const abs = archive.resolve(rel);
       if (!abs) return send(res, 404, 'Not found');
-      return serveLocalFile(req, res, abs);
+      // `save=1` is the same bytes with a filename on them, which is what
+      // turns a stream into a file in Downloads or Files. Only offered for
+      // containers a phone actually opens — everything else is converted
+      // first, through the downloads queue.
+      let attachmentName = null;
+      if (searchParams.get('save')) {
+        const entry = archive.entry(rel) || {};
+        const ext = String(entry.container || path.extname(abs).replace('.', '') || 'mp4');
+        attachmentName = `${entry.title || path.basename(abs, path.extname(abs))}.${ext}`;
+        // Saving is a transfer off the box like any other; a restart in the
+        // middle of it would cut the file in half.
+        localPlaybackAt = Date.now();
+      }
+      return serveLocalFile(req, res, abs, { attachmentName });
     }
     if (pathname === '/stream') return await handleStream(req, res, searchParams);
     if (pathname === '/img') return await handleImage(req, res, searchParams);

@@ -4030,6 +4030,28 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 .archive-card-art:empty { display: none; }
 
+/* Save this one to the device in your hand. Top-right of the card, over the
+   frame when there is one and over the corner when there is not. */
+.archive-dl {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .6);
+  border: 1px solid rgba(255, 255, 255, .16);
+  color: #fff;
+  backdrop-filter: blur(3px);
+}
+
+.archive-dl:hover { background: rgba(0, 0, 0, .8); }
+.archive-dl svg { width: 16px; height: 16px; }
+.archive-dl.is-saved { color: #4caf7d; border-color: rgba(76, 175, 125, .45); }
+.archive-dl.is-queued { color: #e8c46a; border-color: rgba(232, 196, 106, .45); }
+.archive-dl[disabled] { opacity: .5; }
+
 .archive-card-art img {
   width: 100%;
   height: 100%;
