@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.17';
+const VERSION = '24.18';
 
 const PAGE_SIZE = 60;
 
@@ -5174,6 +5174,11 @@ function downloadCard(job) {
     const unoptimized =
       job.status === 'done' && !job.preparing && !NATIVE_CONTAINERS.includes(String(job.ext || '').toLowerCase());
 
+    // Optimizing is not a decision anybody would ever make differently, so
+    // there is no longer a button for it — the box converts every finished
+    // download on its own and keeps trying if something is in the way. The
+    // card only reports where that has got to. Same for a failed download:
+    // it retries itself rather than waiting to be asked.
     const sub = el('p', 'card-sub');
     sub.textContent =
       job.status === 'done'
@@ -5181,11 +5186,13 @@ function downloadCard(job) {
           ? 'Optimizing for instant playback…'
           : unoptimized
             ? job.prepareError
-              ? `Not optimized — ${job.prepareError}`
-              : 'Not optimized yet — playback will be slow'
+              ? `Optimizing shortly — ${job.prepareError}`
+              : 'Optimizing shortly…'
             : formatBytes(job.total)
         : job.status === 'error'
-          ? job.error || 'Failed'
+          ? job.permanent || (job.tries || 0) >= 8
+            ? job.error || 'Failed'
+            : `${job.error || 'Failed'} — trying again shortly`
           : job.status === 'downloading'
             ? `${formatBytes(job.bytes)} of ${formatBytes(job.total)}`
             : job.status === 'paused'
@@ -5195,27 +5202,6 @@ function downloadCard(job) {
               : 'Waiting for the connection';
 
     const actions = el('div', 'dl-actions');
-
-    if (unoptimized) {
-      const fix = el('button', 'btn btn-primary btn-sm');
-      fix.textContent = job.prepareError ? 'Retry optimize' : 'Optimize';
-      fix.title = 'Convert to a plain MP4 so it plays and scrubs instantly';
-      fix.addEventListener('click', async (event) => {
-        event.stopPropagation();
-        fix.disabled = true;
-        try {
-          const res = await fetch(`/api/downloads/${job.id}/optimize`, { method: 'POST' });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || 'Could not start optimizing.');
-          toast('Optimizing — this runs once, then playback is instant.');
-        } catch (err) {
-          toast(err.message);
-          fix.disabled = false;
-        }
-        await refreshDownloads({ rerender: true });
-      });
-      actions.append(fix);
-    }
 
     if (job.status === 'done') {
       const save = el('a', 'btn btn-ghost btn-sm');
@@ -5237,15 +5223,18 @@ function downloadCard(job) {
       actions.append(pause);
     }
 
-    if (job.status === 'error' || job.status === 'paused') {
-      const retry = el('button', 'btn btn-ghost btn-sm');
-      retry.textContent = job.status === 'paused' ? 'Resume' : 'Retry';
-      retry.addEventListener('click', async () => {
-        retry.disabled = true;
+    // Resume stays: a download paused by hand is waiting on a decision, and
+    // that decision is yours. A FAILED one is not — it retries itself, so
+    // the Retry button that used to sit here is gone.
+    if (job.status === 'paused') {
+      const resume = el('button', 'btn btn-ghost btn-sm');
+      resume.textContent = 'Resume';
+      resume.addEventListener('click', async () => {
+        resume.disabled = true;
         await fetch(`/api/downloads/${job.id}/retry`, { method: 'POST' });
         await refreshDownloads({ rerender: true });
       });
-      actions.append(retry);
+      actions.append(resume);
     }
 
     const remove = el('button', 'icon-btn dl-remove');
@@ -8432,7 +8421,9 @@ async function playLocalCopy(job, startAt = 0) {
     // The file is on disk but still in its original container, so it has to be
     // converted as it plays — the exact stop-start this feature exists to
     // avoid. Say so, rather than letting it look like a network problem.
-    toast('This download is not optimized yet — playback may stall. Fix it from Downloads.');
+    // No longer "fix it from Downloads": there is nothing to press. The box
+    // is already converting this one, or shortly will be.
+    toast('Still being optimized — playback may stall until that finishes.');
     const remuxed = await api('/api/remux', {
       download: job.id,
       start: startAt || '',

@@ -786,6 +786,10 @@ async function prepareForBrowser(job) {
     job.ext = 'mp4';
     job.file = path.basename(out);
     job.total = fs.statSync(out).size;
+    // Done, and never to be attempted again — the backoff that got it here
+    // starts fresh if this file ever somehow needs converting once more.
+    job.prepareTries = 0;
+    job.prepareError = '';
   } else {
     try {
       fs.unlinkSync(tmp);
@@ -797,6 +801,68 @@ async function prepareForBrowser(job) {
   job.preparing = false;
   persistDownloads();
 }
+
+/* ---- keeping downloads right without anybody pressing anything ----
+ *
+ * There were two buttons here — Optimize and Retry — and both asked the
+ * viewer to do the box's job. Optimizing is not a choice anybody would ever
+ * decline: a download left in its original container plays through an
+ * on-the-fly conversion, which is the exact slowness downloads exist to
+ * avoid. And a download that failed because the provider hiccuped wants
+ * trying again, not a button.
+ *
+ * So the box tends to both itself, on a backoff, and the buttons are gone.
+ * Nothing here gives up on optimizing: the usual reason it fails is a full
+ * disk, which stops being true the moment something is deleted, and an
+ * attempt costs nothing when the file is already fine.
+ */
+const PREPARE_BACKOFF = [30_000, 2 * 60_000, 10 * 60_000, 30 * 60_000];
+const RETRY_BACKOFF = [60_000, 3 * 60_000, 10 * 60_000, 30 * 60_000];
+/** A download that has failed this many times is left alone until asked. */
+const MAX_DOWNLOAD_TRIES = 8;
+
+const backoffFor = (steps, tries) => steps[Math.min(tries, steps.length - 1)];
+
+function tendDownloads() {
+  let changed = false;
+  for (const job of downloads.values()) {
+    // Always optimize. Anything finished but still in its original
+    // container gets converted, now or on the next pass.
+    if (job.status === 'done') {
+      if (job.preparing || !hasFfmpeg()) continue;
+      if (NATIVE_CONTAINERS.has(String(job.ext || '').toLowerCase())) continue;
+      const waited = Date.now() - (job.prepareAt || 0);
+      if (waited < backoffFor(PREPARE_BACKOFF, job.prepareTries || 0)) continue;
+      job.prepareAt = Date.now();
+      job.prepareTries = (job.prepareTries || 0) + 1;
+      changed = true;
+      queuePrepare(job);
+      continue;
+    }
+
+    // A failed download tries again by itself. Not one that failed for a
+    // reason trying again cannot fix — an allowance is spent until somebody
+    // deletes something, and hammering the provider over it helps nobody.
+    if (job.status === 'error' && !job.permanent) {
+      const tries = job.tries || 0;
+      if (tries >= MAX_DOWNLOAD_TRIES) continue;
+      if (Date.now() - (job.failedAt || 0) < backoffFor(RETRY_BACKOFF, tries)) continue;
+      job.status = 'queued';
+      job.error = '';
+      changed = true;
+      queue.push(job.id);
+    }
+  }
+  if (changed) {
+    persistDownloads();
+    processQueue();
+  }
+}
+
+setInterval(tendDownloads, 60_000).unref();
+// Sooner than the first tick after a restart: a box that came back up with
+// an unoptimized download should not sit on it for a minute first.
+setTimeout(tendDownloads, 10_000).unref();
 
 /**
  * Media files are named by job id, so if the index is lost the files are still
@@ -1196,11 +1262,13 @@ async function runArchiveJob(job) {
     const allowance = downloadLimitFor(ownerOf(job.profileId));
     const used = downloadBytesFor(job.profileId, job.id);
     if (Number.isFinite(allowance) && used + srcSize > allowance) {
-      throw new Error(
+      const full = new Error(
         `${job.name || 'That'} is ${gb(srcSize)} and you have `
         + `${gb(Math.max(0, allowance - used))} of your ${gb(allowance)} left. `
         + 'Delete something from Downloads to make room.'
       );
+      full.permanent = true;
+      throw full;
     }
     const free = diskFree(DOWNLOAD_DIR);
     if (free < srcSize + SPACE_RESERVE) {
@@ -1299,6 +1367,8 @@ async function runArchiveJob(job) {
   }
   job.total = job.bytes;
   job.finishedAt = Date.now();
+  job.tries = 0;
+  job.permanent = false;
   persistDownloads();
   // No queuePrepare: this came out as mp4 by construction.
 }
@@ -1359,11 +1429,13 @@ async function runJob(job) {
         /* nothing partial to remove */
       }
       job.bytes = 0;
-      throw new Error(
+      const full = new Error(
         `${job.name || 'That'} is ${gb(job.total)} and you have `
         + `${gb(Math.max(0, allowance - used))} of your ${gb(allowance)} left. `
         + 'Delete something from Downloads to make room.'
       );
+      full.permanent = true;   // trying again changes nothing; deleting does
+      throw full;
     }
   }
 
@@ -1418,6 +1490,9 @@ async function runJob(job) {
   job.file = path.basename(final);
   job.total = job.bytes;
   job.finishedAt = Date.now();
+  // It got here in the end, so whatever went wrong before is history.
+  job.tries = 0;
+  job.permanent = false;
   persistDownloads();
   queuePrepare(job); // make it browser-native before it's ever played
 }
@@ -1566,6 +1641,13 @@ async function processQueue() {
         if (job.status !== 'cancelled' && job.status !== 'paused') {
           job.status = 'error';
           job.error = err.message;
+          // What the automatic retry needs to know: when this happened, how
+          // many times it has now happened, and whether trying again could
+          // ever help. An allowance that is spent stays spent until somebody
+          // deletes something, so that one is left alone.
+          job.failedAt = Date.now();
+          job.tries = (job.tries || 0) + 1;
+          job.permanent = Boolean(err.permanent);
           persistDownloads();
         }
         // A full disk fails every remaining job identically, and each one
@@ -4301,6 +4383,11 @@ async function handleApi(req, res, pathname, query) {
       }
       job.status = 'queued';
       job.error = '';
+      // Asked for by hand (Resume all, or resuming one), so the automatic
+      // backoff starts over rather than counting this against it.
+      job.tries = 0;
+      job.failedAt = 0;
+      job.permanent = false;
       persistDownloads();
       queue.push(job.id);
       processQueue();
