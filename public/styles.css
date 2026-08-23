@@ -3876,6 +3876,27 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
    answer is often good news — so it recolours by result. Bad keeps the red. */
 .health-speed { margin-top: 18px; }
 
+/* The weak-Wi-Fi switch, beside the connection test because that is the
+   question it answers. */
+.low-mode {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.low-mode-row {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.low-mode-row input { margin-top: 3px; flex-shrink: 0; }
+
+.low-mode-words { display: flex; flex-direction: column; gap: 3px; }
+.low-mode-words strong { font-size: 14px; font-weight: 600; }
+.low-mode-words small { font-size: 12.5px; line-height: 1.45; color: var(--muted-dim); }
+
 /* conn-, not speed-: .health-speed is the block this sits inside, and a
    .speed- name here once collided with an absolutely-positioned pill and threw
    the note out of the card and halfway up the screen. */

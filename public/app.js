@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.18';
+const VERSION = '24.19';
 
 const PAGE_SIZE = 60;
 
@@ -83,6 +83,10 @@ const prefs = {
     // subtitles wants them on the next film too, and being asked again every
     // time is the thing this remembers them to avoid.
     captionTrack: '',
+    // Weak Wi-Fi: have the box shrink everything before it crosses the link.
+    // Remembered rather than asked, because the corner of the house with bad
+    // signal is still bad tomorrow.
+    lowBandwidth: false,
   },
 
   async load() {
@@ -387,6 +391,37 @@ const LIVE_DVR_SEAT = 45;
  * five all evening.
  */
 const MV_RECOVER_TRIES = 5;
+
+/**
+ * How the player behaves on a link that keeps faltering.
+ *
+ * The stream itself is already small by the time this matters — the box
+ * shrank it — so the remaining enemy is not size but interruption: a few
+ * seconds of nothing, over and over. Every one of these settings buys
+ * patience. A fragment that fails is retried far more times and for far
+ * longer before it is called fatal, because on a weak link the difference
+ * between "slow" and "broken" is mostly how long you are willing to wait.
+ */
+const LOW_PATIENCE = {
+  // A minute of runway rather than seconds of it.
+  maxBufferLength: 90,
+  maxMaxBufferLength: 600,
+  // Keep asking. hls.js gives a fragment six tries by default and then
+  // declares the stream dead; on bad Wi-Fi six tries is an ordinary bad
+  // minute, not a verdict.
+  fragLoadingMaxRetry: 12,
+  fragLoadingRetryDelay: 1500,
+  fragLoadingMaxRetryTimeout: 30000,
+  manifestLoadingMaxRetry: 8,
+  manifestLoadingRetryDelay: 1500,
+  levelLoadingMaxRetry: 8,
+  levelLoadingRetryDelay: 1500,
+  // A slow response is not a failed one. The defaults time out long before
+  // a struggling link has finished answering.
+  fragLoadingTimeOut: 60000,
+  manifestLoadingTimeOut: 30000,
+  levelLoadingTimeOut: 30000,
+};
 
 const LIVE_HLS = {
   lowLatencyMode: false,
@@ -1702,6 +1737,7 @@ const multiview = {
           kind: 'live',
           id: item.id,
           ext: item.ext || '',
+          ...lowParam(),
         });
       if (stale() || !play) return;
       cell.format = play.format || '';
@@ -1739,13 +1775,14 @@ const multiview = {
     // it, opening a second converted title killed the first.
     const replaces = cell.remux || '';
     const remuxed = local
-      ? await api('/api/remux', { download: local.id, replaces })
+      ? await api('/api/remux', { download: local.id, replaces, ...lowParam() })
       : await api('/api/remux', {
         kind,
         id,
         ext,
         vcodec: override?.vcodec || item.vcodec || '',
         replaces,
+        ...lowParam(),
       });
     if (stale()) {
       // Nothing is going to watch it, so do not leave ffmpeg grinding — but
@@ -1832,6 +1869,7 @@ const multiview = {
       // starting at zero, and startPosition pins it to the beginning.
       cell.engine = new Hls(vod
         ? {
+          ...(lowMode() ? LOW_PATIENCE : {}),
           lowLatencyMode: false,
           backBufferLength: Infinity,
           liveSyncDuration: 1e9,
@@ -1840,7 +1878,8 @@ const multiview = {
           maxBufferLength: 120,
           startPosition: 0,
         }
-        : { ...LIVE_HLS, ...(dvr ? { liveSyncDuration: LIVE_DVR_SEAT } : {}) });
+        : { ...LIVE_HLS, ...(dvr ? { liveSyncDuration: LIVE_DVR_SEAT } : {}),
+          ...(lowMode() ? LOW_PATIENCE : {}) });
       cell.engine.loadSource(url);
       cell.engine.attachMedia(video);
 
@@ -5955,8 +5994,10 @@ function attach(url, format, opts = {}) {
       engineKind = 'hls.js';
       engine = new Hls(
         live
-          ? { ...LIVE_HLS, ...(opts.dvr ? { liveSyncDuration: LIVE_DVR_SEAT } : {}) }
+          ? { ...LIVE_HLS, ...(opts.dvr ? { liveSyncDuration: LIVE_DVR_SEAT } : {}),
+            ...(lowMode() ? LOW_PATIENCE : {}) }
           : {
+              ...(lowMode() ? LOW_PATIENCE : {}),
               lowLatencyMode: false,
               // Keep everything behind the playhead. While a conversion is
               // still running the playlist has no end marker, so hls.js reads
@@ -6828,6 +6869,39 @@ const playback = {
 for (const name of ['waiting', 'stalled', 'error', 'ratechange', 'seeked']) {
   $('#video').addEventListener(name, () => {
     playback.events[name] += 1;
+    if (name === 'waiting') offerLowMode();
+  });
+}
+
+/**
+ * Offer the weak-Wi-Fi switch at the moment it would help.
+ *
+ * A setting nobody can find while the picture is freezing is a setting that
+ * does not exist. Four stalls in one sitting is not bad luck, it is a link
+ * that cannot carry this stream — so say so, once, with the fix attached,
+ * and never nag: declined, it stays declined for the rest of the session.
+ */
+let lowOffered = false;
+const LOW_OFFER_STALLS = 4;
+
+function offerLowMode() {
+  if (lowOffered || lowMode()) return;
+  if (playback.events.waiting < LOW_OFFER_STALLS) return;
+  if ($('#playerOverlay').hidden) return;
+  lowOffered = true;
+  toast('This keeps stopping to buffer — your connection is struggling.', {
+    action: {
+      label: 'Send it smaller',
+      run: async () => {
+        prefs.data.lowBandwidth = true;
+        await prefs.save();
+        $('#lowMode').checked = true;
+        // Already playing, so this one is restarted to shrink it — which is
+        // what was just asked for, unlike doing it to a film unprompted.
+        toast('Low bandwidth mode on — reloading this at a smaller size.');
+        reloadStream();
+      },
+    },
   });
 }
 // Everything that could explain a kink in the timeline gets written onto the
@@ -6971,7 +7045,19 @@ async function reloadStream() {
 
     // Playing straight from a file — there is no remux to restart, so re-attach
     // the same source and drop back to where it was.
+    //
+    // Unless the box has just been asked to send things smaller: re-attaching
+    // the same file would hand over the same full-size bytes, which is
+    // precisely what could not get through. Resolving it again routes it
+    // through a conversion instead.
     if (!lastRemux.session) {
+      if (lowMode() && film.item) {
+        toast(`Reloading from ${hms(at)}…`);
+        const { url, format, seekTo } = await resolveStream(film.item,
+          { ...(film.override || {}), startAt: at });
+        attach(url, format, { seekTo });
+        return;
+      }
       const src = video.currentSrc || video.src;
       if (!src) return toast('Nothing to reload.');
       toast(`Reloading from ${hms(at)}…`);
@@ -7319,6 +7405,7 @@ async function seekFilm(target, { force = false } = {}) {
       const remux = await api('/api/archive/play', {
         path: film.item.archivePath,
         profileId: profiles.current?.id || '',
+        ...lowParam(),
       });
       const sameSession = Boolean(remux.session) && lastRemux.session === remux.session;
       if (remux.mode === 'direct') {
@@ -7359,6 +7446,7 @@ async function seekFilm(target, { force = false } = {}) {
             download: film.item.downloadId,
             start: Math.floor(clamped),
             replaces,
+            ...lowParam(),
           }
           : {
             kind: film.override?.kind || (film.item.kind === 'movie' ? 'movie' : film.item.kind),
@@ -7367,6 +7455,7 @@ async function seekFilm(target, { force = false } = {}) {
             vcodec: film.override?.vcodec || film.item.vcodec || '',
             start: Math.floor(clamped),
             replaces,
+            ...lowParam(),
           }
       );
       lastRemux = remux;
@@ -8252,7 +8341,11 @@ function bankingEta(gained, elapsed, remaining) {
 
 async function waitForPrebuffer(remux) {
   if (!remux.session) return;
-  const target = remux.prebuffer || 45;
+  // A deeper cushion on a weak link: the stream is small by then, so a
+  // minute of it is cheap to hold and is what rides out the gaps.
+  const target = lowMode()
+    ? Math.max(remux.prebuffer || 45, 60)
+    : (remux.prebuffer || 45);
   activeRemux = { session: remux.session, target };
 
   loader.show('Buffering — this plays through without stopping', '');
@@ -8400,6 +8493,17 @@ function askResume(name, row) {
 /** Containers a browser opens directly. .mkv is the one that breaks iOS. */
 const NATIVE_CONTAINERS = ['mp4', 'm4v', 'mov'];
 
+/**
+ * Is the box being asked to shrink everything before it crosses the link?
+ *
+ * Read at the moment each stream is resolved rather than captured once, so
+ * turning it on mid-film applies to the very next thing that is asked for.
+ */
+const lowMode = () => prefs.data.lowBandwidth === true;
+
+/** What every playback request carries when it is on, and nothing when not. */
+const lowParam = () => (lowMode() ? { low: '1' } : {});
+
 /** Last /api/remux response — carries the ffprobe duration fallback. */
 let lastRemux = {};
 
@@ -8417,6 +8521,22 @@ function findLocalCopy(kind, id) {
 
 /** Play a completed download, remuxing off local disk if the container needs it. */
 async function playLocalCopy(job, startAt = 0) {
+  // A file already on the box still has to cross the Wi-Fi, and optimizing
+  // it never made it smaller — only the container changed. On a weak link
+  // it goes through a conversion like everything else, which is the whole
+  // point: fewer bits over the air.
+  if (lowMode()) {
+    const remuxed = await api('/api/remux', {
+      download: job.id,
+      start: startAt || '',
+      replaces: lastRemux.session || '',
+      ...lowParam(),
+    });
+    lastRemux = remuxed;
+    await waitForPrebuffer(remuxed);
+    film.offset = remuxed.offset || 0;
+    return { url: remuxed.url, format: 'm3u8', local: true };
+  }
   if (needsRemux(job.ext)) {
     // The file is on disk but still in its original container, so it has to be
     // converted as it plays — the exact stop-start this feature exists to
@@ -8456,6 +8576,7 @@ async function resolveStream(item, override) {
     const data = await api('/api/archive/play', {
       path: item.archivePath,
       profileId: profiles.current?.id || '',
+      ...lowParam(),
     });
 
     if (data.mode === 'direct') {
@@ -8484,6 +8605,7 @@ async function resolveStream(item, override) {
     if (item.localOnly && item.downloadId && needsRemux(localExt)) {
       const data = await api('/api/remux', {
         download: item.downloadId,
+        ...lowParam(),
         });
       // Keep the response — sourceDuration is the scrubber's runtime, and
       // session is what marks this as remux-backed for seeking.
@@ -8522,6 +8644,7 @@ async function resolveStream(item, override) {
       start: startAt || '',
       // Whatever this player was showing before is finished with.
       replaces: lastRemux.session || '',
+      ...lowParam(),
     });
     lastRemux = remuxed;
     await waitForPrebuffer(remuxed);
@@ -8533,6 +8656,7 @@ async function resolveStream(item, override) {
     kind,
     id,
     ext,
+    ...lowParam(),
   });
   const format =
     kind === 'live' ? data.format : /^(m3u8|ts)$/.test(data.format) ? data.format : 'file';
@@ -9138,6 +9262,31 @@ $('#loadMore').addEventListener('click', () => {
   render();
 });
 
+/**
+ * The weak-Wi-Fi switch.
+ *
+ * Takes effect on the next thing that is played rather than reaching into
+ * what is already running: a stream mid-flight would have to be torn down
+ * and rebuilt from a fresh conversion, and doing that to a film somebody is
+ * watching, without being asked, is worse than the stall it is trying to
+ * fix. Saying so plainly is better than a switch that appears to do nothing.
+ */
+$('#lowMode').addEventListener('change', async (event) => {
+  prefs.data.lowBandwidth = event.target.checked;
+  await prefs.save();
+  const playing = !$('#playerOverlay').hidden;
+  const note = $('#lowModeNote');
+  note.hidden = false;
+  note.textContent = event.target.checked
+    ? (playing
+      ? 'On. Reopen what you are watching to shrink it — everything you start from now on is already small.'
+      : 'On. Everything the box sends from now on is shrunk to fit a weak connection.')
+    : 'Off. Full quality again — best on a good connection.';
+  toast(event.target.checked
+    ? 'Low bandwidth mode on.'
+    : 'Low bandwidth mode off.');
+});
+
 $('#filterToggle').addEventListener('change', async (event) => {
   prefs.data.filtersEnabled = event.target.checked;
   await prefs.save();
@@ -9536,6 +9685,7 @@ async function startApp() {
   $('#appView').hidden = false;
   $('#profileGate').hidden = true;
   $('#filterToggle').checked = prefs.data.filtersEnabled !== false;
+  $('#lowMode').checked = prefs.data.lowBandwidth === true;
   await refreshDownloads();
   await applyRoute();
 

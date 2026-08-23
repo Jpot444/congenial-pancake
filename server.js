@@ -246,6 +246,7 @@ function readPrefsRaw() {
       pinnedCategories: Array.isArray(parsed.pinnedCategories) ? parsed.pinnedCategories : [],
       favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
       captionTrack: typeof parsed.captionTrack === 'string' ? parsed.captionTrack : '',
+      lowBandwidth: parsed.lowBandwidth === true,
       prebufferSeconds: Number(parsed.prebufferSeconds) || DEFAULT_PREBUFFER,
       filtersEnabled: parsed.filtersEnabled !== false,
       filters: { ...DEFAULT_FILTERS, ...(parsed.filters || {}) },
@@ -269,6 +270,7 @@ function readPrefs() {
     pinnedCategories: [],
     favorites: [],
     captionTrack: '',
+    lowBandwidth: false,
     prebufferSeconds: DEFAULT_PREBUFFER,
     filtersEnabled: true,
     filters: { ...DEFAULT_FILTERS },
@@ -2363,8 +2365,31 @@ function audioFilter(delayMs = 0, padSeconds = 0, tempo = 0, clock = 'container'
   return chain.join(',');
 }
 
+/* ---- low bandwidth ----
+ *
+ * What "optimizing" a download never did, and could never do: make it
+ * SMALLER. Converting a .mkv to .mp4 fixes the container and changes the
+ * bitrate not at all, so a 1080p title at six megabits is still six megabits
+ * crossing the Wi-Fi, and on a weak link it stalls exactly as much
+ * afterwards as before. The only cure for a link that cannot carry the
+ * stream is to send fewer bits.
+ *
+ * 480 lines at CRF 26 with a hard ceiling under a megabit, plus 96k of
+ * audio, lands around 1 Mbit/s — comfortably inside what a bad corner of a
+ * house still carries, and perfectly watchable on a phone or a tablet. The
+ * cost is the Pi doing real encoding work, which veryfast makes affordable,
+ * and a picture that is visibly softer on a big television. That is the
+ * trade, and it is the viewer's to make, which is why it is a switch rather
+ * than something clever done behind their back.
+ */
+const LOW_HEIGHT = 480;
+const LOW_CRF = '26';
+const LOW_MAXRATE = '900k';
+const LOW_BUFSIZE = '1800k';
+const LOW_AUDIO = '96k';
+
 function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 0,
-  audioPadSeconds = 0, subs = [], audioTempo = 0, seekMode = 'input') {
+  audioPadSeconds = 0, subs = [], audioTempo = 0, seekMode = 'input', low = false) {
   const args = [];
   if (/^https?:/i.test(input)) {
     // This provider paces VOD at barely above realtime and drops the socket
@@ -2383,7 +2408,9 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 
     );
   }
 
-  const isHevc = /hevc|h265/.test(videoCodec || '');
+  // Low bandwidth always comes out as H.264, whatever went in — so the HEVC
+  // packaging below must not claim otherwise.
+  const isHevc = !low && /hevc|h265/.test(videoCodec || '');
 
   // -ss ahead of -i is the fast seek: ffmpeg jumps in with Range requests
   // rather than decoding from the top. With -c copy it lands on the nearest
@@ -2462,7 +2489,27 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 
   // the archive drive — MPEG-4 ASP, MPEG-2, WMV — no browser decodes.
   const PASSTHROUGH_VIDEO = new Set(['h264', 'hevc', 'h265']);
   const needsVideoEncode = videoCodec && !PASSTHROUGH_VIDEO.has(videoCodec);
-  if (needsVideoEncode) {
+  if (low) {
+    // Nothing is copied here, however good the source codec is: copying is
+    // exactly what keeps the stream too big to cross the link.
+    args.push(
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', LOW_CRF,
+      // A ceiling as well as a quality target, because CRF alone lets a busy
+      // scene spike to several megabits — which is the moment it stalls.
+      '-maxrate', LOW_MAXRATE,
+      '-bufsize', LOW_BUFSIZE,
+      '-pix_fmt', 'yuv420p',
+      // Down to 480 lines, aspect kept, dimensions even (H.264 requires it),
+      // and never upscaled — material already smaller is left as it is.
+      '-vf', `scale=-2:'min(${LOW_HEIGHT},ih)'`,
+      // A keyframe on every segment boundary, so segments stay independent
+      // and seeking lands where it was asked to.
+      '-force_key_frames', 'expr:gte(t,n_forced*6)',
+      '-sc_threshold', '0'
+    );
+  } else if (needsVideoEncode) {
     args.push(
       '-c:v', 'libx264',
       '-preset', 'veryfast',
@@ -2501,7 +2548,7 @@ function ffmpegArgs(input, outDir, videoCodec, startSeconds = 0, audioDelayMs = 
     '-profile:a', 'aac_low',
     '-ac', '2',
     '-ar', '48000',
-    '-b:a', '160k',
+    '-b:a', low ? LOW_AUDIO : '160k',
     '-af', audioFilter(audioDelayMs, audioPadSeconds, audioTempo,
       seekMode === 'demux' ? 'content' : 'container')
   );
@@ -2637,7 +2684,7 @@ async function startRemux(input, opts) {
   const { fromProvider, videoCodec, startSeconds = 0, audioDelayMs = 0,
     audioPadSeconds = 0, audioTempo = 0, seekMode = 'input', aligned = false,
     subs = [], noSubs = false, sourceDuration = 0, id: wantId = '',
-    replaces = '' } = opts;
+    replaces = '', low = false } = opts;
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed on this machine');
 
   // Clear the way for this conversion — without cutting off anybody else's.
@@ -2692,7 +2739,7 @@ async function startRemux(input, opts) {
   const wanted = noSubs ? [] : subs;
   const args = ['-v', 'info', '-nostats', '-hide_banner', '-y',
     ...ffmpegArgs(input, dir, codec, startSeconds, audioDelayMs, audioPadSeconds, wanted,
-      audioTempo, seekMode)];
+      audioTempo, seekMode, low)];
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
   let stderr = '';
@@ -2937,7 +2984,21 @@ const LIVE_DVR = {
   restartWindowMs: 30000,
 };
 
-function liveDvrArgs(input, dir, resumed = false) {
+function liveDvrArgs(input, dir, resumed = false, low = false) {
+  // Shrinking a live channel is the same trade as shrinking a film, with one
+  // extra condition: the encode has to keep up with the broadcast, for ever.
+  // ultrafast rather than veryfast for exactly that — a channel that falls
+  // behind its own feed never catches up, and a slightly softer picture is a
+  // far better outcome than a growing delay.
+  const videoArgs = low
+    ? [
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', LOW_CRF,
+      '-maxrate', LOW_MAXRATE, '-bufsize', LOW_BUFSIZE, '-pix_fmt', 'yuv420p',
+      '-vf', `scale=-2:'min(${LOW_HEIGHT},ih)'`,
+      '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+      '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-b:a', LOW_AUDIO,
+    ]
+    : ['-c', 'copy'];
   return [
     '-v', 'info', '-nostats', '-hide_banner', '-y',
     // The feed drops; these ride out the transport-level ones without ffmpeg
@@ -2956,8 +3017,8 @@ function liveDvrArgs(input, dir, resumed = false) {
     '-i', input,
     // First video stream plus every audio stream; data and DVB subtitle
     // streams are dropped — they are why a bare -map 0 dies on some channels.
-    '-map', '0:v:0', '-map', '0:a?',
-    '-c', 'copy',
+    '-map', '0:v:0', '-map', low ? '0:a:0?' : '0:a?',
+    ...videoArgs,
     '-f', 'hls',
     '-hls_time', String(LIVE_DVR.segmentSeconds),
     '-hls_list_size', String(LIVE_DVR.windowSegments),
@@ -2975,7 +3036,9 @@ function liveDvrArgs(input, dir, resumed = false) {
 
 /** Start (or restart) the ingest for a live session. */
 function spawnLiveDvr(session, input, resumed = false) {
-  const args = liveDvrArgs(input, session.dir, resumed);
+  // The session remembers whether it is the small one, so a respawn after a
+  // dropped feed comes back the same size it went away.
+  const args = liveDvrArgs(input, session.dir, resumed, Boolean(session.low));
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
   session.proc = proc;
   session.exited = false;
@@ -3009,8 +3072,11 @@ function spawnLiveDvr(session, input, resumed = false) {
  * Shared: a second viewer of the same channel joins the same window on the
  * same single provider connection.
  */
-async function ensureLiveDvr(cfg, channelId) {
-  const id = `live-${channelId}`;
+async function ensureLiveDvr(cfg, channelId, low = false) {
+  // The shrunk feed is a different ingest of the same channel and gets its
+  // own name: one viewer on weak Wi-Fi must not replace the full-size feed
+  // everybody else in the house is watching.
+  const id = `live-${low ? 'lo-' : ''}${channelId}`;
   const existing = remuxSessions.get(id);
   if (existing && !(existing.exited && Date.now() - existing.lastAccess > LIVE_DVR.restartWindowMs)) {
     existing.lastAccess = Date.now();
@@ -3030,6 +3096,7 @@ async function ensureLiveDvr(cfg, channelId) {
     id,
     dir,
     live: true,
+    low,
     lastAccess: Date.now(),
     fromProvider: true,
     idleMs: LIVE_DVR.idleMs,
@@ -4140,6 +4207,11 @@ async function handleApi(req, res, pathname, query) {
       if (typeof incoming.filtersEnabled === 'boolean') {
         prefs.filtersEnabled = incoming.filtersEnabled;
       }
+      // Weak Wi-Fi. Stored on the box rather than in the browser so the same
+      // corner of the house behaves the same on every device in it.
+      if (typeof incoming.lowBandwidth === 'boolean') {
+        prefs.lowBandwidth = incoming.lowBandwidth;
+      }
       if (incoming.filters && typeof incoming.filters === 'object') {
         for (const tab of ['live', 'movies', 'series']) {
           if (typeof incoming.filters[tab] === 'string') {
@@ -4531,6 +4603,9 @@ async function handleApi(req, res, pathname, query) {
         // caller because only the caller knows; everything else that happens
         // to be running belongs to somebody else's screen.
         replaces: query.get('replaces') || '',
+        // Shrink it on the way out, for a viewer whose Wi-Fi cannot carry
+        // the real thing.
+        low: query.get('low') === '1',
       });
       return json(res, 200, {
         url: `/hls/${session.id}/index.m3u8`,
@@ -4705,11 +4780,20 @@ async function handleApi(req, res, pathname, query) {
       });
     }
 
+    // Shrink it on the way out, when the viewer's link cannot carry the real
+    // thing. This is also the one case where a browser-native file is NOT
+    // handed over as it stands: the whole point is that the file as it
+    // stands is too big for the link.
+    const low = query.get('low') === '1';
+
     // Resuming does not change the decision: the file is served over ranges,
     // so the browser seeks to the resume point itself. Sending it through
     // ffmpeg to start at an offset would be slower and produce a worse
     // scrubber than the native one.
-    if (item.playback === 'direct') {
+    // With no ffmpeg there is nothing to shrink it with, and a file that
+    // plays as it stands is better than an error about one that would have
+    // been smaller.
+    if (item.playback === 'direct' && (!low || !hasFfmpeg())) {
       return json(res, 200, {
         mode: 'direct',
         url: `/archive/file?path=${encodeURIComponent(rel)}`,
@@ -4734,7 +4818,11 @@ async function handleApi(req, res, pathname, query) {
     // within the growing output to reach a resume point. A second request for
     // the same file — a resume, a seek past the frontier, a reopen — joins
     // the session already running rather than starting a rival.
-    const sessionKey = `arc-${crypto.createHash('sha1').update(rel).digest('hex').slice(0, 12)}`;
+    // The small version is a different conversion of the same file, so it
+    // gets its own name — otherwise one viewer's cached full-size episode
+    // would be handed to somebody who asked for the small one.
+    const sessionKey = `arc-${low ? 'lo-' : ''}`
+      + crypto.createHash('sha1').update(rel).digest('hex').slice(0, 12);
     const asResponse = (session) => ({
       mode: 'hls',
       url: `/hls/${session.id}/index.m3u8`,
@@ -4828,6 +4916,7 @@ async function handleApi(req, res, pathname, query) {
         seekMode: 'demux',
         sourceDuration: item.duration || 0,
         id: sessionKey,
+        low,
       });
       // What the cache cannot recover from the files alone, written beside
       // them: the true runtime and the subtitle listing.
@@ -4879,11 +4968,18 @@ async function handleApi(req, res, pathname, query) {
       // which is what stops segments expiring under a slow viewer. Any
       // failure — no ffmpeg, a dead feed, a timeout — falls back to the
       // direct proxy, which is exactly what this endpoint always returned.
-      if (kind === 'live' && format === 'm3u8' && hasFfmpeg() && /^[\w-]+$/.test(id)) {
+      // On a weak link the channel goes through the DVR whatever the
+      // preferred format is — the shrunk feed only exists there, and the
+      // direct TS proxy hands over the provider's full-size stream, which is
+      // the thing that cannot get through.
+      const lowWanted = query.get('low') === '1';
+      if (kind === 'live' && (format === 'm3u8' || lowWanted)
+          && hasFfmpeg() && /^[\w-]+$/.test(id)) {
         try {
-          const session = await ensureLiveDvr(cfg, id);
+          const session = await ensureLiveDvr(cfg, id, lowWanted);
           return json(res, 200, {
             url: `/hls/${session.id}/index.m3u8`, format: 'm3u8', dvr: true,
+            low: lowWanted,
           });
         } catch {
           /* direct proxy below */

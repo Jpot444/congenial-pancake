@@ -80,6 +80,23 @@
       <p class="health-note" id="speedResult" hidden></p>
     </div>
 
+    <!-- For the corner of the house where the signal is bad. Lives beside the
+         connection test because that is the question it answers, and outside
+         #healthBody because the poll replaces that block wholesale. -->
+    <div class="low-mode">
+      <label class="low-mode-row">
+        <input type="checkbox" id="lowMode" />
+        <span class="low-mode-words">
+          <strong>Low bandwidth mode</strong>
+          <small>
+            The box shrinks everything to about 1 Mbit/s before sending it, so
+            it keeps playing on weak Wi-Fi. The picture is softer, and it works.
+          </small>
+        </span>
+      </label>
+      <p class="health-note" id="lowModeNote" hidden></p>
+    </div>
+
     <!-- What everyone else has sent in. Sits outside #healthBody for the same
          reason the connection test does: that block is replaced wholesale by
          the poll every few seconds. -->
