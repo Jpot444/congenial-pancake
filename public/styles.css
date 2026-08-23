@@ -3874,6 +3874,48 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 /* The connection test borrows the note block, but unlike the rest of it the
    answer is often good news — so it recolours by result. Bad keeps the red. */
+/* One search, three answers. Each section spans the whole grid and holds its
+   own grid of cards, so the headings stay headings however the page reflows. */
+.search-section { grid-column: 1 / -1; }
+
+.search-head {
+  display: flex;
+  align-items: baseline;
+  gap: 11px;
+  margin: 4px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.search-head-title {
+  font-family: var(--display);
+  font-size: 17px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.search-head-note { font-size: 12.5px; color: var(--muted-dim); }
+
+.search-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 16px;
+  margin-bottom: 26px;
+}
+
+/* Channels are idents, not posters: wide, letterboxed and contained, exactly
+   as the Live TV page draws them. Without this they inherit the 2:3 poster
+   shape and a row of channels becomes a row of very tall empty rectangles. */
+.search-cards.is-live { grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); }
+.search-cards.is-live .card-art { aspect-ratio: 16 / 9; }
+.search-cards.is-live .card-art img { object-fit: contain; padding: 22px; }
+
+@media (max-width: 640px) {
+  .search-cards { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 12px; }
+  .search-cards.is-live { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+}
+
 .health-speed { margin-top: 18px; }
 
 /* The weak-Wi-Fi switch, beside the connection test because that is the

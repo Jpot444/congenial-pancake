@@ -282,6 +282,9 @@
       <button type="button" data-source="series">Series</button>
       <button type="button" data-source="favorites">Favorites</button>
       <button type="button" data-source="recent">Recent</button>
+      <!-- Hidden for everyone but the owner, the same as the Archive tab in
+           the main nav; applyButtons decides. -->
+      <button type="button" data-source="archive" data-owner-only="1">Archive</button>
     </div>
     <input type="search" id="mvSearch" placeholder="Search channels…" autocomplete="off" />
   </div>

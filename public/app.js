@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.19';
+const VERSION = '24.20';
 
 const PAGE_SIZE = 60;
 
@@ -681,7 +681,7 @@ const MV_IDLE = 3000;        // how long the chrome stays up with nothing moving
  * no fetch, and are the fast way to fill a cell with something you already
  * know you want.
  */
-const MV_SOURCES = ['live', 'movies', 'series', 'favorites', 'recent'];
+const MV_SOURCES = ['live', 'movies', 'series', 'favorites', 'recent', 'archive'];
 
 const multiview = {
   cells: [],
@@ -693,6 +693,8 @@ const multiview = {
   source: 'live',
   /** Which category the picker is inside, or null at the top level. */
   browsing: null,
+  /** Which folder of the archive drive the picker is inside, '' at the top. */
+  archiveDir: '',
   /** Which show the picker is inside, for the episode step. */
   show: null,
 
@@ -1272,7 +1274,23 @@ const multiview = {
       series: 'Search shows…',
       favorites: 'Search favorites…',
       recent: 'Search what you have watched…',
+      archive: 'Search the drive…',
     }[source];
+
+    // The drive answers from the box's index rather than from a library held
+    // in the browser, so this asks for the folder it is about to draw.
+    if (source === 'archive') {
+      this.archiveDir = '';
+      this.results('');
+      try {
+        await loadArchive('');
+      } catch (err) {
+        toast(`Couldn't read the archive: ${err.message}`);
+      }
+      if (this.source === 'archive') this.results($('#mvSearch').value || '');
+      return;
+    }
+
     this.results('');
 
     // Favorites and Recent are already on this device — the profile's own
@@ -1311,6 +1329,13 @@ const multiview = {
       this.browsing = null;
       return this.results('');
     }
+    // Up one folder of the drive rather than straight out of the picker.
+    if (this.source === 'archive' && this.archiveDir) {
+      this.archiveDir = this.archiveDir.split('/').slice(0, -1).join('/');
+      return loadArchive(this.archiveDir).then(() => {
+        if (this.source === 'archive') this.results('');
+      });
+    }
     this.closePicker();
   },
 
@@ -1341,6 +1366,14 @@ const multiview = {
       return this.source === 'favorites'
         ? this.favoriteTiles(box, query)
         : this.recentTiles(box, query);
+    }
+
+    if (this.source === 'archive') {
+      box.classList.remove('is-cats');
+      box.classList.add('is-live');
+      $('#mvPickerBackLabel').textContent =
+        (query.trim() || this.archiveDir) ? 'Back' : 'Cancel';
+      return this.archiveTiles(box, query);
     }
 
     const library = state.library[this.source];
@@ -1484,6 +1517,79 @@ const multiview = {
    * the item, not a reference to it — so a channel or a film goes straight into
    * a cell with nothing to look up. A show still opens its episode list.
    */
+  /**
+   * The drive, in a cell.
+   *
+   * Folders then files, the same two steps as the Archive page, because
+   * 5,853 files flattened into one list is not something anybody browses.
+   * Typing cuts across all of it — and only across the drive: the archive is
+   * searched from the archive and nowhere else, which is exactly how the
+   * main page treats it too.
+   */
+  async archiveTiles(box, query) {
+    const q = query.trim();
+    if (q) {
+      try {
+        await searchArchive(q);
+      } catch (err) {
+        const note = el('p', 'show-note');
+        note.textContent = `Couldn't search the drive: ${err.message}`;
+        return box.append(note);
+      }
+      if (this.source !== 'archive') return;   // moved on while it answered
+      box.innerHTML = '';
+    }
+
+    const data = state.archive.data || { subdirs: [], items: [] };
+    const dirs = q ? [] : (data.subdirs || []);
+    const items = data.items || [];
+
+    $('#mvPickerTitle').textContent = q ? 'Search results'
+      : (this.archiveDir || 'Archive');
+    $('#mvPickerSub').textContent = items.length || dirs.length
+      ? `${dirs.length ? `${dirs.length} folder${dirs.length === 1 ? '' : 's'}` : ''}`
+        + `${dirs.length && items.length ? ' · ' : ''}`
+        + `${items.length ? `${items.length.toLocaleString()} file${items.length === 1 ? '' : 's'}` : ''}`
+      : '';
+
+    if (!dirs.length && !items.length) {
+      const note = el('p', 'show-note');
+      note.textContent = q ? 'Nothing on the drive matches that.'
+        : 'Nothing here. Is the drive plugged in?';
+      return box.append(note);
+    }
+
+    for (const dir of dirs) {
+      const tile = this.titleTile(
+        { name: dir.name, kind: 'movie', logo: '' },
+        {
+          sub: `${(dir.count || 0).toLocaleString()} file${dir.count === 1 ? '' : 's'}`,
+          onPick: async () => {
+            // `dir` is the full path from the top of the drive, already.
+            this.archiveDir = dir.dir || dir.name;
+            await loadArchive(this.archiveDir);
+            if (this.source === 'archive') this.results('');
+          },
+        }
+      );
+      box.append(tile);
+    }
+
+    for (const entry of items) {
+      box.append(this.titleTile(
+        { name: entry.title, kind: 'movie', logo: '' },
+        {
+          sub: entry.duration ? `${Math.round(entry.duration / 60)} min` : 'On the drive',
+          onPick: () => {
+            const index = this.picking;
+            this.closePicker();
+            this.start(index, archiveItemToPlayable(entry));
+          },
+        }
+      ));
+    }
+  },
+
   favoriteTiles(box, query) {
     const q = query.trim().toLowerCase();
     const kindWord = { live: 'Channel', movie: 'Film', series: 'Show' };
@@ -1562,6 +1668,24 @@ const multiview = {
    */
   async startRecent(row) {
     const index = this.picking;
+
+    /* An archive title never was in the provider library, so looking it up
+     * there ends in "no longer in the library" — the wrong words entirely for
+     * a file sitting on the drive, and exactly what a viewer picking one out
+     * of Recent was told. Its id carries its own path; that plus the row's
+     * name is everything a cell needs. */
+    if (String(row.id || '').startsWith('archive:')) {
+      this.closePicker();
+      return this.start(index, {
+        kind: 'movie',
+        id: row.id,
+        name: row.name || '',
+        archivePath: String(row.id).slice('archive:'.length),
+        localOnly: true,
+        logo: row.poster || '',
+      });
+    }
+
     const tab = row.kind === 'series' ? 'series' : row.kind === 'live' ? 'live' : 'movies';
     this.closePicker();
 
@@ -1761,6 +1885,24 @@ const multiview = {
    * through the app-wide loader, which would cover the other three.
    */
   async resolveVod(cell, item, override, stale) {
+    // A file on the archive drive. Its own endpoint, because it is not a
+    // provider title and has no stream id to ask about — and because that
+    // endpoint keeps one conversion per file, which a cell joins like any
+    // other viewer.
+    if (item.archivePath) {
+      const data = await api('/api/archive/play', {
+        path: item.archivePath,
+        profileId: profiles.current?.id || '',
+        ...lowParam(),
+      });
+      if (stale()) return null;
+      if (data.mode === 'direct') return { url: data.url, format: 'file' };
+      cell.remux = data.session || '';
+      await this.waitForConversion(cell, data, stale);
+      if (stale()) return null;
+      return { url: data.url, format: 'm3u8' };
+    }
+
     const kind = override?.kind || item.kind;
     const id = override?.id ?? item.id;
     const ext = override?.ext ?? item.ext ?? '';
@@ -2425,6 +2567,10 @@ const reporter = {
     // bar styles its links with a display of their own and would win.
     document.querySelectorAll('a[data-tab="archive"]').forEach((a) => {
       a.style.display = owner ? '' : 'none';
+    });
+    // Same drive, same gate, inside multi-view's picker.
+    document.querySelectorAll('#mvSourceSeg button[data-owner-only]').forEach((b) => {
+      b.style.display = owner ? '' : 'none';
     });
   },
 
@@ -3211,7 +3357,7 @@ function groupsToCategories(items) {
   return [...counts.keys()].sort().map((name) => ({ id: name, name }));
 }
 
-async function loadTab(tab) {
+async function loadTab(tab, { quiet = false } = {}) {
   if (state.library[tab]) return state.library[tab];
 
   if (state.config.mode === 'm3u') {
@@ -3236,18 +3382,23 @@ async function loadTab(tab) {
   // The server filters and trims before sending, so this stays small even on
   // a provider carrying six figures of titles.
   const titles = { live: 'Live TV', movies: 'Movies', series: 'Series' };
-  loader.show(`Loading ${titles[tab] || tab}…`);
+  // A cross-library search fetches what it is missing WHILE showing what it
+  // already has; a full-screen panel over those results would be a step
+  // backwards from the thing it is loading.
+  if (!quiet) loader.show(`Loading ${titles[tab] || tab}…`);
 
   // Whoever shows the loading screen hides it. Leaving that to the caller left
   // the bar sitting at 100% for ever the first time a caller forgot — so it is
   // owned here, where it cannot be forgotten again.
   try {
-    const data = await fetchWithProgress(`/api/library?tab=${encodeURIComponent(tab)}`, (f, got, total) =>
-      loader.set(f, `${mb(got)} of ${mb(total)}`)
-    );
+    const data = await fetchWithProgress(`/api/library?tab=${encodeURIComponent(tab)}`, (f, got, total) => {
+      if (!quiet) loader.set(f, `${mb(got)} of ${mb(total)}`);
+    });
 
-    loader.label('Building the library…');
-    loader.set(1, `${(data.items || []).length.toLocaleString()} titles`);
+    if (!quiet) {
+      loader.label('Building the library…');
+      loader.set(1, `${(data.items || []).length.toLocaleString()} titles`);
+    }
 
     state.library[tab] = {
       categories: data.categories || [],
@@ -3256,7 +3407,7 @@ async function loadTab(tab) {
     };
     return state.library[tab];
   } finally {
-    loader.hide();
+    if (!quiet) loader.hide();
   }
 }
 
@@ -3423,6 +3574,135 @@ function buildShelves(tab) {
   }
 
   return rows;
+}
+
+/* ------------------------------------------------------- search, all of it ---
+ *
+ * Typing in the box searches the WHOLE library, not the tab that happened to
+ * be open. Somebody looking for a word does not know, and should not have to
+ * know, whether the thing they are picturing is filed as a film, an episode
+ * or a channel — and checking three tabs by hand is three times the work for
+ * the same answer.
+ *
+ * The three sections fill in one at a time rather than together, because a
+ * library that has not been opened yet has to be fetched: the tabs already
+ * loaded appear at once, and the rest drop in as they arrive. Waiting for the
+ * slowest one before showing any of them would make the common case — the
+ * thing you wanted is a film, and Movies was already loaded — feel like the
+ * rare one.
+ *
+ * The drive is deliberately NOT in here. It is a separate 5,853-file index on
+ * the box, it answers over the network per keystroke, and it belongs to one
+ * profile; it is searched from the Archive page, where that is what you asked
+ * for.
+ */
+const SEARCH_TABS = ['live', 'movies', 'series'];
+const SEARCH_SECTIONS = [
+  { tab: 'live', title: 'Live TV' },
+  { tab: 'movies', title: 'Movies' },
+  { tab: 'series', title: 'Series' },
+];
+/** Per section, before it stops being a list and starts being a wall. */
+const SEARCH_PER_SECTION = 40;
+/** Bumped by every new search, so a slow library cannot land on a later one. */
+let searchToken = 0;
+
+function renderSearchAll() {
+  const grid = $('#grid');
+  const query = state.query.trim().toLowerCase();
+  const mine = (searchToken += 1);
+
+  document.querySelector('.app-shell').classList.add('no-sidebar');
+  grid.hidden = false;
+  grid.className = 'grid';
+  grid.innerHTML = '';
+  $('#contentTitle').textContent = 'Search';
+  $('#contentMeta').textContent = `“${state.query}”`;
+  $('#loadMore').hidden = true;
+  $('#emptyState').hidden = true;
+
+  // One placeholder per section, in order, so the page has its shape before
+  // anything has arrived and sections cannot land out of order.
+  const slots = new Map();
+  for (const section of SEARCH_SECTIONS) {
+    const slot = el('div', 'search-section');
+    slot.dataset.tab = section.tab;
+    slots.set(section.tab, slot);
+    grid.append(slot);
+  }
+
+  let answered = 0;
+  let found = 0;
+
+  const draw = (section, items, error) => {
+    if (mine !== searchToken) return;          // a newer search is on screen
+    const slot = slots.get(section.tab);
+    if (!slot) return;
+    slot.innerHTML = '';
+    answered += 1;
+
+    if (error) {
+      const head = el('div', 'search-head');
+      head.append(Object.assign(el('h2', 'search-head-title'),
+        { textContent: section.title }));
+      head.append(Object.assign(el('span', 'search-head-note'),
+        { textContent: `couldn't load — ${error}` }));
+      slot.append(head);
+      return finish();
+    }
+
+    if (!items.length) return finish();        // nothing here; say nothing
+    found += items.length;
+
+    const head = el('div', 'search-head');
+    head.append(Object.assign(el('h2', 'search-head-title'),
+      { textContent: section.title }));
+    head.append(Object.assign(el('span', 'search-head-note'), {
+      textContent: items.length > SEARCH_PER_SECTION
+        ? `${items.length.toLocaleString()} matches — showing ${SEARCH_PER_SECTION}`
+        : `${items.length.toLocaleString()} match${items.length === 1 ? '' : 'es'}`,
+    }));
+    slot.append(head);
+
+    const cards = el('div', `search-cards${section.tab === 'live' ? ' is-live' : ''}`);
+    for (const item of items.slice(0, SEARCH_PER_SECTION)) cards.append(cardFor(item));
+    slot.append(cards);
+    finish();
+  };
+
+  const finish = () => {
+    if (answered < SEARCH_SECTIONS.length || found) return;
+    // Every section has answered and none of them had anything.
+    const empty = $('#emptyState');
+    empty.hidden = false;
+    empty.textContent = `Nothing matches “${state.query}”.`
+      + (reporter.isOwner() ? ' The drive is searched from the Archive page.' : '');
+  };
+
+  const matches = (tab) => (state.library[tab]?.items || [])
+    .filter((i) => !profiles.isDeleted(i))
+    .filter((i) => i.name && i.name.toLowerCase().includes(query));
+
+  for (const section of SEARCH_SECTIONS) {
+    if (state.library[section.tab]) {
+      draw(section, matches(section.tab));
+      continue;
+    }
+    // Not loaded, so it has to be fetched — quietly, because a full-screen
+    // loading panel over a page that is already showing results is worse
+    // than a section that fills in a moment later.
+    const slot = slots.get(section.tab);
+    const head = el('div', 'search-head');
+    head.append(Object.assign(el('h2', 'search-head-title'),
+      { textContent: section.title }));
+    head.append(Object.assign(el('span', 'search-head-note'),
+      { textContent: 'searching…' }));
+    slot.append(head);
+
+    loadTab(section.tab, { quiet: true })
+      .then(() => draw(section, matches(section.tab)))
+      .catch((err) => draw(section, [], err.message));
+  }
 }
 
 function renderRows() {
@@ -4597,6 +4877,12 @@ function liveCategoryCard(cat, count, cover, { onOpen = null, bin: withBin = tru
  * when each caller kept its own hide-list, every list was missing something.
  */
 function clearStage() {
+  // A search leaves three sections' worth of cards in the grid. Whatever
+  // draws next may not touch the grid at all — the shelves live in their own
+  // view — so those cards would sit there hidden, holding memory and ready
+  // to flash back into sight the next time anything unhid it.
+  const grid = $('#grid');
+  if (grid.querySelector('.search-section')) grid.innerHTML = '';
   $('#homeView').hidden = true;
   $('#seriesView').hidden = true;
   $('#downloadList').hidden = true;
@@ -4660,6 +4946,10 @@ function render() {
   if (state.tab === 'home') return renderHome();
   if (state.tab === 'series' && state.seriesId) return renderShowCard();
   if (state.tab === 'movies' && state.movieId) return renderMovieCard();
+
+  // A search is not a filter on the tab you happen to be standing in — it
+  // asks the whole library at once, and each part answers as it can.
+  if (state.query && SEARCH_TABS.includes(state.tab)) return renderSearchAll();
 
   $('#grid').hidden = false;
 
