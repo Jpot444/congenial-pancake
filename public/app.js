@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.26';
+const VERSION = '24.27';
 
 const PAGE_SIZE = 60;
 
@@ -5180,6 +5180,26 @@ function canShareFiles() {
 }
 
 /**
+ * Why the share sheet is not on offer here — which is never the viewer's
+ * fault and should never be reported as their device being too old.
+ *
+ * Almost always it is the ADDRESS. Handing over a file is one of the
+ * browser powers gated behind a secure context, like the clipboard further
+ * up this file, and most of the household reaches this over plain http on
+ * the tailnet — `http://100.68.175.115:8420`, added to a home screen months
+ * ago and never thought about again. Same app, same iPad, same everything;
+ * the sheet is missing because of the scheme in front of it.
+ *
+ * That is worth saying exactly, because the fix is a one-off — add it to
+ * the home screen from the https address instead — and "this version of iOS
+ * can't" sends somebody looking for a software update that will not help.
+ */
+function whyNoShare() {
+  if (!window.isSecureContext) return 'address';
+  return 'ios';
+}
+
+/**
  * Past this size, warn that the hand-over will take a while and may fail.
  *
  * It is NOT a cut-off. A cut-off was tried, at 900MB, and all it did was
@@ -5230,11 +5250,24 @@ function handOverFile({ url, filename, bytes, name }) {
     if (canShareFiles()) {
       return saveBar.fetchThenShare({ href, filename, name, bytes, again });
     }
-    // Old iOS, no file sharing. In Safari a download link is still fine —
-    // there is chrome to come back from, and Safari's own downloads take
-    // it. Installed to the home screen there is nothing safe left to try,
-    // so say that instead of opening something that fails in silence.
-    if (isStandalone()) return saveBar.deadEnd(name, bytes);
+    // No share sheet. In Safari a download link is still fine — there is
+    // chrome to come back from, and Safari's own downloads take it.
+    // Installed to the home screen it is not fine, but it is not nothing
+    // either: it does save, it just leaves iOS's file page over the app
+    // afterwards. So say why, say what fixes it for good, and let the save
+    // happen anyway for somebody who wants the film now.
+    if (isStandalone()) {
+      return saveBar.noShareHere({
+        name,
+        bytes,
+        why: whyNoShare(),
+        anyway: () => {
+          const took = startTransfer(href, filename);
+          saveBar.watch({ id: track, name, bytes, href, filename,
+            blocked: !took, again, preview: true });
+        },
+      });
+    }
   }
 
   const took = startTransfer(href, filename);
@@ -5368,29 +5401,41 @@ const saveBar = {
   },
 
   /**
-   * Say plainly that this device cannot be given the file.
+   * No share sheet here — say why, and still offer the save.
    *
-   * Only iOS old enough to have no file sharing lands here. The temptation
-   * is to open something anyway — that is what produced the dead browser
-   * page — so this deliberately opens nothing.
+   * The first version of this refused outright and blamed the iPad, which
+   * was both wrong and useless: the sheet is missing because the app was
+   * added to the home screen from the plain-http tailnet address, not
+   * because of anything about the device. So this names the real cause,
+   * names the one-off fix, and puts the save on a button anyway — it does
+   * work, it just leaves iOS's own file page over the app when it is done,
+   * and that is the viewer's call to make rather than mine.
    */
-  deadEnd(name, bytes) {
+  noShareHere({ name, bytes, why, anyway }) {
     this.id = '';
-    this.again = null;      // nothing to retry: it will fail the same way
+    this.again = null;
     clearInterval(this.timer);
     this.timer = null;
     this.clearTap();
     $('#saveBarName').textContent = name;
     $('#saveBarPct').textContent = '';
     $('#saveBarFill').style.width = '0%';
-    $('#saveBarNote').textContent =
-      `${bytes ? `${formatBytes(bytes)}. ` : ''}This version of iOS can't be handed a file `
-      + 'from inside the app. Open the portal in Safari and save it from there.';
     $('#saveBar').hidden = false;
-    this.finish(15_000);
+
+    const size = bytes ? `${formatBytes(bytes)}. ` : '';
+    this.offerAction(
+      why === 'address'
+        ? `${size}Handing over a file needs the secure address. This one was `
+          + 'added to your home screen from the plain http:// one, so iOS holds '
+          + 'the share sheet back. Add it again from the https:// address and '
+          + 'this works properly from then on.'
+        : `${size}This iPad can't be handed a file from inside the app.`,
+      'Save anyway',
+      anyway,
+    );
   },
 
-  watch({ id, name, bytes, href, filename, blocked, again }) {
+  watch({ id, name, bytes, href, filename, blocked, again, preview }) {
     this.id = id;
     this.again = again || null;
     clearInterval(this.timer);
@@ -5403,6 +5448,16 @@ const saveBar = {
       ? `${formatBytes(bytes)} — starting…`
       : 'Starting…';
     $('#saveBar').hidden = false;
+
+    // Taken with eyes open: this save works, and iOS puts its own file page
+    // over the app at the end of it. Say how to get back before it happens,
+    // rather than leaving somebody to work it out from a screen with no
+    // buttons on it.
+    if (preview) {
+      $('#saveBarNote').textContent =
+        `${bytes ? `${formatBytes(bytes)} — ` : ''}saving. iOS will show its own file `
+        + 'page when it lands; swipe up from the bottom, or reopen the app, to come back.';
+    }
 
     // The browser said outright that it would not start the download.
     if (blocked) return this.offerTap(href, filename,
