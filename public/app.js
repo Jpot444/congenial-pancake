@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.23';
+const VERSION = '24.24';
 
 const PAGE_SIZE = 60;
 
@@ -5136,22 +5136,59 @@ const savedOffers = new Set();
  * file to Safari and leaves the app untouched; on a desktop the download
  * attribute wins and no tab appears at all.
  */
-function handOverFile({ url, filename, bytes, name }) {
-  // The id the box counts against. The browser will not tell this page how
-  // its download is going, so the page asks the box how much it has sent.
-  const track = `sv${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-  const href = `${url}${url.includes('?') ? '&' : '?'}track=${track}`;
+/**
+ * Is this the home-screen app rather than a browser tab?
+ *
+ * It decides how a file can be handed over at all. In a tab there is chrome
+ * to come back from; installed there is none, and a same-window navigation
+ * to a video is a one-way door.
+ */
+const isStandalone = () =>
+  Boolean(window.matchMedia?.('(display-mode: standalone)')?.matches
+    || window.navigator.standalone === true);
 
+/**
+ * Start the transfer, and say whether the browser actually took it.
+ *
+ * Three attempts have now been made at this and each broke the other one's
+ * fix, so both failures are written down here.
+ *
+ *   * A plain same-window link SAVES reliably — and installed to the home
+ *     screen it replaces the entire app with the system's file viewer, which
+ *     has no way back short of force-quitting.
+ *   * A link with target=_blank leaves the app standing — and clicked from
+ *     script rather than by a finger it is a popup, which gets blocked, and
+ *     then nothing is saved at all.
+ *
+ * So: in a tab, the plain link, which is the one known to work. Installed,
+ * a new window — and if that is refused, say so and let the viewer tap a
+ * real link themselves, because a tap by a finger is never blocked.
+ */
+function startTransfer(href, filename) {
+  if (isStandalone()) {
+    // No `download` attribute here: it is meaningless across contexts, and
+    // the server's Content-Disposition already names the file.
+    const opened = window.open(href, '_blank');
+    return Boolean(opened);
+  }
   const a = document.createElement('a');
   a.href = href;
   a.download = filename;
-  a.target = '_blank';
-  a.rel = 'noopener';
   document.body.append(a);
   a.click();
   a.remove();
+  return true;
+}
 
-  saveBar.watch({ id: track, name, bytes });
+function handOverFile({ url, filename, bytes, name }) {
+  // The id the box counts against. The browser will not tell this page how
+  // its download is going, so the page asks the box how much it has sent —
+  // which also means the page can tell when the browser never asked at all.
+  const track = `sv${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const href = `${url}${url.includes('?') ? '&' : '?'}track=${track}`;
+
+  const took = startTransfer(href, filename);
+  saveBar.watch({ id: track, name, bytes, href, filename, blocked: !took });
 }
 
 /**
@@ -5171,9 +5208,10 @@ const saveBar = {
   timer: null,
   id: '',
 
-  watch({ id, name, bytes }) {
+  watch({ id, name, bytes, href, filename, blocked }) {
     this.id = id;
     clearInterval(this.timer);
+    this.clearTap();
 
     $('#saveBarName').textContent = name;
     $('#saveBarPct').textContent = '';
@@ -5183,8 +5221,13 @@ const saveBar = {
       : 'Starting…';
     $('#saveBar').hidden = false;
 
-    // Give the browser a moment to actually ask for the file before deciding
-    // nothing is happening.
+    // The browser said outright that it would not open the window.
+    if (blocked) return this.offerTap(href, filename,
+      'Your browser blocked the download window.');
+
+    // Otherwise wait and see. The box knows whether the file was ever asked
+    // for, so a save that silently never began is detectable rather than a
+    // bar sitting at nothing for ever — which is exactly what it did.
     let misses = 0;
     this.timer = setInterval(async () => {
       let s;
@@ -5192,19 +5235,55 @@ const saveBar = {
         s = await api('/api/save-progress', { id });
       } catch {
         misses += 1;
-        // A save that never even starts is worth saying out loud rather than
-        // leaving a bar at zero for ever.
-        if (misses === 20) {
-          $('#saveBarNote').textContent =
-            'Waiting for the browser to start it. If nothing happens, check its downloads.';
+        // Eight seconds with the box never asked for a single byte: the
+        // browser did not take it. Hand it over to a finger instead.
+        if (misses === 16) {
+          this.offerTap(href, filename, 'The browser did not start it.');
         }
-        if (misses > 120) this.stop();
         return;
       }
       if (this.id !== id) return;    // a newer save took the bar
       misses = 0;
+      this.clearTap();
       this.paint(s);
     }, 500);
+  },
+
+  /**
+   * When the browser refuses to start a download from script, ask the
+   * viewer to start it themselves.
+   *
+   * A real link, tapped by a finger, is never treated as a popup and never
+   * blocked — which is the whole reason this exists. It is offered rather
+   * than done silently, because it is the one case where the app genuinely
+   * cannot act on somebody's behalf.
+   */
+  offerTap(href, filename, why) {
+    clearInterval(this.timer);
+    this.timer = null;
+    this.clearTap();
+    $('#saveBarNote').textContent = `${why} Tap below to start it.`;
+
+    const link = el('a', 'btn btn-primary btn-sm save-bar-tap');
+    link.id = 'saveBarTap';
+    link.href = href;
+    link.textContent = 'Start the download';
+    // In a tab the download attribute does the work; installed, the new
+    // context does, and a tap opening one is allowed where script is not.
+    if (isStandalone()) link.target = '_blank';
+    else link.download = filename;
+    link.addEventListener('click', () => {
+      $('#saveBarNote').textContent = 'Started — watching it now…';
+      link.remove();
+      // Back to watching: the bytes will start arriving in a moment.
+      setTimeout(() => this.watch({ id: this.id, name: $('#saveBarName').textContent,
+        bytes: 0, href, filename, blocked: false }), 1200);
+    });
+    $('#saveBar').append(link);
+  },
+
+  clearTap() {
+    document.querySelector('#saveBarTap')?.remove();
   },
 
   paint(s) {
@@ -5256,6 +5335,7 @@ const saveBar = {
     clearInterval(this.timer);
     this.timer = null;
     this.id = '';
+    this.clearTap();
     $('#saveBar').hidden = true;
   },
 };

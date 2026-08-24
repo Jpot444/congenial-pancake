@@ -3684,6 +3684,15 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   font-variant-numeric: tabular-nums;
 }
 
+/* The way out when a browser refuses to start a download from script: a real
+   link for a real finger, which is never blocked. */
+.save-bar-tap {
+  display: block;
+  margin-top: 11px;
+  text-align: center;
+  text-decoration: none;
+}
+
 /* On a phone the tab bar owns the bottom of the screen. */
 .touch .save-bar { bottom: calc(74px + env(safe-area-inset-bottom, 0px)); }
 
