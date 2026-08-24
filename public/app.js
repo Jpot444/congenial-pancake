@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.22';
+const VERSION = '24.23';
 
 const PAGE_SIZE = 60;
 
@@ -87,10 +87,6 @@ const prefs = {
     // Remembered rather than asked, because the corner of the house with bad
     // signal is still bad tomorrow.
     lowBandwidth: false,
-    // What this device's link to the box last measured, and when. Only used
-    // to tell somebody how long a save will take.
-    deviceMbit: 0,
-    deviceMbitAt: 0,
   },
 
   async load() {
@@ -2801,9 +2797,6 @@ $('#speedTest').addEventListener('click', async () => {
 
     const seconds = (performance.now() - started) / 1000;
     const mbit = (got * 8) / seconds / 1e6;
-    // Kept, so the next Save to device can say how long it will take without
-    // measuring all over again.
-    rememberDeviceSpeed(mbit);
     const [, tone, verdict] = SPEED_TIERS.find(([floor]) => mbit >= floor);
 
     out.className = `health-note conn-${tone}`;
@@ -5144,8 +5137,13 @@ const savedOffers = new Set();
  * attribute wins and no tab appears at all.
  */
 function handOverFile({ url, filename, bytes, name }) {
+  // The id the box counts against. The browser will not tell this page how
+  // its download is going, so the page asks the box how much it has sent.
+  const track = `sv${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const href = `${url}${url.includes('?') ? '&' : '?'}track=${track}`;
+
   const a = document.createElement('a');
-  a.href = url;
+  a.href = href;
   a.download = filename;
   a.target = '_blank';
   a.rel = 'noopener';
@@ -5153,24 +5151,121 @@ function handOverFile({ url, filename, bytes, name }) {
   a.click();
   a.remove();
 
-  // Something has to happen the moment it is pressed. A multi-gigabyte
-  // transfer shows nothing for a long time — the browser is busy, the app is
-  // silent, and it reads as a button that did not work.
-  const size = bytes > 0 ? formatBytes(bytes) : '';
-  const eta = deviceEta(bytes);
-  toast(`Saving “${name}” to this device${size ? ` — ${size}` : ''}`
-    + `${eta ? `, about ${eta}` : ''}. It carries on in the background.`);
-
-  // No measurement to estimate from yet: take one now and say so when it
-  // lands, rather than leaving a large file with no idea attached to it.
-  if (bytes > 0 && !eta) {
-    measureDeviceSpeed().then((mbit) => {
-      if (!mbit) return;
-      const guess = deviceEta(bytes);
-      if (guess) toast(`“${name}” should take about ${guess} at ${mbit.toFixed(1)} Mbit/s.`);
-    });
-  }
+  saveBar.watch({ id: track, name, bytes });
 }
+
+/**
+ * The bar that shows a save actually happening.
+ *
+ * Every other way of doing this fails on this box. Pulling the file through
+ * fetch to count it needs the whole film in memory. A service worker needs a
+ * secure context, and half the household reaches this over plain http on the
+ * tailnet. So the honest measure is the one the SENDER has: the box counts
+ * the bytes it writes, and this asks it, twice a second.
+ *
+ * It survives navigation — a save outlives whatever page somebody wanders to
+ * while it runs — and closing it only hides it, because there is no way to
+ * cancel a download the browser owns.
+ */
+const saveBar = {
+  timer: null,
+  id: '',
+
+  watch({ id, name, bytes }) {
+    this.id = id;
+    clearInterval(this.timer);
+
+    $('#saveBarName').textContent = name;
+    $('#saveBarPct').textContent = '';
+    $('#saveBarFill').style.width = '0%';
+    $('#saveBarNote').textContent = bytes
+      ? `${formatBytes(bytes)} — starting…`
+      : 'Starting…';
+    $('#saveBar').hidden = false;
+
+    // Give the browser a moment to actually ask for the file before deciding
+    // nothing is happening.
+    let misses = 0;
+    this.timer = setInterval(async () => {
+      let s;
+      try {
+        s = await api('/api/save-progress', { id });
+      } catch {
+        misses += 1;
+        // A save that never even starts is worth saying out loud rather than
+        // leaving a bar at zero for ever.
+        if (misses === 20) {
+          $('#saveBarNote').textContent =
+            'Waiting for the browser to start it. If nothing happens, check its downloads.';
+        }
+        if (misses > 120) this.stop();
+        return;
+      }
+      if (this.id !== id) return;    // a newer save took the bar
+      misses = 0;
+      this.paint(s);
+    }, 500);
+  },
+
+  paint(s) {
+    const pct = s.total ? Math.min(100, (s.sent / s.total) * 100) : 0;
+    $('#saveBarFill').style.width = `${pct.toFixed(1)}%`;
+    $('#saveBarPct').textContent = `${Math.floor(pct)}%`;
+
+    if (s.done) {
+      $('#saveBarNote').textContent =
+        `Saved — ${formatBytes(s.total)}. It is on this device now.`;
+      $('#saveBarFill').style.width = '100%';
+      $('#saveBarPct').textContent = '100%';
+      this.finish(6000);
+      return;
+    }
+
+    // Ended with bytes still owing is NOT the same as stopped. A browser
+    // pulling a large file fetches it in ranges — one connection closes, the
+    // next opens — so this is an ordinary moment in the middle of a healthy
+    // download, and calling it stopped there would be a lie told every few
+    // seconds on every phone. Only a connection that closed AND has stayed
+    // quiet has really given up.
+    if (s.ended && s.idleMs > 6000) {
+      $('#saveBarNote').textContent =
+        `Stopped at ${formatBytes(s.sent)} of ${formatBytes(s.total)}. Press save again to retry.`;
+      this.finish(9000);
+      return;
+    }
+
+    const rate = s.bytesPerSec || 0;
+    const left = rate > 0 ? (s.total - s.sent) / rate : 0;
+    $('#saveBarNote').textContent =
+      `${formatBytes(s.sent)} of ${formatBytes(s.total)}`
+      + (rate > 0 ? ` · ${(rate / 1048576).toFixed(1)} MB/s` : '')
+      + (left > 1 && !s.stalled ? ` · about ${etaText(left)} left` : '')
+      + (s.stalled ? ' · paused or stopped' : '');
+  },
+
+  /** Stop asking, then clear the bar after a moment so the result is read. */
+  finish(after) {
+    clearInterval(this.timer);
+    this.timer = null;
+    setTimeout(() => {
+      if (!this.timer) this.stop();
+    }, after);
+  },
+
+  stop() {
+    clearInterval(this.timer);
+    this.timer = null;
+    this.id = '';
+    $('#saveBar').hidden = true;
+  },
+};
+
+$('#saveBarClose').addEventListener('click', () => {
+  // Hiding it is all this can do: the download belongs to the browser, and
+  // pretending a close button cancels it would be a lie.
+  saveBar.stop();
+  toast('Hidden — the save carries on in the browser.');
+});
 
 function saveToDevice(job) {
   handOverFile({
@@ -5181,55 +5276,6 @@ function saveToDevice(job) {
   });
 }
 
-/**
- * How long this device would take to pull that many bytes off the box.
- *
- * From a real measurement of THIS device's link, taken by the connection
- * test or by the sample a save runs when there is nothing to go on. The
- * figure is kept on the profile, so the second save of the evening can
- * answer immediately. Stale measurements are dropped rather than trusted:
- * the whole reason this matters is somebody who moves between a good corner
- * of the house and a bad one.
- */
-const SPEED_FRESH_MS = 30 * 60 * 1000;
-
-function deviceEta(bytes) {
-  const mbit = Number(prefs.data.deviceMbit) || 0;
-  const at = Number(prefs.data.deviceMbitAt) || 0;
-  if (!bytes || !mbit || Date.now() - at > SPEED_FRESH_MS) return '';
-  const seconds = (bytes * 8) / (mbit * 1e6);
-  if (seconds < 20) return 'a few seconds';
-  return etaText(seconds);
-}
-
-/** One short pull off the box, to know what this device's link is worth. */
-let speedSample = null;
-async function measureDeviceSpeed(bytes = 1.5 * 1024 * 1024) {
-  if (speedSample) return speedSample;
-  speedSample = (async () => {
-    try {
-      const started = performance.now();
-      const res = await fetch(`/api/speedtest?bytes=${bytes}`, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const got = (await res.arrayBuffer()).byteLength;
-      const mbit = (got * 8) / ((performance.now() - started) / 1000) / 1e6;
-      if (Number.isFinite(mbit) && mbit > 0) rememberDeviceSpeed(mbit);
-      return mbit;
-    } catch {
-      return 0;
-    } finally {
-      // One sample per press, not one for ever: the link changes.
-      setTimeout(() => { speedSample = null; }, 5000);
-    }
-  })();
-  return speedSample;
-}
-
-function rememberDeviceSpeed(mbit) {
-  prefs.data.deviceMbit = Math.round(mbit * 10) / 10;
-  prefs.data.deviceMbitAt = Date.now();
-  prefs.save().catch(() => {});
-}
 
 /** Poster for a download: stored at save time, else matched from the library. */
 function downloadPoster(job) {

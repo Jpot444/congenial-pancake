@@ -80,6 +80,8 @@
       <p class="health-note" id="speedResult" hidden></p>
     </div>
 
+    <!-- Placeholder kept next to the connection test; the live save bar is
+         appended to the body, so it is visible from any page. -->
     <!-- For the corner of the house where the signal is bad. Lives beside the
          connection test because that is the question it answers, and outside
          #healthBody because the poll replaces that block wholesale. -->
@@ -877,6 +879,24 @@
 </div>
 
 <div class="toast" id="toast" hidden></div>
+
+<!-- ────────────────────────────────────────────── saving to a device ─── -->
+<!-- A real bar over a real transfer. The browser owns the download and will
+     not say a word about it, so these numbers are the bytes the box has
+     actually sent — see the save tracker in server.js. Sits above everything
+     and outside the app frame, because a save outlives whatever page you
+     wander to while it runs. -->
+<div class="save-bar" id="saveBar" hidden>
+  <div class="save-bar-row">
+    <span class="save-bar-name" id="saveBarName"></span>
+    <span class="save-bar-pct" id="saveBarPct"></span>
+    <button class="save-bar-x" id="saveBarClose" title="Hide this" aria-label="Hide this">
+      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="save-bar-track"><i id="saveBarFill"></i></div>
+  <p class="save-bar-note" id="saveBarNote"></p>
+</div>
 
 <script src="/app.js"></script>
 </body>

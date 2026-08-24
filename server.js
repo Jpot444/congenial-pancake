@@ -247,8 +247,6 @@ function readPrefsRaw() {
       favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
       captionTrack: typeof parsed.captionTrack === 'string' ? parsed.captionTrack : '',
       lowBandwidth: parsed.lowBandwidth === true,
-      deviceMbit: Number(parsed.deviceMbit) || 0,
-      deviceMbitAt: Number(parsed.deviceMbitAt) || 0,
       prebufferSeconds: Number(parsed.prebufferSeconds) || DEFAULT_PREBUFFER,
       filtersEnabled: parsed.filtersEnabled !== false,
       filters: { ...DEFAULT_FILTERS, ...(parsed.filters || {}) },
@@ -273,8 +271,6 @@ function readPrefs() {
     favorites: [],
     captionTrack: '',
     lowBandwidth: false,
-    deviceMbit: 0,
-    deviceMbitAt: 0,
     prebufferSeconds: DEFAULT_PREBUFFER,
     filtersEnabled: true,
     filters: { ...DEFAULT_FILTERS },
@@ -1747,8 +1743,48 @@ function cancelJob(job, { removeFile }) {
   persistDownloads();
 }
 
+/* ---- watching a file leave the box ----
+ *
+ * Once a file is handed to the browser as a download, the page cannot see it
+ * any more: the transfer belongs to the browser, and nothing in JavaScript is
+ * allowed to ask how it is going. Which left a viewer pressing Save to
+ * device on a three-gigabyte film and getting a message, then nothing, for
+ * several minutes — with no way to tell a slow transfer from a dead one.
+ *
+ * But the box is the one SENDING it, and it can count. The page asks for the
+ * file with a tracking id on the URL, the bytes written to that response are
+ * counted here, and the page polls for the number. That is a real progress
+ * bar over the real transfer, with nothing buffered in memory and no service
+ * worker — both of which were the other ways to do this, and neither of
+ * which survives being served over plain http on the tailnet.
+ */
+const saveTransfers = new Map();
+const SAVE_KEEP_MS = 10 * 60 * 1000;
+
+function trackSave(id, { name, total }) {
+  if (!id) return null;
+  const existing = saveTransfers.get(id);
+  // A browser may fetch a file in several range requests; they are all the
+  // same save as far as anybody watching is concerned.
+  const t = existing || {
+    id, name, total, sent: 0, startedAt: Date.now(), endedAt: 0, at: Date.now(),
+  };
+  t.name = name || t.name;
+  t.total = total || t.total;
+  t.endedAt = 0;
+  t.at = Date.now();
+  saveTransfers.set(id, t);
+  return t;
+}
+
+setInterval(() => {
+  for (const [id, t] of saveTransfers) {
+    if (Date.now() - t.at > SAVE_KEEP_MS) saveTransfers.delete(id);
+  }
+}, 60_000).unref();
+
 /** Serve a completed download from disk, with Range support for seeking. */
-function serveLocalFile(req, res, filePath, { attachmentName } = {}) {
+function serveLocalFile(req, res, filePath, { attachmentName, track = '' } = {}) {
   let stat;
   try {
     stat = fs.statSync(filePath);
@@ -1765,6 +1801,29 @@ function serveLocalFile(req, res, filePath, { attachmentName } = {}) {
       `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(attachmentName)}`;
   }
 
+  const progress = track
+    ? trackSave(track, { name: attachmentName || path.basename(filePath), total: stat.size })
+    : null;
+
+  /** Count what actually reaches the wire, and say when it stops. */
+  const pipeCounting = (stream) => {
+    if (progress) {
+      stream.on('data', (chunk) => {
+        progress.sent = Math.min(progress.total, progress.sent + chunk.length);
+        progress.at = Date.now();
+        // Playing or saving, the box is in use either way — a restart in the
+        // middle of a transfer would cut the file in half.
+        localPlaybackAt = Date.now();
+      });
+      const finish = () => {
+        if (!progress.endedAt) progress.endedAt = Date.now();
+      };
+      res.on('close', finish);
+      res.on('finish', finish);
+    }
+    stream.pipe(res);
+  };
+
   const range = req.headers.range;
   const match = /^bytes=(\d*)-(\d*)$/.exec(range || '');
 
@@ -1778,12 +1837,15 @@ function serveLocalFile(req, res, filePath, { attachmentName } = {}) {
     headers['content-range'] = `bytes ${start}-${end}/${stat.size}`;
     headers['content-length'] = end - start + 1;
     res.writeHead(206, headers);
-    return fs.createReadStream(filePath, { start, end }).pipe(res);
+    // A ranged save starts wherever it starts; count from there so a resumed
+    // or chunked transfer still reads as a fraction of the whole file.
+    if (progress && start > progress.sent) progress.sent = start;
+    return pipeCounting(fs.createReadStream(filePath, { start, end }));
   }
 
   headers['content-length'] = stat.size;
   res.writeHead(200, headers);
-  fs.createReadStream(filePath).pipe(res);
+  pipeCounting(fs.createReadStream(filePath));
 }
 
 /* ------------------------------------------------------------- remuxing ---
@@ -4253,12 +4315,6 @@ async function handleApi(req, res, pathname, query) {
       if (typeof incoming.lowBandwidth === 'boolean') {
         prefs.lowBandwidth = incoming.lowBandwidth;
       }
-      // What this device measured its own link at, so a save can say how
-      // long it will take without measuring again first.
-      if (Number.isFinite(Number(incoming.deviceMbit))) {
-        prefs.deviceMbit = Math.max(0, Math.min(10000, Number(incoming.deviceMbit)));
-        prefs.deviceMbitAt = Number(incoming.deviceMbitAt) || Date.now();
-      }
       if (incoming.filters && typeof incoming.filters === 'object') {
         for (const tab of ['live', 'movies', 'series']) {
           if (typeof incoming.filters[tab] === 'string') {
@@ -4458,6 +4514,8 @@ async function handleApi(req, res, pathname, query) {
       localPlaybackAt = Date.now();
       return serveLocalFile(req, res, path.join(DOWNLOAD_DIR, job.file), {
         attachmentName: suffix === '/save' ? `${job.name}.${job.ext}` : null,
+        // How the page watches a save it can no longer see for itself.
+        track: suffix === '/save' ? (query.get('track') || '') : '',
       });
     }
 
@@ -4670,6 +4728,32 @@ async function handleApi(req, res, pathname, query) {
     } catch (err) {
       return json(res, 502, { error: err.message });
     }
+  }
+
+  /* How far a Save to device has got. The page cannot see the browser's own
+     download, so it watches what the box is sending instead. */
+  if (pathname === '/api/save-progress') {
+    const t = saveTransfers.get(query.get('id') || '');
+    if (!t) return json(res, 404, { error: 'No such transfer' });
+    const elapsed = Math.max(0.001, ((t.endedAt || Date.now()) - t.startedAt) / 1000);
+    return json(res, 200, {
+      id: t.id,
+      name: t.name,
+      total: t.total,
+      sent: t.sent,
+      bytesPerSec: t.sent / elapsed,
+      // Ended means the connection closed — finished if everything went, and
+      // stopped part-way if it did not.
+      done: t.total > 0 && t.sent >= t.total,
+      ended: Boolean(t.endedAt),
+      // How long since anything last moved. A browser that fetches in
+      // ranges — which is what Safari does with a large file — closes one
+      // connection and opens the next, so `ended` on its own is a normal
+      // moment mid-download and must never be read as "it stopped". Only
+      // ended AND quiet for a while means that.
+      idleMs: Date.now() - t.at,
+      stalled: !t.endedAt && Date.now() - t.at > 15000,
+    });
   }
 
   if (pathname === '/api/remux/status') {
@@ -5192,7 +5276,10 @@ const server = http.createServer(async (req, res) => {
         // middle of it would cut the file in half.
         localPlaybackAt = Date.now();
       }
-      return serveLocalFile(req, res, abs, { attachmentName });
+      return serveLocalFile(req, res, abs, {
+        attachmentName,
+        track: searchParams.get('save') ? (searchParams.get('track') || '') : '',
+      });
     }
     if (pathname === '/stream') return await handleStream(req, res, searchParams);
     if (pathname === '/img') return await handleImage(req, res, searchParams);

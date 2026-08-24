@@ -3603,6 +3603,90 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 @keyframes rise { from { opacity: 0; transform: translate(-50%, 12px); } }
 
+/* Saving to a device. A real bar over a real transfer — the numbers are the
+   bytes the box has actually sent, because the browser will not say. Pinned
+   above everything: a save outlives whichever page you wander to while it
+   runs, and the whole point is being able to see it. */
+.save-bar {
+  position: fixed;
+  z-index: 320;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+  width: min(440px, calc(100vw - 28px));
+  padding: 13px 15px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-card);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, .55);
+  animation: rise .24s var(--ease);
+}
+
+.save-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+
+.save-bar-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.save-bar-pct {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--brand-red);
+}
+
+.save-bar-x {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-dim);
+  cursor: pointer;
+}
+
+.save-bar-x svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; }
+.save-bar-x:hover { color: var(--text); }
+
+.save-bar-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .12);
+  overflow: hidden;
+}
+
+.save-bar-track i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--brand-red);
+  transition: width .4s var(--ease);
+}
+
+.save-bar-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* On a phone the tab bar owns the bottom of the screen. */
+.touch .save-bar { bottom: calc(74px + env(safe-area-inset-bottom, 0px)); }
+
 /* ======================================================= responsive === */
 @media (max-width: 1080px) {
   .search input { width: 140px; }
