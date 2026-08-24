@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.24';
+const VERSION = '24.25';
 
 const PAGE_SIZE = 60;
 
@@ -5180,6 +5180,30 @@ function startTransfer(href, filename) {
   return true;
 }
 
+/**
+ * Can this device be handed an actual file, rather than a link to one?
+ *
+ * On iOS it can, and that is the whole answer to the trap: the share sheet
+ * has "Save to Files" in it, it is a system panel that closes, and nothing
+ * ever navigates away from the app.
+ */
+function canShareFiles() {
+  try {
+    const probe = new File([new Blob(['x'])], 'probe.mp4', { type: 'video/mp4' });
+    return Boolean(navigator.canShare && navigator.canShare({ files: [probe] }));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Above this, a file is not pulled through memory to be shared.
+ *
+ * Building a Blob out of the pieces holds the film twice over for a moment,
+ * so this is deliberately well under what a tablet will part with.
+ */
+const SHARE_MAX_BYTES = 900 * 1024 * 1024;
+
 function handOverFile({ url, filename, bytes, name }) {
   // The id the box counts against. The browser will not tell this page how
   // its download is going, so the page asks the box how much it has sent —
@@ -5187,8 +5211,27 @@ function handOverFile({ url, filename, bytes, name }) {
   const track = `sv${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const href = `${url}${url.includes('?') ? '&' : '?'}track=${track}`;
 
+  /* On iOS, do not point a browser at the file at all.
+   *
+   * Whatever opens it — this window, a new one, Safari — iOS answers with
+   * its document preview: an icon, the file's name, "Open in…", and no way
+   * back. Installed to the home screen there is no chrome around that page,
+   * so it swallows the app until it is force-quit. That is the screen the
+   * viewer photographed.
+   *
+   * So the file is fetched HERE instead, which also means the progress bar
+   * is measuring our own transfer rather than asking the box about the
+   * browser's, and then handed to the system share sheet — where "Save to
+   * Files" is, and which closes like any other panel. */
+  if (isIOS() && canShareFiles() && (!bytes || bytes <= SHARE_MAX_BYTES)) {
+    return saveBar.fetchThenShare({ href, filename, name, bytes });
+  }
+
   const took = startTransfer(href, filename);
-  saveBar.watch({ id: track, name, bytes, href, filename, blocked: !took });
+  saveBar.watch({ id: track, name, bytes, href, filename, blocked: !took,
+    // A file too large to carry through memory still has to go the old way
+    // on iOS, and that way ends at the preview screen. Say so first.
+    warnPreview: isIOS() });
 }
 
 /**
@@ -5208,7 +5251,96 @@ const saveBar = {
   timer: null,
   id: '',
 
-  watch({ id, name, bytes, href, filename, blocked }) {
+  /**
+   * Fetch the file here, then hand the file itself to the system.
+   *
+   * The transfer is ours, so the bar is measuring what it claims to be
+   * measuring rather than asking the box about somebody else's download.
+   * And the share sheet is offered on a fresh tap on purpose: a share has
+   * to come from a gesture, and by the time a film has been fetched the
+   * gesture that started it is long spent.
+   */
+  async fetchThenShare({ href, filename, name, bytes }) {
+    const mine = `share-${Date.now()}`;
+    this.id = mine;
+    clearInterval(this.timer);
+    this.timer = null;
+    this.clearTap();
+
+    $('#saveBarName').textContent = name;
+    $('#saveBarPct').textContent = '';
+    $('#saveBarFill').style.width = '0%';
+    $('#saveBarNote').textContent = bytes
+      ? `${formatBytes(bytes)} — fetching from the box…`
+      : 'Fetching from the box…';
+    $('#saveBar').hidden = false;
+
+    try {
+      const res = await fetch(href, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`the box answered ${res.status}`);
+      const total = Number(res.headers.get('content-length')) || bytes || 0;
+
+      let blob;
+      if (res.body && res.body.getReader) {
+        const reader = res.body.getReader();
+        const chunks = [];
+        let got = 0;
+        const started = performance.now();
+        for (;;) {
+          // eslint-disable-next-line no-await-in-loop
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (this.id !== mine) return reader.cancel();   // superseded
+          chunks.push(value);
+          got += value.length;
+          const secs = (performance.now() - started) / 1000;
+          const rate = secs > 0 ? got / secs : 0;
+          const pct = total ? Math.min(100, (got / total) * 100) : 0;
+          $('#saveBarFill').style.width = `${pct.toFixed(1)}%`;
+          $('#saveBarPct').textContent = total ? `${Math.floor(pct)}%` : '';
+          $('#saveBarNote').textContent =
+            `${formatBytes(got)}${total ? ` of ${formatBytes(total)}` : ''}`
+            + (rate > 0 ? ` · ${(rate / 1048576).toFixed(1)} MB/s` : '')
+            + (rate > 0 && total > got ? ` · about ${etaText((total - got) / rate)} left` : '');
+        }
+        blob = new Blob(chunks, { type: res.headers.get('content-type') || 'video/mp4' });
+        chunks.length = 0;
+      } else {
+        // No streaming to read: still worth doing, just without a bar that
+        // moves. Never navigating is the point.
+        blob = await res.blob();
+      }
+      if (this.id !== mine) return;
+
+      const file = new File([blob], filename, { type: blob.type || 'video/mp4' });
+      $('#saveBarFill').style.width = '100%';
+      $('#saveBarPct').textContent = '100%';
+
+      // Offered again after a dismissal rather than thrown away: the file is
+      // already here, and making somebody fetch a gigabyte twice because
+      // they closed a sheet would be absurd.
+      const offer = (note) => this.offerAction(note, 'Save to device', async () => {
+        try {
+          await navigator.share({ files: [file] });
+          $('#saveBarNote').textContent = 'Saved to this device.';
+          this.finish(5000);
+        } catch (err) {
+          if (err && err.name === 'AbortError') {
+            return offer('Not saved. The file is still here — tap again.');
+          }
+          toast(`Couldn't hand it over: ${err.message}`);
+          offer(`Ready — ${formatBytes(blob.size)}.`);
+        }
+      });
+      offer(`Ready — ${formatBytes(blob.size)}. Choose “Save to Files”.`);
+    } catch (err) {
+      if (this.id !== mine) return;
+      $('#saveBarNote').textContent = `Couldn't fetch it — ${err.message}.`;
+      this.finish(9000);
+    }
+  },
+
+  watch({ id, name, bytes, href, filename, blocked, warnPreview }) {
     this.id = id;
     clearInterval(this.timer);
     this.clearTap();
@@ -5220,6 +5352,16 @@ const saveBar = {
       ? `${formatBytes(bytes)} — starting…`
       : 'Starting…';
     $('#saveBar').hidden = false;
+
+    // On iOS this road ends at the system's file preview — an icon, a name,
+    // "Open in…", and no way back inside a home-screen app. It is only
+    // taken when the file is too big to carry through memory, and it is
+    // worth saying so plainly rather than letting it happen.
+    if (warnPreview) {
+      $('#saveBarNote').textContent =
+        `${bytes ? `${formatBytes(bytes)} — ` : ''}too large to hand over inside the app. `
+        + 'iOS will show its own file page; swipe down or reopen the app to come back.';
+    }
 
     // The browser said outright that it would not open the window.
     if (blocked) return this.offerTap(href, filename,
@@ -5258,6 +5400,19 @@ const saveBar = {
    * than done silently, because it is the one case where the app genuinely
    * cannot act on somebody's behalf.
    */
+  /** A button in the bar that runs something when tapped. */
+  offerAction(note, label, run) {
+    clearInterval(this.timer);
+    this.timer = null;
+    this.clearTap();
+    $('#saveBarNote').textContent = note;
+    const button = el('button', 'btn btn-primary btn-sm save-bar-tap');
+    button.id = 'saveBarTap';
+    button.textContent = label;
+    button.addEventListener('click', run);
+    $('#saveBar').append(button);
+  },
+
   offerTap(href, filename, why) {
     clearInterval(this.timer);
     this.timer = null;
