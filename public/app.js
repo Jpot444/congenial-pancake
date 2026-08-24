@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.21';
+const VERSION = '24.22';
 
 const PAGE_SIZE = 60;
 
@@ -87,6 +87,10 @@ const prefs = {
     // Remembered rather than asked, because the corner of the house with bad
     // signal is still bad tomorrow.
     lowBandwidth: false,
+    // What this device's link to the box last measured, and when. Only used
+    // to tell somebody how long a save will take.
+    deviceMbit: 0,
+    deviceMbitAt: 0,
   },
 
   async load() {
@@ -2797,6 +2801,9 @@ $('#speedTest').addEventListener('click', async () => {
 
     const seconds = (performance.now() - started) / 1000;
     const mbit = (got * 8) / seconds / 1e6;
+    // Kept, so the next Save to device can say how long it will take without
+    // measuring all over again.
+    rememberDeviceSpeed(mbit);
     const [, tone, verdict] = SPEED_TIERS.find(([floor]) => mbit >= floor);
 
     out.className = `health-note conn-${tone}`;
@@ -5120,20 +5127,108 @@ function offerDeviceSave(before, after) {
 const savedOffers = new Set();
 
 /**
- * Hand the file to the browser.
+ * Hand a file to the browser, and say so.
  *
  * A plain link with `download` rather than fetch-and-blob: a film is gigabytes,
  * and pulling one into memory to make a blob out of it is how a phone runs out
  * of it. The server sets `Content-Disposition`, so iOS puts it in Files and a
  * Mac in Downloads.
+ *
+ * `target="_blank"` is not decoration and must not be tidied away. Added to
+ * the home screen this runs as a standalone app with no browser chrome — no
+ * address bar, no back button — and a plain same-window link to a video file
+ * REPLACES the app with the system's own full-screen viewer. There is no way
+ * out of that except force-quitting, which is exactly what happened to
+ * somebody saving a film off the drive. Opening in a new context hands the
+ * file to Safari and leaves the app untouched; on a desktop the download
+ * attribute wins and no tab appears at all.
  */
-function saveToDevice(job) {
+function handOverFile({ url, filename, bytes, name }) {
   const a = document.createElement('a');
-  a.href = `/api/downloads/${job.id}/save`;
-  a.download = `${job.name}.${job.ext}`;
+  a.href = url;
+  a.download = filename;
+  a.target = '_blank';
+  a.rel = 'noopener';
   document.body.append(a);
   a.click();
   a.remove();
+
+  // Something has to happen the moment it is pressed. A multi-gigabyte
+  // transfer shows nothing for a long time — the browser is busy, the app is
+  // silent, and it reads as a button that did not work.
+  const size = bytes > 0 ? formatBytes(bytes) : '';
+  const eta = deviceEta(bytes);
+  toast(`Saving “${name}” to this device${size ? ` — ${size}` : ''}`
+    + `${eta ? `, about ${eta}` : ''}. It carries on in the background.`);
+
+  // No measurement to estimate from yet: take one now and say so when it
+  // lands, rather than leaving a large file with no idea attached to it.
+  if (bytes > 0 && !eta) {
+    measureDeviceSpeed().then((mbit) => {
+      if (!mbit) return;
+      const guess = deviceEta(bytes);
+      if (guess) toast(`“${name}” should take about ${guess} at ${mbit.toFixed(1)} Mbit/s.`);
+    });
+  }
+}
+
+function saveToDevice(job) {
+  handOverFile({
+    url: `/api/downloads/${job.id}/save`,
+    filename: `${job.name}.${job.ext}`,
+    bytes: job.total || job.bytes || 0,
+    name: job.name,
+  });
+}
+
+/**
+ * How long this device would take to pull that many bytes off the box.
+ *
+ * From a real measurement of THIS device's link, taken by the connection
+ * test or by the sample a save runs when there is nothing to go on. The
+ * figure is kept on the profile, so the second save of the evening can
+ * answer immediately. Stale measurements are dropped rather than trusted:
+ * the whole reason this matters is somebody who moves between a good corner
+ * of the house and a bad one.
+ */
+const SPEED_FRESH_MS = 30 * 60 * 1000;
+
+function deviceEta(bytes) {
+  const mbit = Number(prefs.data.deviceMbit) || 0;
+  const at = Number(prefs.data.deviceMbitAt) || 0;
+  if (!bytes || !mbit || Date.now() - at > SPEED_FRESH_MS) return '';
+  const seconds = (bytes * 8) / (mbit * 1e6);
+  if (seconds < 20) return 'a few seconds';
+  return etaText(seconds);
+}
+
+/** One short pull off the box, to know what this device's link is worth. */
+let speedSample = null;
+async function measureDeviceSpeed(bytes = 1.5 * 1024 * 1024) {
+  if (speedSample) return speedSample;
+  speedSample = (async () => {
+    try {
+      const started = performance.now();
+      const res = await fetch(`/api/speedtest?bytes=${bytes}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const got = (await res.arrayBuffer()).byteLength;
+      const mbit = (got * 8) / ((performance.now() - started) / 1000) / 1e6;
+      if (Number.isFinite(mbit) && mbit > 0) rememberDeviceSpeed(mbit);
+      return mbit;
+    } catch {
+      return 0;
+    } finally {
+      // One sample per press, not one for ever: the link changes.
+      setTimeout(() => { speedSample = null; }, 5000);
+    }
+  })();
+  return speedSample;
+}
+
+function rememberDeviceSpeed(mbit) {
+  prefs.data.deviceMbit = Math.round(mbit * 10) / 10;
+  prefs.data.deviceMbitAt = Date.now();
+  prefs.save().catch(() => {});
 }
 
 /** Poster for a download: stored at save time, else matched from the library. */
@@ -5566,10 +5661,17 @@ function downloadCard(job) {
     const actions = el('div', 'dl-actions');
 
     if (job.status === 'done') {
-      const save = el('a', 'btn btn-ghost btn-sm');
-      save.href = `/api/downloads/${job.id}/save`;
+      // A button rather than a bare link, so it goes through the one place
+      // that opens the file in a new context and says what is happening.
+      // As a plain same-window link it replaced the whole app with the
+      // system's video viewer, which on a home-screen install has no way
+      // back out of it at all.
+      const save = el('button', 'btn btn-ghost btn-sm');
       save.textContent = 'Save to device';
-      save.setAttribute('download', `${job.name}.${job.ext}`);
+      save.addEventListener('click', (event) => {
+        event.stopPropagation();
+        saveToDevice(job);
+      });
       actions.append(save);
     }
 
@@ -5793,12 +5895,12 @@ const archiveStreamId = (entry) => `archive:${entry.path}`;
  * The drive itself is only ever read. Nothing here writes to it.
  */
 function saveArchiveToDevice(entry) {
-  const a = document.createElement('a');
-  a.href = `/archive/file?path=${encodeURIComponent(entry.path)}&save=1`;
-  a.download = `${entry.title || 'video'}.${entry.container || 'mp4'}`;
-  document.body.append(a);
-  a.click();
-  a.remove();
+  handOverFile({
+    url: `/archive/file?path=${encodeURIComponent(entry.path)}&save=1`,
+    filename: `${entry.title || 'video'}.${entry.container || 'mp4'}`,
+    bytes: Number(entry.size) || 0,
+    name: entry.title || 'this',
+  });
 }
 
 async function requestArchiveDownload(entry) {

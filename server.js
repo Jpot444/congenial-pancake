@@ -247,6 +247,8 @@ function readPrefsRaw() {
       favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
       captionTrack: typeof parsed.captionTrack === 'string' ? parsed.captionTrack : '',
       lowBandwidth: parsed.lowBandwidth === true,
+      deviceMbit: Number(parsed.deviceMbit) || 0,
+      deviceMbitAt: Number(parsed.deviceMbitAt) || 0,
       prebufferSeconds: Number(parsed.prebufferSeconds) || DEFAULT_PREBUFFER,
       filtersEnabled: parsed.filtersEnabled !== false,
       filters: { ...DEFAULT_FILTERS, ...(parsed.filters || {}) },
@@ -271,6 +273,8 @@ function readPrefs() {
     favorites: [],
     captionTrack: '',
     lowBandwidth: false,
+    deviceMbit: 0,
+    deviceMbitAt: 0,
     prebufferSeconds: DEFAULT_PREBUFFER,
     filtersEnabled: true,
     filters: { ...DEFAULT_FILTERS },
@@ -4248,6 +4252,12 @@ async function handleApi(req, res, pathname, query) {
       // corner of the house behaves the same on every device in it.
       if (typeof incoming.lowBandwidth === 'boolean') {
         prefs.lowBandwidth = incoming.lowBandwidth;
+      }
+      // What this device measured its own link at, so a save can say how
+      // long it will take without measuring again first.
+      if (Number.isFinite(Number(incoming.deviceMbit))) {
+        prefs.deviceMbit = Math.max(0, Math.min(10000, Number(incoming.deviceMbit)));
+        prefs.deviceMbitAt = Number(incoming.deviceMbitAt) || Date.now();
       }
       if (incoming.filters && typeof incoming.filters === 'object') {
         for (const tab of ['live', 'movies', 'series']) {
