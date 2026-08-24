@@ -1298,6 +1298,9 @@ async function runArchiveJob(job) {
   // of this drive is MPEG-4 ASP, which copies through to a black rectangle.
   const codec = String(entry.vcodec || (await probeSource(abs)).codec || '').toLowerCase();
   const args = ['-v', 'error', '-nostats', '-hide_banner', '-y',
+    // Its own position, machine-readable, on stdout — the only honest
+    // measure of how far through a conversion is.
+    '-progress', 'pipe:1',
     '-i', abs, '-map', '0:v:0', '-map', '0:a:0?'];
   if (['h264', 'hevc', 'h265'].includes(codec)) {
     args.push('-c:v', 'copy');
@@ -1312,7 +1315,7 @@ async function runArchiveJob(job) {
     out
   );
 
-  const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   // Pause, cancel and the auto-pause when a stream starts all reach a
   // running download by destroying `activeRequest`. Wearing the same shape
   // means every one of those paths works here without knowing what this is.
@@ -1321,7 +1324,25 @@ async function runArchiveJob(job) {
   let stderr = '';
   proc.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
 
-  // There is no byte counter to read, so the growing file is the progress.
+  /* How far through it is, in the only unit that means anything here.
+   *
+   * A download has a content length, so bytes-of-bytes is a real fraction.
+   * A conversion has no such number: the output of an old .avi is usually a
+   * fraction of the source, so measuring the growing file against the
+   * source's size shows a bar that creeps to a third and then jumps to
+   * done — which reads as stuck. ffmpeg will report its own position through
+   * `-progress`, and the index already knows the runtime, so the honest
+   * fraction is minutes converted out of minutes total. */
+  job.convertDuration = Number(entry.duration) || 0;
+  job.convertSeconds = 0;
+  let tail = '';
+  proc.stdout.on('data', (d) => {
+    tail = (tail + d).slice(-4000);
+    let m;
+    const re = /out_time_us=(\d+)/g;
+    while ((m = re.exec(tail))) job.convertSeconds = Number(m[1]) / 1e6;
+  });
+
   const ticker = setInterval(() => {
     try {
       job.bytes = fs.statSync(out).size;
@@ -1566,6 +1587,10 @@ function providerBusy() {
 function autoPauseActiveDownload() {
   const job = activeJob;
   if (!job || job.status !== 'downloading') return;
+  // This exists to hand the provider's one connection back to playback. A
+  // conversion off the archive drive is not holding it, so pausing that one
+  // buys nothing and costs the viewer their progress.
+  if (job.archivePath) return;
   job.status = 'paused';
   job.autoPaused = true; // resumes by itself, unlike a manual pause
   if (activeRequest) {
@@ -1625,12 +1650,24 @@ async function processQueue() {
     while (queue.length) {
       // Hold while anything streams, plus a grace window so channel-flipping
       // doesn't bounce the download up and down between every change.
+      //
+      // Except for the archive drive. That queue waits on the provider's
+      // single connection, and a title being converted off a local disk does
+      // not use it — so a viewer who asked for one while watching something
+      // saw it sit at "Waiting for the connection", with no connection to
+      // wait for and no sign of progress. Those are pulled out of the queue
+      // and run regardless; everything else still waits its turn.
+      let id;
       if (providerBusy() || Date.now() - lastProviderActiveAt < RESUME_GRACE_MS) {
-        await new Promise((r) => setTimeout(r, 3000));
-        continue;
+        const at = queue.findIndex((qid) => downloads.get(qid)?.archivePath);
+        if (at < 0) {
+          await new Promise((r) => setTimeout(r, 3000));
+          continue;
+        }
+        id = queue.splice(at, 1)[0];
+      } else {
+        id = queue.shift();
       }
-
-      const id = queue.shift();
       const job = downloads.get(id);
       if (!job || job.status === 'cancelled' || job.status === 'paused') continue;
 

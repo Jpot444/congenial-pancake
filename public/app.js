@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.20';
+const VERSION = '24.21';
 
 const PAGE_SIZE = 60;
 
@@ -5358,6 +5358,28 @@ function nextDownloadedEpisode(job) {
 }
 
 /** Identity a download groups under, or '' for anything that isn't an episode. */
+/**
+ * How far through a download is, as a percentage.
+ *
+ * Two different questions wearing the same word. A provider download knows
+ * how many bytes it is expecting, so bytes-of-bytes is the real fraction. A
+ * title being converted off the archive drive has no such number — the mp4
+ * an old .avi becomes is usually a fraction of the source's size, so
+ * measuring the growing file against the source shows a bar creeping to a
+ * third and then leaping to done, which reads as stuck. For those, ffmpeg
+ * reports its own position and the index knows the runtime: minutes
+ * converted out of minutes total, which is what somebody watching the card
+ * actually wants to know.
+ */
+function downloadPercent(job) {
+  if (job.convertDuration > 0 && job.convertSeconds >= 0) {
+    return Math.max(0, Math.min(100,
+      Math.floor((job.convertSeconds / job.convertDuration) * 100)));
+  }
+  return job.total ? Math.max(0, Math.min(100,
+    Math.floor((job.bytes / job.total) * 100))) : 0;
+}
+
 function seriesKeyOf(job) {
   if (job.kind !== 'series') return '';
   if (job.seriesId) return `s${job.seriesId}`;
@@ -5465,7 +5487,7 @@ function downloadCard(job) {
 
     // Status badge
     const badge = el('div', 'badge dl-badge');
-    const pct = job.total ? Math.floor((job.bytes / job.total) * 100) : 0;
+    const pct = downloadPercent(job);
     badge.textContent =
       job.status === 'done'
         ? 'READY'
@@ -5523,12 +5545,23 @@ function downloadCard(job) {
             ? job.error || 'Failed'
             : `${job.error || 'Failed'} — trying again shortly`
           : job.status === 'downloading'
-            ? `${formatBytes(job.bytes)} of ${formatBytes(job.total)}`
+            // A conversion off the drive is not fetching anything, so "X of
+            // Y megabytes" would be describing the wrong thing entirely.
+            // Minutes converted, and how big it has become so far.
+            ? (job.convertDuration > 0
+              ? `Converting — ${hms(Math.floor(job.convertSeconds || 0))} of `
+                + `${hms(Math.floor(job.convertDuration))}`
+                + `${job.bytes ? ` · ${formatBytes(job.bytes)} so far` : ''}`
+              : `${formatBytes(job.bytes)} of ${formatBytes(job.total)}`)
             : job.status === 'paused'
               ? job.autoPaused
                 ? 'Paused while you watch — resumes on its own'
                 : `${formatBytes(job.bytes)} saved`
-              : 'Waiting for the connection';
+              // A queued archive title is waiting for the encoder's turn, not
+              // for a connection it never needed — saying "the connection"
+              // there sent somebody looking for a network fault.
+              : job.archivePath ? 'Waiting its turn to convert'
+                : 'Waiting for the connection';
 
     const actions = el('div', 'dl-actions');
 
