@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.25';
+const VERSION = '24.26';
 
 const PAGE_SIZE = 60;
 
@@ -5120,57 +5120,40 @@ function offerDeviceSave(before, after) {
 const savedOffers = new Set();
 
 /**
- * Hand a file to the browser, and say so.
- *
- * A plain link with `download` rather than fetch-and-blob: a film is gigabytes,
- * and pulling one into memory to make a blob out of it is how a phone runs out
- * of it. The server sets `Content-Disposition`, so iOS puts it in Files and a
- * Mac in Downloads.
- *
- * `target="_blank"` is not decoration and must not be tidied away. Added to
- * the home screen this runs as a standalone app with no browser chrome — no
- * address bar, no back button — and a plain same-window link to a video file
- * REPLACES the app with the system's own full-screen viewer. There is no way
- * out of that except force-quitting, which is exactly what happened to
- * somebody saving a film off the drive. Opening in a new context hands the
- * file to Safari and leaves the app untouched; on a desktop the download
- * attribute wins and no tab appears at all.
- */
-/**
  * Is this the home-screen app rather than a browser tab?
  *
- * It decides how a file can be handed over at all. In a tab there is chrome
- * to come back from; installed there is none, and a same-window navigation
- * to a video is a one-way door.
+ * It decides only one thing now: whether there is any chrome to come back
+ * from when a hand-over cannot be done inside the app.
  */
 const isStandalone = () =>
   Boolean(window.matchMedia?.('(display-mode: standalone)')?.matches
     || window.navigator.standalone === true);
 
 /**
- * Start the transfer, and say whether the browser actually took it.
+ * Start the transfer with a link, the way every browser but iOS wants.
  *
- * Three attempts have now been made at this and each broke the other one's
- * fix, so both failures are written down here.
+ * Four attempts have now been made at this and each broke the one before
+ * it, so all of them are written down here.
  *
  *   * A plain same-window link SAVES reliably — and installed to the home
- *     screen it replaces the entire app with the system's file viewer, which
- *     has no way back short of force-quitting.
+ *     screen on iOS it replaces the entire app with the system's file
+ *     viewer, which has no way back short of force-quitting.
  *   * A link with target=_blank leaves the app standing — and clicked from
  *     script rather than by a finger it is a popup, which gets blocked, and
  *     then nothing is saved at all.
+ *   * window.open() from the home-screen app is not blocked, but it does not
+ *     download either: it opens iOS's own little browser view, on the raw
+ *     tailnet address, showing a blank page with a close button that does
+ *     not close. That is the screen somebody photographed, and it is worse
+ *     than either of the first two because nothing is saved AND the app is
+ *     covered.
  *
- * So: in a tab, the plain link, which is the one known to work. Installed,
- * a new window — and if that is refused, say so and let the viewer tap a
- * real link themselves, because a tap by a finger is never blocked.
+ * So window.open is gone for good, and iOS never comes through here at all
+ * — it is handed the file itself (see handOverFile). Everywhere else the
+ * plain download link is the one thing that has always worked, installed or
+ * in a tab, so that is all this does now.
  */
 function startTransfer(href, filename) {
-  if (isStandalone()) {
-    // No `download` attribute here: it is meaningless across contexts, and
-    // the server's Content-Disposition already names the file.
-    const opened = window.open(href, '_blank');
-    return Boolean(opened);
-  }
   const a = document.createElement('a');
   a.href = href;
   a.download = filename;
@@ -5197,13 +5180,24 @@ function canShareFiles() {
 }
 
 /**
- * Above this, a file is not pulled through memory to be shared.
+ * Past this size, warn that the hand-over will take a while and may fail.
  *
- * Building a Blob out of the pieces holds the film twice over for a moment,
- * so this is deliberately well under what a tablet will part with.
+ * It is NOT a cut-off. A cut-off was tried, at 900MB, and all it did was
+ * send big films down the browser road that does not work on iOS anyway —
+ * so a large file failed twice: no save, and the app buried under a dead
+ * browser page. Better to attempt it, say honestly that it is a lot to
+ * carry, and deal with a failure if one comes.
  */
-const SHARE_MAX_BYTES = 900 * 1024 * 1024;
+const SHARE_WARN_BYTES = 900 * 1024 * 1024;
 
+/**
+ * Send a file to the device, by whatever road that device actually has.
+ *
+ * iOS has exactly one that works — take the file into this page and hand
+ * the file itself to the share sheet. Every road that involves pointing a
+ * browser at a URL ends somewhere the viewer cannot get out of. Everywhere
+ * else, a download link, which has never once misbehaved.
+ */
 function handOverFile({ url, filename, bytes, name }) {
   // The id the box counts against. The browser will not tell this page how
   // its download is going, so the page asks the box how much it has sent —
@@ -5211,27 +5205,40 @@ function handOverFile({ url, filename, bytes, name }) {
   const track = `sv${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const href = `${url}${url.includes('?') ? '&' : '?'}track=${track}`;
 
-  /* On iOS, do not point a browser at the file at all.
+  /* Every way this can fail ends in a button that runs it again.
    *
-   * Whatever opens it — this window, a new one, Safari — iOS answers with
-   * its document preview: an icon, the file's name, "Open in…", and no way
-   * back. Installed to the home screen there is no chrome around that page,
-   * so it swallows the app until it is force-quit. That is the screen the
-   * viewer photographed.
+   * A save that stops half way is not rare — a phone sleeps, wifi drops in
+   * a doorway — and up to now the answer was a line of text saying "press
+   * save again", which means finding the card again, on a page that may
+   * have moved on. The retry starts from scratch on purpose: a fresh
+   * tracking id, so the bar counts this attempt rather than adding to the
+   * ruins of the last one. */
+  const again = () => handOverFile({ url, filename, bytes, name });
+
+  /* On iOS, never point a browser at the file. Not this window, not a new
+   * one, not a link — every one of those ends somewhere the viewer cannot
+   * get out of, and two of them do not even save.
    *
-   * So the file is fetched HERE instead, which also means the progress bar
-   * is measuring our own transfer rather than asking the box about the
-   * browser's, and then handed to the system share sheet — where "Save to
-   * Files" is, and which closes like any other panel. */
-  if (isIOS() && canShareFiles() && (!bytes || bytes <= SHARE_MAX_BYTES)) {
-    return saveBar.fetchThenShare({ href, filename, name, bytes });
+   * The file is fetched HERE instead, which also means the progress bar is
+   * measuring our own transfer rather than asking the box about somebody
+   * else's, and then the file itself goes to the system share sheet — where
+   * "Save to Files" is, and which closes like any other panel.
+   *
+   * No size limit on the attempt: a limit only decides which failure the
+   * viewer gets, and this one at least has a chance of working. */
+  if (isIOS()) {
+    if (canShareFiles()) {
+      return saveBar.fetchThenShare({ href, filename, name, bytes, again });
+    }
+    // Old iOS, no file sharing. In Safari a download link is still fine —
+    // there is chrome to come back from, and Safari's own downloads take
+    // it. Installed to the home screen there is nothing safe left to try,
+    // so say that instead of opening something that fails in silence.
+    if (isStandalone()) return saveBar.deadEnd(name, bytes);
   }
 
   const took = startTransfer(href, filename);
-  saveBar.watch({ id: track, name, bytes, href, filename, blocked: !took,
-    // A file too large to carry through memory still has to go the old way
-    // on iOS, and that way ends at the preview screen. Say so first.
-    warnPreview: isIOS() });
+  saveBar.watch({ id: track, name, bytes, href, filename, blocked: !took, again });
 }
 
 /**
@@ -5250,6 +5257,8 @@ function handOverFile({ url, filename, bytes, name }) {
 const saveBar = {
   timer: null,
   id: '',
+  /** How to start this same save over, for the button on every failure. */
+  again: null,
 
   /**
    * Fetch the file here, then hand the file itself to the system.
@@ -5260,9 +5269,10 @@ const saveBar = {
    * to come from a gesture, and by the time a film has been fetched the
    * gesture that started it is long spent.
    */
-  async fetchThenShare({ href, filename, name, bytes }) {
+  async fetchThenShare({ href, filename, name, bytes, again }) {
     const mine = `share-${Date.now()}`;
     this.id = mine;
+    this.again = again || null;
     clearInterval(this.timer);
     this.timer = null;
     this.clearTap();
@@ -5273,6 +5283,10 @@ const saveBar = {
     $('#saveBarNote').textContent = bytes
       ? `${formatBytes(bytes)} — fetching from the box…`
       : 'Fetching from the box…';
+    if (bytes > SHARE_WARN_BYTES) {
+      $('#saveBarNote').textContent =
+        `${formatBytes(bytes)} — a big one. Keep this open while it comes across.`;
+    }
     $('#saveBar').hidden = false;
 
     try {
@@ -5335,13 +5349,50 @@ const saveBar = {
       offer(`Ready — ${formatBytes(blob.size)}. Choose “Save to Files”.`);
     } catch (err) {
       if (this.id !== mine) return;
-      $('#saveBarNote').textContent = `Couldn't fetch it — ${err.message}.`;
-      this.finish(9000);
+      // Running out of room to hold the film is the one failure worth
+      // naming, because the answer to it is a different one: fetch a
+      // smaller copy rather than try the same thing again.
+      const outOfRoom = err && (err.name === 'RangeError'
+        || /allocat|memory|quota/i.test(err.message || ''));
+      const note = outOfRoom
+        ? `Too large for this device to hold — ${formatBytes(bytes || 0)}. `
+          + 'Download it to the box first, which makes a smaller copy, then save that.'
+        : `Couldn't fetch it — ${err.message}.`;
+      // Out of room will fail again the same way, so retrying it is a lie.
+      // Anything else — a doorway, a sleeping phone, the box busy — is worth
+      // one press.
+      if (again && !outOfRoom) return this.offerAction(note, 'Try again', again);
+      $('#saveBarNote').textContent = note;
+      this.finish(12_000);
     }
   },
 
-  watch({ id, name, bytes, href, filename, blocked, warnPreview }) {
+  /**
+   * Say plainly that this device cannot be given the file.
+   *
+   * Only iOS old enough to have no file sharing lands here. The temptation
+   * is to open something anyway — that is what produced the dead browser
+   * page — so this deliberately opens nothing.
+   */
+  deadEnd(name, bytes) {
+    this.id = '';
+    this.again = null;      // nothing to retry: it will fail the same way
+    clearInterval(this.timer);
+    this.timer = null;
+    this.clearTap();
+    $('#saveBarName').textContent = name;
+    $('#saveBarPct').textContent = '';
+    $('#saveBarFill').style.width = '0%';
+    $('#saveBarNote').textContent =
+      `${bytes ? `${formatBytes(bytes)}. ` : ''}This version of iOS can't be handed a file `
+      + 'from inside the app. Open the portal in Safari and save it from there.';
+    $('#saveBar').hidden = false;
+    this.finish(15_000);
+  },
+
+  watch({ id, name, bytes, href, filename, blocked, again }) {
     this.id = id;
+    this.again = again || null;
     clearInterval(this.timer);
     this.clearTap();
 
@@ -5353,17 +5404,7 @@ const saveBar = {
       : 'Starting…';
     $('#saveBar').hidden = false;
 
-    // On iOS this road ends at the system's file preview — an icon, a name,
-    // "Open in…", and no way back inside a home-screen app. It is only
-    // taken when the file is too big to carry through memory, and it is
-    // worth saying so plainly rather than letting it happen.
-    if (warnPreview) {
-      $('#saveBarNote').textContent =
-        `${bytes ? `${formatBytes(bytes)} — ` : ''}too large to hand over inside the app. `
-        + 'iOS will show its own file page; swipe down or reopen the app to come back.';
-    }
-
-    // The browser said outright that it would not open the window.
+    // The browser said outright that it would not start the download.
     if (blocked) return this.offerTap(href, filename,
       'Your browser blocked the download window.');
 
@@ -5423,10 +5464,11 @@ const saveBar = {
     link.id = 'saveBarTap';
     link.href = href;
     link.textContent = 'Start the download';
-    // In a tab the download attribute does the work; installed, the new
-    // context does, and a tap opening one is allowed where script is not.
-    if (isStandalone()) link.target = '_blank';
-    else link.download = filename;
+    // The download attribute and nothing else. A target of _blank was here
+    // once; installed to the home screen it is the same new-window road
+    // that produced a browser page with no way out, and it is not worth a
+    // second try on a link the viewer taps themselves either.
+    link.download = filename;
     link.addEventListener('click', () => {
       $('#saveBarNote').textContent = 'Started — watching it now…';
       link.remove();
@@ -5462,8 +5504,12 @@ const saveBar = {
     // seconds on every phone. Only a connection that closed AND has stayed
     // quiet has really given up.
     if (s.ended && s.idleMs > 6000) {
-      $('#saveBarNote').textContent =
-        `Stopped at ${formatBytes(s.sent)} of ${formatBytes(s.total)}. Press save again to retry.`;
+      const note = `Stopped at ${formatBytes(s.sent)} of ${formatBytes(s.total)}.`;
+      // The old text said "press save again", which meant finding the card
+      // again on a page that has probably moved on since. Put the retry
+      // where the bad news is.
+      if (this.again) return this.offerAction(note, 'Try again', this.again);
+      $('#saveBarNote').textContent = `${note} Press save again to retry.`;
       this.finish(9000);
       return;
     }
@@ -5490,16 +5536,19 @@ const saveBar = {
     clearInterval(this.timer);
     this.timer = null;
     this.id = '';
+    this.again = null;
     this.clearTap();
     $('#saveBar').hidden = true;
   },
 };
 
 $('#saveBarClose').addEventListener('click', () => {
-  // Hiding it is all this can do: the download belongs to the browser, and
-  // pretending a close button cancels it would be a lie.
+  // When the page is doing the fetching it can genuinely stop — the reader
+  // loop notices the bar has been taken and cancels. When the browser owns
+  // the download it cannot, and saying otherwise would be a lie.
+  const ours = saveBar.id.startsWith('share-');
   saveBar.stop();
-  toast('Hidden — the save carries on in the browser.');
+  toast(ours ? 'Stopped.' : 'Hidden — the save carries on in the browser.');
 });
 
 function saveToDevice(job) {
