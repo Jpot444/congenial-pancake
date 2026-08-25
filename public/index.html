@@ -575,6 +575,17 @@
           <p class="content-meta" id="contentMeta"></p>
         </div>
         <span class="spacer"></span>
+        <!-- Only while a search is on screen. The provider sells in every
+        language and the stored filter drops all of it before it reaches the
+        browser, which is right for browsing and wrong when you are looking
+        for one title you know the name of. -->
+        <button class="btn btn-ghost btn-sm" id="wideSearchBtn" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="globe-icon">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18"/>
+          </svg>
+          <span id="wideSearchLabel">All languages</span>
+        </button>
         <!-- Live TV only: four things side by side means nothing elsewhere. -->
         <button class="btn btn-ghost btn-sm" id="multiviewBtn" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true" class="mv-icon">

@@ -4633,7 +4633,15 @@ async function handleApi(req, res, pathname, query) {
     if (cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
 
     const prefs = readPrefs();
-    const pattern = prefs.filtersEnabled ? prefs.filters[tab] : '';
+    /* `all=1` sets the filter aside for this one request without touching
+     * what is stored. The Settings switch is a decision about the whole
+     * library — flip it and every page reloads from nothing — which is far
+     * too much to ask of somebody who only wants to find one foreign film
+     * they know the name of. This is that search, and nothing else.
+     *
+     * The cache key already carries the pattern, so the wide catalogue gets
+     * its own entry and neither copy evicts the other. */
+    const pattern = (prefs.filtersEnabled && !query.get('all')) ? prefs.filters[tab] : '';
     // Bump LIBRARY_SHAPE whenever projectItem changes, so a cache written by
     // an older build is ignored rather than served without the new fields.
     const cacheKey = `v${LIBRARY_SHAPE}:${tab}:${pattern}`;

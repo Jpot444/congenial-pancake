@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.27';
+const VERSION = '24.28';
 
 const PAGE_SIZE = 60;
 
@@ -56,6 +56,14 @@ const state = {
   vodCache: {},
   /** Per-tab cache: { categories: [], items: [] } */
   library: { live: null, movies: null, series: null },
+  /* The same three sections with the English/US filter set aside, fetched
+   * only when somebody asks a search to look wider. Kept apart from
+   * `library` on purpose: browsing stays the short catalogue it has always
+   * been, and one search for a foreign title does not turn the Movies page
+   * into 178,000 items until the next reload. */
+  libraryAll: { live: null, movies: null, series: null },
+  /** Whether search is currently looking past the English/US filter. */
+  searchWide: false,
   visible: PAGE_SIZE,
   filtered: [],
   downloads: { items: [], active: null, queued: 0 },
@@ -3357,8 +3365,12 @@ function groupsToCategories(items) {
   return [...counts.keys()].sort().map((name) => ({ id: name, name }));
 }
 
-async function loadTab(tab, { quiet = false } = {}) {
-  if (state.library[tab]) return state.library[tab];
+async function loadTab(tab, { quiet = false, all = false } = {}) {
+  // `all` is the same section with the language filter set aside. It lands in
+  // its own store so the two never overwrite each other — a wide search must
+  // not leave every other page holding the whole provider.
+  const store = all ? state.libraryAll : state.library;
+  if (store[tab]) return store[tab];
 
   if (state.config.mode === 'm3u') {
     const buckets = await api('/api/playlist');
@@ -3391,7 +3403,8 @@ async function loadTab(tab, { quiet = false } = {}) {
   // the bar sitting at 100% for ever the first time a caller forgot — so it is
   // owned here, where it cannot be forgotten again.
   try {
-    const data = await fetchWithProgress(`/api/library?tab=${encodeURIComponent(tab)}`, (f, got, total) => {
+    const url = `/api/library?tab=${encodeURIComponent(tab)}${all ? '&all=1' : ''}`;
+    const data = await fetchWithProgress(url, (f, got, total) => {
       if (!quiet) loader.set(f, `${mb(got)} of ${mb(total)}`);
     });
 
@@ -3400,12 +3413,12 @@ async function loadTab(tab, { quiet = false } = {}) {
       loader.set(1, `${(data.items || []).length.toLocaleString()} titles`);
     }
 
-    state.library[tab] = {
+    store[tab] = {
       categories: data.categories || [],
       items: (data.items || []).map((row) => ({ ...row, logo: img(row.logo) })),
       totals: data.totals,
     };
-    return state.library[tab];
+    return store[tab];
   } finally {
     if (!quiet) loader.hide();
   }
@@ -3596,6 +3609,28 @@ function buildShelves(tab) {
  * profile; it is searched from the Archive page, where that is what you asked
  * for.
  */
+/**
+ * Lower-cased and stripped of accents, so a keyboard can reach a title.
+ *
+ * The moment search stops being English-only this stops being optional:
+ * "Le Fabuleux Destin d'Amélie Poulain" is unreachable by typing "amelie"
+ * on a US keyboard, and a button that surfaces foreign titles nobody can
+ * then type is half a feature. NFD splits an accented letter into the
+ * letter and its mark; dropping the marks leaves the letter.
+ *
+ * Memoised onto the item because a search runs over the whole catalogue on
+ * every keystroke, and with the filter set aside that catalogue is six
+ * figures of titles.
+ */
+function foldText(text) {
+  return String(text || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+}
+
+const foldedName = (item) => {
+  if (item.folded === undefined) item.folded = foldText(item.name);
+  return item.folded;
+};
+
 const SEARCH_TABS = ['live', 'movies', 'series'];
 const SEARCH_SECTIONS = [
   { tab: 'live', title: 'Live TV' },
@@ -3609,7 +3644,7 @@ let searchToken = 0;
 
 function renderSearchAll() {
   const grid = $('#grid');
-  const query = state.query.trim().toLowerCase();
+  const query = foldText(state.query.trim());
   const mine = (searchToken += 1);
 
   document.querySelector('.app-shell').classList.add('no-sidebar');
@@ -3675,16 +3710,25 @@ function renderSearchAll() {
     // Every section has answered and none of them had anything.
     const empty = $('#emptyState');
     empty.hidden = false;
-    empty.textContent = `Nothing matches “${state.query}”.`
+    // Nothing found under the English/US filter is the exact moment the
+    // wider search is worth knowing about, so it is said here rather than
+    // left to be noticed on a button somebody is not looking at.
+    const wider = !state.searchWide && prefs.data.filtersEnabled !== false
+      ? ' Try All languages, above, to search the titles the English/US filter hides.'
+      : '';
+    empty.textContent = `Nothing matches “${state.query}”.${wider}`
       + (reporter.isOwner() ? ' The drive is searched from the Archive page.' : '');
   };
 
-  const matches = (tab) => (state.library[tab]?.items || [])
+  // Wide or narrow, it is the same search over a different catalogue.
+  const held = state.searchWide ? state.libraryAll : state.library;
+
+  const matches = (tab) => (held[tab]?.items || [])
     .filter((i) => !profiles.isDeleted(i))
-    .filter((i) => i.name && i.name.toLowerCase().includes(query));
+    .filter((i) => i.name && foldedName(i).includes(query));
 
   for (const section of SEARCH_SECTIONS) {
-    if (state.library[section.tab]) {
+    if (held[section.tab]) {
       draw(section, matches(section.tab));
       continue;
     }
@@ -3695,15 +3739,59 @@ function renderSearchAll() {
     const head = el('div', 'search-head');
     head.append(Object.assign(el('h2', 'search-head-title'),
       { textContent: section.title }));
-    head.append(Object.assign(el('span', 'search-head-note'),
-      { textContent: 'searching…' }));
+    head.append(Object.assign(el('span', 'search-head-note'), {
+      // The wide catalogue is the whole provider and takes noticeably
+      // longer, so it says which search it is waiting on rather than
+      // leaving somebody watching an unexplained pause.
+      textContent: state.searchWide ? 'searching every language…' : 'searching…',
+    }));
     slot.append(head);
 
-    loadTab(section.tab, { quiet: true })
+    loadTab(section.tab, { quiet: true, all: state.searchWide })
       .then(() => draw(section, matches(section.tab)))
       .catch((err) => draw(section, [], err.message));
   }
 }
+
+/**
+ * Search past the English/US filter, without changing what the filter is.
+ *
+ * The provider sells in every language it can, and the stored filter throws
+ * all of it away before it ever reaches the browser — which is right for
+ * browsing, and wrong for the one evening somebody wants a film they know
+ * the name of and cannot find. The Settings switch does exist, but it is a
+ * decision about the whole library: flip it and every page reloads from
+ * nothing, and it has to be remembered and flipped back.
+ *
+ * So this is a button on the search itself. It widens the search that is
+ * already on screen, leaves browsing exactly as it was, and stays on for
+ * the rest of the session because somebody hunting a foreign title is
+ * rarely doing it once.
+ */
+function applyWideSearchButton() {
+  const button = $('#wideSearchBtn');
+  const searching = Boolean(state.query) && SEARCH_TABS.includes(state.tab);
+  // With the filter switched off in Settings there is nothing hidden to go
+  // looking for, and a button offering to widen an already-wide search is
+  // just a lie with a globe on it.
+  button.hidden = !searching || prefs.data.filtersEnabled === false;
+  button.classList.toggle('is-on', state.searchWide);
+  // The label, not the button: textContent here would take the icon with it.
+  $('#wideSearchLabel').textContent = state.searchWide
+    ? 'Every language' : 'All languages';
+  button.title = state.searchWide
+    ? 'Searching the whole provider. Press to go back to English/US only.'
+    : 'Also search the titles the English/US filter hides.';
+}
+
+$('#wideSearchBtn').addEventListener('click', () => {
+  state.searchWide = !state.searchWide;
+  applyWideSearchButton();
+  render();
+  toast(state.searchWide
+    ? 'Searching every language — the first one takes a moment.'
+    : 'Back to English/US titles.');
+});
 
 function renderRows() {
   const grid = $('#grid');
@@ -4931,6 +5019,7 @@ function render() {
   // rather than once at startup. Kept out of syncTabs, which device.init()
   // reaches before this module has been initialised at all.
   applyMultiviewButton();
+  applyWideSearchButton();
 
   // EVERY tab's furniture goes away here, before the per-tab branches — not
   // inside them. Each branch used to hide its neighbours for itself, and
@@ -5003,8 +5092,9 @@ function render() {
   }
 
   if (state.query) {
-    const q = state.query.toLowerCase();
-    items = items.filter((i) => i.name.toLowerCase().includes(q));
+    // Folded on both sides, so "amelie" reaches "Amélie" — see foldText.
+    const q = foldText(state.query);
+    items = items.filter((i) => foldedName(i).includes(q));
   }
   state.filtered = items;
 
@@ -6578,6 +6668,7 @@ async function goTo(tab) {
   // returns before render(), and a Live TV button left sitting on Movies is
   // the kind of thing that only shows up when something else is broken.
   applyMultiviewButton();
+  applyWideSearchButton();
   state.category = null;
   state.shelf = null;
   state.visible = PAGE_SIZE;
@@ -10529,6 +10620,7 @@ async function startApp() {
   // Before anything renders, so controls are the right size on first paint.
   device.init();
   applyMultiviewButton();
+  applyWideSearchButton();
   try {
     const config = await api('/api/config');
     if (!config.configured) return showSetup();
