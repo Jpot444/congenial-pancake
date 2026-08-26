@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.33';
+const VERSION = '24.34';
 
 const PAGE_SIZE = 60;
 
@@ -7465,10 +7465,24 @@ const playback = {
     const rate = p.drift?.rate;
     const gap = p.drift?.gap;
     if (!Number.isFinite(rate) || !Number.isFinite(gap)) return;
-    // 10ms per second is a second of lip-sync every minute and forty — well
-    // clear of anything a healthy conversion produces, and far below the 220
-    // that prompted this.
-    if (Math.abs(rate) < 0.01 || Math.abs(gap) < 0.5) return;
+
+    /* Two shapes of fault, and until now only one of them was caught.
+     *
+     * DRIFT is the audio pulling away a little at a time — a rate and a gap
+     * that grow together, which is what these thresholds were written for.
+     * 10ms per second is a second of lip-sync every minute and forty, well
+     * clear of anything healthy and far below the 220 that prompted them.
+     *
+     * A STEP is what seeking produces, and it looks nothing like drift: the
+     * gap opens in the first few seconds and then stops, so by the time the
+     * measurement settles the rate reads near zero beside a gap of seconds.
+     * The old test demanded both, so the exact fault the viewer kept hitting
+     * — "only when I am resuming or have been seeking" — was the one shape
+     * it could not see. A second and a half is far past any keyframe-edge
+     * raggedness and unmistakably a real offset. */
+    const drifting = Math.abs(rate) >= 0.01 && Math.abs(gap) >= 0.5;
+    const stepped = Math.abs(gap) >= 1.5;
+    if (!drifting && !stepped) return;
 
     const session = lastRemux.session;
     if (!session || this.rescued.has(session)) return;
@@ -7481,6 +7495,21 @@ const playback = {
     this.rescued.add(session);
     this.rescues += 1;
     this.lastRescueAt = Date.now();
+
+    /* Rebuild WITH the correction, not without it.
+     *
+     * This used to re-run the identical command — same `-ss`, same flags —
+     * which on a seeked conversion reproduced the identical offset, so the
+     * rescue announced itself twice and then gave up while the audio stayed
+     * exactly where it was. Measuring a fault and then not using the
+     * measurement is worse than not measuring it.
+     *
+     * A negative gap is audio ending before the picture: it is running
+     * ahead, so it is held back by that much. The correction accumulates,
+     * because the next reading is taken against the corrected stream and
+     * describes whatever is still left over. */
+    film.audioDelayMs = Math.max(0, Math.min(10_000,
+      film.audioDelayMs + (gap < 0 ? Math.abs(gap) * 1000 : 0)));
 
     const behind = gap < 0 ? 'behind' : 'ahead of';
     toast(`Audio ran ${Math.abs(gap).toFixed(1)}s ${behind} the picture — rebuilding.`);
@@ -8228,6 +8257,14 @@ const film = {
   item: null,
   override: null,
   seeking: false,
+  /* A correction to hand the box on the NEXT conversion of this title.
+   *
+   * Seeking is the only thing that has ever put this app's audio out, and
+   * the reason it stayed out was that the rescue rebuilt the stream with
+   * the identical command — same `-ss`, same everything — so it landed on
+   * the identical offset and gave up after two tries. Measuring the gap and
+   * then not using it was the whole flaw. This carries it. */
+  audioDelayMs: 0,
 };
 
 /**
@@ -8401,6 +8438,9 @@ function showFilmBar(item, duration, override) {
   // session time instead of real running time.
   film.offset = lastRemux.offset || 0;
   film.ready = 0;
+  // A correction belongs to the title it was measured on. Carrying one into
+  // the next film would push its audio out by seconds for no reason.
+  if (film.item?.id !== item?.id) film.audioDelayMs = 0;
   film.item = item;
   film.override = override || null;
 
@@ -8561,6 +8601,7 @@ async function seekFilm(target, { force = false } = {}) {
             download: film.item.downloadId,
             start: Math.floor(clamped),
             replaces,
+            ...delayParam(),
             ...lowParam(),
           }
           : {
@@ -8570,6 +8611,7 @@ async function seekFilm(target, { force = false } = {}) {
             vcodec: film.override?.vcodec || film.item.vcodec || '',
             start: Math.floor(clamped),
             replaces,
+            ...delayParam(),
             ...lowParam(),
           }
       );
@@ -9615,6 +9657,17 @@ const NATIVE_CONTAINERS = ['mp4', 'm4v', 'mov'];
  * turning it on mid-film applies to the very next thing that is asked for.
  */
 const lowMode = () => prefs.data.lowBandwidth === true;
+
+/**
+ * The standing audio correction for this title, if one has been measured.
+ *
+ * Sent with every conversion of it from then on, so a seek that would have
+ * repeated the fault comes back already corrected rather than being noticed
+ * and rebuilt all over again.
+ */
+function delayParam() {
+  return film.audioDelayMs ? { adelay: Math.round(film.audioDelayMs) } : {};
+}
 
 /** What every playback request carries when it is on, and nothing when not. */
 const lowParam = () => (lowMode() ? { low: '1' } : {});
