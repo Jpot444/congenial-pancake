@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.32';
+const VERSION = '24.33';
 
 const PAGE_SIZE = 60;
 
@@ -3452,20 +3452,20 @@ async function findTitle(tab, wantId) {
   const near = lookIn(state.library);
   if (near) return near;
 
-  // With the filter off there is no wider catalogue to go and look in; the
-  // one already loaded is everything the provider has.
-  if (prefs.data.filtersEnabled === false) return null;
-
-  // The second look is best effort, and its failure is swallowed on
-  // purpose. The library that matters loaded fine; if the whole catalogue
-  // cannot be had on top of that, the honest answer is still "not in the
-  // library" — turning it into a provider error would dress up an ordinary
-  // withdrawn title as a broken box.
-  try {
-    if (!state.libraryAll[tab]) await loadTab(tab, { all: true, quiet: true });
-  } catch {
-    return null;
-  }
+  /* The wide catalogue is consulted only if it is ALREADY in hand.
+   *
+   * It used to be fetched here when it was missing, which read well and was
+   * a bad idea: it turned one press on a home-screen card into a pull of the
+   * provider's entire unfiltered catalogue — six figures of titles the box
+   * has to assemble in memory — for a lookup that fails either way when the
+   * title really is gone. On a Pi with a gigabyte to its name that is how
+   * the portal ends up restarting mid-request and the next page reports the
+   * library as empty.
+   *
+   * So it stays opt-in. Press All languages and the catalogue is loaded, and
+   * from that moment everything found in it opens and plays; without that,
+   * a title the filter hides is reported missing, which is the same answer
+   * this gave before any of it existed and costs nothing to arrive at. */
   return lookIn(state.libraryAll) || null;
 }
 

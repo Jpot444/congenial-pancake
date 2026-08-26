@@ -3746,6 +3746,21 @@ function rebuildLibrary(cfg, tab, pattern, cacheKey) {
 
   const job = buildLibrary(cfg, tab, pattern)
     .then((payload) => {
+      /* An empty library is never cached, and never allowed to replace one
+       * that is not.
+       *
+       * A provider that answers 200 with nothing — busy, rate-limiting, or
+       * simply between updates — used to be written down as the truth and
+       * then served for the whole cache lifetime, so one bad minute became
+       * an evening of "The library came back empty". Handing back the last
+       * good copy is right in every case: if the library really is empty
+       * there is nothing to lose by showing yesterday's, and if it is not,
+       * this is the difference between a blink and a broken box. */
+      if (!(payload.items || []).length) {
+        const held = libraryCache.get(cacheKey);
+        if (held && (held.payload.items || []).length) return held.payload;
+        return payload;
+      }
       libraryCache.set(cacheKey, { at: Date.now(), payload });
       persistLibraryCache();
       return payload;
