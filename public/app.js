@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.31';
+const VERSION = '24.32';
 
 const PAGE_SIZE = 60;
 
@@ -7340,11 +7340,51 @@ const playback = {
       const secs = Math.round((r.at - base) / 1000);
       const rate = r.step !== null ? `${r.step.toFixed(2)}x`
         : r.paused ? 'paused' : r.seeking ? 'seeking' : '-';
+      // The buffer in FILM time, not session time.
+      //
+      // These two columns used to be on different clocks: position counted
+      // from the start of the film, the buffer from the start of the
+      // conversion. Resume a film at 102s and every row read "position 314,
+      // buffered to 235" — as though the buffer were eighty seconds BEHIND
+      // the playhead, which is impossible and sent a whole evening chasing
+      // it. Same clock now, and the cushion beside it, which is the number
+      // anybody reading this column actually wants.
+      const bufFilm = r.buf + (r.pos - r.t);
+      const cushion = r.buf - r.t;
       return `  +${String(secs).padStart(3)}s ${r.pos.toFixed(1).padStart(8)} ` +
-        `${rate.padStart(7)}  rs${r.rs}/${r.nw} buf${String(Math.round(r.buf)).padStart(4)}` +
+        `${rate.padStart(7)}  rs${r.rs}/${r.nw} buf${String(Math.round(bufFilm)).padStart(5)}` +
+        ` +${String(Math.round(cushion)).padStart(3)}s` +
         (r.notes ? `  ${r.notes}` : '');
     });
-    return ['', 'timeline  (film position, rate, readyState/networkState, buffered to)', ...rows];
+    return ['',
+      'timeline  (film position, rate, readyState/networkState, buffered to, cushion)',
+      ...rows];
+  },
+
+  /**
+   * How fast the media is ARRIVING, as a multiple of how fast it is played.
+   *
+   * The measured rate says how fast the clock advanced; this says whether
+   * there was anything to advance through. Below 1.0 the cushion is being
+   * spent and a stall is only a matter of when, however healthy the last ten
+   * seconds looked — which is precisely the case that reads as fine right up
+   * until it isn't.
+   *
+   * Taken from the growth of the buffer's far end, and only since the last
+   * time a source was attached: a swap restarts that clock at zero and would
+   * otherwise read as an enormous negative.
+   */
+  deliveryRate() {
+    let rows = this.history;
+    const lastLoad = rows.map((r) => /loadstart/.test(r.notes || '')).lastIndexOf(true);
+    if (lastLoad >= 0) rows = rows.slice(lastLoad + 1);
+    rows = rows.filter((r) => !r.paused);
+    if (rows.length < 10) return null;
+    const a = rows[0];
+    const b = rows[rows.length - 1];
+    const wall = (b.at - a.at) / 1000;
+    if (wall < 10) return null;
+    return (b.buf - a.buf) / wall;
   },
 
   sample() {
@@ -7524,11 +7564,19 @@ const playback = {
     const mb = (bits) => `${(bits / 1e6).toFixed(1)} Mbit/s`;
     const speed = Number(p.speed) || 0;
     const boxFine = speed >= 1.2;
+    // What is actually arriving, which is the claim rather than the estimate.
+    // hls.js's own figure is what it managed on the segments it fetched, and
+    // it reads high on a link that is fine in bursts and short over a minute.
+    const delivered = this.deliveryRate();
 
     return `this copy is ${mb(stream)} and the connection measured ${mb(link)}`
       + `${stream >= link ? ' — more than the link can carry' : ', which leaves no headroom'}. `
       + (boxFine
         ? `The box is fine: it is writing ${speed.toFixed(1)}× faster than realtime. `
+        : '')
+      + (delivered !== null && delivered < 0.98
+        ? `The picture is arriving at ${delivered.toFixed(2)}× the speed it is watched, `
+          + 'so the cushion is being spent and will run out. '
         : '')
       // Said here rather than left to be worked out, because starving looks
       // exactly like lip-sync going off and the reflex is to go hunting
@@ -7734,6 +7782,14 @@ const playback = {
       `version         v${VERSION}`,
       `measured rate   ${rate === null ? 'n/a' : `${rate.toFixed(3)}x over ${this.span().toFixed(0)}s`}`,
       `worst measured  ${this.worstRate === null ? 'n/a' : `${this.worstRate.toFixed(3)}x`}`,
+      // Arriving, not playing. Under 1.0 the cushion is being spent, and the
+      // stall is only a question of when — which is exactly the state that
+      // reads as perfectly healthy in every other line here.
+      `delivery        ${(() => {
+        const d = this.deliveryRate();
+        return d === null ? 'n/a'
+          : `${d.toFixed(2)}x of playback${d < 1 ? ' — the cushion is being spent' : ''}`;
+      })()}`,
       `playbackRate    ${video.playbackRate}`,
       `paused/seeking  ${video.paused} / ${video.seeking}`,
       `readyState      ${video.readyState}   networkState ${video.networkState}`,
