@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.29';
+const VERSION = '24.30';
 
 const PAGE_SIZE = 60;
 
@@ -7484,6 +7484,56 @@ const playback = {
    *                    we asked to be. If those disagree, the setting is not
    *                    doing what it says.
    */
+  /**
+   * What the player reckons the connection is worth, in bits per second.
+   *
+   * hls.js measures this from segments it has already fetched, so it is the
+   * real path — Pi, tunnel, wifi and all — rather than a speed test against
+   * something else.
+   */
+  linkBits() {
+    if (engineKind !== 'hls.js' || !engine) return 0;
+    return Number(engine.bandwidthEstimate) || 0;
+  },
+
+  /**
+   * Is this simply a bigger stream than the connection can carry?
+   *
+   * Worth asking before anything else, because when the answer is yes every
+   * other reading in the report is a red herring. A 4K HEVC master copied
+   * verbatim is twenty-odd megabits; a household connection is whatever it
+   * is; and if the first number is near the second, the film cannot arrive
+   * in time no matter how healthy the timestamps are or how far ahead the
+   * box has run.
+   *
+   * The box's own conversion speed is what separates the two failures. If
+   * it is writing several times faster than realtime and the viewer is
+   * still starving, nothing is wrong with the box: the wire is the wall.
+   *
+   * Returns the sentence to say, or '' when this is not the problem.
+   */
+  tooFatForTheLink() {
+    const p = this.probe;
+    const stream = p && !p.error ? Number(p.bitrate) || 0 : 0;
+    const link = this.linkBits();
+    if (!stream || !link) return '';
+    // Below about four fifths there is real headroom and the stalls are
+    // something else; a stream at or over the link is hopeless.
+    if (stream < link * 0.8) return '';
+
+    const mb = (bits) => `${(bits / 1e6).toFixed(1)} Mbit/s`;
+    const speed = Number(p.speed) || 0;
+    const boxFine = speed >= 1.2;
+
+    return `this copy is ${mb(stream)} and the connection measured ${mb(link)}`
+      + `${stream >= link ? ' — more than the link can carry' : ', which leaves no headroom'}. `
+      + (boxFine
+        ? `The box is fine: it is writing ${speed.toFixed(1)}× faster than realtime. `
+        : '')
+      + 'Pick a smaller copy of the same title, watch it over the local address '
+      + 'rather than the tunnel if you are in the house, or turn on Low bandwidth mode.';
+  },
+
   hlsLines() {
     if (engineKind !== 'hls.js' || !engine) return [];
     const out = [];
@@ -7700,7 +7750,18 @@ const playback = {
       ...(p.input || []).map((line, i) =>
         `${i === 0 ? 'source' : ''}`.padEnd(16) + line),
       `conversion      wrote ${Number(p.declaredTotal || 0).toFixed(1)}s across the playlist ` +
-        `(measured ${age}s ago)`,
+        `(measured ${age}s ago)`
+        + (p.speed ? `, at ${p.speed.toFixed(1)}× realtime` : ''),
+      // The two numbers that settle "is it the box or the wire". A stream
+      // running fatter than the link measured cannot arrive in time however
+      // healthy everything else looks, and nothing else in this report says
+      // so — it was all timestamps and drift, which are the wrong questions
+      // when the answer is simply that the film is too big for the pipe.
+      `  bitrate       ${p.bitrate ? `${(p.bitrate / 1e6).toFixed(1)} Mbit/s of stream` : 'n/a'}`
+        + (p.bitrate && this.linkBits()
+          ? ` against ${(this.linkBits() / 1e6).toFixed(1)} Mbit/s of link  → ${
+            (p.bitrate / this.linkBits()).toFixed(2)}× the connection`
+          : ''),
       `  a segment     claims ${Number(seg.declared || 0).toFixed(3)}s, holds ` +
         `${Number(seg.real || 0).toFixed(3)}s  → timeline ${seg.ratio ? seg.ratio.toFixed(3) : 'n/a'}`,
       `  a/v start     video ${Number.isFinite(p.start?.video) ? p.start.video.toFixed(3) : '?'}s, ` +
@@ -7800,7 +7861,9 @@ const playback = {
         return `Playback RATE is ${video.playbackRate}× — something set it, this is not the stream.`;
       }
       if (this.events.waiting > 3) {
-        return `Running at ${rate.toFixed(2)}× with ${this.events.waiting} stalls — the stream is not arriving fast enough.`;
+        const starved = this.tooFatForTheLink();
+        return `Running at ${rate.toFixed(2)}× with ${this.events.waiting} stalls — `
+          + (starved || 'the stream is not arriving fast enough.');
       }
       return `Running at ${rate.toFixed(2)}× with the rate at ${video.playbackRate} and few stalls — ` +
         'the media itself is decoding slowly, which points at the conversion rather than the network.';

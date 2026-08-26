@@ -1966,6 +1966,33 @@ function probeOutput(session) {
   }
   if (!segments.length) return Promise.resolve({ error: 'nothing written yet' });
 
+  /* How many bits a second of this actually is, and how fast it is being
+   * made. Both are cheap, and between them they answer the question the
+   * report could not: a viewer running at 0.7x with the box idling at 3x
+   * realtime is not waiting on the box, they are waiting on the wire — and
+   * no amount of staring at drift figures says so.
+   *
+   * Measured over the tail rather than the whole session: a film that opens
+   * on a title card and ends in a chase averages the two together, and it
+   * is the part being watched now that has to fit down the connection. The
+   * newest segment is skipped because it is very likely half-written. */
+  let bitrate = 0;
+  try {
+    const tail = segments.slice(Math.max(0, segments.length - 41), segments.length - 1);
+    let bytes = 0;
+    let seconds = 0;
+    for (const seg of tail) {
+      bytes += fs.statSync(path.join(session.dir, seg.name)).size;
+      seconds += seg.declared;
+    }
+    if (seconds > 0) bitrate = (bytes * 8) / seconds;
+  } catch {
+    bitrate = 0;      // a segment swept out from under us; not worth failing on
+  }
+
+  const elapsed = session.startedAt ? (Date.now() - session.startedAt) / 1000 : 0;
+  const speed = elapsed > 2 ? declaredTotal / elapsed : 0;
+
   // Three segments answer three questions. The first carries the start of
   // each stream, which is where an audio/video offset introduced by seeking
   // shows up. A recent one says whether the timeline still matches its
@@ -2155,6 +2182,8 @@ function probeOutput(session) {
 
     return {
       declaredTotal,
+      bitrate,
+      speed,
       segment: {
         declared: recent.declared,
         real,
@@ -2860,6 +2889,12 @@ async function startRemux(input, opts) {
     dir,
     proc,
     lastAccess: Date.now(),
+    // When ffmpeg started, so the report can say how fast the conversion is
+    // running against the clock. A stream copy runs at several times
+    // realtime; anything re-encoded on this box does not, and telling those
+    // two apart is the difference between "the wire cannot carry it" and
+    // "the box cannot make it".
+    startedAt: Date.now(),
     fromProvider,
     // Where this session sits in the film. The client adds it back so the
     // scrubber reads in real running time rather than session time.
