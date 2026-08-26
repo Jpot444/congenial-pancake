@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.30';
+const VERSION = '24.31';
 
 const PAGE_SIZE = 60;
 
@@ -7530,8 +7530,17 @@ const playback = {
       + (boxFine
         ? `The box is fine: it is writing ${speed.toFixed(1)}× faster than realtime. `
         : '')
+      // Said here rather than left to be worked out, because starving looks
+      // exactly like lip-sync going off and the reflex is to go hunting
+      // through the drift figures for a fault that is not there.
+      + (this.muxedBuffer()
+        ? 'Sound and picture are in one buffer here, so they cannot come apart — '
+          + 'what this looks like is stuttering, not drift. '
+        : '')
       + 'Pick a smaller copy of the same title, watch it over the local address '
-      + 'rather than the tunnel if you are in the house, or turn on Low bandwidth mode.';
+      + 'rather than the tunnel if you are in the house, or turn on Low bandwidth mode. '
+      + 'Seeking makes it worse for the rest of the film: every jump throws away '
+      + 'the buffer, and at this bitrate it never gets a cushion back.';
   },
 
   hlsLines() {
@@ -7592,6 +7601,30 @@ const playback = {
    * true, which is the question five rounds of encoder changes could not
    * answer.
    */
+  /**
+   * Are sound and picture in ONE buffer, or two?
+   *
+   * It settles an argument that keeps coming back. The box writes muxed
+   * segments, so hls.js gives the browser a single `audiovideo` buffer with
+   * both tracks inside it — and two tracks in one buffer cannot come apart:
+   * they are fetched together, appended together, starve together and
+   * resume together. Whatever a stuttering picture sounds like, it is not
+   * the sound sliding away from it.
+   *
+   * Worth stating outright, because "the audio and video are out of sync" is
+   * what repeated starvation actually feels like to watch, and chasing that
+   * ghost through drift figures is a whole evening.
+   */
+  muxedBuffer() {
+    try {
+      const sb = engine?.bufferController?.sourceBuffer;
+      const kinds = sb ? Object.keys(sb) : [];
+      return kinds.length === 1 && kinds[0] === 'audiovideo';
+    } catch {
+      return false;
+    }
+  },
+
   buffers() {
     try {
       const sb = engine?.bufferController?.sourceBuffer;
