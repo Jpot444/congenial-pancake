@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.28';
+const VERSION = '24.29';
 
 const PAGE_SIZE = 60;
 
@@ -1711,14 +1711,14 @@ const multiview = {
       this.paint();
     };
 
+    const wantId = String(row.kind === 'series' ? row.seriesId ?? row.id : row.id);
+    let item;
     try {
-      if (!state.library[tab]) await loadTab(tab);
+      item = await findTitle(tab, wantId);
     } catch (err) {
       return giveUp(`Couldn't load ${tab}: ${err.message}`);
     }
 
-    const wantId = String(row.kind === 'series' ? row.seriesId ?? row.id : row.id);
-    const item = (state.library[tab]?.items || []).find((i) => String(i.id) === wantId);
     if (!item) return giveUp('That title is no longer in the library.');
     if (item.kind !== 'series') return this.start(index, item);
 
@@ -3424,6 +3424,51 @@ async function loadTab(tab, { quiet = false, all = false } = {}) {
   }
 }
 
+/**
+ * Find one title by id, wherever in the provider it actually lives.
+ *
+ * Everything that opens a title — a card, Continue watching, a multi-view
+ * cell — used to look in `state.library` and nowhere else, and say "no
+ * longer in the library" when it came up empty. That was true enough while
+ * the only titles on screen came from the filtered catalogue. It stopped
+ * being true the moment search could show foreign ones: four versions of
+ * Trading Places found under All languages, every one of them refusing to
+ * play, because the id was never in the short list the player was reading.
+ *
+ * So the search is: what is already held, filtered first; then the whole
+ * catalogue, fetched if it has to be. Fetching matters for the case that
+ * has nothing to do with search — a foreign film watched last night, the
+ * app reloaded since, and Continue watching holding an id that only the
+ * wide catalogue can explain.
+ *
+ * Throws if a library cannot be loaded, so callers can tell "the box did
+ * not answer" from "there is no such title" — which the old code could not.
+ */
+async function findTitle(tab, wantId) {
+  const id = String(wantId);
+  const lookIn = (store) => (store[tab]?.items || []).find((i) => String(i.id) === id);
+
+  if (!state.library[tab]) await loadTab(tab);
+  const near = lookIn(state.library);
+  if (near) return near;
+
+  // With the filter off there is no wider catalogue to go and look in; the
+  // one already loaded is everything the provider has.
+  if (prefs.data.filtersEnabled === false) return null;
+
+  // The second look is best effort, and its failure is swallowed on
+  // purpose. The library that matters loaded fine; if the whole catalogue
+  // cannot be had on top of that, the honest answer is still "not in the
+  // library" — turning it into a provider error would dress up an ordinary
+  // withdrawn title as a broken box.
+  try {
+    if (!state.libraryAll[tab]) await loadTab(tab, { all: true, quiet: true });
+  } catch {
+    return null;
+  }
+  return lookIn(state.libraryAll) || null;
+}
+
 /* ---------------------------------------------------------- movie rows ---
 
  * The Movies page is built from named rows rather than one flat grid. Each row
@@ -4308,16 +4353,16 @@ async function playFromHistory(row) {
     });
   }
   const tab = row.kind === 'series' ? 'series' : row.kind === 'live' ? 'live' : 'movies';
+  const wantId = String(row.kind === 'series' ? row.seriesId ?? row.id : row.id);
+  let item;
   try {
-    if (!state.library[tab]) await loadTab(tab);
+    item = await findTitle(tab, wantId);
   } catch {
     return toast(`Couldn't load ${tab}.`);
   } finally {
     loader.hide();
   }
 
-  const wantId = String(row.kind === 'series' ? row.seriesId ?? row.id : row.id);
-  const item = (state.library[tab]?.items || []).find((i) => String(i.id) === wantId);
   if (!item) return toast('That title is no longer in the library.');
   if (item.kind !== 'series') return openPlayer(item);
 
@@ -4666,10 +4711,20 @@ function detailCard(item, backHash, backLabel) {
   return { mount, describe };
 }
 
-function renderShowCard() {
-  const item = (state.library.series?.items || [])
-    .find((i) => String(i.id) === String(state.seriesId));
+async function renderShowCard() {
   $('#contentTitle').textContent = 'Series';
+  // Looking a title up can now go to the box for the wide catalogue, so
+  // this can land on a page somebody has already left. Whatever they are
+  // looking at now wins.
+  const wanted = state.seriesId;
+  let item;
+  try {
+    item = await findTitle('series', wanted);
+  } catch (err) {
+    if (state.seriesId !== wanted) return;
+    return missingTitle(`Couldn't load the series list — ${err.message}`);
+  }
+  if (state.seriesId !== wanted) return;
   if (!item) return missingTitle('That show is no longer in the library.');
 
   const { mount, describe } = detailCard(item, '#/series', 'All series');
@@ -4682,9 +4737,16 @@ function renderShowCard() {
  * button and how long it runs — which is the whole of what there is to decide.
  */
 async function renderMovieCard() {
-  const item = (state.library.movies?.items || [])
-    .find((i) => String(i.id) === String(state.movieId));
   $('#contentTitle').textContent = 'Movies';
+  const wanted = state.movieId;
+  let item;
+  try {
+    item = await findTitle('movies', wanted);
+  } catch (err) {
+    if (state.movieId !== wanted) return;
+    return missingTitle(`Couldn't load the film list — ${err.message}`);
+  }
+  if (state.movieId !== wanted) return;
   if (!item) return missingTitle('That film is no longer in the library.');
 
   const { mount, describe } = detailCard(item, '#/movies', 'All movies');
