@@ -654,7 +654,7 @@ function scan(stream, want, into, stats) {
       declared.set(id, { ids });
     };
 
-    const takeProgramme = (attrs, body, hit) => {
+    const takeProgramme = (attrs, body, hit, guideId) => {
       const start = parseStamp(attr(attrs, 'start'));
       const stop = parseStamp(attr(attrs, 'stop'));
       if (!start || !stop || stop <= start) return;
@@ -729,7 +729,7 @@ function scan(stream, want, into, stats) {
         if (kind === 'programme') {
           const chan = attr(attrs, 'channel');
           const hit = chan && ours(chan);
-          if (hit) takeProgramme(attrs, buf.slice(bodyStart, end), hit);
+          if (hit) takeProgramme(attrs, buf.slice(bodyStart, end), hit, chan);
         } else {
           takeChannel(attrs, buf.slice(bodyStart, end));
         }
@@ -808,15 +808,30 @@ function wantedKeys(channels) {
 
 function tidy(list) {
   const seen = new Set();
-  return list
+  const sorted = list
     .filter((p) => {
       const key = `${p.start}:${p.title}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     })
-    .sort((a, b) => a.start - b.start)
-    .slice(0, MAX_PER_CHANNEL);
+    .sort((a, b) => a.start - b.start || b.stop - a.stop);
+
+  /* Nothing may overlap what came before it.
+   *
+   * The grid places each programme by its start and stop, so two that share a
+   * minute are drawn in the same place and land on top of each other. A feed
+   * that lists a channel twice, or lists a correction without removing what
+   * it corrects, is enough to cause it — so the shape is enforced here rather
+   * than trusted. */
+  const out = [];
+  for (const p of sorted) {
+    const last = out[out.length - 1];
+    if (last && p.start < last.stop) continue;
+    out.push(p);
+    if (out.length >= MAX_PER_CHANNEL) break;
+  }
+  return out;
 }
 
 /* -------------------------------------------------------------------- disk */
