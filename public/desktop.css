@@ -571,11 +571,39 @@
   .desk .site-header .nav a { padding: var(--space-3) var(--space-5); font-size: var(--text-lg); }
 }
 
+/* Search folds down to its icon, and unfolds when you tap it.
+ *
+ * It used to fold down to an icon and stay there: the input was `display: none`
+ * and `:focus-within` was pinned to the collapsed width, so there was no field
+ * to type into and no way to get one — you could see the magnifier and nothing
+ * else. That was invisible while this design started at 1100px, because the only
+ * screens it applied to were the 20px between 1080 and 1100. It applies to every
+ * iPad now, so it has to actually work.
+ *
+ * The input is zero-width rather than removed, because a label focuses the
+ * control inside it and `display: none` is not focusable — tapping the
+ * magnifier would have done nothing at all. */
 @media (max-width: 1080px) {
   .desk .site-header .search { flex: 0 0 var(--control-h); width: var(--control-h); padding: 0; justify-content: center; }
-  .desk .site-header .search input { display: none; }
-  .desk .site-header .search:focus-within { flex-basis: var(--control-h); width: var(--control-h); }
-  .desk .site-header .search svg { width: 18px; height: 18px; }
+  .desk .site-header .search svg { width: 18px; height: 18px; flex: none; }
+
+  .desk .site-header .search input {
+    width: 0;
+    min-width: 0;
+    padding: 0;
+    opacity: 0;
+    transition: opacity var(--dur-base) var(--ease);
+  }
+
+  .desk .site-header .search:focus-within {
+    flex: 0 1 276px;
+    width: 276px;
+    padding: 0 var(--space-6);
+    gap: var(--space-3);
+    justify-content: flex-start;
+  }
+
+  .desk .site-header .search:focus-within input { width: 100%; opacity: 1; }
 }
 
 /* ---- the nav stays a bar ----
@@ -1773,9 +1801,10 @@
    correctly above. The only thing this layer had to do was stop turning it back
    into a row — see `body:not(.has-tabbar)` on that rule further up. */
 
-/* Search collapses to its icon and stays in the row. styles.css gives it a row
-   of its own below 560px, which was right for a bar that had to hold six nav
-   links as well; this one holds four buttons and the profile chip. */
+/* Search stays in the row as its icon. styles.css gives it a row of its own
+   below 560px, which was right for a bar that also had to hold six nav links;
+   this one holds four buttons and the profile chip, and the design draws the
+   magnifier beside them rather than a field under them. */
 .desk body.has-tabbar .site-header .search {
   order: 0;
   flex: 0 0 var(--control-h);
@@ -1784,7 +1813,25 @@
   justify-content: center;
 }
 
-.desk body.has-tabbar .site-header .search input { display: none; }
+/* Tapped, it takes the whole row rather than the 276px the step above gives it:
+   276px is most of a 393pt screen and there is nowhere for the rest of the bar
+   to go. The rest of the bar steps aside rather than being painted over — an
+   overlaid field is the same width but with the badge showing through one end
+   of it and the buttons sitting on top of the other. */
+.desk body.has-tabbar .header-inner:has(.search:focus-within) .brand,
+.desk body.has-tabbar .header-inner:has(.search:focus-within) .header-actions > :not(.search) {
+  display: none;
+}
+
+.desk body.has-tabbar .header-inner:has(.search:focus-within) .header-actions {
+  flex: 1 1 auto;
+}
+
+.desk body.has-tabbar .site-header .search:focus-within {
+  flex: 1 1 auto;
+  width: auto;
+}
+
 .desk body.has-tabbar .header-actions { flex: 0 1 auto; flex-wrap: nowrap; margin-left: auto; gap: var(--space-2); }
 
 /* ---- the category bar ----
