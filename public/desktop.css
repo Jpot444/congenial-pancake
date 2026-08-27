@@ -1060,7 +1060,10 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
-  padding: 12% 17%;
+  object-position: center;
+  /* Marks arrive at every shape and size; the padding is what stops a square
+     one touching the plate's edges while a wide one still has room. */
+  padding: 16% 20%;
 }
 
 .desk .cht .mk {
@@ -1203,13 +1206,34 @@
 }
 
 .desk #dkHero .slide.on { opacity: 1; pointer-events: auto; }
-.desk #dkHero .art { position: absolute; inset: -7%; background: var(--field); transform: scale(1.02); }
+.desk #dkHero .art { position: absolute; inset: -3%; background: var(--field); transform: scale(1.01); }
 .desk #dkHero .slide.on .art { animation: dkDrift 30s var(--ease) infinite alternate; }
-.desk #dkHero .art img { width: 100%; height: 100%; object-fit: cover; opacity: .9; }
+.desk #dkHero .art img { width: 100%; height: 100%; object-fit: cover; object-position: center; opacity: .9; }
 
+/* The drift used to end at 1.15, which on top of a cover fit meant a poster
+   was carrying about a third more upscale than it had pixels for. Half that
+   is still movement and no longer reads as a blow-up. */
 @keyframes dkDrift {
-  from { transform: scale(1.03) translate3d(0, 0, 0); }
-  to { transform: scale(1.15) translate3d(-2.4%, -1.6%, 0); }
+  from { transform: scale(1.01) translate3d(0, 0, 0); }
+  to { transform: scale(1.07) translate3d(-1.6%, -1%, 0); }
+}
+
+/* A CHANNEL's artwork is a mark, not a backdrop.
+   Covering a billboard with a 400px station logo scales it six-fold and then
+   crops it — half a letter, filling the screen. Contained, centred, at its
+   own size and quietly enough to be a background rather than the subject. */
+.desk #dkHero .slide.is-mark .art { inset: 0; transform: none; }
+.desk #dkHero .slide.is-mark.on .art { animation: none; }
+.desk #dkHero .slide.is-mark .art img {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: auto;
+  height: auto;
+  max-width: min(34%, 420px);
+  max-height: 46%;
+  object-fit: contain;
+  opacity: .38;
 }
 
 /* Protection is a gradient, never a plate — so the picture keeps going under

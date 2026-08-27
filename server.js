@@ -3837,7 +3837,13 @@ function knownLiveChannels() {
     for (const item of entry.payload?.items || []) {
       if (!seen.has(String(item.id))) {
         seen.set(String(item.id), {
-          id: item.id, epgId: item.epgId || '', name: item.name || '',
+          id: item.id,
+          epgId: item.epgId || '',
+          name: item.name || '',
+          /* The country the provider files it under — "US" out of "US| ABC".
+           * splitTitle already lifted it off the name into `tag`; the guide
+           * needs it to keep ABC.us and ABC.au apart. */
+          country: String(item.tag || '').split(/\s+/)[0] || '',
         });
       }
     }

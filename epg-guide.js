@@ -95,6 +95,8 @@ const store = {
   fromSource: new Map(),
   /** "abcnewyork" -> "wabc", learned from the channels that name both. */
   byMarket: new Map(),
+  /** The country codes our own channels are sold under — usually just "us". */
+  countries: new Set(),
   /** ourChannelId -> the guide entry that matched but had no schedule. */
   emptyMatch: new Map(),
   channels: [],
@@ -269,6 +271,9 @@ function withoutNetwork(tokens) {
   // East. What is left has to be a name, not a marking.
   if (rest.every((t) => FEED_WORD.test(t))) return '';
   if (tail.includes(first)) return tail;
+  // Whatever is left has to be a name. "FOX NEWS" leaving `news` matched a
+  // channel called News in another language entirely.
+  if (TOO_GENERIC.has(tail)) return '';
   // E! after "NBC". Only for a network this provider actually files under,
   // so "BBC ONE" cannot become "one".
   if (NETWORKS.has(first) && tail.length >= 1) return tail;
@@ -382,6 +387,20 @@ function stationVariants(key) {
  * to the handful of prefixes this catalogue actually uses.
  */
 const NETWORKS = new Set(['nbc', 'cbs', 'abc', 'fox', 'cw', 'pbs', 'the']);
+
+/**
+ * Words that are not a channel, they are a kind of channel.
+ *
+ * Dropping the network off "FOX NEWS" leaves `news`, and there is a channel
+ * called News in most languages on earth — which is how Fox News came to be
+ * showing a Hebrew schedule. Anything this generic has to be matched whole
+ * or not at all.
+ */
+const TOO_GENERIC = new Set([
+  'news', 'sports', 'sport', 'movies', 'movie', 'kids', 'music', 'tv', 'hd',
+  'one', 'two', 'three', 'life', 'home', 'max', 'plus', 'extra', 'family',
+  'comedy', 'drama', 'action', 'living', 'style', 'food', 'travel', 'history',
+]);
 
 /**
  * The network and the market, with the local channel number taken out.
@@ -633,7 +652,13 @@ function scan(stream, want, into, stats) {
       // Every spelling this guide entry answers to, including the call sign
       // with its broadcast suffix trimmed off.
       const candidates = new Set([id.toLowerCase()]);
-      for (const key of [chanKey(id), ...names.map(chanKey)]) {
+      /* The bare form of an id is only offered where the country agrees.
+       * `ABC.au` still matches anything whose epg id IS "abc.au"; what it may
+       * not do is become plain `abc` and answer for an American station. */
+      const home = /\.([a-z]{2})$/.exec(id.toLowerCase());
+      const foreign = home && store.countries.size && !store.countries.has(home[1]);
+      const fromId = foreign ? [] : [chanKey(id)];
+      for (const key of [...fromId, ...names.map(chanKey)]) {
         for (const v of stationVariants(key)) if (v) candidates.add(v);
       }
       // "WABC (ABC) New York, NY" also answers to `abcnewyork`, which is what
@@ -949,9 +974,18 @@ function setSources(urls) {
 
 function setChannels(channels) {
   store.channels = (Array.isArray(channels) ? channels : []).map((c) => ({
-    id: String(c.id), epgId: c.epgId || '', name: c.name || '',
+    id: String(c.id), epgId: c.epgId || '', name: c.name || '', country: c.country || '',
   }));
   store.byMarket = stationByMarket(store.channels);
+  /* Which countries we actually buy channels in.
+   *
+   * An XMLTV id ends in the country that publishes it — ABC.us and ABC.au are
+   * two different broadcasters, and dropping the suffix made them one key.
+   * That is how a US ABC affiliate came to be showing "News Breakfast", which
+   * is the Australian ABC's morning programme. */
+  store.countries = new Set(
+    (channels || []).map((c) => String(c.country || '').toLowerCase()).filter(Boolean)
+  );
 }
 
 const due = () => !store.at || Date.now() - store.at > REFRESH_MS;

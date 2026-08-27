@@ -1149,6 +1149,11 @@
         image.src = logoSource(logo);
         image.addEventListener('error', () => image.remove());
         art.append(image);
+        /* A channel has a MARK, not a backdrop. Filling a 1900px billboard
+           with a 400px station logo blows it up to six times its size and
+           crops it, which is the giant half-an-abc. Marked so the styling
+           can centre it at its own size instead of covering with it. */
+        if (f.item.kind === 'live') art.closest('.slide')?.classList.add('is-mark');
       }
       const chip = hero.querySelector(`.picker button[data-i="${i}"] .bg`);
       if (chip) chip.style.setProperty('--field', FIELDS[i % FIELDS.length]);
