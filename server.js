@@ -5910,6 +5910,12 @@ function serveStatic(req, res, pathname) {
   if (!filePath.startsWith(PUBLIC_DIR)) return send(res, 403, 'Forbidden');
 
   fs.stat(filePath, (statErr, stat) => {
+    // A directory is served by its index.html, so /tv/ reaches the Shield app
+    // the way a URL typed on a television is actually typed. One level only:
+    // the retry lands on a file or on the 404 below.
+    if (!statErr && stat.isDirectory()) {
+      return serveStatic(req, res, `${pathname.replace(/\/+$/, '')}/index.html`);
+    }
     if (statErr || !stat.isFile()) return send(res, 404, 'Not found');
 
     // `no-cache` alone tells the browser to revalidate but gives it nothing to
