@@ -3725,7 +3725,7 @@ const epgCache = new Map();
 const libraryCache = new Map();
 const LIBRARY_TTL = 30 * 60 * 1000;
 /** Payload shape version — bump when projectItem gains or loses a field. */
-const LIBRARY_SHAPE = 7;
+const LIBRARY_SHAPE = 8;
 const LIBRARY_CACHE_PATH = path.join(ROOT, 'library-cache.json');
 
 /**
@@ -3926,6 +3926,9 @@ function projectItem(row, kind) {
       logo: row.stream_icon || '',
       categoryId: String(row.category_id ?? ''),
       epgId: row.epg_channel_id || '',
+      // The channel number the provider files it under. The guide shows it
+      // beside the name, the way a guide has since teletext.
+      num: Number(row.num) || 0,
       uhd: isUhd(row.name),
       adult: isAdult(row.name),
     };
@@ -4826,7 +4829,7 @@ async function handleApi(req, res, pathname, query) {
         try {
           // eslint-disable-next-line no-await-in-loop
           const upstream = await request(xtreamApiUrl(cfg, {
-            action: 'get_short_epg', stream_id: id, limit: 4,
+            action: 'get_short_epg', stream_id: id, limit: 10,
           }));
           // eslint-disable-next-line no-await-in-loop
           const body = (await readBody(upstream)).toString('utf8');

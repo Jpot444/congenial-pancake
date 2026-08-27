@@ -30,7 +30,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const CHANNELS = [
   // Names as a profile actually stores them: whatever they were called when
   // they were starred, tags and all.
-  { kind: 'live', id: 501, name: 'US: FOX NEWS HD', categoryId: 'c1' },
+  { kind: 'live', id: 501, name: 'US: FOX NEWS HD', num: 104, categoryId: 'c1' },
   { kind: 'live', id: 502, name: 'US| SPORTS HD', categoryId: 'c1' },
   { kind: 'live', id: 503, name: 'US| NOTHING LISTED', categoryId: 'c1' },
 ];
@@ -77,10 +77,15 @@ const CHANNELS = [
     renderHome();
     await new Promise((r) => setTimeout(r, 700));
     return [...document.querySelectorAll('.guide-row')].map((row) => ({
-      channel: row.querySelector('.guide-channel')?.textContent || '',
-      now: row.querySelector('.guide-now')?.textContent || '',
-      next: row.querySelector('.guide-next')?.textContent || '',
-      bar: row.querySelector('.guide-bar i')?.style.width || '',
+      channel: row.querySelector('.guide-chan-name')?.textContent || '',
+      num: row.querySelector('.guide-chan-num')?.textContent || '',
+      progs: [...row.querySelectorAll('.guide-prog')].map((p) => ({
+        title: p.querySelector('.guide-prog-title')?.textContent || '',
+        time: p.querySelector('.guide-prog-time')?.textContent || '',
+        now: p.classList.contains('is-now'),
+        left: p.style.left,
+        width: p.style.width,
+      })),
     }));
   }, favs);
 
@@ -89,12 +94,38 @@ const CHANNELS = [
   console.log('   ', JSON.stringify(rows, null, 1).slice(0, 400));
   check('a row per favourited channel', rows.length === 3, String(rows.length));
   check('named by the channel', rows[0].channel === 'FOX NEWS HD', rows[0].channel);
-  check('saying what is on now', /Now on 501/.test(rows[0].now), rows[0].now);
-  check('and what is on after it, with a time',
-    /\d{1,2}:\d{2}/.test(rows[0].next) && /Next on 501/.test(rows[0].next), rows[0].next);
-  check('with how far through it is, which is the thing you want before',
-    parseFloat(rows[0].bar) > 40 && parseFloat(rows[0].bar) < 60, rows[0].bar);
-  console.log('       pressing — half an hour in is a different decision');
+  check('with its programmes laid out along the row',
+    rows[0].progs.length >= 2, JSON.stringify(rows[0].progs));
+  check('each one as wide as it is long, positioned on the clock',
+    rows[0].progs.every((p) => /%$/.test(p.left) && /%$/.test(p.width)),
+    JSON.stringify(rows[0].progs));
+  check('carrying its own start and finish',
+    /\d{1,2}:\d{2}.*–.*\d{1,2}:\d{2}/.test(rows[0].progs[0].time), rows[0].progs[0].time);
+  // The one coloured thing on the grid, because it is the question being
+  // asked: not what is scheduled, what is HAPPENING.
+  const live = rows[0].progs.filter((p) => p.now);
+  check('and exactly one of them marked as on now', live.length === 1,
+    JSON.stringify(rows[0].progs.map((p) => p.now)));
+  check('which is the one covering this minute', /Now on 501/.test(live[0].title),
+    live[0].title);
+
+  console.log('\n  the clock across the top, and the line at now');
+  const axis = await page.evaluate(() => ({
+    head: document.querySelector('.guide-axis-head')?.textContent || '',
+    hours: [...document.querySelectorAll('.guide-hour')].map((h) => h.textContent),
+    at: document.querySelector('.guide-now-line')?.style.getPropertyValue('--at') || '',
+  }));
+  console.log('   ', JSON.stringify(axis));
+  check('four whole hours, so the axis reads as a clock',
+    axis.hours.length === 4 && axis.hours.every((h) => /:00/.test(h)),
+    JSON.stringify(axis.hours));
+  check('the channel column is labelled', /Channel/i.test(axis.head), axis.head);
+  // A fraction, not a percentage: calc() multiplies a number by a
+  // length-percentage but not a percentage by one, and written the wrong way
+  // the whole declaration is dropped and the line parks at the left edge
+  // looking like a border. It did exactly that once.
+  check('and the now line sits somewhere inside the window',
+    parseFloat(axis.at) >= 0 && parseFloat(axis.at) <= 1 && !/%/.test(axis.at), axis.at);
 
   console.log('\n  a channel the provider lists nothing for');
   check('is still a row, and still presses', rows[2].channel === 'NOTHING LISTED',
@@ -102,13 +133,16 @@ const CHANNELS = [
   // A hole in the row is a hole most of the page wide on a desktop, which is
   // what the first version looked like.
   check('says so rather than leaving a hole in the row',
-    rows[2].now === 'No listing', JSON.stringify(rows[2]));
-  check('and invents no programme for it', rows[2].next === '', rows[2].next);
+    rows[2].progs.length === 1 && rows[2].progs[0].title === 'No listings',
+    JSON.stringify(rows[2].progs));
+  check('and it still presses, because it is still a channel',
+    rows[2].progs[0].width === '100%', rows[2].progs[0].width);
 
   console.log('\n  and the names, which favourites stored before the tags came off');
   check('a leading tag is trimmed for display',
-    rows[0].channel === 'FOX NEWS HD' || rows[0].channel === 'NEWS ONE',
-    rows[0].channel);
+    rows[0].channel === 'FOX NEWS HD', rows[0].channel);
+  check('and the channel number sits beside it, the way a guide has always',
+    rows[0].num === '104', rows[0].num);
 
   console.log('\n  and only the channels, only a few of them');
   console.log('   ', JSON.stringify(asked));
@@ -134,7 +168,8 @@ const CHANNELS = [
   check('the rows are still there', quiet.length === 3, String(quiet.length));
   check('named, and pressable', quiet[0].channel === 'FOX NEWS HD', quiet[0].channel);
   check('with no programme claimed and no error shouted',
-    quiet.every((r) => r.now === '' && r.next === ''), JSON.stringify(quiet));
+    quiet.every((r) => r.progs.every((p) => p.title === 'No listings')),
+    JSON.stringify(quiet));
 
   console.log('\n  and it wears the redesign\'s own heading');
   //
@@ -145,14 +180,16 @@ const CHANNELS = [
     return { shelfHead: !!s?.querySelector('.shelf-head'),
       title: s?.querySelector('.shelf-title')?.textContent || '',
       count: s?.querySelector('.shelf-count')?.textContent || '',
-      capped: getComputedStyle(s?.querySelector('.guide-list')).maxWidth };
+      capped: getComputedStyle(s?.querySelector('.guide-grid')).maxWidth };
   });
   console.log('   ', JSON.stringify(head));
   check('the same head every other block on the page uses',
-    head.shelfHead && head.title === "What's on", JSON.stringify(head));
-  check('counted like the others', /channel/.test(head.count), head.count);
-  check('and the rows are capped rather than flung across the window',
-    head.capped !== 'none' && parseInt(head.capped, 10) < 1200, head.capped);
+    head.shelfHead && head.title === "Tonight's guide", JSON.stringify(head));
+  check('counted like the others', /favorite channel/.test(head.count), head.count);
+  // Capped, but wider than the list it replaced: four hours of timeline
+  // needs the room, and the fault before was that it had no cap at all.
+  check('and the grid is capped rather than flung across the window',
+    head.capped !== 'none' && parseInt(head.capped, 10) <= 1300, head.capped);
 
   console.log('\n  and no channels at all');
   const none = await home([{ kind: 'movie', id: 9, name: 'A Film' }]);

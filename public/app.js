@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.44';
+const VERSION = '24.45';
 
 const PAGE_SIZE = 60;
 
@@ -4647,6 +4647,8 @@ function trimTag(raw) {
 
 /** How many channels the guide shows. The box caps it too; this is the row. */
 const GUIDE_CHANNELS = 6;
+/** Hours across the grid. More and the columns cannot hold a title. */
+const GUIDE_HOURS = 4;
 
 /**
  * "What's on" — now and next, for the channels somebody favourited.
@@ -4666,81 +4668,167 @@ const GUIDE_CHANNELS = 6;
  */
 async function paintGuide(section, channels) {
   section.innerHTML = '';
-  /* The redesign's own section heading, not the old one.
-   *
-   * `shelf-head` is what every other block on the desktop home uses — the
-   * crimson rule, the Bebas caps, the count in a pill — and a section that
-   * invents its own heading beside them reads as something bolted on, which
-   * is exactly how this looked. The classes are inert outside `.desk`, so
-   * the phone keeps its own plainer version from styles.css. */
+
+  /* The redesign's own section heading — the crimson rule, the Bebas caps,
+     the count. A section that invents its own heading beside them reads as
+     something bolted on. */
   const head = el('div', 'shelf-head');
   const label = el('h2', 'shelf-title');
-  label.textContent = "What's on";
+  label.textContent = "Tonight's guide";
   const count = el('span', 'shelf-count');
-  count.textContent = `${channels.length} channel${channels.length === 1 ? '' : 's'}`;
+  count.textContent = `${channels.length} favorite channel${channels.length === 1 ? '' : 's'}`;
   head.append(label, count);
   section.append(head);
 
-  const rows = new Map();
-  const list = el('div', 'guide-list');
-  for (const channel of channels) {
-    const row = el('button', 'guide-row');
-    const name = el('span', 'guide-channel');
-    // Favourites keep the name they had when they were favourited, which for
-    // anything starred before the prefixes came off is still "US: FOX NEWS
-    // HD". Trimmed here for display rather than rewritten in the profile —
-    // what is stored is what was starred, and rewriting somebody's saved
-    // list to tidy a label is not a trade worth making.
-    name.textContent = trimTag(channel.name);
-    const now = el('span', 'guide-now');
-    now.textContent = '…';
-    const next = el('span', 'guide-next');
-    row.append(name, now, next);
-    row.addEventListener('click', () => openPlayer(channel));
-    rows.set(String(channel.id), { now, next });
-    list.append(row);
+  /* The window the grid covers: whole hours, starting with this one.
+   *
+   * Whole hours because the axis has to read as a clock — "8:00, 9:00,
+   * 10:00" — and a grid that started at 8:47 would be a truthful axis nobody
+   * can scan. Four of them is what fits before the columns are too narrow to
+   * hold a programme title. */
+  const from = new Date();
+  from.setMinutes(0, 0, 0);
+  const startAt = from.getTime() / 1000;
+  const endAt = startAt + GUIDE_HOURS * 3600;
+  const span = endAt - startAt;
+  /** Where a moment falls across the window, 0 to 1. */
+  const across = (at) => Math.min(1, Math.max(0, (at - startAt) / span));
+
+  const grid = el('div', 'guide-grid');
+
+  const axis = el('div', 'guide-axis');
+  axis.append(Object.assign(el('span', 'guide-axis-head'), { textContent: 'Channel' }));
+  const hours = el('div', 'guide-hours');
+  for (let i = 0; i < GUIDE_HOURS; i += 1) {
+    const mark = el('span', 'guide-hour');
+    mark.textContent = clockFromTimestamp(startAt + i * 3600);
+    hours.append(mark);
   }
-  section.append(list);
+  axis.append(hours);
+  grid.append(axis);
+
+  const body = el('div', 'guide-body');
+  const tracks = new Map();
+  for (const channel of channels) {
+    const row = el('div', 'guide-row');
+
+    const who = el('div', 'guide-chan');
+    // Favourites keep the name they had when they were starred, tags and
+    // all, so a channel starred in July still reads "US: FOX NEWS HD".
+    // Trimmed for display only — what is stored stays what was starred.
+    who.append(Object.assign(el('span', 'guide-chan-name'),
+      { textContent: trimTag(channel.name) }));
+    if (channel.num) {
+      who.append(Object.assign(el('span', 'guide-chan-num'),
+        { textContent: String(channel.num) }));
+    }
+
+    const track = el('div', 'guide-track');
+    // Something to press while the listings are still coming, and something
+    // to press for ever if they never do. A guide that cannot say what is on
+    // is still a row of channels.
+    const waiting = el('button', 'guide-prog is-blank');
+    waiting.style.left = '0%';
+    waiting.style.width = '100%';
+    waiting.append(Object.assign(el('span', 'guide-prog-title'), { textContent: '' }));
+    waiting.addEventListener('click', () => openPlayer(channel));
+    track.append(waiting);
+
+    row.append(who, track);
+    tracks.set(String(channel.id), { track, channel });
+    body.append(row);
+  }
+  grid.append(body);
+
+  /* The line at now, and the dot on top of it. It is the one thing on the
+     grid that says which of these is happening, and it is why the whole
+     thing is worth drawing as a timeline rather than a list. */
+  const line = el('div', 'guide-now-line');
+  /* A unitless fraction, not a percentage. The line sits at
+   *   calc(channel-column + --at * (100% - channel-column))
+   * and calc() will multiply a NUMBER by a length-percentage but not a
+   * percentage by one — written as `4%` the whole expression is invalid, the
+   * declaration is dropped, and the line silently parks itself at the very
+   * left edge of the panel looking like a border. */
+  line.style.setProperty('--at', String(across(Date.now() / 1000)));
+  line.append(el('i'));
+  body.append(line);
+
+  section.append(grid);
 
   let data;
   try {
     data = await api('/api/epg/now', { ids: channels.map((c) => c.id).join(',') });
   } catch {
-    // A guide that cannot be had is not an error worth a message. The
-    // channels are still there and still press.
-    for (const { now, next } of rows.values()) { now.textContent = ''; next.textContent = ''; }
+    // A guide that cannot be had is not an error worth a message.
+    for (const { track } of tracks.values()) {
+      track.querySelector('.guide-prog-title').textContent = 'No listings';
+    }
     return;
   }
 
-  const at = Date.now() / 1000;
+  const now = Date.now() / 1000;
   for (const channel of data.channels || []) {
-    const row = rows.get(String(channel.id));
-    if (!row) continue;
-    const listings = channel.listings || [];
-    const current = listings.find((l) => l.start <= at && at < l.stop);
-    const coming = listings.find((l) => l.start > at);
+    const held = tracks.get(String(channel.id));
+    if (!held) continue;
 
-    row.now.textContent = current ? current.title : '';
-    row.next.textContent = coming
-      ? `${clockFromTimestamp(coming.start)}  ${coming.title}`
-      : '';
-    // A channel the provider lists nothing for is a row with a hole in it
-    // otherwise, and on a wide screen that hole is most of the page.
-    if (!current && !coming) {
-      row.now.textContent = 'No listing';
-      row.now.classList.add('guide-none');
+    // Only what falls inside the window, and only what has somewhere to sit.
+    const listings = (channel.listings || [])
+      .filter((l) => l.stop > startAt && l.start < endAt)
+      .sort((a, b) => a.start - b.start);
+
+    if (!listings.length) {
+      held.track.querySelector('.guide-prog-title').textContent = 'No listings';
+      continue;
     }
-    // How far through it is, which is the thing you actually want to know
-    // before pressing: half an hour into a two-hour film is a different
-    // decision from two minutes in.
-    if (current && current.stop > current.start) {
-      const through = (at - current.start) / (current.stop - current.start);
-      const bar = el('span', 'guide-bar');
-      const fill = el('i');
-      fill.style.width = `${Math.min(100, Math.max(0, through * 100))}%`;
-      bar.append(fill);
-      row.now.append(bar);
+
+    held.track.innerHTML = '';
+    for (const listing of listings) {
+      const left = across(listing.start);
+      const right = across(listing.stop);
+      const slab = el('button', 'guide-prog');
+      if (listing.start <= now && now < listing.stop) slab.classList.add('is-now');
+      slab.style.left = `${left * 100}%`;
+      slab.style.width = `${Math.max(0.5, (right - left) * 100)}%`;
+      slab.append(
+        Object.assign(el('span', 'guide-prog-title'), { textContent: listing.title }),
+        Object.assign(el('span', 'guide-prog-time'), {
+          textContent: `${clockFromTimestamp(listing.start)} – ${clockFromTimestamp(listing.stop)}`,
+        })
+      );
+      slab.title = `${listing.title}  ${clockFromTimestamp(listing.start)}`;
+      slab.addEventListener('click', () => openPlayer(held.channel));
+      held.track.append(slab);
     }
+  }
+}
+
+/**
+ * Forget that a title was watched, without touching the title.
+ *
+ * Removed from the screen first and asked of the box after: the row is
+ * already gone from view by the time anybody could notice the request, and
+ * if the box refuses, it comes back with a word about why rather than a
+ * card that silently returns on the next reload.
+ */
+async function forgetWatched(row) {
+  const key = row.key || `${row.kind}:${row.seriesId ?? row.id}`;
+  const before = state.recentlyWatched || [];
+  state.recentlyWatched = before.filter((r) => (r.key || '') !== key);
+  renderHome();
+  try {
+    const url = `/api/profiles/${profiles.current.id}/history`
+      + `?key=${encodeURIComponent(key)}`;
+    const res = await fetch(url, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `the box answered ${res.status}`);
+    }
+    toast('Removed from Continue watching. It is still in your library.');
+  } catch (err) {
+    state.recentlyWatched = before;
+    renderHome();
+    toast(`Couldn't remove it: ${err.message}`);
   }
 }
 
@@ -4826,34 +4914,6 @@ function homeCard(row, className) {
   return card;
 }
 
-/**
- * Forget that a title was watched, without touching the title.
- *
- * Removed from the screen first and asked of the box after: the row is
- * already gone from view by the time anybody could notice the request, and
- * if the box refuses, it comes back with a word about why rather than a
- * card that silently returns on the next reload.
- */
-async function forgetWatched(row) {
-  const key = row.key || `${row.kind}:${row.seriesId ?? row.id}`;
-  const before = state.recentlyWatched || [];
-  state.recentlyWatched = before.filter((r) => (r.key || '') !== key);
-  renderHome();
-  try {
-    const url = `/api/profiles/${profiles.current.id}/history`
-      + `?key=${encodeURIComponent(key)}`;
-    const res = await fetch(url, { method: 'DELETE' });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || `the box answered ${res.status}`);
-    }
-    toast('Removed from Continue watching. It is still in your library.');
-  } catch (err) {
-    state.recentlyWatched = before;
-    renderHome();
-    toast(`Couldn't remove it: ${err.message}`);
-  }
-}
 
 /**
  * One favorite, as a tile you press to open it.
