@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.37';
+const VERSION = '24.38';
 
 const PAGE_SIZE = 60;
 
@@ -3687,6 +3687,77 @@ const foldedName = (item) => {
  * things.
  */
 /**
+ * One card per title, however many copies of it the provider sells.
+ *
+ * The same film arrives three and four times over — a 4K one, a Dutch one, a
+ * Scandinavian one — because the provider files each in its own category and
+ * the category name was living in the title. A grid of that reads as a grid
+ * of duplicates, and picking between them means reading four near-identical
+ * lines of text.
+ *
+ * Grouped on the cleaned title EXACTLY, which is the whole of the care here.
+ * "Trading Places" three times is one card; "Bytta roller/Trading Places" is
+ * a different film with a different name and gets its own; and "Trading
+ * Places (2023)" is a different film that happens to share a name, which the
+ * year says plainly — so an exact match on the name, year and all, is both
+ * the simplest rule and the correct one.
+ *
+ * Order within a group is left as the library gave it, except that the one
+ * with the most to offer leads: 4K first, so the card that opens is the best
+ * copy rather than whichever happened to be listed first.
+ */
+function groupVariants(items) {
+  const byName = new Map();
+  const out = [];
+  for (const item of items) {
+    const key = foldedName(item);
+    if (!key) { out.push(item); continue; }
+    const held = byName.get(key);
+    if (!held) {
+      const lead = { ...item, variants: [item] };
+      byName.set(key, lead);
+      out.push(lead);
+      continue;
+    }
+    held.variants.push(item);
+    // The best copy leads the card, and lends it its poster and its mark.
+    if (item.uhd && !held.uhd) {
+      const kept = held.variants;
+      Object.assign(held, item, { variants: kept });
+    }
+  }
+  return out;
+}
+
+/**
+ * Every copy of one title, for the switcher on its own page.
+ *
+ * Derived rather than carried: the grids group for display, but a card is
+ * reached by id from a link or a history row, and that id may be any of the
+ * copies. Asking the library the same question again is cheap and means the
+ * card is right however it was arrived at.
+ */
+function variantsOf(tab, item) {
+  if (!item) return [];
+  const key = foldedName(item);
+  for (const store of [state.library, state.libraryAll]) {
+    const items = store[tab]?.items || [];
+    if (!items.some((i) => String(i.id) === String(item.id))) continue;
+    const found = items.filter((i) => foldedName(i) === key && !profiles.isDeleted(i));
+    if (found.length) return found;
+  }
+  return [item];
+}
+
+/** What to call one copy on the switcher. */
+function variantLabel(tab, item) {
+  if (item.tag) return item.tag;
+  const cats = state.library[tab]?.categories || state.libraryAll[tab]?.categories || [];
+  const cat = cats.find((c) => String(c.id) === String(item.categoryId));
+  return cat?.name || 'Standard';
+}
+
+/**
  * A query broken into the words it is actually made of.
  *
  * Search used to be one contiguous substring, which meant it only ever found
@@ -3856,8 +3927,8 @@ function renderSearchAll() {
   // Wide or narrow, it is the same search over a different catalogue.
   const held = state.searchWide ? state.libraryAll : state.library;
 
-  const matches = (tab) => rankedMatches(
-    (held[tab]?.items || []).filter((i) => !profiles.isDeleted(i)), state.query);
+  const matches = (tab) => groupVariants(rankedMatches(
+    (held[tab]?.items || []).filter((i) => !profiles.isDeleted(i)), state.query));
 
   for (const section of SEARCH_SECTIONS) {
     if (held[section.tab]) {
@@ -4755,6 +4826,33 @@ function detailCard(item, backHash, backLabel) {
   const body = el('div', 'show-body');
   const heading = el('h2', 'show-title');
   heading.textContent = item.name;
+
+  /* The switcher, when the provider sells this title more than once.
+   *
+   * Under the name rather than beside it: these are the same film, and the
+   * choice between them is which copy to watch, not which film. One copy
+   * gets no switcher at all — a row of tabs with a single tab on it is
+   * furniture pretending to be a decision.
+   */
+  const tab = item.kind === 'series' ? 'series' : 'movies';
+  const copies = variantsOf(tab, item);
+  const picker = el('div', 'variant-pick');
+  if (copies.length > 1) {
+    for (const copy of copies) {
+      const chip = el('button', 'variant-chip');
+      chip.textContent = variantLabel(tab, copy);
+      if (copy.uhd && !/4K/i.test(chip.textContent)) {
+        chip.append(Object.assign(el('span', 'variant-4k'), { textContent: '4K' }));
+      }
+      if (String(copy.id) === String(item.id)) chip.classList.add('is-active');
+      chip.addEventListener('click', () => {
+        if (String(copy.id) === String(item.id)) return;
+        location.hash = `#/${tab}/${copy.id}`;
+      });
+      picker.append(chip);
+    }
+  }
+
   const meta = el('p', 'show-meta');
   const plot = el('p', 'show-plot');
   plot.hidden = true;
@@ -4790,7 +4888,7 @@ function detailCard(item, backHash, backLabel) {
   }
 
   const mount = el('div', 'show-episodes');
-  body.append(heading, meta, plot, actions, mount);
+  body.append(heading, picker, meta, plot, actions, mount);
   card.append(posterWrap, body);
   view.append(back, card);
 
@@ -5261,6 +5359,9 @@ function render() {
     // small madness of its own.
     items = rankedMatches(items, state.query);
   }
+  // One card per title, whatever the provider's filing says. Done after the
+  // filtering above so a category page groups only what is on it.
+  if (state.tab === 'movies' || state.tab === 'series') items = groupVariants(items);
   state.filtered = items;
 
   const grid = $('#grid');

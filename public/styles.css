@@ -4441,3 +4441,52 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 /* The caption text sits above the strip, not behind it. */
 .cc-overlay { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+
+
+/* ------------------------------------------------- one title, many copies ---
+ *
+ * The provider sells the same film several times over — a 4K one, a Dutch
+ * one, a Scandinavian one — and the grids now show one card for all of them.
+ * This is the switch between them, under the title, because these are the
+ * same film and the choice is which copy to watch rather than which film.
+ */
+.variant-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.variant-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  cursor: pointer;
+}
+.variant-chip:hover { color: var(--text); border-color: #3a3a44; }
+.variant-chip.is-active {
+  color: var(--text);
+  border-color: rgba(224, 49, 50, .55);
+  background: rgba(224, 49, 50, .16);
+}
+
+.variant-4k {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 217, 138, .16);
+  color: #FFD98A;
+  font-size: 10px;
+  letter-spacing: .06em;
+}
+
+/* On a phone the row wraps rather than scrolls: three or four short chips
+   fit, and a sideways scroller for that few is a gesture nobody discovers. */
+.touch .variant-chip { padding: 8px 14px; font-size: 13px; }

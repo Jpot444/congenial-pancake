@@ -3713,7 +3713,7 @@ const LIBRARY_ACTIONS = {
 const libraryCache = new Map();
 const LIBRARY_TTL = 30 * 60 * 1000;
 /** Payload shape version — bump when projectItem gains or loses a field. */
-const LIBRARY_SHAPE = 4;
+const LIBRARY_SHAPE = 5;
 const LIBRARY_CACHE_PATH = path.join(ROOT, 'library-cache.json');
 
 /**
@@ -3808,7 +3808,10 @@ const TITLE_TAGS = new Set([
   'FR', 'FRA', 'ES', 'ESP', 'SPA', 'DE', 'GER', 'DEU', 'NL', 'PT', 'BR', 'POR',
   'AR', 'ARA', 'TR', 'TUR', 'RU', 'RUS', 'PL', 'POL', 'SE', 'SWE', 'NO', 'DK',
   'FI', 'GR', 'RO', 'HU', 'CZ', 'IN', 'HI', 'PK', 'MX', 'LAT', 'LATINO',
-  'AFR', 'ASIA', 'EU', 'EX-YU', 'EXYU', 'SCAND', 'BALKAN',
+  'AFR', 'ASIA', 'EU', 'EX-YU', 'EXYU', 'SCAND', 'BALKAN', 'SC', 'NOR', 'DAN',
+  'ICE', 'DUT', 'NLD', 'BE', 'CH', 'AT', 'ZA', 'JP', 'JPN', 'KR', 'KOR',
+  'CN', 'CHN', 'TH', 'VN', 'ID', 'MY', 'PH', 'IL', 'IR', 'EG', 'MA', 'SA',
+  'AE', 'BG', 'HR', 'RS', 'SI', 'SK', 'UA', 'LT', 'LV', 'EE',
   // studios and services
   'MAX', 'HBO', 'NF', 'NETFLIX', 'AMZN', 'AMAZON', 'PRIME', 'DSNY', 'DISNEY',
   'DSNP', 'APPLE', 'ATVP', 'ATV', 'PMNT', 'PARAMOUNT', 'PMTP', 'PEACOCK',
@@ -3828,25 +3831,47 @@ const UHD_TAG = /(^|[^A-Z0-9])(4K|UHD|2160P)([^A-Z0-9]|$)/i;
  * — a title made entirely of tags is more likely a channel than a mistake.
  */
 function cleanTitle(raw) {
+  return splitTitle(raw).name;
+}
+
+/**
+ * The title, and the tags that were sitting in front of it.
+ *
+ * The tags are not rubbish once removed — they are the only thing telling
+ * three otherwise identical rows apart, and they become the labels on a
+ * grouped card's switcher. "4K-MAX- Trading Places" is the 4K one; the
+ * NL one beside it is the Dutch one; without the prefix they are three
+ * indistinguishable copies of the same film.
+ */
+function splitTitle(raw) {
   const original = String(raw || '').trim();
   let name = original;
+  const tags = [];
   for (let i = 0; i < 6; i += 1) {
     const m = /^([A-Za-z0-9+&]{1,12})\s*[-|:\u2013\u2022]\s*/.exec(name);
     if (!m || !TITLE_TAGS.has(m[1].toUpperCase())) break;
+    tags.push(m[1].toUpperCase());
     name = name.slice(m[0].length).trimStart();
   }
-  return name.trim() || original;
+  const trimmed = name.trim();
+  // A name made only of tags keeps its name and loses its tags: it is more
+  // likely a channel than a mistake, and stripping it to nothing helps
+  // nobody.
+  if (!trimmed) return { name: original, tags: [] };
+  return { name: trimmed, tags };
 }
 
 /** Is this title 4K, by anything the provider said anywhere in the name? */
 const isUhd = (raw) => UHD_TAG.test(String(raw || ''));
 
 function projectItem(row, kind) {
+  const split = splitTitle(row.name);
   if (kind === 'live') {
     return {
       kind,
       id: row.stream_id,
-      name: cleanTitle(row.name),
+      name: split.name,
+      tag: split.tags.join(' '),
       logo: row.stream_icon || '',
       categoryId: String(row.category_id ?? ''),
       epgId: row.epg_channel_id || '',
@@ -3857,7 +3882,8 @@ function projectItem(row, kind) {
     return {
       kind,
       id: row.stream_id,
-      name: cleanTitle(row.name),
+      name: split.name,
+      tag: split.tags.join(' '),
       logo: row.stream_icon || '',
       categoryId: String(row.category_id ?? ''),
       uhd: isUhd(row.name),
@@ -3870,7 +3896,8 @@ function projectItem(row, kind) {
   return {
     kind,
     id: row.series_id,
-    name: cleanTitle(row.name),
+    name: split.name,
+    tag: split.tags.join(' '),
     logo: row.cover || '',
     categoryId: String(row.category_id ?? ''),
     uhd: isUhd(row.name),
