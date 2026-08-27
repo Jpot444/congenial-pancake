@@ -2915,6 +2915,11 @@ const TOUR = [
   },
 ];
 
+/** What the note says, wherever this layout happens to keep the pins. */
+const LIVE_TOUR_BODY = 'Every channel worth a shit is pinned up here already — '
+  + 'the networks, the PPV feeds, all of it — so you are not hunting through '
+  + 'four hundred categories to find the game.';
+
 /**
  * The one note the opening tour does not carry, because it is about something
  * that is not on screen when the tour runs. Shown the first time a profile
@@ -2927,11 +2932,27 @@ const LIVE_TOUR = [
     target: '#grid .cat-card.is-pinned',
     all: true,
     title: 'These are Hunter\'s, now they\'re yours',
-    body: 'Every channel worth a shit is pinned up here already — the networks, '
-      + 'the PPV feeds, all of it — so you are not hunting through four hundred '
-      + 'categories to find the game. Hit the pin on any category in the sidebar '
-      + 'to add your own, drag them to reorder, and pin one off again when you '
-      + 'realise you are never going to watch curling.',
+    body: `${LIVE_TOUR_BODY} Hit the pin on any category in the sidebar to add `
+      + 'your own, drag them to reorder, and pin one off again when you realise '
+      + 'you are never going to watch curling.',
+  },
+];
+
+/**
+ * The same note on the desktop portal, which keeps its pins somewhere else.
+ *
+ * A step that points at something has to point at the thing it is describing.
+ * There the pins ARE the chip bar, they are dragged in the bar itself, and
+ * there is no sidebar left to send anybody to.
+ */
+const LIVE_TOUR_DESK = [
+  {
+    target: '.catchip.pinned',
+    all: true,
+    title: 'These are Hunter\'s, now they\'re yours',
+    body: `${LIVE_TOUR_BODY} They lead the bar in your order — drag them right `
+      + 'there to rearrange, use the pin on any row heading to add your own, and '
+      + 'pin one off again when you realise you are never going to watch curling.',
   },
 ];
 
@@ -5247,11 +5268,18 @@ function renderLiveCategories() {
 function maybeExplainLivePins() {
   if (!profiles.current || profiles.data.liveTourDone) return;
   if (!$('#tour').hidden) return;   // the opening tour is still running
-  if (!$('#grid .cat-card.is-pinned')) return;
-  // After the tiles have been laid out, or the highlight is drawn around
+
+  // Whichever layout is up decides what the note points at, and there is
+  // nothing to say until that thing is actually on the page.
+  const steps = document.documentElement.classList.contains('desk')
+    ? LIVE_TOUR_DESK
+    : LIVE_TOUR;
+  if (!$(steps[0].target)) return;
+
+  // After the pins have been laid out, or the highlight is drawn around
   // where they were about to be.
   requestAnimationFrame(() => {
-    if ($('#tour').hidden) tour.start(LIVE_TOUR, 'liveTourDone');
+    if ($('#tour').hidden) tour.start(steps, 'liveTourDone');
   });
 }
 

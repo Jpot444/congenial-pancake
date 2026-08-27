@@ -52,6 +52,67 @@ app is called everywhere except its `<title>`.
 iOS caches home-screen icons hard: an existing shortcut keeps the old tile
 until it is removed and added again.
 
+## The desktop portal
+
+The desktop layout is a redesign, and it lives in two files of its own —
+`public/desktop.css` and `public/desktop.js` — rather than in the middle of
+`styles.css` and `app.js`. Both are inert unless `html.desk` is set, which
+happens only in desktop layout on a window at least 1100px wide. **The phone
+and iPad layout is untouched by all of it**; that is a separate design and this
+is not it.
+
+`desktop.js` is a layer on top of `app.js`, never a replacement for it. `app.js`
+still decides what is on the page and where the data came from; this wraps
+`render` and dresses the result afterwards. A redesign that forked the
+rendering would be a second copy of the library logic to keep in step, and the
+first provider change would put the two out of it. Every entry point is
+wrapped in a guard: a fault in here paints a worse page, and must never take
+the portal down with it.
+
+What the desktop gets that the phone does not:
+
+- **A header that turns to glass.** The crimson bar is the brand plate at rest
+  and becomes blurred dark glass as soon as the page has moved at all, so what
+  holds the top of the screen is the picture rather than the chrome. The
+  wordmark is Bebas at 25px, set tight, and ignites crimson once the bar is
+  dark enough to carry it.
+- **The category bar instead of the sidebar.** A sticky strip of category chips
+  under the header, which tracks whichever row you have scrolled into and
+  scrolls itself to keep that chip readable. It is a direct child of `<body>`,
+  not of the page: a sticky element can only travel inside its own parent, and
+  a wrapper exactly as tall as the bar has no room to travel in. Two ways to
+  pick a category is one too many, so the sidebar is dropped wherever the bar
+  is up.
+- **A billboard on Home** in place of the hero-and-quad. Three features at
+  most, each with something real behind it — a favorite channel, something left
+  half-watched, the newest thing indexed — and it **never rotates on its own**.
+  The choice is the viewer's; the arrow keys and the pickers switch it.
+- **Live TV built around the two ways it actually gets navigated.** Pinned
+  categories *are* the bar, dragged to reorder where they are read, and
+  favorited channels are the first row on the page. The wall of category
+  squares is gone, and on this layout it is not built at all rather than built
+  and hidden.
+- **Show slabs on Series.** A poster tells you nothing about a series you are
+  three seasons into, so the artwork shrinks to a 96px thumbnail and the row
+  carries the season pips, what plays next and the genre tags instead.
+- **A startup screen that is a projector lamp**, reporting the portal's real
+  steps against a hairline rather than a spinner. It runs once — the same
+  overlay is also what buffering and seeking put up, and replaying a
+  four-second lamp-and-wipe for a three-hundred-millisecond wait would mean a
+  reboot every time you skipped forward.
+
+Everything is written against the design tokens at the top of `styles.css` —
+the colours, the half-pixel type sizes and the spacing rhythm — which is where
+to change any of it.
+
+Two things are deliberately **not** in it, and both for the same reason: the
+provider does not send the data. Channel cards carry no "what's on now" line
+and Home has no evening guide strip, because the box's only schedule call is
+one channel at a time and a page of them would be dozens of requests against a
+provider connection the health panel already reports as *1 of 1 in use*. And
+Live sorts by provider order or by name, because a channel has no release year,
+no rating and no number to sort on.
+
 ## Run it
 
 ```bash
@@ -562,8 +623,11 @@ memory. The server now persists every key it is sent, and returns them all.
 to it**. It is deliberately not a tab — it is in neither the desktop nav nor the
 phone tab bar, because it is where you already are when you open the app.
 
-On a desktop it is one large poster of the last thing watched, a 2×2 of the
-four before it alongside, and the two favorite sets side by side underneath.
+On a phone it is one large poster of the last thing watched, a row of the four
+before it alongside, and the two favorite sets stacked underneath. **On a
+desktop this shape has been replaced by the billboard** — see *The desktop
+portal* above; the rest of this section describes the phone layout, and the two
+claims below still hold there.
 
 Only two things changed from the first version of that layout, and neither is
 the shape:
@@ -648,7 +712,10 @@ than the phone it was on.
 
 The phone button in the header opens **This device**, which chooses between a
 phone layout and a desktop one and remembers it in `localStorage` — the same
-profile is used from both, and only one of them wants any of this.
+profile is used from both, and only one of them wants any of this. That switch
+is also what turns the desktop portal on and off: `html.touch` means phone
+layout, `html.desk` means the redesigned desktop one, and they are never both
+set.
 
 Phone layout is a different shape, not a scaled-down desktop:
 
@@ -738,6 +805,12 @@ Three details carry it:
 
 The pointer is tracked by id as well as captured, so a refused capture degrades
 to a working drag rather than no drag at all.
+
+The desktop portal's category chips are dragged the same way, for the same
+reason and with the same three details — horizontally, and swapping at a
+neighbour's midpoint on the x axis. "Desktop" there means the layout, not the
+hardware: an iPad in landscape is wide enough for it and can be set to it by
+hand, and HTML5 drag-and-drop would silently do nothing on exactly that device.
 
 ## Row headers open the whole row
 
@@ -839,8 +912,10 @@ Turning the filter off works, but expect the original wait.
 ## Loading screen and prebuffering
 
 Movies and episodes wait on a full-screen loading screen — charging bison,
-prairie grass, and a progress bar pinned to the bottom of the viewport. The
-percentage is real, not decorative:
+prairie grass, and a progress bar pinned to the bottom of the viewport. **On a
+desktop the same overlay is dressed as a projector lamp** — see *The desktop
+portal* above — but it is the same element reporting the same numbers, and
+everything below applies to both. The percentage is real, not decorative:
 
 - **Library loads** stream the response and report bytes received against
   `Content-Length` (which the server sets explicitly on every JSON reply).
@@ -1921,8 +1996,14 @@ phone.
 
 So Live opens on square tiles, one per category, showing a single station logo
 and the channel count. Tapping one drills into just that category's stations,
-with an **All categories** button back out. Same on the phone, the iPad and the
-Mac — the only difference is how many squares fit in a row.
+with an **All categories** button back out.
+
+**On a desktop the tiles are gone.** The wall of squares was too close to the
+flat grid it replaced, so that layout leads with the pinned categories as its
+chip bar and your favorited channels as the first row — see *The desktop
+portal* above. The reasoning below is still what picks a category's cover art
+wherever tiles are drawn, and the pinning it describes is the same pinning,
+kept per profile on the box.
 
 **The cover logo is the first still one in the category.** Providers hand out a
 lot of animated logos — spinning idents and promo loops — and a wall of those

@@ -209,17 +209,31 @@ const STREAMS = CATS.flatMap((c, i) => [
     };
     location.hash = '#/live';
   }, CATS);
-  await page.waitForSelector('#grid .cat-card', { timeout: 15000 });
+  // Where the categories are drawn depends on the layout. The desktop portal
+  // makes the pins the chip bar at the top of the page; the phone keeps the
+  // grid of category tiles. What is under test is the seeding — which
+  // categories get pinned, in which order — and that is the same either way,
+  // so the suite reads whichever of the two this layout put on screen.
+  await page.waitForSelector('#dkChips .catchip, #grid .cat-card', { timeout: 15000 });
   await wait(900);
 
-  const grid = await page.evaluate(() => ({
-    order: [...document.querySelectorAll('#grid .cat-card')]
-      .map((c) => c.querySelector('.card-title')?.textContent || ''),
-    pinned: [...document.querySelectorAll('#grid .cat-card.is-pinned')]
-      .map((c) => c.querySelector('.card-title')?.textContent || ''),
-    keys: profiles.data.pinnedCategories,
-  }));
-  console.log('   pinned:', JSON.stringify(grid.pinned));
+  const grid = await page.evaluate(() => {
+    const desk = document.documentElement.classList.contains('desk');
+    const all = desk ? '#dkChips .catchip' : '#grid .cat-card';
+    const set = desk ? '#dkChips .catchip.pinned' : '#grid .cat-card.is-pinned';
+    // A chip carries its count in a <b> the tile has no equivalent of, and
+    // the count is not part of the name.
+    const label = (node) => (desk
+      ? [...node.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('')
+      : node.querySelector('.card-title')?.textContent || '').trim();
+    return {
+      where: desk ? 'chips' : 'tiles',
+      order: [...document.querySelectorAll(all)].map(label),
+      pinned: [...document.querySelectorAll(set)].map(label),
+      keys: profiles.data.pinnedCategories,
+    };
+  });
+  console.log('   pinned:', grid.where, JSON.stringify(grid.pinned));
 
   // Six of the eight fixture categories are on the starter list.
   check('the starter categories are pinned',
@@ -232,7 +246,7 @@ const STREAMS = CATS.flatMap((c, i) => [
     JSON.stringify(grid.keys));
   check('categories not on the list are left alone',
     !grid.pinned.some((n) => /RELIGIOUS|SHOPPING/.test(n)), JSON.stringify(grid.pinned));
-  check('they lead the grid',
+  check('they lead the list',
     grid.order.slice(0, 6).every((n) => grid.pinned.includes(n)),
     JSON.stringify(grid.order.slice(0, 7)));
   check('in the order they were listed, not the provider\'s',
@@ -245,8 +259,11 @@ const STREAMS = CATS.flatMap((c, i) => [
   const note = await page.evaluate(() => {
     if (document.querySelector('#tour').hidden) return null;
     const hole = document.querySelector('#tourHole').getBoundingClientRect();
-    const tiles = [...document.querySelectorAll('#grid .cat-card.is-pinned')]
-      .map((t) => t.getBoundingClientRect());
+    const tiles = [...document.querySelectorAll(
+      document.documentElement.classList.contains('desk')
+        ? '#dkChips .catchip.pinned'
+        : '#grid .cat-card.is-pinned'
+    )].map((t) => t.getBoundingClientRect());
     const card = document.querySelector('#tourCard').getBoundingClientRect();
     return {
       body: document.querySelector('#tourBody').textContent,
@@ -298,7 +315,7 @@ const STREAMS = CATS.flatMap((c, i) => [
     };
     location.hash = '#/live';
   }, CATS);
-  await page.waitForSelector('#grid .cat-card', { timeout: 15000 });
+  await page.waitForSelector('#dkChips .catchip, #grid .cat-card', { timeout: 15000 });
   await wait(1200);
   check('the note does not come back', await page.locator('#tour').isHidden());
 

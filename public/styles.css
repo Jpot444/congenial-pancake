@@ -46,6 +46,132 @@
   --radius-sm: 9px;
   --header-h: 68px;
   --ease: cubic-bezier(.22, .61, .36, 1);
+
+  /* ---------------------------------------------------------------------
+     The rest of the design system, lifted from the Treasure Theater kit.
+     Everything above this line predates it and is left exactly as it was;
+     everything below is additive, so a rule that has never asked for one of
+     these names cannot change behaviour by their being here. The desktop
+     redesign in desktop.css is written entirely against these.
+     --------------------------------------------------------------------- */
+
+  /* brand — the two ends of the header gradient */
+  --brand-red-light: #B0242A;
+  --brand-red-shade: #8C1A1F;
+
+  /* surfaces: the two hover lines, warm and cool */
+  --line-hover: #3a3a44;
+  --line-hover-warm: #4A3A36;
+
+  /* text on a --text-filled control, which is how a selection is drawn */
+  --on-light: #08080a;
+
+  /* semantic */
+  --live-soft: #ff8b82;
+  --ok: #57C88B;
+  --ok-soft: #7FD4A0;
+  --warn: #E9A13B;
+  --warn-soft: #F0C36A;
+  --uhd: #FFD98A;
+
+  /* profile swatches, in the order the profile editor offers them */
+  --swatch-1: #A21F24;
+  --swatch-2: #6E1418;
+  --swatch-3: #2F5D50;
+  --swatch-4: #2B4C7E;
+  --swatch-5: #7A4E1D;
+  --swatch-6: #4A3A63;
+
+  /* type */
+  --body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+          Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Bebas runs narrow and short, so every display size carries a tracking
+     bump to hold the same weight on screen as a normal sans would. */
+  --display-page: 34px;
+  --display-shelf: 24px;
+  --display-modal: 22px;
+  --display-brand: 20px;
+  --display-nav: 16px;
+  --display-eyebrow: 12px;
+  --display-caps: 11px;
+  --track-display: .02em;
+  --track-nav: .06em;
+  --track-caps: .14em;
+  --track-eyebrow: .22em;
+  /* Body scale, verbatim from the portal — half-pixel sizes included. */
+  --text-xs: 10.5px;
+  --text-sm: 12px;
+  --text-sm-plus: 12.5px;
+  --text-base: 13.5px;
+  --text-md: 14px;
+  --text-lg: 15px;
+  --text-xl: 17px;
+  --leading-tight: 1.35;
+  --leading-body: 1.6;
+  --leading-prose: 1.65;
+
+  /* The portal's real spacing rhythm. Not a 4px grid — the values are what
+     they are, so copy them rather than snapping them. */
+  --space-1: 2px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 14px;
+  --space-7: 18px;
+  --space-8: 22px;
+  --space-9: 26px;
+  --space-10: 28px;
+  --space-11: 34px;
+  --space-12: 40px;
+  --gutter: 28px;
+  --wrap-max: 1440px;
+  --rail-card-w: 172px;
+  --control-h: 38px;
+  --control-h-lg: 48px;
+  --control-h-sm: 34px;
+  --field-h: 46px;
+
+  /* shape */
+  --radius-xs: 6px;
+  --radius-pill: 999px;
+  /* Outer shadows only, and always warm-black. No inner shadows anywhere
+     except the one accent inset on a resumed episode row. */
+  --shadow-header: 0 10px 30px rgba(0, 0, 0, .38);
+  --shadow-card: 0 10px 26px rgba(0, 0, 0, .32);
+  --shadow-modal: 0 30px 80px rgba(0, 0, 0, .55);
+  --shadow-float: 0 12px 40px rgba(0, 0, 0, .5);
+  --shadow-drag: 0 10px 24px rgba(0, 0, 0, .5);
+  --inset-resumed: inset 3px 0 0 var(--brand-red);
+  /* Protection: chrome over picture is a gradient, never a plate. */
+  --scrim-top: linear-gradient(180deg, rgba(0, 0, 0, .72), rgba(0, 0, 0, 0));
+  --scrim-bottom: linear-gradient(0deg, rgba(0, 0, 0, .78), rgba(0, 0, 0, 0));
+  --scrim-modal: rgba(12, 8, 8, .74);
+  --blur-modal: blur(10px);
+  --blur-badge: blur(8px);
+  /* The brand field: profile gate and startup screen. */
+  --brand-field: radial-gradient(120% 90% at 50% 35%, var(--brand-red) 0%,
+                 var(--brand-red-deep) 55%, var(--brand-red-dark) 100%);
+  --header-field: linear-gradient(180deg, var(--brand-red-light) 0%,
+                  var(--brand-red) 58%, var(--brand-red-shade) 100%);
+  --fallback-tile: linear-gradient(150deg, #2A201E, #17110F);
+  --aspect-poster: 2/3;
+  --aspect-channel: 16/9;
+
+  /* One easing curve for the whole product. Nothing bounces, nothing
+     overshoots, nothing springs. --ease, above, is that curve. */
+  --dur-fast: .12s;
+  --dur-hover: .16s;
+  --dur-base: .18s;
+  --dur-lift: .22s;
+  --dur-fade: .25s;
+  --dur-bar: .4s;
+  --dur-bar-slow: .5s;
+  --lift-card: translateY(-4px);
+  --lift-tile: translateY(-5px);
+  --lift-picker: translateY(-2px);
+  --press-scale: scale(.985);
 }
 
 * { box-sizing: border-box; }

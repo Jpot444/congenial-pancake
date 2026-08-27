@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Portal — Live TV, Movies &amp; Series</title>
   <link rel="stylesheet" href="/styles.css" />
+  <!-- The desktop portal. Every rule in it hangs off `html.desk`, which
+       desktop.js sets only in desktop layout on a window wide enough to hold
+       the design, so the phone and iPad layout stays exactly what it was. -->
+  <link rel="stylesheet" href="/desktop.css" />
   <!-- The bison, manufactured into the shape iOS actually wants: square,
        opaque, 180x180, on the app's own background. The raw logo was the icon
        for a while and the iPad said no — public/bison.png is 219x148 with a
@@ -910,5 +914,9 @@
 </div>
 
 <script src="/app.js"></script>
+<!-- Layered on top of app.js, never in place of it: app.js still decides what
+     is on the page and where the data came from, and this dresses the result.
+     Inert unless the desktop design is on. -->
+<script src="/desktop.js"></script>
 </body>
 </html>

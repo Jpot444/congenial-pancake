@@ -1,11 +1,18 @@
 /**
  * The home screen.
  *
- * Two claims under test, and both are geometric rather than about markup.
- * First, that the whole page fits the window on a desktop — that is the point
- * of shrinking the posters, and a layout that "looks smaller" while still
- * scrolling has not done it. Second, that a favorite poster opens the thing on
- * it rather than a page listing it, which is one click instead of two.
+ * The desktop landing page is a billboard now, and that changed what there is
+ * to claim about it. It used to be that the whole page fit the window — the
+ * point of shrinking the posters — and this suite measured that. A billboard
+ * is taller than the window on purpose, so that claim is gone and is not
+ * quietly weakened into something easier: what replaces it is that the
+ * billboard offers a choice and never takes it, which is the thing that was
+ * actually asked for, and that nothing runs off the side.
+ *
+ * What did not change, and is still tested exactly as it was: a favorite
+ * poster opens the thing on it rather than a page listing it, a channel tunes
+ * straight in, artwork is never cropped to fit its box, and the phone layout —
+ * which the redesign does not touch — still looks the way it did.
  */
 const { chromium } = require('./playwright.js');
 const fs = require('fs');
@@ -123,7 +130,9 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
       location.hash = '#/home';
       render();
     }, RECENT);
-    await page.waitForSelector('.home-hero', { timeout: 10000 });
+    // The billboard on a desktop, the big poster on a phone — whichever
+    // layout is up, this is the landing page having drawn something.
+    await page.waitForSelector('#dkHero, .home-hero', { timeout: 10000 });
     await wait(400);
   };
   await home();
@@ -131,60 +140,86 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
   // --- the shape of the page ----------------------------------------------
   console.log('\n  what is on the page');
   const shape = await page.evaluate(() => {
-    const cols = [...document.querySelectorAll('.home-fav-col')];
+    const text = (sel) => document.querySelector(sel)?.textContent.trim() || null;
+    const head = (sel) => text(`${sel} .shelf-title`);
     return {
-      hero: document.querySelectorAll('.home-hero').length,
-      quad: document.querySelectorAll('.home-quad-card').length,
-      boxes: document.querySelectorAll('.home-box').length,
-      cols: cols.map((c) => ({
-        label: c.querySelector('.home-label').textContent,
-        tiles: c.querySelectorAll('.home-tile').length,
-        more: c.querySelector('.home-more')?.textContent || null,
-      })),
-      // Side by side means one row: both columns start at the same height.
-      sameRow: cols.length === 2
-        && Math.abs(cols[0].getBoundingClientRect().top
-          - cols[1].getBoundingClientRect().top) < 2,
-      sideBySide: cols.length === 2
-        && cols[0].getBoundingClientRect().right <= cols[1].getBoundingClientRect().left + 1,
+      slides: document.querySelectorAll('#dkHero .slide').length,
+      picks: document.querySelectorAll('#dkHero .picker button').length,
+      billed: [...document.querySelectorAll('#dkHero h1.big')].map((h) => h.textContent),
+      lane: head('#dkLane'),
+      laneChannels: document.querySelectorAll('#dkLane .cht').length,
+      resumeRow: head('.home-recent'),
+      resuming: document.querySelectorAll('.home-recent .card').length,
+      favRow: head('.home-favs'),
+      favs: document.querySelectorAll('.home-favs .card').length,
+      footer: !!document.querySelector('#dkFoot'),
+      // Every one of these is a rail with a heading, which is what makes the
+      // page one thing rather than four kinds of block stacked up.
+      rails: document.querySelectorAll('#homeView .shelf .rail-track').length,
     };
   });
   console.log('  ', JSON.stringify(shape));
-  check('the big poster of the last thing watched is back', shape.hero === 1,
-    String(shape.hero));
-  check('with the four smaller ones alongside it', shape.quad === 4, String(shape.quad));
-  check('the favorite boxes are still gone', shape.boxes === 0, `${shape.boxes} boxes`);
-  check('channels and films are two columns', shape.cols.length === 2,
-    JSON.stringify(shape.cols.map((c) => c.label)));
-  check('side by side, not stacked', shape.sameRow && shape.sideBySide,
-    JSON.stringify(shape));
-  check('each showing its favorites as posters',
-    shape.cols[0].tiles === 6 && shape.cols[1].tiles === 6,
-    JSON.stringify(shape.cols));
 
-  // The link through to the full list only when there is more to see.
-  check('a capped column offers the rest', /15/.test(shape.cols[0].more || ''),
-    String(shape.cols[0].more));
-  check('a column showing everything does not', shape.cols[1].more === null,
-    String(shape.cols[1].more));
+  // Three features at most, and only ones with something behind them: a live
+  // channel, something half-watched, and the newest thing indexed.
+  check('the billboard has something on it', shape.slides >= 1, String(shape.slides));
+  check('and offers each of them to be picked', shape.picks === shape.slides,
+    `${shape.picks} pickers for ${shape.slides} slides`);
+  check('your channels lead the page', shape.lane === 'On now', String(shape.lane));
+  // All of them, not a capped six with a link to the rest: a rail scrolls,
+  // so there is nothing to cap and nowhere the remainder has to go.
+  check('with every one of them in it', shape.laneChannels === 15, String(shape.laneChannels));
+  check('continue watching is a row of its own', shape.resumeRow === 'Continue watching',
+    String(shape.resumeRow));
+  check('carrying what was actually watched', shape.resuming === 5, String(shape.resuming));
+  check('and the starred titles are a row too', shape.favRow === 'Your favorites',
+    String(shape.favRow));
+  check('with all six in it', shape.favs === 6, String(shape.favs));
+  check('every block on the page is a rail', shape.rails >= 3, String(shape.rails));
+  check('and the box reports itself at the foot', shape.footer);
 
-  // --- it fits ------------------------------------------------------------
+  // --- the billboard does not move on its own ------------------------------
+  //
+  // The one thing that was asked for by name. A page that changes under you
+  // while you are reading it is a page you have to fight, so the three
+  // features are offered and the choice is the viewer's.
+  console.log('\n  the billboard holds still');
+  const onNow = () => page.evaluate(() =>
+    document.querySelector('#dkHero .slide.on')?.dataset.i ?? null);
+  const first = await onNow();
+  await wait(3200);
+  check('it has not rotated on its own', (await onNow()) === first,
+    `${first} became ${await onNow()}`);
+
+  if (shape.slides > 1) {
+    await page.evaluate(() => document.querySelectorAll('#dkHero .picker button')[1].click());
+    await wait(500);
+    check('but picking one switches it', (await onNow()) === '1', String(await onNow()));
+    await page.evaluate(() => document.querySelectorAll('#dkHero .picker button')[0].click());
+    await wait(400);
+  }
+
+  // --- it fits sideways ----------------------------------------------------
+  //
+  // Vertically it does not, and is not meant to: the billboard is most of a
+  // window on its own and the rails are below it. Sideways is still a bug.
   console.log('\n  it fits the window');
   const fit = await page.evaluate(() => ({
-    scrollH: document.documentElement.scrollHeight,
-    innerH: window.innerHeight,
     scrollW: document.documentElement.scrollWidth,
     innerW: window.innerWidth,
-    heroBottom: Math.round(document.querySelector('.home-hero').getBoundingClientRect().bottom),
-    lastTile: Math.round(Math.max(...[...document.querySelectorAll('.home-tile')]
-      .map((t) => t.getBoundingClientRect().bottom))),
+    heroBottom: Math.round(document.querySelector('#dkHero').getBoundingClientRect().bottom),
+    innerH: window.innerHeight,
+    laneTop: Math.round(document.querySelector('#dkLane').getBoundingClientRect().top),
   }));
   console.log('  ', JSON.stringify(fit));
-  check('no vertical scrolling on a laptop', fit.scrollH <= fit.innerH,
-    `${fit.scrollH} vs ${fit.innerH}`);
-  check('and none sideways', fit.scrollW <= fit.innerW, `${fit.scrollW} vs ${fit.innerW}`);
-  check('the last favorite is above the fold rather than merely un-scrolled-to',
-    fit.lastTile <= fit.innerH, `${fit.lastTile} vs ${fit.innerH}`);
+  check('no sideways scrolling', fit.scrollW <= fit.innerW, `${fit.scrollW} vs ${fit.innerW}`);
+  check('the billboard holds the window without filling it',
+    fit.heroBottom > fit.innerH * 0.6 && fit.heroBottom <= fit.innerH + 1,
+    `${fit.heroBottom} vs ${fit.innerH}`);
+  // The lane overlaps the foot of the billboard, so the page is visibly a
+  // page rather than a poster you have to scroll to get past.
+  check('and the first row shows under it without scrolling',
+    fit.laneTop < fit.innerH, `${fit.laneTop} vs ${fit.innerH}`);
   await page.screenshot({ path: SHOTS + '/home.png' });
 
   // --- nothing is cut off --------------------------------------------------
@@ -194,11 +229,17 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
   // are not the same. `cover` fills the box by throwing away the difference,
   // which on a block wider than a 16:9 still means the top and bottom of it.
   console.log('\n  the whole picture');
+  // The rows scroll sideways, and artwork out beyond the right-hand edge is
+  // deliberately not fetched until it is needed — so "every image has loaded"
+  // is no longer a true thing to ask for. What is asked instead is that the
+  // ones which HAVE loaded are all drawn whole, which is the actual claim.
   await page.waitForFunction(
-    () => [...document.querySelectorAll('#homeView img')].every((i) => i.complete),
+    () => [...document.querySelectorAll('#homeView img')]
+      .filter((i) => i.complete && i.naturalWidth > 0).length >= 10,
     null, { timeout: 10000 });
   const whole = await page.evaluate(() => {
-    const imgs = [...document.querySelectorAll('#homeView img')];
+    const imgs = [...document.querySelectorAll('#homeView img')]
+      .filter((i) => i.complete && i.naturalWidth > 0);
     const bad = [];
     for (const img of imgs) {
       const box = img.getBoundingClientRect();
@@ -217,43 +258,35 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
     return { total: imgs.length, bad };
   });
   console.log('  ', JSON.stringify(whole));
-  check('every image on the page is loaded', whole.total >= 10, String(whole.total));
+  check('the artwork on screen has loaded', whole.total >= 10, String(whole.total));
   check('and not one of them is cropped to fit its box',
     whole.bad.length === 0, JSON.stringify(whole.bad));
 
   // --- the artwork ---------------------------------------------------------
   console.log('\n  the artwork');
   const art = await page.evaluate(() => {
-    const cols = [...document.querySelectorAll('.home-fav-col')];
     const rect = (n) => n.getBoundingClientRect();
-    const hero = rect(document.querySelector('.home-hero'));
-    const quad = [...document.querySelectorAll('.home-quad-card')].map(rect);
-    const chans = [...cols[0].querySelectorAll('.card-art')].map(rect);
-    const films = [...cols[1].querySelectorAll('.card-art')].map(rect);
+    const chans = [...document.querySelectorAll('#dkLane .cht .card-art')].map(rect);
+    const films = [...document.querySelectorAll('.home-favs .card-art')].map(rect);
     const same = (list) => new Set(list.map((b) => Math.round(b.width))).size === 1;
     return {
-      heroBigger: hero.width > quad[0].width * 1.5,
-      quadUniform: same(quad),
       filmRatio: films[0].width / films[0].height,
       chanRatio: chans[0].width / chans[0].height,
-      favUniform: same(films) && same(chans),
-      favSmaller: films[0].width < quad[0].width,
+      filmsUniform: same(films),
+      chansUniform: same(chans),
     };
   });
   console.log('  ', JSON.stringify(art));
-  check('the hero really is the large one', art.heroBigger, JSON.stringify(art));
-  check('and the four beside it match each other', art.quadUniform, JSON.stringify(art));
   check('favorite films keep a 2:3 poster',
     Math.abs(art.filmRatio - 2 / 3) < 0.02, String(art.filmRatio));
   check('a channel ident gets a wide plate instead, so its name survives',
     art.chanRatio > 1.2, String(art.chanRatio));
-  check('favorites are all one size', art.favUniform, JSON.stringify(art));
-  check('and smaller than the row above them', art.favSmaller, JSON.stringify(art));
+  check('films are all one size', art.filmsUniform, JSON.stringify(art));
+  check('and so are the channels', art.chansUniform, JSON.stringify(art));
 
   // --- a favorite poster opens the thing, not a list -----------------------
   console.log('\n  pressing a favorite');
-  await page.evaluate(() =>
-    document.querySelectorAll('.home-fav-col')[1].querySelector('.home-tile').click());
+  await page.evaluate(() => document.querySelector('.home-favs .card').click());
   await wait(900);
   const film = await page.evaluate(() => ({
     hash: location.hash,
@@ -264,8 +297,7 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
     film.hash === '#/movies/200', film.hash);
 
   await home();
-  await page.evaluate(() =>
-    document.querySelectorAll('.home-fav-col')[0].querySelector('.home-tile').click());
+  await page.evaluate(() => document.querySelector('#dkLane .cht').click());
   await wait(2500);
   const chan = await page.evaluate(() => ({
     playerUp: !document.querySelector('#playerOverlay').hidden,
@@ -279,19 +311,20 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
   await page.evaluate(() => closePlayer());
   await wait(400);
 
-  // The link through still goes to the list.
+  // The row heading is the way through to the full list.
   await home();
-  await page.evaluate(() =>
-    document.querySelectorAll('.home-fav-col')[0].querySelector('.home-more').click());
+  await page.evaluate(() => document.querySelector('#dkLane .shelf-head').click());
   await wait(700);
-  check('the "all of them" link still reaches the list',
+  check('the channel row reaches the list it is a slice of',
     (await page.evaluate(() => location.hash)) === '#/favlive',
     await page.evaluate(() => location.hash));
 
   // --- continue watching still resumes ------------------------------------
   console.log('\n  continue watching');
   await home();
-  await page.evaluate(() => document.querySelectorAll('.home-quad-card')[0].click());
+  await page.evaluate(() =>
+    [...document.querySelectorAll('.home-recent .card-title')]
+      .find((t) => t.textContent === 'Dune Part Two').closest('.card').click());
   await wait(2500);
   const resumed = await page.evaluate(() => ({
     playerUp: !document.querySelector('#playerOverlay').hidden,
@@ -335,7 +368,12 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
     phone.quadInARow === 1, String(phone.quadInARow));
   await page.screenshot({ path: SHOTS + '/home-phone.png' });
 
-  // --- an empty profile ----------------------------------------------------
+  // --- a profile that has not watched anything -----------------------------
+  //
+  // Different from the old landing page, which was only ever your own history
+  // and your own favorites: with neither of those it had nothing to show and
+  // said so. This one also carries what the box holds, so a new profile still
+  // opens on a library rather than on an apology.
   console.log('\n  with nothing watched or starred');
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.evaluate(() => {
@@ -346,18 +384,38 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
     render();
   });
   await wait(600);
+  const fresh = await page.evaluate(() => ({
+    hero: document.querySelectorAll('#dkHero .slide').length,
+    personal: document.querySelectorAll('#dkLane, .home-recent, .home-favs').length,
+    rails: document.querySelectorAll('#homeView .shelf').length,
+    empty: document.querySelector('#emptyState').hidden
+      ? '' : document.querySelector('#emptyState').textContent,
+  }));
+  console.log('  ', JSON.stringify(fresh));
+  // Nothing half-watched, no live favorite, and nothing dated in the library
+  // fixture — so there is no feature to bill.
+  check('no billboard with nothing to put on it', fresh.hero === 0, String(fresh.hero));
+  check('and none of the rows that are about you', fresh.personal === 0, String(fresh.personal));
+  check('but the library is still on the page', fresh.rails >= 1, String(fresh.rails));
+  check('so it does not claim to be empty', fresh.empty === '', fresh.empty);
+
+  // --- and one with nothing anywhere ---------------------------------------
+  console.log('\n  with nothing on the box at all');
+  await page.evaluate(() => {
+    state.library.movies = { categories: [], items: [] };
+    state.library.series = { categories: [], items: [] };
+    state.library.live = { categories: [], items: [] };
+    render();
+  });
+  await wait(600);
   const bare = await page.evaluate(() => ({
-    hero: document.querySelectorAll('.home-hero').length,
-    prompts: [...document.querySelectorAll('.home-empty')].map((p) => p.textContent),
+    rails: document.querySelectorAll('#homeView .shelf').length,
     empty: document.querySelector('#emptyState').hidden
       ? '' : document.querySelector('#emptyState').textContent,
     version: document.querySelector('.home-version')?.textContent || '',
   }));
   console.log('  ', JSON.stringify(bare));
-  check('no hero with nothing to put in it', bare.hero === 0, String(bare.hero));
-  check('the favorite columns say how to fill them',
-    bare.prompts.length === 2 && bare.prompts.every((p) => /tap the heart/.test(p)),
-    JSON.stringify(bare.prompts));
+  check('no rows over nothing', bare.rails === 0, String(bare.rails));
   check('it says so instead', /Nothing here yet/.test(bare.empty), bare.empty);
   check('and the version is still in the corner', /^v/.test(bare.version), bare.version);
 
