@@ -721,11 +721,26 @@ set.
 
 Phone layout is a different shape, not a scaled-down desktop:
 
-- **The sections move to a bottom bar.** Live, Movies, Series, Favorites and
-  Saved sit where a thumb reaches, the way a native app puts them, and the
-  hamburger and its dropdown are hidden — two routes to the same five places is
-  one too many. The bar clears the home indicator with
-  `env(safe-area-inset-bottom)`.
+- **The sections move to a bottom bar** — four of them: Live TV, Movies, Series
+  and Downloads, where a thumb reaches, the way a native app puts them. The bar
+  clears the home indicator with `env(safe-area-inset-bottom)`.
+
+  It carried six until recently, which on a 375pt screen is 62px a tab — under
+  the 44pt Apple asks for, with a 10.5px label underneath. Four gives each one
+  96px. The two that left are the two that are reached some other way:
+
+  - **Home was never a tab.** The badge in the top left is the way back, and two
+    routes to the same place is one too many.
+  - **Favorites** is the middle of the home screen — both columns of it, each
+    with an *All 240 ›* into the full list.
+  - **The Archive** is Hunter's own drive and appears for nobody else.
+
+  The header's menu holds the last two. It used to be hidden outright in phone
+  layout, back when the bar carried everything and the menu was a second copy of
+  it; now the four sections that *are* on the bar are hidden from the menu
+  instead, and what is left is the overflow — which is what a menu is for.
+  Dropping it along with the tabs would have stranded the Archive, which has no
+  other route in. `tests/tabbar.test.js` checks that nothing is stranded.
 - **The document does not scroll; the view inside it does.** The bar used to be
   `position: fixed; bottom: 0` over a scrolling page, which is correct
   everywhere except the one place this runs. WebKit detaches fixed elements

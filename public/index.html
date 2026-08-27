@@ -786,11 +786,26 @@
 
 <!-- ──────────────────────────────────────────── phone tab bar ─── -->
 <!-- Phone layout only. The sections sit where a native app puts them rather
-     than behind a hamburger, which on a phone is a tap away from everything. -->
+     than behind a hamburger, which on a phone is a tap away from everything.
+
+     FOUR of them, not six. Six tabs on a 375pt screen is 62px each — narrower
+     than the 44pt Apple asks for, with a label under each one at 10.5px. The
+     two that left are the two that are reached some other way:
+
+       * Home was never a tab. The badge in the top left is the way back, and
+         two routes to the same place is one too many.
+       * Favorites is the middle of the home screen — both columns of it, with
+         an "All 240 ›" into the full list.
+       * The Archive is Hunter's own drive and appears for nobody else. It, and
+         Favorites, are what the header's menu holds in phone layout: the menu
+         is no longer a second copy of this bar, it is the overflow from it.
+
+     Keep this in step with `.touch .nav a[data-tab=...]` in styles.css, which
+     is what hides these four from that menu. -->
 <nav class="tabbar" id="tabBar" hidden>
   <a href="#/live" data-tab="live">
     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="20" height="13" rx="2"/><path d="M8 21h8"/></svg>
-    <span>Live</span>
+    <span>Live TV</span>
   </a>
   <a href="#/movies" data-tab="movies">
     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 4v16M17 4v16M2 12h20"/></svg>
@@ -800,17 +815,9 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="8" width="20" height="12" rx="2"/><path d="M8 3l4 4 4-4"/></svg>
     <span>Series</span>
   </a>
-  <a href="#/favorites" data-tab="favorites">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7.5-4.9-9.3-9.2C1.3 8.4 3.2 5 6.6 5c2 0 3.5 1.2 4.4 2.4l1 1.3 1-1.3C13.9 6.2 15.4 5 17.4 5c3.4 0 5.3 3.4 3.9 6.8C19.5 16.1 12 21 12 21z"/></svg>
-    <span>Favorites</span>
-  </a>
-  <a href="#/archive" data-tab="archive">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="13" width="20" height="7" rx="2"/><path d="M4 13l3-8h10l3 8"/><path d="M17.5 16.5h.01"/></svg>
-    <span>Archive</span>
-  </a>
   <a href="#/downloads" data-tab="downloads">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg>
-    <span>Saved</span>
+    <span>Downloads</span>
     <span class="tab-count" id="tabDlCount" hidden></span>
   </a>
 </nav>

@@ -1317,10 +1317,20 @@ body.has-tabbar > .tabbar {
   z-index: auto;
 }
 
-/* Phone layout navigates from the bar, so the hamburger and its dropdown are
-   redundant — two ways to the same five places is one too many. */
-.touch .nav-toggle,
-.touch .nav { display: none; }
+/* The menu is the overflow from the bar, not a second copy of it.
+ *
+ * It used to be hidden outright in phone layout — the bar carried all six
+ * sections and two ways to the same six places is one too many. The bar carries
+ * four now, and dropping the menu with it would strand the other two: the
+ * Archive in particular is Hunter's own drive and has no other route in.
+ *
+ * So the menu stays, and the four sections that ARE on the bar are taken out of
+ * it. What is left is Favorites and the Archive — the overflow, which is what a
+ * menu is for. Keep this list in step with the tab bar in index.html. */
+.touch .nav a[data-tab="live"],
+.touch .nav a[data-tab="movies"],
+.touch .nav a[data-tab="series"],
+.touch .nav a[data-tab="downloads"] { display: none; }
 
 /* The grid is deliberately NOT overridden here. Phone layout and desktop layout
    run the same auto-fill rule off the same target widths; the screen decides. */
