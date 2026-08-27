@@ -26,6 +26,26 @@ const PORT = Number(process.env.PORT) || 8420;
 const HOST = process.env.HOST || '127.0.0.1';
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
+
+/*
+ * The box's version, read out of the file that shows it.
+ *
+ * The number belongs to the portal and always has — it is stamped into its
+ * own footer. But the TV app is a second front end against the same box and
+ * has no way to know what it is talking to, which is the first question of
+ * every report about it. Read once at boot rather than kept in a second
+ * place, because a copy that is not on screen is always the one that is out
+ * of date. Blank if it cannot be read: an empty stamp is honest, a stale one
+ * is not.
+ */
+const VERSION = (() => {
+  try {
+    const src = fs.readFileSync(path.join(PUBLIC_DIR, 'app.js'), 'utf8');
+    return (/^const VERSION = '([^']+)'/m.exec(src) || [])[1] || '';
+  } catch {
+    return '';
+  }
+})();
 const CONFIG_PATH = path.join(ROOT, 'config.json');
 const PREFS_PATH = path.join(ROOT, 'prefs.json');
 const PROFILES_PATH = path.join(ROOT, 'profiles.json');
@@ -1129,6 +1149,11 @@ async function readHealth() {
     },
     uptime: { host: os.uptime(), server: process.uptime() },
     update: readUpdateState(),
+    // What is actually running. The browser portal knows its own version
+    // because it IS the version; the TV app is a separate front end against
+    // the same box, and "which build am I looking at" is the first question
+    // of every report about it.
+    version: VERSION,
     now: Date.now(),
   };
 }

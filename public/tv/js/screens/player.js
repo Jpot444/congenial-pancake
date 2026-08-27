@@ -27,6 +27,30 @@ const GUIDE_ROWS = 12;
 const GUIDE_SPAN_HOURS = 6;
 const HISTORY_EVERY_MS = 30000;
 
+/*
+ * How a live channel is seated, copied from the browser portal because these
+ * are the numbers that measured well against THIS provider rather than good
+ * defaults in general: it publishes about 60 seconds of playlist, so joining
+ * roughly half of it back leaves room to hold a cushion without the segment
+ * under the playhead expiring. The chaser is parked out of reach on purpose —
+ * a stream that keeps playing while running a little late has nothing wrong
+ * with it. The Pi's own DVR window is longer, so a channel coming through it
+ * sits further back again.
+ */
+const LIVE_HLS = {
+  lowLatencyMode: false,
+  liveSyncDuration: 32,
+  liveMaxLatencyDuration: 600,
+  maxBufferLength: 45,
+  maxMaxBufferLength: 90,
+  backBufferLength: 60,
+  subtitleDisplay: false,
+};
+const LIVE_DVR_SEAT = 45;
+
+/** How long a tuned channel may show nothing before the app admits it. */
+const PICTURE_BY_MS = 15000;
+
 let channel = null;
 let from = 'live';
 let overlay = null;          // null | 'guide' | 'bar'
@@ -62,13 +86,7 @@ export async function render(hostNode, app, params) {
 
 function paint() {
   const root = el('div', 'player');
-
-  const video = el('video');
-  video.setAttribute('playsinline', '');
-  video.autoplay = true;
-  root.append(video);
-  media.video = video;
-
+  root.append(videoNode());
   root.append(el('div', 'player-watermark', plateText(channel.name)));
 
   if (game) root.append(scoreBug(game));
@@ -78,6 +96,30 @@ function paint() {
   if (overlay === 'bar') root.append(channelBar());
 
   clear(host).append(root);
+}
+
+/**
+ * ONE video element for the whole sitting, made once and moved from paint to
+ * paint.
+ *
+ * Every overlay on this screen — the guide, the channel bar, the bare picture —
+ * is a repaint, and a repaint that built a fresh <video> would leave hls.js
+ * feeding an element that is no longer on the page: chrome that looks right
+ * over a picture that never arrives. Tuning itself ends in a repaint, so that
+ * was every channel, every time.
+ *
+ * Moving the element is safe where rebuilding it is not. A media element is
+ * only paused for being removed from the document if it is STILL out of it
+ * when the browser next reaches a stable state, and paint() takes it out and
+ * puts it back inside one task — so playback carries straight across.
+ */
+function videoNode() {
+  if (media.video) return media.video;
+  const video = el('video');
+  video.setAttribute('playsinline', '');
+  video.autoplay = true;
+  media.video = video;
+  return video;
 }
 
 /**
@@ -378,44 +420,110 @@ async function open(app) {
 }
 
 async function attach(stream) {
-  const video = media.video;
-  if (!video) return;
+  const video = videoNode();
   const url = stream.url;
   const isHls = media.format === 'm3u8' || /\.m3u8(\?|$)/i.test(url);
 
   if (isHls && window.Hls && window.Hls.isSupported()) {
-    const hls = new window.Hls({ lowLatencyMode: false, backBufferLength: 90 });
+    const hls = new window.Hls({
+      ...LIVE_HLS,
+      ...(stream.dvr ? { liveSyncDuration: LIVE_DVR_SEAT } : {}),
+    });
     media.hls = hls;
     hls.loadSource(url);
     hls.attachMedia(video);
+    /* A live playlist drops segments as it advances, so a fumble is ordinary
+       rather than terminal: pick the load back up where the portal does, and
+       only say something when neither recovery applies. */
+    hls.on(window.Hls.Events.ERROR, (_, data) => {
+      if (!data.fatal) return;
+      if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+      else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+      else stalled(`Playback failed — ${data.details}`);
+    });
   } else if (!isHls && window.mpegts && window.mpegts.isSupported()) {
     const feed = window.mpegts.createPlayer(
-      { type: 'mpegts', isLive: true, url },
-      { enableStashBuffer: true, liveBufferLatencyChasing: true }
+      /* mpegts.js fetches inside a Web Worker, which has no document base URL:
+         the box's own "/api/proxy?…" is a URL the worker cannot parse. */
+      { type: 'mpegts', isLive: true, url: new URL(url, location.href).href },
+      {
+        enableWorker: true,
+        // This provider delivers in lumpy 4-5s chunks and mpegts.js's chaser
+        // fires above 1.5s of buffer, so left on it seeks on every lump.
+        liveBufferLatencyChasing: false,
+        enableStashBuffer: false,
+        lazyLoad: false,
+        autoCleanupSourceBuffer: true,
+        autoCleanupMaxBackwardDuration: 30,
+        autoCleanupMinBackwardDuration: 10,
+      }
     );
     media.mpegts = feed;
     feed.attachMediaElement(video);
     feed.load();
+    feed.on(window.mpegts.Events.ERROR, (type, detail) => stalled(`${type}: ${detail}`));
   } else {
     video.src = url;
   }
+  watchForPicture(video);
 
-  try {
-    await video.play();
-  } catch {
-    /* A browser that will not start an unmuted stream on its own is not a
-       failure to tune — start it quiet and say so. */
-    video.muted = true;
-    try {
-      await video.play();
-      if (appRef) appRef.toast('Started muted — this browser blocked sound until you interact.');
-    } catch (err) {
-      throw new Error(`The stream would not start: ${err.message}`);
-    }
+  /* Started, not awaited. A live element's play() promise settles when frames
+     actually arrive, which on a channel that is buffering is seconds away and
+     on a channel that is never coming is never — and everything after this
+     call is what takes the TUNING IN card down and puts the picture up. The
+     watchdog above is what notices a channel that does not arrive; this only
+     has to ask. */
+  const start = video.play();
+  if (start && start.catch) {
+    start.catch(() => {
+      /* A browser that will not start an unmuted stream on its own is not a
+         failure to tune — start it quiet and say so. */
+      video.muted = true;
+      video.play().then(
+        () => {
+          if (appRef) appRef.toast('Started muted — this browser blocked sound until you interact.');
+        },
+        (err) => stalled(`the browser would not start it — ${err.message}`)
+      );
+    });
   }
 }
 
+/**
+ * Say so, once, when a channel is not coming.
+ *
+ * Neither engine throws at the point of attachment — an HLS playlist that
+ * 404s, a TS feed the provider refuses because the one connection is already
+ * spent, a codec the box will not decode all fail later and silently, leaving
+ * chrome over a black rectangle for as long as the viewer is willing to sit
+ * there. The screen is never taken away for this: a channel that recovers on
+ * its own has recovered, and the toast is gone by then anyway.
+ */
+function stalled(detail) {
+  if (media.said) return;
+  media.said = true;
+  if (appRef) appRef.toast(`${plateText(channel.name)} is not coming through — ${detail}`);
+}
+
+/** No picture within the watchdog is a fact worth reporting too. */
+function watchForPicture(video) {
+  clearTimeout(media.watchdog);
+  const started = () => {
+    clearTimeout(media.watchdog);
+    media.said = false;
+  };
+  video.addEventListener('playing', started, { once: true });
+  media.watchdog = setTimeout(() => {
+    if (video.readyState < 3) {
+      stalled('no picture yet. OK for another channel, BACK to leave.');
+    }
+  }, PICTURE_BY_MS);
+}
+
 function teardownMedia() {
+  clearTimeout(media.watchdog);
+  media.watchdog = null;
+  media.said = false;
   if (media.hls) { try { media.hls.destroy(); } catch { /* already gone */ } }
   if (media.mpegts) {
     try { media.mpegts.destroy(); } catch { /* already gone */ }

@@ -136,13 +136,32 @@ async function start(cell, i) {
     const stream = await getPlay('live', cell.channel.id);
     const isHls = stream.format === 'm3u8' || /\.m3u8(\?|$)/i.test(stream.url);
     if (isHls && window.Hls && window.Hls.isSupported()) {
-      cell.hls = new window.Hls({ backBufferLength: 30 });
+      cell.hls = new window.Hls({
+        lowLatencyMode: false,
+        liveSyncDuration: stream.dvr ? 45 : 32,
+        liveMaxLatencyDuration: 600,
+        backBufferLength: 30,
+      });
       cell.hls.loadSource(stream.url);
       cell.hls.attachMedia(cell.video);
+      /* Four cells share one link, so a starved fragment here is routine.
+         Pick the load back up, and only name it when it is something else. */
+      cell.hls.on(window.Hls.Events.ERROR, (_, data) => {
+        if (!data.fatal) return;
+        if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) cell.hls.startLoad();
+        else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) cell.hls.recoverMediaError();
+        else fault(cell, data.details);
+      });
     } else if (!isHls && window.mpegts && window.mpegts.isSupported()) {
-      cell.mpegts = window.mpegts.createPlayer({ type: 'mpegts', isLive: true, url: stream.url });
+      cell.mpegts = window.mpegts.createPlayer(
+        /* Absolute: mpegts.js fetches inside a worker, which cannot parse the
+           box's own "/api/proxy?…" against a base URL it does not have. */
+        { type: 'mpegts', isLive: true, url: new URL(stream.url, location.href).href },
+        { enableWorker: true, liveBufferLatencyChasing: false, enableStashBuffer: false }
+      );
       cell.mpegts.attachMediaElement(cell.video);
       cell.mpegts.load();
+      cell.mpegts.on(window.mpegts.Events.ERROR, (type, detail) => fault(cell, `${type}: ${detail}`));
     } else {
       cell.video.src = stream.url;
     }
@@ -151,9 +170,14 @@ async function start(cell, i) {
       return cell.video.play();
     });
   } catch (err) {
-    cell.error = err.message;
-    if (cell.whatLabel) cell.whatLabel.textContent = `Did not open — ${err.message}`;
+    fault(cell, err.message);
   }
+}
+
+/** A cell reports its own trouble in its own foot — the others carry on. */
+function fault(cell, detail) {
+  cell.error = detail;
+  if (cell.whatLabel) cell.whatLabel.textContent = `Did not open — ${detail}`;
 }
 
 /** Audio follows focus: exactly one cell is heard, and it says which. */
