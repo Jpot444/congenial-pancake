@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '27.12';
+const VERSION = '27.13';
 
 const PAGE_SIZE = 60;
 
@@ -2575,6 +2575,11 @@ const guideSources = {
       if (!data.offered) {
         near.textContent = 'The guides have not been read yet, so there is nothing '
           + 'to compare against. Press Save and fetch first.';
+      } else if (ch.emptyMatch) {
+        // The useful distinction: not "find another guide", but "this guide
+        // has the channel and published no schedule for it".
+        near.textContent = `The guides do have it — "${ch.emptyMatch}" — but published `
+          + 'no schedule for it. Another feed would have to carry it instead.';
       } else if (!ch.near.length) {
         near.textContent = `Nothing like it among the ${data.offered.toLocaleString()} `
           + 'channels the guides published — a guide covering the country this '

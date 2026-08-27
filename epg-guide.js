@@ -95,6 +95,8 @@ const store = {
   fromSource: new Map(),
   /** "abcnewyork" -> "wabc", learned from the channels that name both. */
   byMarket: new Map(),
+  /** ourChannelId -> the guide entry that matched but had no schedule. */
+  emptyMatch: new Map(),
   channels: [],
   at: 0,
   running: false,
@@ -162,7 +164,10 @@ function markedTokens(raw) {
   // The country suffix an XMLTV id carries: "espn.us"
   s = s.replace(/\.[a-z]{2}$/, '');
   // Quality and feed words, wherever they appear.
-  s = s.replace(/\b(fhd|uhd|hd|sd|4k|8k|hevc|h265|h264|raw|backup|alt|feed|plus|channel|tv)\b/g, ' ');
+  // `plus` is NOT in this list, and must not be: "NBC Sports Chicago Plus"
+  // is a different channel from "NBC Sports Chicago", and stripping it made
+  // the two identical — one key, one schedule, and whichever lost went blank.
+  s = s.replace(/\b(fhd|uhd|hd|sd|4k|8k|hevc|h265|h264|raw|backup|alt|feed|tv)\b/g, ' ');
   // Superscript markings — ᴴᴰ, ᴿᴬᵂ — are not letters, so they fall out with
   // the punctuation below; these are the ones that would otherwise survive.
   s = s.replace(/[ᴴᴰⁱ]/g, ' ');
@@ -654,6 +659,13 @@ function scan(stream, want, into, stats) {
         }
       }
       declared.set(id, { ids });
+      /* Remembered so that "no listings" can tell its two halves apart.
+       * A channel nothing matched needs a different guide; a channel that
+       * matched an entry the guide then published nothing for needs nothing
+       * at all — the guide simply has a name and no schedule behind it, and
+       * no amount of ticking more feeds will change that. */
+      const label = names[0] || id;
+      for (const entry of ids) if (!stats.claimed.has(entry.id)) stats.claimed.set(entry.id, label);
     };
 
     const takeProgramme = (attrs, body, hit, guideId) => {
@@ -962,7 +974,9 @@ async function refresh({ force = false, sources = null } = {}) {
   const started = Date.now();
   const want = wantedKeys(store.channels);
   const into = new Map();
-  const stats = { kept: 0, seen: 0, offered: new Map(), truncated: false };
+  const stats = {
+    kept: 0, seen: 0, offered: new Map(), claimed: new Map(), truncated: false,
+  };
   const report = [];
 
   for (const source of list) {
@@ -1056,6 +1070,9 @@ async function refresh({ force = false, sources = null } = {}) {
   // What the guides contain is worth keeping even when nothing matched — that
   // is exactly the case where somebody needs to see it.
   if (stats.offered.size) store.offered = stats.offered;
+  // Matched a guide entry, got nothing out of it.
+  store.emptyMatch = new Map();
+  for (const [id, label] of stats.claimed) if (!tidied.has(id)) store.emptyMatch.set(id, label);
   store.lastRun = {
     at: Date.now(),
     took: Date.now() - started,
@@ -1333,6 +1350,7 @@ function explain(query) {
         covered: Boolean(listings && listings.length),
         programmes: listings ? listings.length : 0,
         matchedBy: store.matchedBy.get(String(c.id)) || null,
+        emptyMatch: store.emptyMatch.get(String(c.id)) || null,
         near: nearFor(keys.map((k) => k.key)),
       };
     });
