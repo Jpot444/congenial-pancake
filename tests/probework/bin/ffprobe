@@ -1,8 +1,8 @@
 #!/bin/sh
 for a in "$@"; do target="$a"; done
-echo "$target" >> /home/claude/congenial-pancake/tests/probework/probed.log
-echo "$target" > /home/claude/congenial-pancake/tests/probework/last-probed.txt
-wc -c < "$target" > /home/claude/congenial-pancake/tests/probework/last-size.txt 2>/dev/null || echo 0 > /home/claude/congenial-pancake/tests/probework/last-size.txt
+echo "$target" >> /home/user/congenial-pancake/tests/probework/probed.log
+echo "$target" > /home/user/congenial-pancake/tests/probework/last-probed.txt
+wc -c < "$target" > /home/user/congenial-pancake/tests/probework/last-size.txt 2>/dev/null || echo 0 > /home/user/congenial-pancake/tests/probework/last-size.txt
 case "$target" in
 
   *)
