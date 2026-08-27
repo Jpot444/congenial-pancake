@@ -3713,7 +3713,7 @@ const LIBRARY_ACTIONS = {
 const libraryCache = new Map();
 const LIBRARY_TTL = 30 * 60 * 1000;
 /** Payload shape version — bump when projectItem gains or loses a field. */
-const LIBRARY_SHAPE = 6;
+const LIBRARY_SHAPE = 7;
 const LIBRARY_CACHE_PATH = path.join(ROOT, 'library-cache.json');
 
 /**
@@ -3890,6 +3890,16 @@ function splitTitle(raw) {
   return { name: trimmed, tags };
 }
 
+/**
+ * Adult, by the tag the provider puts in front of it.
+ *
+ * Kept as a flag rather than left for the browser to infer from the name,
+ * because the browser then has to keep inferring it — in the grid, in the
+ * shelves, in every search — and one place that forgets is one place it
+ * shows up.
+ */
+const isAdult = (raw) => /(^|[^a-z0-9])xxx([^a-z0-9]|$)/i.test(String(raw || ''));
+
 /** Is this title 4K, by anything the provider said anywhere in the name? */
 const isUhd = (raw) => UHD_TAG.test(String(raw || ''));
 
@@ -3905,6 +3915,7 @@ function projectItem(row, kind) {
       categoryId: String(row.category_id ?? ''),
       epgId: row.epg_channel_id || '',
       uhd: isUhd(row.name),
+      adult: isAdult(row.name),
     };
   }
   if (kind === 'movie') {
@@ -3916,6 +3927,7 @@ function projectItem(row, kind) {
       logo: row.stream_icon || '',
       categoryId: String(row.category_id ?? ''),
       uhd: isUhd(row.name),
+      adult: isAdult(row.name),
       ext: row.container_extension || 'mp4',
       rating: row.rating || '',
       // Upload time, used to sort the New Releases row newest-first.
@@ -3930,6 +3942,7 @@ function projectItem(row, kind) {
     logo: row.cover || '',
     categoryId: String(row.category_id ?? ''),
     uhd: isUhd(row.name),
+    adult: isAdult(row.name),
     rating: row.rating || '',
     // Feed the genre shelves — provider categories carry no genre split.
     genre: row.genre || '',

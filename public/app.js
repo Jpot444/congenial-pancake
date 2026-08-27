@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.40';
+const VERSION = '24.41';
 
 const PAGE_SIZE = 60;
 
@@ -1394,8 +1394,10 @@ const multiview = {
         + 'open that section once and come back.';
       return box.append(note);
     }
-    const all = library.items || [];
     const q = query.trim().toLowerCase();
+    // Multi-view searches its own box, so it needs the same door: adult
+    // titles only once the word is typed here too.
+    const all = browsable(library.items || [], q);
 
     if (this.show) return this.episodeTiles(box);
 
@@ -3581,8 +3583,9 @@ function buildShelves(tab) {
   const lib = state.library[tab];
   if (!lib) return [];
 
-  // Hidden titles are out of the rows too, not just the grids.
-  const pool = lib.items.filter((i) => !profiles.isDeleted(i));
+  // Hidden titles are out of the rows too, not just the grids — and so is
+  // anything adult, which nobody put on a landing shelf on purpose.
+  const pool = browsable(lib.items.filter((i) => !profiles.isDeleted(i)), '');
   const rows = [];
   for (const def of SHELF_DEFS[tab] || []) {
     if (def.special === 'recent') {
@@ -3686,6 +3689,28 @@ const foldedName = (item) => {
  * Downloads and the archive keep their own searches, which look at their own
  * things.
  */
+/**
+ * Adult titles stay out of the way until they are asked for by name.
+ *
+ * The provider files a great deal of this and files it everywhere — in the
+ * grids, in the shelves, in the New Releases row, and in the answer to any
+ * search loose enough to catch it. None of it is wanted while somebody is
+ * looking for a film with the family in the room, and all of it is wanted by
+ * whoever went looking for it deliberately.
+ *
+ * So the door is the word itself: type "xxx" and they appear, do anything
+ * else and they do not. It is not a lock — this box has no accounts and
+ * pretends to none — it is a door that stays shut unless you open it, which
+ * is the honest version of what was asked for.
+ */
+const asksForAdult = (query) => /(^|[^a-z0-9])xxx([^a-z0-9]|$)/i.test(String(query || ''));
+
+/** Everything but the adult titles, unless the query went looking for them. */
+function browsable(items, query = state.query) {
+  if (asksForAdult(query)) return items;
+  return items.filter((i) => !i.adult);
+}
+
 /**
  * One card per title, however many copies of it the provider sells.
  *
@@ -3824,6 +3849,7 @@ function matchScore(item, terms, phrase) {
 function rankedMatches(items, query) {
   const terms = searchTerms(query);
   if (!terms.length) return [];
+  items = browsable(items, query);
   const phrase = foldText(query).trim();
   const scored = [];
   for (const item of items) {
@@ -5420,14 +5446,17 @@ function render() {
   if (!isFavorites) {
     // Count what the grid will actually show. Leaving hidden titles in the
     // tally means a category reads 6 and then opens with 5 in it.
+    // The counts and the category list are built from the same pool the grid
+    // draws from, or a category reads "412 titles" and opens on nothing.
+    const listed = browsable(source.items);
     renderCategories(
       source.categories,
-      canDelete(state.tab) ? source.items.filter((i) => !profiles.isDeleted(i)) : source.items
+      canDelete(state.tab) ? listed.filter((i) => !profiles.isDeleted(i)) : listed
     );
   }
 
   const inBin = state.category === DELETED_CATEGORY;
-  let items = inBin ? profiles.deletedItems(state.tab) : source.items;
+  let items = inBin ? profiles.deletedItems(state.tab) : browsable(source.items);
 
   if (!inBin) {
     if (state.category !== null && !isFavorites) {
