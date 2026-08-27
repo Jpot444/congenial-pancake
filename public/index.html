@@ -383,7 +383,11 @@
       <a href="#/series" data-tab="series">Series</a>
       <a href="#/favorites" data-tab="favorites">Favorites</a>
       <a href="#/archive" data-tab="archive">Archive</a>
-      <a href="#/downloads" data-tab="downloads">Downloads<span class="nav-count" id="dlCount" hidden></span></a>
+      <!-- data-opt: the one tab the bar is allowed to drop when it runs out of
+           room, at the 900px step in desktop.css. It is the section with
+           another way in — what is saved carries a badge on its own poster,
+           and the count beside this link is on the header either way. -->
+      <a href="#/downloads" data-tab="downloads" data-opt>Downloads<span class="nav-count" id="dlCount" hidden></span></a>
     </nav>
 
     <div class="header-actions">

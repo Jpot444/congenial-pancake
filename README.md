@@ -54,12 +54,17 @@ until it is removed and added again.
 
 ## The desktop portal
 
-The desktop layout is a redesign, and it lives in two files of its own —
-`public/desktop.css` and `public/desktop.js` — rather than in the middle of
-`styles.css` and `app.js`. Both are inert unless `html.desk` is set, which
-happens only in desktop layout on a window at least 1100px wide. **The phone
-and iPad layout is untouched by all of it**; that is a separate design and this
-is not it.
+The portal design lives in two files of its own — `public/desktop.css` and
+`public/desktop.js` — rather than in the middle of `styles.css` and `app.js`.
+Both are inert unless `html.desk` is set, which happens on any screen at least
+**820px** wide that is not in phone layout.
+
+820, not the 1100 it used to be: an **iPad in portrait** gets this design now.
+The breakpoints below degrade the header down to that width in a deliberate
+order — company sub-line, then the profile name, then the search field collapses
+to its icon, and last the one tab marked `[data-opt]`, Downloads, which is the
+only section with another way in. **The phone layout is untouched by all of
+it**; that is a separate design and this is not it.
 
 `desktop.js` is a layer on top of `app.js`, never a replacement for it. `app.js`
 still decides what is on the page and where the data came from; this wraps
@@ -714,10 +719,29 @@ than the phone it was on.
 
 The phone button in the header opens **This device**, which chooses between a
 phone layout and a desktop one and remembers it in `localStorage` — the same
-profile is used from both, and only one of them wants any of this. That switch
-is also what turns the desktop portal on and off: `html.touch` means phone
-layout, `html.desk` means the redesigned desktop one, and they are never both
-set.
+profile is used from both, and only one of them wants any of this.
+
+**Two questions, not one.** They used to be the same question, and an iPad is
+the device that shows why they are not:
+
+| | asks | true on |
+|---|---|---|
+| `html.touch` | is this a **finger**? | every iPhone, every iPad |
+| `body.has-tabbar` | is this a **phone-shaped screen**? | iPhones, and anyone who picks Phone |
+| `html.desk` | is there room for the portal's own chrome? | ≥820px and not phone-shaped |
+
+`touch` sizes controls for a fingertip — 44px targets, and anything that only
+appeared on `:hover` shown outright. `has-tabbar` is the layout: the sections
+move to a bottom bar and the nav becomes its overflow. They are independent now,
+and `touch` + `desk` together is the normal state of an iPad.
+
+It used to be that a coarse pointer set `touch`, and `touch` *meant* phone
+layout — so an iPad was disqualified from the portal design for being touched
+rather than for being small, and an 820pt screen was laid out as a large phone.
+An iPad now gets finger-sized targets **and** the nav. The auto-detection is
+`coarse pointer && innerWidth < 820`, re-asked on resize so turning an iPad on
+its side is not a different app, and never re-asked once a person has chosen for
+themselves in This device.
 
 Phone layout is a different shape, not a scaled-down desktop:
 

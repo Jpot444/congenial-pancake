@@ -574,6 +574,56 @@
   .desk .site-header .search svg { width: 18px; height: 18px; }
 }
 
+/* ---- the nav stays a bar ----
+ *
+ * styles.css turns the nav into a fixed dropdown behind a hamburger below
+ * 1200px, which was right when everything under 1200 was either phone layout or
+ * a laptop the design did not run on. This design does run there now — an iPad
+ * gets it — and its bar is a row of tabs, not a menu button.
+ *
+ * The width that forced the dropdown was touch mode's: 12px/17px links make the
+ * six of them about 464px, more than an iPad has spare. The steps above take
+ * them back down — and the 900px step drops Downloads — so they fit as a row.
+ * Undone rather than left to the breakpoint, because the sticky category bar
+ * underneath assumes a header of a known height and a dropdown that overlays it
+ * would open straight through that bar.
+ */
+.desk .site-header .nav {
+  position: static;
+  flex-direction: row;
+  gap: var(--space-2);
+  padding: 0;
+  background: none;
+  border-bottom: 0;
+  transform: none;
+}
+
+.desk .site-header .nav-toggle { display: none; }
+
+/* ---- an iPad in portrait ----
+ *
+ * 820pt is the last step, and the narrowest screen this design runs on: below
+ * it the bottom bar is the better answer. Everything the steps above shed has
+ * already gone — sub-line, profile name, search field — so what is left is a
+ * tab, and the one that goes is the one reachable from elsewhere. Downloads is
+ * marked [data-opt] for exactly this: what is saved carries a badge on its own
+ * poster and a count on the header, so the bar is not the only way to it.
+ *
+ * The brand keeps its full mark. It is the way Home, and shrinking the one
+ * control that is also the logo to buy a few pixels would be the wrong few.
+ */
+@media (max-width: 900px) {
+  .desk .site-header .nav { gap: var(--space-1); }
+  .desk .site-header .nav a { padding: var(--space-3) var(--space-4); font-size: var(--text-md); }
+  .desk .site-header .nav a[data-opt] { display: none; }
+  .desk .header-inner { gap: var(--space-5); }
+  .desk .header-actions { gap: var(--space-2); }
+  /* The gutter and the shell gap are a desktop's, and at this width they are
+     most of the difference between five posters across and four. */
+  .desk .wrap { padding: 0 var(--space-8); }
+  .desk .app-shell { gap: var(--space-9); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .desk .card-sheen,
   .desk .site-header .btn-dot { animation: none !important; transition: none; }

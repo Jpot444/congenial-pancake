@@ -19,10 +19,13 @@
 (function () {
   'use strict';
 
-  /* The design is drawn for 1440 and degrades to about 1080 through the
-     breakpoints in desktop.css. Below that the phone layout is the better
-     answer, and the user can still force either from This device. */
-  const MIN_WIDTH = 1100;
+  /* The design is drawn for 1440 and degrades through the breakpoints in
+     desktop.css. The last of those steps takes it to 820 — an iPad in portrait,
+     which is the narrowest screen the portal's own header still fits on once it
+     has shed the company sub-line, the profile name and the Downloads tab.
+     Below that the phone layout is the better answer, and the user can still
+     force either from This device. */
+  const MIN_WIDTH = 820;
 
   const root = document.documentElement;
   const $$ = (sel, host) => Array.from((host || document).querySelectorAll(sel));
@@ -69,8 +72,14 @@
      asks it rather than re-deriving the answer from the window. */
   let on = false;
 
+  /* Phone LAYOUT is what rules this out, not a finger. They used to be the same
+     class: a coarse pointer set `touch`, and `touch` meant the bottom bar — so
+     an iPad was disqualified for being touched rather than for being small, and
+     an 820pt screen got laid out as a large phone. The question here is whether
+     the sections are in a bar at the bottom, which is what has-tabbar says. */
   function wanted() {
-    return !root.classList.contains('touch') && window.innerWidth >= MIN_WIDTH;
+    return !document.body.classList.contains('has-tabbar')
+      && window.innerWidth >= MIN_WIDTH;
   }
 
   const applyGate = guard('gate', function applyGate() {

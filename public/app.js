@@ -551,6 +551,20 @@ function scrollViewTop() {
  * that stretches between them. Phone gets the sections as a bottom bar; desktop
  * keeps the hamburger.
  *
+ * TWO questions, not one. They used to be the same question, and an iPad is the
+ * device that shows why they are not:
+ *
+ *   * `html.touch` — is this a finger? Controls are sized for one: 44px targets,
+ *     and anything that only appeared on :hover is shown outright. True for
+ *     every iPhone and every iPad.
+ *   * `device.phone` / `body.has-tabbar` — is this a PHONE-shaped screen? The
+ *     sections move to a bottom bar and the nav becomes its overflow.
+ *
+ * An iPad is the first: a finger, on a screen wide enough for the portal's own
+ * chrome. It used to get both, because a coarse pointer set `touch` and `touch`
+ * meant phone layout — so an 820pt screen was laid out as a large phone. It now
+ * gets finger-sized targets and the nav, which is what the design asks for.
+ *
  * There used to be a posters-per-row setting here as well — 2, 3 or 4, picked
  * by hand, phone only. It is gone. The grid now names one target poster WIDTH
  * and lets the column count fall out of the screen, so it is right on an SE, a
@@ -561,15 +575,23 @@ function scrollViewTop() {
  * is used from both, and only one of them wants any of this.
  */
 
+/* Below this, a screen is phone-shaped. It is the width at which the portal's
+   own header stops fitting — see the laptop breakpoints in desktop.css, whose
+   last step is the one that gets an iPad's 820pt bar down to size. */
+const PHONE_MAX = 820;
+
 const device = {
   phone: false,
+  touch: false,
+  /** Did a person choose the layout, or are we reading the hardware? */
+  chosen: false,
 
   init() {
     const saved = localStorage.getItem('portal.touch');
-    // No stored choice? Take the hint from the hardware — a coarse pointer
-    // means a finger, which is every iPhone and iPad.
-    const coarse = window.matchMedia?.('(pointer: coarse)').matches;
-    this.phone = saved === null ? Boolean(coarse) : saved === '1';
+    // A coarse pointer means a finger, which is every iPhone and every iPad.
+    this.touch = Boolean(window.matchMedia?.('(pointer: coarse)').matches);
+    this.chosen = saved !== null;
+    this.phone = this.chosen ? saved === '1' : this.autoPhone();
 
     // The column setting is retired. Clear what an older build stored rather
     // than leaving a key in localStorage that nothing reads.
@@ -577,11 +599,26 @@ const device = {
     this.apply();
   },
 
+  /* A finger on a phone-shaped screen. A finger on a bigger one is an iPad,
+     which has the room for the nav and is better off with it. */
+  autoPhone() {
+    return this.touch && window.innerWidth < PHONE_MAX;
+  },
+
+  /* An iPad turned on its side crosses PHONE_MAX, so the answer has to be
+     re-asked on resize — but never once somebody has chosen for themselves. */
+  reflow() {
+    if (this.chosen) return;
+    const next = this.autoPhone();
+    if (next === this.phone) return;
+    this.phone = next;
+    this.apply();
+    if (state.config) render();
+  },
+
   apply() {
     const root = document.documentElement;
-    // Still called `touch`: every sizing rule in the stylesheet hangs off it,
-    // and phone layout is what it has always meant.
-    root.classList.toggle('touch', this.phone);
+    root.classList.toggle('touch', this.touch);
 
     const btn = $('#touchToggle');
     btn.classList.toggle('is-on', this.phone);
@@ -600,10 +637,13 @@ const device = {
 
   setPhone(on) {
     this.phone = on;
+    this.chosen = true;
     localStorage.setItem('portal.touch', on ? '1' : '0');
     this.apply();
   },
 };
+
+addEventListener('resize', () => device.reflow());
 
 /** Mark the open section on whichever nav is showing. */
 function syncTabs() {

@@ -1326,11 +1326,17 @@ body.has-tabbar > .tabbar {
  *
  * So the menu stays, and the four sections that ARE on the bar are taken out of
  * it. What is left is Favorites and the Archive — the overflow, which is what a
- * menu is for. Keep this list in step with the tab bar in index.html. */
-.touch .nav a[data-tab="live"],
-.touch .nav a[data-tab="movies"],
-.touch .nav a[data-tab="series"],
-.touch .nav a[data-tab="downloads"] { display: none; }
+ * menu is for. Keep this list in step with the tab bar in index.html.
+ *
+ * Keyed on has-tabbar rather than .touch, and the difference is not academic:
+ * .touch means targets sized for a finger, which an iPad wants while still
+ * navigating from the nav rather than a bar. Hidden on .touch, an iPad would
+ * lose four of its six sections and keep no bar to reach them from. The rule
+ * belongs to the bar existing, so it asks whether the bar exists. */
+body.has-tabbar .nav a[data-tab="live"],
+body.has-tabbar .nav a[data-tab="movies"],
+body.has-tabbar .nav a[data-tab="series"],
+body.has-tabbar .nav a[data-tab="downloads"] { display: none; }
 
 /* The grid is deliberately NOT overridden here. Phone layout and desktop layout
    run the same auto-fill rule off the same target widths; the screen decides. */
