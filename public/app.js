@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '27.0';
+const VERSION = '27.1';
 
 const PAGE_SIZE = 60;
 
@@ -2334,8 +2334,8 @@ const guideSources = {
         + 'good guess, not a promise.');
     }
     if (data.byGuess) {
-      bits.push(`${chans(data.byGuess)} matched only after dropping a feed `
-        + 'marking or on a call sign; those are worth spot-checking.');
+      bits.push(`${chans(data.byGuess)} matched only after trimming the name — `
+        + 'a network said twice, a feed marking, a call sign. Worth a spot-check.');
     }
     if (data.lastRun?.truncated) bits.push('One feed was too big to read to the end.');
     if (data.at) bits.push(`Last read ${whenWords(data.at)}.`);
@@ -2388,30 +2388,31 @@ const guideSources = {
           id: 'the id the provider gave it',
           name: 'its name',
           callsign: 'its call sign',
-          loose: 'its name with the feed marking dropped — check it is the right feed',
+          loose: 'a trimmed version of its name — worth checking it is the right channel',
         }[ch.matchedBy] || ch.matchedBy}`
         : 'No listings.';
       const keys = document.createElement('code');
       keys.className = 'gsrc-why-keys';
       keys.textContent = `yours: ${ch.keys.map((k) => k.key).join(' · ')}`;
       row.append(head, said, keys);
+
+      // The other half of the answer, and the half that says what to do next.
+      const near = document.createElement('div');
+      near.className = 'gsrc-why-near';
+      if (!data.offered) {
+        near.textContent = 'The guides have not been read yet, so there is nothing '
+          + 'to compare against. Press Save and fetch first.';
+      } else if (!ch.near.length) {
+        near.textContent = `Nothing like it among the ${data.offered.toLocaleString()} `
+          + 'channels the guides published — a guide covering the country this '
+          + 'channel is from would be the thing to add.';
+      } else {
+        near.textContent = `the guides have: ${ch.near
+          .map((n) => `${n.name} (${n.key})`).join(', ')}`;
+      }
+      row.append(near);
       out.append(row);
     }
-
-    const near = document.createElement('div');
-    near.className = 'gsrc-why-near';
-    if (!data.offered) {
-      near.textContent = 'The guides have not been read yet, so there is nothing '
-        + 'to compare against. Press Save and fetch first.';
-    } else if (!data.near.length) {
-      near.textContent = `Nothing like it in the ${data.offered.toLocaleString()} `
-        + 'channels the guides published. A guide covering the country this '
-        + 'channel is from would be the thing to add.';
-    } else {
-      near.textContent = `The guides call these something similar — ${data.near
-        .slice(0, 12).map((n) => `${n.name} (${n.key})`).join(', ')}`;
-    }
-    out.append(near);
   },
 
   async save() {

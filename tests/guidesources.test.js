@@ -246,38 +246,100 @@ function serve(xml) {
     oneStatus.byGuess === 1 && oneStatus.byName === 0,
     `byName ${oneStatus.byName} byGuess ${oneStatus.byGuess}`);
 
+  /* ---- the network said twice --------------------------------------- */
+  //
+  // Reported from the box, verbatim:
+  //
+  //     NBC CNBC ᴿᴬᵂ
+  //     No listings.
+  //     yours: nbccnbc
+  //
+  // This provider files a channel under its network and then says it again.
+  // Flattened that is `nbccnbc`, and every guide on earth publishes `cnbc`,
+  // so no number of ticked feeds could ever have matched it.
+  console.log('\n  the network said twice');
+  check('the superscript RAW marking falls out',
+    guide.chanKey('NBC CNBC ᴿᴬᵂ') === 'nbccnbc', guide.chanKey('NBC CNBC ᴿᴬᵂ'));
+  check('and the repeated network comes off for a second attempt',
+    guide.channelKeys({ id: 1, name: 'NBC CNBC ᴿᴬᵂ' }).some((k) => k.key === 'cnbc'),
+    JSON.stringify(guide.channelKeys({ id: 1, name: 'NBC CNBC ᴿᴬᵂ' })));
+  check('same for MSNBC', guide.channelKeys({ id: 1, name: 'NBC MSNBC ᴿᴬᵂ' })
+    .some((k) => k.key === 'msnbc'));
+  check('and for the network on itself',
+    guide.channelKeys({ id: 1, name: 'NBC NBC ᴿᴬᵂ' }).some((k) => k.key === 'nbc'));
+  // The guard. Dropping a leading word is dangerous and this is the case that
+  // shows why: "one" would match anything in the world called One.
+  check('but "BBC ONE" does not become "one"',
+    !guide.channelKeys({ id: 1, name: 'BBC ONE' }).some((k) => k.key === 'one'),
+    JSON.stringify(guide.channelKeys({ id: 1, name: 'BBC ONE' })));
+  console.log('       (only when the network is spelled inside what follows it,');
+  console.log('        or what is left is too long to be an English word)');
+
+  let cnbc = '<?xml version="1.0"?>\n<tv>\n';
+  cnbc += '<channel id="CNBC.us"><display-name>CNBC</display-name></channel>\n';
+  cnbc += `<programme start="${stamp(-5)}" stop="${stamp(55)}" channel="CNBC.us">`
+    + '<title>Squawk Box</title></programme>\n</tv>\n';
+  const cnbcFeed = await serve(cnbc);
+  guide.setChannels([{ id: '930', epgId: '', name: 'NBC CNBC ᴿᴬᵂ' }]);
+  await guide.refresh({ force: true, sources: [{ url: cnbcFeed.url, label: 'us1' }] });
+  cnbcFeed.stop();
+  check('so the channel that had nothing now has its listings',
+    guide.lookup('930')?.[0]?.title === 'Squawk Box', JSON.stringify(guide.lookup('930')));
+
   /* ---- and being able to see why ------------------------------------ */
   //
   // The thing that turns "it did not work" into something anybody can act on.
   console.log('\n  explaining a miss');
+  // Its own feed and its own channels: these checks are about what the box
+  // can SAY, and leaning on whatever an earlier section happened to leave in
+  // the index makes them fail for reasons that have nothing to do with that.
+  let shelf = '<?xml version="1.0"?>\n<tv>\n';
+  shelf += '<channel id="NBC.us"><display-name>NBC</display-name></channel>\n';
+  shelf += '<channel id="CNBC.us"><display-name>CNBC</display-name></channel>\n';
+  shelf += `<programme start="${stamp(0)}" stop="${stamp(60)}" channel="NBC.us">`
+    + '<title>Anything</title></programme>\n</tv>\n';
+  const shelfFeed = await serve(shelf);
   guide.setChannels([
     { id: '920', epgId: '', name: 'US| NBC EAST' },
     { id: '921', epgId: '', name: 'US| SOMETHING NOBODY PUBLISHES' },
+    { id: '922', epgId: '', name: 'NBC CNBC ᴿᴬᵂ' },
   ]);
-  const why = guide.explain('NBC');
+  await guide.refresh({ force: true, sources: [{ url: shelfFeed.url, label: 'shelf' }] });
+  shelfFeed.stop();
+
+  const why = guide.explain('NBC EAST');
   check('it finds our channel by a partial name',
     why.channels.some((c) => c.name === 'US| NBC EAST'));
   check('and shows the keys it reduced to, which is the actual answer',
     why.channels[0].keys.some((k) => k.key === 'nbceast'),
     JSON.stringify(why.channels[0]?.keys));
   check('and what the guides published that is nearly it',
-    why.near.some((n) => n.key === 'nbc'), JSON.stringify(why.near.slice(0, 4)));
+    why.channels[0].near.some((n) => n.key === 'nbc'),
+    JSON.stringify(why.channels[0]?.near?.slice(0, 4)));
   console.log('       ("yours is nbceast, theirs is nbc" is a complete answer)');
+  // Worked out from the CHANNEL's keys, not from what was typed. Searching
+  // "NBC" and being shown things near the word NBC helps nobody; being shown
+  // that the guide has `cnbc` while ours is `nbccnbc` is the whole answer.
+  const whyCnbc = guide.explain('CNBC');
+  check('near misses are per channel, not per search term',
+    whyCnbc.channels[0]?.near?.some((n) => n.key === 'cnbc'),
+    JSON.stringify(whyCnbc.channels[0]?.near));
   const nothing = guide.explain('SOMETHING NOBODY PUBLISHES');
   check('a channel with nothing near it says so',
-    nothing.channels.length === 1 && !nothing.near.length);
+    nothing.channels.length === 1 && !nothing.channels[0].near.length,
+    JSON.stringify(nothing.channels[0]?.near));
   check('and asking about nothing at all is not an error',
     guide.explain('').channels.length === 0);
 
   /* ---- surviving a bad day ------------------------------------------ */
   //
-  // 911 is whatever the last successful refresh above left in the index; the
-  // point is that a refusal does not disturb it.
+  // 920 is what the refresh just above put in the index; the point is that a
+  // refusal does not disturb it.
   console.log('\n  when a feed is down');
-  const held = guide.lookup('911').length;
+  const held = guide.lookup('920').length;
   await guide.refresh({ force: true, sources: [{ url: 'http://127.0.0.1:1/nope.xml', label: 'down' }] });
   check('a failed fetch does not wipe the listings we already had',
-    guide.lookup('911')?.length === held, String(guide.lookup('911')?.length));
+    guide.lookup('920')?.length === held, String(guide.lookup('920')?.length));
   console.log('       (a feed down for an afternoon should cost nothing at all)');
 
   const st = guide.status();
@@ -312,7 +374,7 @@ function serve(xml) {
   check('and admits when a match was made on the name alone',
     /good guess, not a promise/.test(APP));
   check('and flags the ones that needed a guess',
-    /worth spot-checking/.test(APP));
+    /Worth a spot-check/.test(APP));
 
   /* ---- the settings screen must hand back what it was given ---------- */
   //

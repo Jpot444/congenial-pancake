@@ -2081,7 +2081,18 @@ outright**:
 | `id` | The `epg_channel_id` the provider asserted about its own channel. |
 | `name` | Both names flatten to the same key. |
 | `callsign` | A call sign found inside the name — `NBC (WNBC) NEW YORK` ↔ `WNBC`. |
-| `loose` | The key with a regional feed marking dropped — `NBC EAST` → `NBC`. |
+| `loose` | The key with something trimmed off — a regional feed marking (`NBC EAST` → `NBC`) or a network said twice (`NBC CNBC` → `CNBC`). |
+
+**The network said twice** is this provider's house style and it defeats every
+guide on earth: CNBC is sold as `NBC CNBC ᴿᴬᵂ`, MSNBC as `NBC MSNBC`. Flattened
+those are `nbccnbc` and `nbcmsnbc`, while every guide publishes `cnbc` and
+`msnbc`, so no number of ticked feeds could ever match them.
+
+Dropping a leading word is dangerous — `BBC ONE` must not become `one` and
+start matching anything in the world called One — so it happens in only two
+cases: the network is spelled *inside* the channel that follows it (`nbc`
+inside `cnbc`), which is as close to proof as this gets; or it is a short
+abbreviation and what remains is too long to be an English word.
 
 The last one is a real compromise: an east-coast schedule against a west-coast
 feed is three hours out. It exists because providers sell `NBC EAST` and

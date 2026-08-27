@@ -131,7 +131,7 @@ function safeChar(code) {
  * deliberately aggressive, because the alternative — matching only what is
  * spelled identically — matches almost nothing.
  */
-function chanKey(raw) {
+function nameTokens(raw) {
   let s = String(raw || '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -142,8 +142,42 @@ function chanKey(raw) {
   s = s.replace(/\.[a-z]{2}$/, '');
   // Quality and feed words, wherever they appear.
   s = s.replace(/\b(fhd|uhd|hd|sd|4k|8k|hevc|h265|h264|raw|backup|alt|feed|plus|channel|tv)\b/g, ' ');
+  // Superscript markings — ᴴᴰ, ᴿᴬᵂ — are not letters, so they fall out with
+  // the punctuation below; these are the ones that would otherwise survive.
   s = s.replace(/[ᴴᴰⁱ]/g, ' ');
-  return s.replace(/[^a-z0-9]+/g, '');
+  return s.replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+}
+
+function chanKey(raw) {
+  return nameTokens(raw).join('');
+}
+
+/**
+ * The name with the network taken off the front.
+ *
+ * This provider files a channel under its network and then says it again:
+ * CNBC is sold as "NBC CNBC ᴿᴬᵂ", MSNBC as "NBC MSNBC". Flattened that is
+ * `nbccnbc`, and every guide in the world publishes `cnbc`, so the exact keys
+ * can never meet however many feeds you tick.
+ *
+ * Dropping a leading word is obviously dangerous — "BBC ONE" must not become
+ * "one" and start matching anything called One — so it happens in only two
+ * cases. Either the network is spelled inside the channel that follows it
+ * (`nbc` inside `cnbc`), which is as close to proof as this gets, or it is a
+ * short abbreviation and what remains is long enough to be a station name
+ * rather than an English word.
+ */
+function withoutNetwork(raw) {
+  const tokens = nameTokens(raw);
+  if (tokens.length < 2) return '';
+  const [first, ...rest] = tokens;
+  const tail = rest.join('');
+  if (!tail) return '';
+  if (tail.includes(first)) return tail;
+  if (first.length >= 2 && first.length <= 4 && /^[a-z]+$/.test(first) && tail.length >= 4) {
+    return tail;
+  }
+  return '';
 }
 
 /**
@@ -516,6 +550,9 @@ function channelKeys(ch) {
   add(name, 'name');
   for (const sign of callSigns(ch.name)) add(sign, 'callsign');
   add(coreKey(name), 'loose');
+  const bare = withoutNetwork(ch.name);
+  add(bare, 'loose');
+  add(coreKey(bare), 'loose');
   return out;
 }
 
@@ -732,6 +769,31 @@ function explain(query) {
   const qk = chanKey(q);
   const low = q.toLowerCase();
 
+  /* What the guides have that is nearly this channel.
+   *
+   * Worked out per channel from that channel's own keys, not from what was
+   * typed: searching "NBC" and being shown things near the word "NBC" is
+   * useless, whereas being shown that the guide publishes `cnbc` while our
+   * key is `nbccnbc` is the entire answer. Containment either way, because
+   * the interesting near-misses are exactly the ones where one side carries
+   * something the other does not. */
+  const nearFor = (keys) => {
+    const hits = [];
+    for (const [key, label] of store.offered) {
+      for (const k of keys) {
+        if (k.length < 3) continue;
+        if (key === k || key.includes(k) || k.includes(key)) {
+          hits.push({ key, name: label, exact: key === k });
+          break;
+        }
+      }
+      if (hits.length >= 40) break;
+    }
+    return hits
+      .sort((a, b) => Number(b.exact) - Number(a.exact) || a.key.length - b.key.length)
+      .slice(0, 8);
+  };
+
   const channels = store.channels
     .filter((c) => String(c.name).toLowerCase().includes(low)
       || (qk && chanKey(c.name).includes(qk))
@@ -739,31 +801,20 @@ function explain(query) {
     .slice(0, 15)
     .map((c) => {
       const listings = store.byChannel.get(String(c.id));
+      const keys = channelKeys(c);
       return {
         id: c.id,
         name: c.name,
         epgId: c.epgId || '',
-        keys: channelKeys(c),
+        keys,
         covered: Boolean(listings && listings.length),
         programmes: listings ? listings.length : 0,
         matchedBy: store.matchedBy.get(String(c.id)) || null,
+        near: nearFor(keys.map((k) => k.key)),
       };
     });
 
-  /* What the guides have that is nearly it. Containment either way, because
-   * the interesting near-misses are exactly the ones where one side carries
-   * something the other does not. */
-  const near = [];
-  for (const [key, label] of store.offered) {
-    if (!qk) break;
-    if (key === qk || key.includes(qk) || qk.includes(key)) {
-      near.push({ key, name: label, exact: key === qk });
-      if (near.length >= 30) break;
-    }
-  }
-  near.sort((a, b) => Number(b.exact) - Number(a.exact) || a.key.length - b.key.length);
-
-  return { query: q, channels, near, offered: store.offered.size };
+  return { query: q, channels, offered: store.offered.size };
 }
 
 module.exports = {
