@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.36';
+const VERSION = '24.37';
 
 const PAGE_SIZE = 60;
 
@@ -3686,6 +3686,83 @@ const foldedName = (item) => {
  * Downloads and the archive keep their own searches, which look at their own
  * things.
  */
+/**
+ * A query broken into the words it is actually made of.
+ *
+ * Search used to be one contiguous substring, which meant it only ever found
+ * what you could already spell in order: "dark knight" found The Dark Knight
+ * and "knight dark" found nothing, and neither did "batman knight" for a film
+ * with both words in the title. Typing a few words you remember is the normal
+ * way to look for something half-remembered, and it was the one way that did
+ * not work.
+ */
+function searchTerms(query) {
+  return foldText(query).split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/**
+ * How well a title answers a query, or 0 for not at all.
+ *
+ * Every word has to be in there somewhere — that is the widening, and it is
+ * deliberately generous, because a near miss you can see past is worth more
+ * than a clean miss you cannot. The score is what stops that generosity
+ * turning into a wall: the whole phrase, in order, at the front of the title
+ * outranks the same words scattered through a long one, so the thing being
+ * looked for is at the top even when a hundred other titles technically
+ * qualify.
+ */
+function matchScore(item, terms, phrase) {
+  const name = foldedName(item);
+  if (!name) return 0;
+
+  let score = 0;
+  for (const term of terms) {
+    const at = name.indexOf(term);
+    if (at === -1) return 0;                 // every word, or nothing
+    score += 10;
+    // At the start of a word rather than buried inside one: "man" matching
+    // Manhattan is not the same find as "man" matching Spider Man.
+    if (at === 0 || !/[a-z0-9]/.test(name[at - 1])) score += 40;
+  }
+
+  /* The words together, in the order they were typed, count for far more
+   * than the same words apart — but only where the phrase is a phrase and
+   * not the front of a longer word. Without the second half of that test
+   * "man" ranked Manhattan above Spider Man, on the strength of starting
+   * with the letters. Bounded on both sides, or it is not a match worth
+   * promoting. */
+  if (phrase) {
+    const at = name.indexOf(phrase);
+    const bounded = at !== -1
+      && (at === 0 || !/[a-z0-9]/.test(name[at - 1]))
+      && (at + phrase.length === name.length
+        || !/[a-z0-9]/.test(name[at + phrase.length]));
+    if (bounded) {
+      score += 200;
+      if (at === 0) score += 300;
+      if (name === phrase) score += 500;
+    }
+  }
+
+  // Between two titles that both qualify, the shorter one is the tighter
+  // match — "Dune" over "Dune: Part Two Behind The Scenes Featurette".
+  return score + Math.max(0, 60 - name.length) / 10;
+}
+
+/** The matches for a query, best first. */
+function rankedMatches(items, query) {
+  const terms = searchTerms(query);
+  if (!terms.length) return [];
+  const phrase = foldText(query).trim();
+  const scored = [];
+  for (const item of items) {
+    const score = matchScore(item, terms, phrase);
+    if (score > 0) scored.push({ item, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.map((row) => row.item);
+}
+
 const SEARCH_TABS = ['home', 'live', 'movies', 'series'];
 
 /** The sections a search fills in. Home has no library of its own to add. */
@@ -3695,13 +3772,12 @@ const SEARCH_SECTIONS = [
   { tab: 'series', title: 'Series' },
 ];
 /** Per section, before it stops being a list and starts being a wall. */
-const SEARCH_PER_SECTION = 40;
+const SEARCH_PER_SECTION = 60;
 /** Bumped by every new search, so a slow library cannot land on a later one. */
 let searchToken = 0;
 
 function renderSearchAll() {
   const grid = $('#grid');
-  const query = foldText(state.query.trim());
   const mine = (searchToken += 1);
 
   document.querySelector('.app-shell').classList.add('no-sidebar');
@@ -3780,9 +3856,8 @@ function renderSearchAll() {
   // Wide or narrow, it is the same search over a different catalogue.
   const held = state.searchWide ? state.libraryAll : state.library;
 
-  const matches = (tab) => (held[tab]?.items || [])
-    .filter((i) => !profiles.isDeleted(i))
-    .filter((i) => i.name && foldedName(i).includes(query));
+  const matches = (tab) => rankedMatches(
+    (held[tab]?.items || []).filter((i) => !profiles.isDeleted(i)), state.query);
 
   for (const section of SEARCH_SECTIONS) {
     if (held[section.tab]) {
@@ -5181,9 +5256,10 @@ function render() {
   }
 
   if (state.query) {
-    // Folded on both sides, so "amelie" reaches "Amélie" — see foldText.
-    const q = foldText(state.query);
-    items = items.filter((i) => foldedName(i).includes(q));
+    // Word by word and ranked, the same as the cross-library search — a tab
+    // that answered a query differently from the search above it would be a
+    // small madness of its own.
+    items = rankedMatches(items, state.query);
   }
   state.filtered = items;
 
