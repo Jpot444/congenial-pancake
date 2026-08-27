@@ -562,62 +562,140 @@ memory. The server now persists every key it is sent, and returns them all.
 to it**. It is deliberately not a tab — it is in neither the desktop nav nor the
 phone tab bar, because it is where you already are when you open the app.
 
-On a desktop it is one large poster of the last thing watched, a 2×2 of the
-four before it alongside, and the two favorite sets side by side underneath.
+It is five things, in the order the questions are asked: a **billboard**, the
+channels that are **on now**, four hours of **tonight's guide**, the library's
+own **shelves**, and a **footer** carrying what the box is doing.
 
-Only two things changed from the first version of that layout, and neither is
-the shape:
+**It scrolls.** The version before this one deliberately did not — it was a
+hero, a 2×2 and two favorite columns, sized to fit the window — and fitting the
+window was exactly what kept the library off the page it is the front door to.
+A landing page that can only show five posters is a landing page that answers
+"what was I watching" and nothing else, and a channel that was on *right now*
+was three presses away from it.
 
-**The favorites are the posters themselves.** They used to be four thumbnails
-on a box that opened the favorites *list*, so reaching anything you had starred
-took two clicks and the first was never the one you wanted. Now pressing a
-poster opens it — a channel tunes in, a film or a show opens its page, the same
-rule the grids follow. The column heading carries an *All 40 ›* link only when
-it is showing fewer than there are.
+### The billboard
 
-**The whole page fits the window.** That is the constraint the sizes bend to.
-`.home-recent-layout` has an explicit height in `vh` rather than letting the
-hero's artwork decide, because with the favorites underneath it is the height
-that runs out first. Two other things had to give: the app shell's 80px of
-run-off padding, which home does not want because it is not meant to scroll,
-and the second line of title under a favorite, where the artwork identifies the
-thing anyway.
+Three things worth opening, in the order they are worth offering: a favorite
+channel with what is actually on it, the thing you were part-way through, and
+the newest thing in the library. Whichever of those exist — a fresh profile has
+none of the first two, so the last one fills what is left.
 
-The favorite tiles are a fixed six across rather than `auto-fill`. They sit in
-a known half of the page, and letting them wrap would put the second line below
-the fold — which is the one thing this is for.
+**It does not rotate.** The thumbnails and the arrow keys are the only things
+that change it. A page that changes what it is showing while you are reading it
+is a page you have to chase.
+
+**The artwork sits on the ground rather than being the ground.** A billboard
+wants a wide backdrop and this provider has none to give: a film comes with a
+2:3 poster and a channel with a small wide ident, and there is no third thing
+to ask it for. Covering the frame with either means cropping a portrait to a
+letterbox or blowing a 200px logo up to 1440. So the backdrop is a tinted
+gradient — warm, per-title, stable between visits — and the real artwork is
+shown *whole* on the right, where the veil is already clear. A channel's ident
+and a film's poster are told apart in JS rather than guessed at in CSS, because
+only that side knows which it is and the two want opposite framing.
+
+The words are drawn from what is in hand and improved by what arrives. The
+listing for a live feature and the plot for a film are both worth having and
+neither is worth waiting for, so `paintBillboardDetail` owns the meta line, the
+blurb and the progress bar, and is called again when either lands. A film's
+details go into the same `state.vodCache` its own page reads, so opening it
+afterwards asks the provider nothing.
+
+A history row is enough to draw a billboard and to press **Resume**. It is not
+enough to favorite or download — those need the library record the row was made
+from — so those two buttons appear only once the library has loaded and the
+record has been found. Nothing waits on it.
+
+The viewer's choice survives the repaint. The library lands a second or two in
+and the page redraws with a third feature in it; matching by key rather than by
+index means somebody who had already picked the second one keeps it.
+
+### On now, and tonight's guide
+
+Both are built from the same list — **favorite channels**, then any channel in
+the watch history, capped at twelve. Never the whole library: a provider
+carries thousands of channels and a lane of the first eight alphabetically is
+not a lane anybody asked for.
+
+The countdowns are real. `get_short_epg` gives each channel its listings with
+start and stop timestamps, and everything on screen is derived from those
+against the clock — the progress bar, the "22 min left", which block in the
+guide is lit, and where the now-line falls across it. One second, one pass, for
+the whole page; there is no state to keep in step because nothing is stored.
+
+Two rules about the one connection this provider sells. **At most two EPG calls
+are in flight**, so opening the page does not fire a dozen requests at a panel
+that answers them one at a time. And **a channel that fails is remembered as
+empty** for the four-minute TTL rather than retried on the next tick — a
+provider having a bad minute must not turn into a request storm.
+
+The guide is not built at all in M3U mode, where there are no listings to ask
+for. And in Xtream mode, if every channel comes back with nothing, the section
+removes itself: six rows of "No listings for this channel" is not a guide, it
+is the absence of one taking up a screen to say so.
+
+The strip is four hours from the top of the current hour, and the blocks are
+placed by their own timestamps rather than laid out in a row — listings are not
+all an hour long, and a flex row would draw a half-hour programme the same
+width as a film. When the hour turns the whole page is rebuilt once, because
+the ruler and the now-line are both anchored to where it started.
+
+### The shelves
+
+`buildShelves()`, the same function the Movies and Series tabs call, so a row
+called New Releases here holds what New Releases holds there. Three from each,
+and **For You is left out of both** — it *is* Continue watching, one section up.
+Both tabs name a row New Releases and several genres appear on each, so the
+second of any repeated name says which library it came from; the tab's own name
+for the row is kept wherever there is nothing to confuse it with.
+
+Continue watching is wider than the rest and 16:10 rather than 2:3 — it is the
+row most likely to be the reason the page was opened, and a history row carries
+the still the provider sent with it, which is a landscape frame far more often
+than it is a poster.
+
+### It still needs no library fetch
+
+Everything above the shelves comes from watch history and favorites, both
+already loaded when `renderHome()` runs, so the badge lands somewhere instantly
+even on a cold start where Movies would sit on a skeleton. The libraries are
+then fetched **quietly** — no loading screen over a page that is already on
+screen and usable — and the page redraws when they arrive. A library that fails
+to load leaves the page standing with one section fewer.
+
+Series still collapse to one card: history is recorded per episode, and five
+cards of the same show is not a landing page.
 
 **Nothing on this page is cropped.** Every image is `object-fit: contain`, and
 that is not a detail — it is the difference between seeing a poster and seeing
-the middle of one. The boxes are sized by the layout, so their shape is
-whatever is left after the block height is divided up; the artwork's shape is
-whatever the provider sent, and the two are never the same. `cover` fills the
-box by throwing away the difference, which on a block wider than a 16:9 still
-means the top and bottom of every one of them — heads cut off, logos clipped.
-The recent block is deliberately as *tall* as the page budget allows for the
-same reason: a taller block is a box closer to the picture's own shape, and so
-less empty margin around it.
+the middle of one. The artwork's shape is whatever the provider sent and the
+box's shape is whatever the layout left; `cover` fills the box by throwing away
+the difference, which means heads cut off and logos clipped.
 
-Channels get a 16:10 plate rather than a 2:3 one — an ident is wide and has
-writing on it — and the four cards under the hero use 16:10 on a phone too,
-since the artwork in that row is mostly wide and a tall box around a wide
-picture is margin, not poster.
+### The footer
 
-On a phone it all stacks — a hero beside a 2×2 leaves both unreadable at 390px,
-and two favorite columns more so — and the four under the hero become one row
-rather than a 2×2.
+The same numbers the health panel reports, said in one line each: uptime,
+whether the provider connection is free, the link, the disk, and the archive
+index. The panel is where you go when one of them is wrong; this is how you
+find out that one is. If the box cannot be reached, the Portal line says so and
+the three rows that were going to come out of the same answer are removed —
+left behind they read as three separate things being broken. The archive line
+belongs to the owner's drive and is not drawn for anyone else.
 
-Two things make the page worth having at all:
+### Full-bleed inside a padded column
 
-- **It needs no library fetch.** Everything on it comes from watch history and
-  favorites, both already loaded, so the badge always lands somewhere instantly
-  even on a cold start where Movies would sit on a skeleton.
-- **Series collapse to one card.** History is recorded per episode, and five
-  cards of the same show is not a landing page.
+The billboard escapes `.wrap`'s max width and gutter with
+`margin-left: calc(50% - var(--page-w) / 2)`. `--page-w` is
+`document.documentElement.clientWidth`, set from `syncPageWidth()` on load and
+on resize. It is not `100vw`: `vw` includes the scrollbar, so on a desktop that
+overshoots by half its width at each edge and the page grows a horizontal
+scrollbar of its own. CSS has no unit for the honest number, which is why it
+arrives from JS — the same reason `--app-h` does.
 
-**Continue watching plays; it does not browse.** Clicking a show here starts
-the episode that was left off. It used to open the show's page, which is the
-exact work the row exists to skip.
+### Continue watching plays; it does not browse
+
+Clicking a show in that row starts the episode that was left off. It used to
+open the show's page, which is the exact work the row exists to skip.
 
 It still routes *through* the show's page to get there, and that is the
 interesting part. A history row knows the episode **number**; everything
@@ -639,10 +717,17 @@ state waiting to fire at the next show someone opens. When it cannot be met the
 empty player is taken back off the screen and the show's page, already drawn,
 is what is left.
 
-Tiles carry `min-width: 0`. A grid item's default `min-width: auto` is its
-min-content width, so without it one long film title is enough to push a tile
-past its track — and once the old home screen did exactly that, 146px wider
-than the phone it was on.
+### On a phone
+
+The billboard becomes a picture band with the words under it rather than over
+them; at 390px there is no column of picture left to write on. The guide goes
+entirely — the strip needs four hours of width to mean anything, and the same
+listings are on each channel's own page.
+
+Cards carry `min-width: 0`. A flex or grid item's default `min-width: auto` is
+its min-content width, so without it one long film title is enough to push a
+card past its track — and once the old home screen did exactly that, 146px
+wider than the phone it was on.
 
 ## Two layouts, not one that stretches
 

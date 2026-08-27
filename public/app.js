@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.41';
+const VERSION = '25';
 
 const PAGE_SIZE = 60;
 
@@ -4539,9 +4539,10 @@ function openSeries(item) {
 
 /* ----------------------------------------------------------------- home ---
 
- * Reached from the badge rather than a tab. Built entirely from watch history
- * and favorites, so it renders without waiting on a library fetch — which is
- * the point of a landing page.
+ * Reached from the badge rather than a tab. It draws from watch history and
+ * favorites — both already in hand when it runs — so the page is on screen
+ * before any library or listing has been asked for. Everything that needs the
+ * box fills in behind it. That is the point of a landing page.
  */
 
 /**
@@ -4712,82 +4713,897 @@ async function forgetWatched(row) {
   }
 }
 
-/**
- * One favorite, as a tile you press to open it.
+/* ---------------------------------------------------------- the landing ---
  *
- * These used to be four thumbnails inside a box that opened the favorites
- * list — a preview of a page rather than the things themselves, so getting to
- * anything took two clicks and the first one was never the one you wanted.
+ * A billboard, what is on right now, tonight's guide, and the rails.
+ *
+ * It used to be a page built to fit the window: a hero, a 2x2 and two columns
+ * of favorites, and nothing scrolled. That page answered "what was I watching"
+ * and stopped there — the library it sits on top of never appeared on it at
+ * all, and a channel that was on RIGHT NOW was three presses away.
+ *
+ * So it scrolls now, and it is built in the order the questions are asked:
+ * one thing worth opening, then what is on, then what is on later, then the
+ * shelves. Everything on it is real — the countdowns are the provider's own
+ * listings against the clock, the rails are the library's own shelves, and
+ * the footer is /api/health. Nothing here is a placeholder.
+ *
+ * It still draws before any of that has arrived. History and favorites are
+ * already in hand when this runs, which is enough for the billboard and the
+ * lane; the library and the listings fill in behind them.
  */
-function homeFavTile(item) {
-  const shape = item.kind === 'live' ? 'is-logo' : 'is-poster';
-  const card = el('button', `card home-tile ${shape}`);
-  const art = el('div', 'card-art');
 
-  const fallback = () => {
+/* The tinted grounds a card falls back to when the provider sent no artwork.
+   The same warm palette the rest of the page is built from, so a library
+   without pictures reads as deliberate rather than broken. */
+const HOME_FIELDS = [
+  'radial-gradient(120% 110% at 22% 18%, #3C2A24, #1A1210 62%, #100B0A)',
+  'radial-gradient(120% 110% at 74% 26%, #243440, #141B20 60%, #0D1115)',
+  'radial-gradient(120% 110% at 34% 22%, #4A2A22, #20120F 62%, #120A09)',
+  'radial-gradient(120% 110% at 60% 30%, #2C3A2C, #161E17 60%, #0D120E)',
+  'radial-gradient(120% 110% at 40% 20%, #3A2C40, #1A151F 60%, #100D13)',
+  'radial-gradient(120% 110% at 66% 24%, #40382A, #1E1A13 60%, #12100B)',
+];
+const homeField = (n) => HOME_FIELDS[Math.abs(Number(n) || 0) % HOME_FIELDS.length];
+
+/** A stable field per title, so a poster keeps its ground between visits. */
+function fieldFor(text) {
+  let h = 0;
+  for (let i = 0; i < String(text).length; i += 1) h = (h * 31 + String(text).charCodeAt(i)) >>> 0;
+  return homeField(h);
+}
+
+/** Artwork with the product's own fallback behind it. */
+function homeArt(box, src, name) {
+  if (!src) {
     const fb = el('div', 'fallback');
-    fb.textContent = item.name || '';
-    art.append(fb);
+    fb.textContent = name || '';
+    box.append(fb);
+    return;
+  }
+  const image = el('img');
+  image.loading = 'lazy';
+  image.alt = '';
+  image.src = src;
+  image.addEventListener('error', () => {
+    image.remove();
+    const fb = el('div', 'fallback');
+    fb.textContent = name || '';
+    box.append(fb);
+  });
+  box.append(image);
+}
+
+/* ------------------------------------------------------------------ epg ---
+ *
+ * What is on, per channel, from the provider's own listings.
+ *
+ * Two rules, both about the one connection this provider sells. At most two
+ * calls are in flight at a time, so opening the page does not fire a dozen
+ * requests at a panel that answers them one at a time. And a channel that
+ * fails is remembered as empty for the TTL rather than retried on the next
+ * tick — a provider having a bad minute must not turn into a request storm.
+ *
+ * Nothing here is required. Every caller draws without it and fills in when
+ * it lands, because a landing page that waits on a provider is a landing page
+ * that sometimes never arrives.
+ */
+const epg = {
+  held: new Map(),
+  inflight: new Map(),
+  running: 0,
+  waiting: [],
+  MAX: 2,
+  TTL: 4 * 60 * 1000,
+
+  /** Listings already in hand, or null. Never goes to the network. */
+  have(id) {
+    const hit = this.held.get(String(id));
+    return hit && Date.now() - hit.at < this.TTL ? hit.listings : null;
+  },
+
+  /** What is on this channel now, from what is already held. */
+  now(id) {
+    const at = Date.now();
+    return (this.have(id) || []).find((l) => l.start <= at && at < l.stop) || null;
+  },
+
+  /** The one after that. */
+  next(id) {
+    const at = Date.now();
+    return (this.have(id) || []).find((l) => l.start > at) || null;
+  },
+
+  async want(id) {
+    // M3U playlists carry no listings at all, and the passthrough refuses.
+    if (state.config?.mode !== 'xtream') return [];
+    const key = String(id);
+    const held = this.have(key);
+    if (held) return held;
+    if (this.inflight.has(key)) return this.inflight.get(key);
+
+    const run = async () => {
+      let listings = [];
+      try {
+        const data = await api('/api/xtream', {
+          action: 'get_short_epg',
+          stream_id: key,
+          limit: 8,
+        });
+        listings = (data.epg_listings || [])
+          .map((l) => ({
+            title: String(l.title || '').trim(),
+            description: String(l.description || '').trim(),
+            start: Number(l.start_timestamp) * 1000,
+            stop: Number(l.stop_timestamp) * 1000,
+          }))
+          .filter((l) => l.start > 0 && l.stop > l.start)
+          .sort((a, b) => a.start - b.start);
+      } catch {
+        /* A channel with no listings is the common case, not an error. */
+      }
+      this.held.set(key, { listings, at: Date.now() });
+      return listings;
+    };
+
+    const promise = new Promise((resolve) => {
+      const start = () => {
+        this.running += 1;
+        resolve(
+          run().finally(() => {
+            this.running -= 1;
+            this.inflight.delete(key);
+            const queued = this.waiting.shift();
+            if (queued) queued();
+          })
+        );
+      };
+      if (this.running < this.MAX) start();
+      else this.waiting.push(start);
+    });
+    this.inflight.set(key, promise);
+    return promise;
+  },
+};
+
+/* ----------------------------------------------------------------- home ---- */
+
+/**
+ * Everything the page has running while it is on screen.
+ *
+ * One interval for the whole page rather than one per countdown, and it stops
+ * itself the moment the view is hidden — leaving home is not something every
+ * ticking thing has to be told about separately.
+ */
+const landing = {
+  timer: null,
+  /** Which of the three billboard features is showing, and which one that is
+      — the index alone does not survive the list growing under it. */
+  feature: 0,
+  featureKey: '',
+  /** Channels the lane and the guide are both built from. */
+  channels: [],
+  /** Top of the hour the guide strip starts at. */
+  guideStart: 0,
+
+  stop() {
+    clearInterval(this.timer);
+    this.timer = null;
+  },
+
+  start() {
+    this.stop();
+    this.timer = setInterval(() => {
+      // Nothing has to remember to stop this: the view being hidden IS the
+      // signal, and every route away from home hides it.
+      if ($('#homeView').hidden) return this.stop();
+      homeTick();
+    }, 1000);
+  },
+};
+
+/**
+ * The width of the page, without the scrollbar.
+ *
+ * The billboard is full-bleed, which means escaping a centred, padded column
+ * with `calc(50% - 50vw)`. `vw` includes the scrollbar, so on a desktop that
+ * overshoots by half its width at each edge and the page grows a horizontal
+ * scrollbar of its own. `clientWidth` is the honest number and CSS has no
+ * unit for it, which is why it arrives from here — the same reason `--app-h`
+ * does.
+ */
+function syncPageWidth() {
+  document.documentElement.style.setProperty(
+    '--page-w',
+    `${document.documentElement.clientWidth}px`
+  );
+}
+syncPageWidth();
+addEventListener('resize', syncPageWidth);
+
+/** How far through a listing the clock is, 0–1. */
+const listingRatio = (l) => {
+  if (!l) return 0;
+  return Math.min(1, Math.max(0, (Date.now() - l.start) / (l.stop - l.start)));
+};
+
+/** Minutes left of a listing, rounded up so it never reads "0 min left". */
+const minutesLeft = (l) => Math.max(1, Math.ceil((l.stop - Date.now()) / 60000));
+
+const clockAt = (ms) =>
+  new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+/* -------------------------------------------------------- the billboard ---
+ *
+ * Three things worth opening, offered as a choice. It does NOT rotate on its
+ * own — a page that changes what it is showing while you are reading it is a
+ * page you have to chase. The thumbnails and the arrow keys are the only
+ * things that move it.
+ */
+
+/**
+ * What goes on the billboard, in the order it is worth offering.
+ *
+ * A favorite channel that is on right now, the thing you were part-way
+ * through, and the newest thing in the library. Whichever of those exist —
+ * this is a real box with a real library behind it, and on a fresh profile
+ * none of the first two do, so the last one fills what is left.
+ */
+function homeFeatures() {
+  const out = [];
+  // Keyed by the TITLE, not by which slot found it: the newest film in the
+  // library is very often the one you started last night, and the billboard
+  // offering it twice is a billboard offering two things.
+  const taken = new Set();
+  const add = (feature) => {
+    if (!feature || out.length >= 3 || taken.has(feature.key)) return;
+    taken.add(feature.key);
+    out.push(feature);
   };
-  if (item.logo) {
-    const image = el('img');
-    image.loading = 'lazy';
-    image.alt = '';
-    image.src = item.logo;
-    image.addEventListener('error', () => { image.remove(); fallback(); });
-    art.append(image);
-  } else {
-    fallback();
+
+  // 1. A favorite channel, with what is actually on it.
+  const channel = profiles.favItems().find((i) => i.kind === 'live');
+  if (channel) {
+    add({
+      key: `live:${channel.id}`,
+      kind: 'live',
+      item: channel,
+      art: channel.logo,
+      cta: 'Watch live',
+      open: () => openPlayer(channel),
+    });
   }
 
-  const title = el('h3', 'card-title');
-  title.textContent = item.name || '';
-  card.append(art, title);
-  // A channel tunes in, a film or a show opens its page — the same rule the
-  // grids follow, so a poster does the same thing wherever it is pressed.
-  card.addEventListener('click', () => openTitle(item));
+  // 2. Where you left off.
+  const resume = (state.recentlyWatched || []).find(
+    (r) => r.duration && r.position && r.position / r.duration < RESUME_MAX_RATIO && !r.completed
+  );
+  if (resume) {
+    /* A history row is enough to draw the billboard and to press Resume — it
+     * carries its own name, poster and place. It is NOT enough to favorite or
+     * download, which need the library record the row was made from. So the
+     * record is looked up if the library happens to be loaded, and the two
+     * buttons that need it appear when it is. Nothing waits: the row alone
+     * still gets a billboard, which is the whole reason it is drawn from
+     * history in the first place. */
+    const tab = resume.kind === 'series' ? 'series' : 'movies';
+    const wantId = String(resume.seriesId ?? resume.id);
+    const record = (state.library[tab]?.items || []).find((i) => String(i.id) === wantId);
+    add({
+      key: `${resume.kind === 'series' ? 'series' : 'movie'}:${wantId}`,
+      kind: 'resume',
+      row: resume,
+      item: record || null,
+      art: resume.poster || record?.logo || '',
+      cta: 'Resume',
+      open: () => playFromHistory(resume),
+    });
+  }
+
+  // 3. The newest thing on the box. Needs the library, which may not have
+  //    arrived yet — the page redraws when it does.
+  const pool = (state.library.movies?.items || []).filter((i) => !profiles.isDeleted(i));
+  const newest = [...pool].sort((a, b) => (b.added || 0) - (a.added || 0)).slice(0, 4);
+  for (const item of newest) {
+    add({
+      key: `movie:${item.id}`,
+      kind: 'new',
+      item,
+      art: item.logo,
+      cta: 'Play',
+      open: () => openPlayer(item),
+      info: () => openTitle(item),
+    });
+  }
+
+  return out;
+}
+
+/** The line above the title: what KIND of thing this is. */
+function billboardEyebrow(feature) {
+  const row = el('div', 'bb-eyebrow');
+  if (feature.kind === 'live') {
+    const pill = el('span', 'bb-live');
+    pill.append(el('span', 'dot'));
+    pill.append(document.createTextNode('LIVE'));
+    const where = el('span', 'bb-caps');
+    where.textContent = feature.item.name;
+    row.append(pill, where);
+  } else {
+    const caps = el('span', 'bb-caps');
+    caps.textContent = feature.kind === 'resume' ? 'Continue watching' : 'New in the archive';
+    row.append(caps);
+  }
+
+  const tags = [];
+  if (feature.item?.uhd) tags.push('4K');
+  if (feature.item?.tag) tags.push(feature.item.tag);
+  if (feature.kind === 'new' && feature.item?.rating) tags.push(`★ ${feature.item.rating}`);
+  for (const text of tags.slice(0, 3)) {
+    const tag = el('span', 'bb-tag');
+    tag.textContent = text;
+    row.append(tag);
+  }
+  return row;
+}
+
+/**
+ * One feature's words. Drawn from what is in hand; the parts that need the
+ * provider (a listing, a plot) are filled in by the callers below when and if
+ * they arrive, and simply stay absent when they do not.
+ */
+function billboardCopy(feature, index) {
+  const copy = el('div', `bb-copy${index === 0 ? ' is-on' : ''}`);
+  copy.dataset.i = String(index);
+
+  copy.append(billboardEyebrow(feature));
+
+  const title = el('h1', 'bb-title');
+  // A live feature's headline is the programme, with the channel above it in
+  // the eyebrow; everything else is its own name.
+  title.textContent =
+    feature.kind === 'live'
+      ? epg.now(feature.item.id)?.title || feature.item.name
+      : feature.row
+        ? feature.row.seriesName || feature.row.name || ''
+        : feature.item.name;
+  copy.append(title);
+
+  const meta = el('p', 'bb-meta');
+  copy.append(meta);
+  const blurb = el('p', 'bb-blurb');
+  copy.append(blurb);
+
+  const resume = el('div', 'bb-resume');
+  resume.hidden = true;
+  const track = el('div', 'bb-track');
+  const fill = el('i');
+  track.append(fill);
+  const left = el('span');
+  resume.append(track, left);
+  copy.append(resume);
+
+  const cta = el('div', 'bb-cta');
+  const play = el('button', 'btn btn-primary bb-play');
+  play.innerHTML = '<svg viewBox="0 0 24 24" class="is-filled"><path d="M7 5l12 7-12 7z"/></svg>';
+  play.append(document.createTextNode(` ${feature.cta}`));
+  play.addEventListener('click', feature.open);
+  cta.append(play);
+
+  // Live has no page to go to — a channel is one decision, and it is the
+  // button to its left. The same rule the grids follow.
+  if (feature.kind !== 'live') {
+    const target = feature.item || null;
+    const more = el('button', 'btn btn-ghost bb-more');
+    more.innerHTML =
+      '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.6v.1"/></svg>';
+    more.append(document.createTextNode(' More info'));
+    more.addEventListener('click', () => {
+      if (target) return openTitle(target);
+      // A history row knows its id but not its record; the page it opens is
+      // the same one the card would have gone to.
+      const row = feature.row;
+      location.hash = `#/${row.kind === 'series' ? 'series' : 'movies'}/${row.seriesId ?? row.id}`;
+    });
+    cta.append(more);
+  }
+
+  const target = feature.item;
+  if (target) {
+    const fav = el('button', 'bb-icon');
+    const paintFav = () => {
+      const on = profiles.hasFav(target);
+      fav.classList.toggle('is-on', on);
+      fav.title = on ? 'In favorites' : 'Add to favorites';
+      fav.setAttribute('aria-label', fav.title);
+      fav.innerHTML =
+        `<svg viewBox="0 0 24 24"${on ? ' class="is-filled"' : ''}><path d="M12 21s-7.5-4.9-9.3-9.2C1.3 8.4 3.2 5 6.6 5c2 0 3.5 1.2 4.4 2.4l1 1.3 1-1.3C13.9 6.2 15.4 5 17.4 5c3.4 0 5.3 3.4 3.9 6.8C19.5 16.1 12 21 12 21z"/></svg>`;
+    };
+    paintFav();
+    fav.addEventListener('click', () => {
+      const added = profiles.toggleFav(target);
+      paintFav();
+      toast(added ? `Added “${target.name}” to favorites.` : `Removed “${target.name}”.`);
+    });
+    cta.append(fav);
+
+    /* Films only. A channel is a feed with no file behind it, and a show is
+     * many files — "save this" has no single answer for either, and the show's
+     * own page is where an episode gets picked. */
+    if (target.kind !== 'live' && target.kind !== 'series') {
+      const save = el('button', 'bb-icon');
+      save.title = 'Save to the box';
+      save.setAttribute('aria-label', save.title);
+      save.innerHTML =
+        '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg>';
+      save.addEventListener('click', () => requestDownload(target, null));
+      cta.append(save);
+    }
+  }
+
+  copy.append(cta);
+  return copy;
+}
+
+/**
+ * The meta line, the blurb and the progress bar — the parts that arrive late.
+ *
+ * Called on the first paint and again whenever a listing or a plot lands, so
+ * one function owns what these three say rather than three places filling
+ * them from different halves of the truth.
+ */
+function paintBillboardDetail(copy, feature) {
+  const meta = copy.querySelector('.bb-meta');
+  const blurb = copy.querySelector('.bb-blurb');
+  const resume = copy.querySelector('.bb-resume');
+  const bits = [];
+
+  if (feature.kind === 'live') {
+    const on = epg.now(feature.item.id);
+    copy.querySelector('.bb-title').textContent = on?.title || feature.item.name;
+    if (on) {
+      bits.push(`${clockAt(on.start)} – ${clockAt(on.stop)}`);
+      resume.hidden = false;
+      resume.querySelector('i').style.width = `${listingRatio(on) * 100}%`;
+      resume.querySelector('span').textContent = `${minutesLeft(on)} min left`;
+    } else {
+      resume.hidden = true;
+    }
+    const next = epg.next(feature.item.id);
+    if (next) bits.push(`Next: ${next.title}`);
+    blurb.textContent = on?.description || '';
+  } else if (feature.kind === 'resume') {
+    const row = feature.row;
+    if (row.season && row.episode) bits.push(`Season ${row.season}, episode ${row.episode}`);
+    // The film's own details, if the library has been loaded and the provider
+    // has answered for it. An episode gets none of this — get_vod_info is for
+    // films, and a show's details belong to the show, not to where you are in
+    // it — so a series row's line stays the season and episode alone.
+    const vod = feature.item && row.kind !== 'series' ? state.vodCache[feature.item.id] : null;
+    if (vod) for (const bit of [vod.releasedate, vod.genre]) if (bit) bits.push(bit);
+    const ratio = row.position / row.duration;
+    resume.hidden = false;
+    resume.querySelector('i').style.width = `${Math.min(100, ratio * 100)}%`;
+    const mins = Math.max(1, Math.round((row.duration - row.position) / 60));
+    resume.querySelector('span').textContent = `${mins} min left`;
+    blurb.textContent = vod?.plot || '';
+  } else {
+    const info = state.vodCache[feature.item.id];
+    if (info) {
+      for (const bit of [info.releasedate, info.genre, info.duration]) if (bit) bits.push(bit);
+      blurb.textContent = info.plot || '';
+    }
+    resume.hidden = true;
+  }
+
+  meta.textContent = bits.join(' · ');
+  meta.hidden = !bits.length;
+  blurb.hidden = !blurb.textContent;
+}
+
+function renderBillboard(view, features) {
+  const bb = el('section', 'home-bb');
+  bb.setAttribute('aria-label', 'Featured');
+
+  const slides = el('div', 'bb-slides');
+  const stage = el('div', 'bb-stage');
+  const picker = el('div', 'bb-pick');
+
+  features.forEach((feature, i) => {
+    const slide = el('div', `bb-slide${i === 0 ? ' is-on' : ''}`);
+    slide.dataset.i = String(i);
+    const art = el('div', 'bb-art');
+    art.style.setProperty('--field', fieldFor(feature.key));
+    slide.append(art);
+
+    /* The artwork sits on the ground rather than being the ground.
+     *
+     * A billboard wants a wide backdrop and this provider has none — it sends
+     * a 2:3 poster for a film and a small wide ident for a channel, and there
+     * is no third thing to ask it for. Covering the frame with either means
+     * cropping a portrait to a letterbox slot or blowing a 200px logo up to
+     * 1440, and both look like a mistake. So the tinted ground is the
+     * backdrop, as the design has it when a slot is empty, and the real
+     * artwork is shown whole on the right where the veil is already clear.
+     */
+    if (feature.art) {
+      // A channel's artwork is a wide ident and a title's is a portrait
+      // poster. Told apart here rather than guessed at in CSS, because only
+      // this side knows which it is — and the two want opposite framing.
+      const panel = el('div', `bb-poster ${feature.kind === 'live' ? 'is-ident' : 'is-poster'}`);
+      const image = el('img');
+      image.alt = '';
+      image.src = feature.art;
+      image.addEventListener('error', () => panel.remove());
+      panel.append(image);
+      slide.append(panel);
+    }
+    slides.append(slide);
+
+    const copy = billboardCopy(feature, i);
+    paintBillboardDetail(copy, feature);
+    stage.append(copy);
+
+    const pick = el('button', `bb-thumb${i === 0 ? ' is-on' : ''}`);
+    pick.dataset.i = String(i);
+    pick.style.setProperty('--field', fieldFor(feature.key));
+    const label = el('span', 'bb-thumb-label');
+    label.textContent =
+      feature.kind === 'live'
+        ? feature.item.name
+        : feature.row
+          ? feature.row.seriesName || feature.row.name || ''
+          : feature.item.name;
+    if (feature.art) {
+      const thumb = el('img');
+      thumb.loading = 'lazy';
+      thumb.alt = '';
+      thumb.src = feature.art;
+      thumb.addEventListener('error', () => thumb.remove());
+      pick.append(thumb);
+    }
+    pick.append(label);
+    pick.setAttribute('aria-label', `Show ${label.textContent}`);
+    picker.append(pick);
+  });
+
+  const veil = el('div', 'bb-veil');
+  const glow = el('div', 'bb-glow');
+  const inner = el('div', 'bb-inner');
+  inner.append(stage);
+
+  bb.append(slides, veil, glow, inner);
+  if (features.length > 1) bb.append(picker);
+  view.append(bb);
+
+  /* The page repaints when the library lands, a few seconds in. Without this
+   * that would throw the billboard back to the first feature under somebody
+   * who had already chosen the third. Matched by key, not by index: the list
+   * itself is what grew. */
+  const restored = features.findIndex((f) => f.key === landing.featureKey);
+  const show = (n) => {
+    landing.feature = (n + features.length) % features.length;
+    landing.featureKey = features[landing.feature].key;
+    for (const node of bb.querySelectorAll('.bb-slide, .bb-copy, .bb-thumb')) {
+      node.classList.toggle('is-on', Number(node.dataset.i) === landing.feature);
+    }
+  };
+  picker.addEventListener('click', (event) => {
+    const button = event.target.closest('.bb-thumb');
+    if (button) show(Number(button.dataset.i));
+  });
+  bb.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowRight') show(landing.feature + 1);
+    if (event.key === 'ArrowLeft') show(landing.feature - 1);
+  });
+  show(restored >= 0 ? restored : 0);
+
+  /* What the provider still owes this billboard, asked for once.
+   *
+   * A listing for the live feature, a plot for the new one. Both are worth
+   * having and neither is worth waiting for, so the page is already drawn by
+   * the time either lands and simply gets better when it does. */
+  features.forEach((feature, i) => {
+    const copy = stage.children[i];
+    if (feature.kind === 'live') {
+      epg.want(feature.item.id).then(() => {
+        if (copy.isConnected) paintBillboardDetail(copy, feature);
+      });
+      return;
+    }
+    // Films only, and once each: get_vod_info is a VOD call, and the answer is
+    // kept in the same cache the film's own page reads, so opening it after
+    // this asks the provider nothing.
+    const film = feature.item && feature.item.kind !== 'series' && feature.row?.kind !== 'series'
+      ? feature.item
+      : null;
+    if (film && state.vodCache[film.id] === undefined) {
+      fetchVodInfo(film).then((info) => {
+        state.vodCache[film.id] = info;
+        if (copy.isConnected) paintBillboardDetail(copy, feature);
+      });
+    }
+  });
+
+  return bb;
+}
+
+/* ------------------------------------------------------------- on now ---
+ *
+ * The favorite channels, with what is on them and how much of it is left.
+ * Favorites rather than the whole library: a provider carries thousands of
+ * channels and a lane of the first eight alphabetically is not a lane anybody
+ * asked for.
+ */
+function laneCard(channel) {
+  const card = el('button', 'lane-card');
+  card.dataset.channel = String(channel.id);
+
+  const ident = el('span', 'lane-ident');
+  ident.style.setProperty('--field', fieldFor(channel.name || channel.id));
+  homeArt(ident, channel.logo, channel.name);
+
+  const live = el('span', 'lane-live');
+  live.append(el('span', 'dot'));
+  live.append(document.createTextNode('LIVE'));
+  ident.append(live);
+
+  if (channel.uhd) {
+    const uhd = el('span', 'badge uhd');
+    uhd.textContent = '4K';
+    ident.append(uhd);
+  }
+
+  const play = el('span', 'lane-play');
+  play.innerHTML =
+    '<span><svg viewBox="0 0 24 24" class="is-filled"><path d="M7 5l12 7-12 7z"/></svg></span>';
+  ident.append(play);
+
+  const body = el('span', 'lane-body');
+  const name = el('span', 'lane-name');
+  name.textContent = channel.name;
+  const now = el('span', 'lane-now');
+  const next = el('span', 'lane-next');
+  const bar = el('span', 'lane-bar');
+  bar.append(el('i'));
+  const left = el('span', 'lane-left');
+  body.append(name, now, next, bar, left);
+
+  card.append(ident, body);
+  card.addEventListener('click', () => openPlayer(channel));
   return card;
 }
 
-/**
- * One favorites column: a heading, a row of tiles, and a way through to the
- * full list when there are more than fit.
- *
- * A column rather than a row of its own, because the two of them sit side by
- * side — stacked, they push the page past the bottom of the screen, which is
- * the one thing this layout is for.
- */
-function homeFavColumn({ title, items, hash, empty, shown }) {
-  const col = el('section', 'home-fav-col');
+/** The one thing a lane card says that changes every second. */
+function paintLaneCard(card, channel) {
+  const on = epg.now(channel.id);
+  const after = epg.next(channel.id);
+  const bar = card.querySelector('.lane-bar');
+  const left = card.querySelector('.lane-left');
 
-  const head = el('div', 'home-row-head');
+  card.querySelector('.lane-now').textContent = on ? on.title : '';
+  card.querySelector('.lane-next').textContent = after ? `Next: ${after.title}` : '';
+  bar.hidden = !on;
+  left.hidden = !on;
+  if (on) {
+    bar.querySelector('i').style.width = `${listingRatio(on) * 100}%`;
+    left.textContent = `${minutesLeft(on)} min left`;
+  }
+}
+
+function renderLane(view, channels) {
+  const section = el('section', 'home-lane');
+  const head = el('div', 'home-head');
+  const title = el('h2', 'home-label');
+  title.textContent = 'On now';
+  const count = el('span', 'home-count');
+  count.textContent = `${channels.length} ${channels.length === 1 ? 'channel' : 'channels'}`;
+  head.append(title, count);
+
+  const track = el('div', 'rail-track');
+  for (const channel of channels) track.append(laneCard(channel));
+
+  section.append(head, homeRail(track, 'On now'));
+  view.append(section);
+
+  /* Ask for every channel's listings. The queue holds it to two at a time and
+   * the cards are already on screen, so this fills in rather than blocks. */
+  for (const channel of channels) {
+    epg.want(channel.id).then(() => {
+      const card = track.querySelector(`[data-channel="${CSS.escape(String(channel.id))}"]`);
+      if (card) paintLaneCard(card, channel);
+    });
+  }
+}
+
+/* ------------------------------------------------------ tonight's guide ---
+ *
+ * Four hours from the top of this one, laid out against the real clock: every
+ * block sits where its own start and stop timestamps put it, and the line
+ * crossing them is now. Only the channels already in the lane, so this asks
+ * the provider for nothing the page has not already asked for.
+ */
+function renderGuide(view, channels) {
+  const rows = channels.slice(0, 6);
+  if (!rows.length) return;
+  // An M3U playlist carries no listings at all — there is nothing to ask and
+  // nothing to draw, so the section is not built rather than built empty.
+  if (state.config?.mode !== 'xtream') return;
+
+  const HOUR = 3600000;
+  const SPAN = 4 * HOUR;
+  landing.guideStart = Math.floor(Date.now() / HOUR) * HOUR;
+
+  const section = el('section', 'home-guide');
+  const head = el('div', 'home-head');
+  const title = el('h2', 'home-label');
+  title.textContent = "Tonight's guide";
+  const count = el('span', 'home-count');
+  count.textContent = `${rows.length} favorite ${rows.length === 1 ? 'channel' : 'channels'}`;
+  head.append(title, count);
+
+  const answered = [];
+  const box = el('div', 'guide-box');
+  const ruler = el('div', 'guide-ruler');
+  const spacer = el('div', 'guide-name');
+  spacer.textContent = 'Channel';
+  const ticks = el('div', 'guide-ticks');
+  for (let h = 0; h < 4; h += 1) {
+    const tick = el('div');
+    tick.textContent = clockAt(landing.guideStart + h * HOUR);
+    ticks.append(tick);
+  }
+  ruler.append(spacer, ticks);
+  box.append(ruler);
+
+  for (const channel of rows) {
+    const row = el('div', 'guide-row');
+    row.dataset.channel = String(channel.id);
+    const name = el('div', 'guide-name');
+    const label = el('span');
+    label.textContent = channel.name;
+    name.append(label);
+    const slots = el('div', 'guide-slots');
+    row.append(name, slots);
+    box.append(row);
+
+    const fill = () => {
+      slots.innerHTML = '';
+      const listings = epg.have(channel.id) || [];
+      const inside = listings.filter(
+        (l) => l.stop > landing.guideStart && l.start < landing.guideStart + SPAN
+      );
+      if (!inside.length) {
+        const none = el('p', 'guide-none');
+        // Said rather than left blank: an empty strip reads as a broken page,
+        // and "the provider sent no listings" is the actual answer.
+        none.textContent = 'No listings for this channel.';
+        slots.append(none);
+        return;
+      }
+      const at = Date.now();
+      for (const listing of inside) {
+        const from = Math.max(listing.start, landing.guideStart);
+        const to = Math.min(listing.stop, landing.guideStart + SPAN);
+        const block = el('button', 'guide-slot');
+        if (listing.start <= at && at < listing.stop) block.classList.add('is-now');
+        block.style.left = `${((from - landing.guideStart) / SPAN) * 100}%`;
+        block.style.width = `${((to - from) / SPAN) * 100}%`;
+        const what = el('b');
+        what.textContent = listing.title;
+        const when = el('s');
+        when.textContent = `${clockAt(listing.start)} – ${clockAt(listing.stop)}`;
+        block.append(what, when);
+        block.addEventListener('click', () => openPlayer(channel));
+        slots.append(block);
+      }
+    };
+    fill();
+    answered.push(
+      epg.want(channel.id).then((listings) => {
+        if (row.isConnected) fill();
+        return listings.length;
+      })
+    );
+  }
+
+  const line = el('div', 'guide-now');
+  line.hidden = true;
+  box.append(line);
+  section.append(head, box);
+  view.append(section);
+
+  /* A provider that sells channels without listings is a real provider, and
+   * six rows of "No listings for this channel" is not a guide — it is the
+   * absence of one, taking a screen to say so. Once every channel has
+   * answered, if not one of them had anything, the section goes. */
+  Promise.all(answered).then((counts) => {
+    if (section.isConnected && !counts.some(Boolean)) section.remove();
+  });
+}
+
+/* ------------------------------------------------------------- the rails ---
+ *
+ * The library's own shelves, exactly as the Movies and Series tabs build them,
+ * so a row called New Releases here holds what New Releases holds there. Not a
+ * second definition of what a shelf is — there is one, and this reads it.
+ */
+
+/** Wrap a track in the arrows every rail on this page shares. */
+function homeRail(track, label) {
+  const rail = el('div', 'rail');
+  const prev = el('button', 'rail-nav prev');
+  prev.setAttribute('aria-label', `Scroll ${label} left`);
+  prev.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
+  const next = el('button', 'rail-nav next');
+  next.setAttribute('aria-label', `Scroll ${label} right`);
+  next.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>';
+
+  // The same hand-rolled tween the shelves use: `behavior: 'smooth'` silently
+  // does nothing in some engines, and the floor covers a rail that reports no
+  // width because it has not been laid out yet.
+  const page = (dir) => {
+    const step = Math.max(track.clientWidth * 0.85, 400);
+    const from = track.scrollLeft;
+    const to = Math.max(0, Math.min(track.scrollWidth - track.clientWidth, from + dir * step));
+    if (to === from) return;
+    const began = performance.now();
+    const glide = (now) => {
+      const t = Math.min(1, (now - began) / 320);
+      track.scrollLeft = from + (to - from) * (1 - (1 - t) * (1 - t));
+      if (t < 1) requestAnimationFrame(glide);
+    };
+    requestAnimationFrame(glide);
+  };
+  prev.addEventListener('click', () => page(-1));
+  next.addEventListener('click', () => page(1));
+
+  const syncNav = () => {
+    prev.classList.toggle('is-off', track.scrollLeft < 8);
+    next.classList.toggle(
+      'is-off',
+      track.scrollLeft + track.clientWidth >= track.scrollWidth - 8
+    );
+  };
+  track.addEventListener('scroll', syncNav, { passive: true });
+  requestAnimationFrame(syncNav);
+
+  rail.append(prev, track, next);
+  return rail;
+}
+
+/**
+ * One shelf on the landing page. `to` is where its header goes — the tab that
+ * holds the full row, since the shelf's own opened-out view belongs to that
+ * tab's state rather than this page's.
+ */
+function homeShelf(view, { title, items, cards, to }) {
+  if (!items.length) return;
+  const section = el('section', 'home-row');
+
+  const head = el('button', 'home-head is-link');
+  head.type = 'button';
+  head.title = `Show all of ${title}`;
   const label = el('h2', 'home-label');
   label.textContent = title;
-  head.append(label);
-  if (items.length > shown) {
-    const more = el('button', 'home-more');
-    more.textContent = `All ${items.length.toLocaleString()} ›`;
-    more.addEventListener('click', () => { location.hash = hash; });
-    head.append(more);
-  }
-  col.append(head);
+  const count = el('span', 'home-count');
+  count.textContent = items.length.toLocaleString();
+  const go = el('span', 'home-go');
+  go.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>';
+  head.append(label, count, go);
+  head.addEventListener('click', () => { location.hash = to; });
 
-  if (!items.length) {
-    const none = el('p', 'home-empty');
-    none.textContent = empty;
-    col.append(none);
-    return col;
-  }
+  const track = el('div', 'rail-track');
+  // Capped at forty, as the shelves are: the header is the way to the rest.
+  for (const item of items.slice(0, 40)) track.append(cards(item));
 
-  const grid = el('div', 'home-tiles');
-  for (const item of items.slice(0, shown)) grid.append(homeFavTile(item));
-  col.append(grid);
-  return col;
+  section.append(head, homeRail(track, title));
+  view.append(section);
 }
 
 function renderHome() {
-  // render() hides everything before its branches now; this list survives
-  // only as a belt for any future direct call.
+  // render() hides everything before its branches now; this list survives only
+  // as a belt for the direct calls — forgetWatched redraws the page in place.
   $('#grid').hidden = true;
   $('#rowsView').hidden = true;
   $('#downloadList').hidden = true;
@@ -4795,16 +5611,46 @@ function renderHome() {
   $('#emptyState').hidden = true;
   $('#loadMore').hidden = true;
   document.querySelectorAll('.folder-back').forEach((b) => b.remove());
+
   const shell = document.querySelector('.app-shell');
   shell.classList.add('no-sidebar');
-  // This is the one page built to fit the window rather than scroll, so it
-  // does not want the run-off room every other view is padded for.
+  // The billboard is the page's own heading, so the tab's one would be a
+  // second title for the same thing.
   shell.classList.add('is-home');
 
   const view = $('#homeView');
   view.hidden = false;
   view.innerHTML = '';
+  syncPageWidth();
 
+  /* ---- the billboard ---- */
+  const features = homeFeatures();
+  if (features.length) renderBillboard(view, features);
+
+  /* ---- what is on right now ---- */
+  // Favorites first; a profile with none gets the channels it has actually
+  // watched, and only then nothing at all. Never the whole library — a lane
+  // of the first eight channels alphabetically is not a lane anybody wants.
+  const favChannels = profiles.favItems().filter((i) => i.kind === 'live');
+  const watchedChannels = (state.recentlyWatched || [])
+    .filter((r) => r.kind === 'live')
+    .map((r) => ({ kind: 'live', id: r.id, name: r.name, logo: r.poster || '' }));
+  const seenChannel = new Set();
+  landing.channels = [...favChannels, ...watchedChannels]
+    .filter((c) => {
+      const key = String(c.id);
+      if (seenChannel.has(key)) return false;
+      seenChannel.add(key);
+      return true;
+    })
+    .slice(0, 12);
+
+  if (landing.channels.length) {
+    renderLane(view, landing.channels);
+    renderGuide(view, landing.channels);
+  }
+
+  /* ---- continue watching ---- */
   // One row per title: series history is per-episode, and five cards of the
   // same show is not a landing page.
   const seen = new Set();
@@ -4814,68 +5660,252 @@ function renderHome() {
     if (seen.has(key)) continue;
     seen.add(key);
     recent.push(row);
-    if (recent.length === 5) break;
+    if (recent.length === 12) break;
+  }
+  homeShelf(view, {
+    title: 'Continue watching',
+    items: recent,
+    cards: (row) => homeCard(row, 'home-resume-card'),
+    to: '#/favorites',
+  });
+
+  /* ---- the library's shelves ---- */
+  // Movies first, then Series, and For You is left out of both: it IS
+  // Continue watching, one section up.
+  //
+  // Both tabs name a row New Releases, and several genres appear on each. Two
+  // rows called the same thing on one page is two rows nobody can tell apart,
+  // so the second one says which library it is from — the tab's own name for
+  // the row is kept wherever there is nothing to confuse it with.
+  const usedTitles = new Set(['Continue watching']);
+  for (const [tab, hash] of [['movies', '#/movies'], ['series', '#/series']]) {
+    for (const row of buildShelves(tab).filter((r) => r.title !== 'For You').slice(0, 3)) {
+      const title = usedTitles.has(row.title)
+        ? `${row.title} · ${tab === 'series' ? 'Series' : 'Movies'}`
+        : row.title;
+      usedTitles.add(title);
+      usedTitles.add(row.title);
+      homeShelf(view, {
+        title,
+        items: row.items,
+        cards: (item) => {
+          const card = cardFor(item);
+          card.classList.add('rail-card');
+          return card;
+        },
+        to: hash,
+      });
+    }
   }
 
-  if (recent.length) {
-    const section = el('section', 'home-recent');
-    const label = el('h2', 'home-label');
-    label.textContent = 'Continue watching';
-    section.append(label);
+  /* ---- favorites ---- */
+  const favTitles = profiles.favItems().filter((i) => i.kind !== 'live');
+  homeShelf(view, {
+    title: 'Favorites',
+    items: favTitles,
+    cards: (item) => {
+      const card = cardFor(item);
+      card.classList.add('rail-card');
+      return card;
+    },
+    to: '#/favorites',
+  });
 
-    const layout = el('div', 'home-recent-layout');
-    layout.append(homeCard(recent[0], 'home-hero'));
-
-    // The four alongside stay a 2×2 even with fewer than four to show, so the
-    // hero keeps its proportions instead of stretching to fill the row.
-    const quad = el('div', 'home-quad');
-    for (const row of recent.slice(1, 5)) quad.append(homeCard(row, 'home-quad-card'));
-    layout.append(quad);
-
-    section.append(layout);
-    view.append(section);
-  }
-
-  const favs = profiles.favItems();
-  const channels = favs.filter((i) => i.kind === 'live');
-  const titles = favs.filter((i) => i.kind !== 'live');
-
-  // Side by side, and capped at what one line of a column holds: this is a
-  // landing page, and the full list is one press away.
-  const SHOWN = 6;
-  const favRow = el('section', 'home-favs');
-  favRow.append(
-    homeFavColumn({
-      title: 'Favorite channels',
-      items: channels,
-      hash: '#/favlive',
-      empty: 'No favorite channels yet — tap the heart while watching one.',
-      shown: SHOWN,
-    }),
-    homeFavColumn({
-      title: 'Favorite movies & shows',
-      items: titles,
-      hash: '#/favorites',
-      empty: 'No favorites yet — tap the heart while watching something.',
-      shown: SHOWN,
-    })
-  );
-  view.append(favRow);
-
-  if (!recent.length && !favs.length) {
+  /* Only once the library has actually answered.
+   *
+   * A fresh profile has no history and no favorites, so everything above this
+   * comes from the library — which is still in flight on the first pass. Said
+   * then, "nothing here yet" is a lie that flashes up for a second and is
+   * replaced by a full page, which is worse than saying nothing. */
+  if (state.library.movies &&
+      !features.length && !landing.channels.length && !recent.length && !favTitles.length) {
     $('#emptyState').hidden = false;
     $('#emptyState').textContent =
       'Nothing here yet. Watch something and it will show up on this page.';
   }
 
-  // Lives inside the home view rather than the page, so leaving home takes it
-  // away without anything having to remember to hide it.
-  const stamp = el('span', 'home-version');
-  stamp.textContent = `v${VERSION}`;
-  stamp.title = 'Version running in this browser';
-  view.append(stamp);
+  renderHomeFooter(view);
+  homeTick();
+  landing.start();
+
+  // Libraries the page wants but does not wait for. Quietly, so the loading
+  // screen never comes up over a page that is already on screen and usable.
+  for (const tab of ['movies', 'series']) {
+    if (state.library[tab]) continue;
+    loadTab(tab, { quiet: true })
+      .then(() => { if (state.tab === 'home') render(); })
+      .catch(() => { /* the page stands without it */ });
+  }
 
   $('#contentMeta').textContent = profiles.current ? profiles.current.name : '';
+}
+
+/* -------------------------------------------------------------- footer ---
+ *
+ * What the box is doing, on the page you land on. These are the same numbers
+ * the health panel reports, said in one line each — the panel is where you go
+ * when one of them is wrong, and this is how you find out that one is.
+ */
+function renderHomeFooter(view) {
+  const foot = el('footer', 'home-foot');
+  const stats = [
+    ['Portal', 'portal'],
+    ['Provider', 'provider'],
+    ['Network', 'network'],
+    ['Storage', 'storage'],
+    ['Archive', 'archive'],
+  ];
+  for (const [label, key] of stats) {
+    const stat = el('div', 'home-stat');
+    const k = el('span', 'home-stat-k');
+    k.textContent = label;
+    const v = el('span', 'home-stat-v');
+    v.dataset.stat = key;
+    v.textContent = '—';
+    stat.append(k, v);
+    foot.append(stat);
+  }
+  const version = el('span', 'home-version');
+  version.textContent = `v${VERSION}`;
+  version.title = 'Version running in this browser';
+  foot.append(version);
+  view.append(foot);
+
+  paintHomeFooter(foot);
+}
+
+const homeDot = (tone) => `<span class="home-dot is-${tone}"></span>`;
+
+async function paintHomeFooter(foot) {
+  const put = (key, html) => {
+    const cell = foot.querySelector(`[data-stat="${key}"]`);
+    if (cell) cell.innerHTML = html;
+  };
+
+  try {
+    const res = await fetch('/api/health', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`the box answered ${res.status}`);
+    const d = await res.json();
+    if (!foot.isConnected) return;
+
+    const days = Math.floor(d.uptime.server / 86400);
+    const hours = Math.floor((d.uptime.server % 86400) / 3600);
+    const mins = Math.floor((d.uptime.server % 3600) / 60);
+    put('portal', homeDot('ok') + escapeHtml(days ? `up ${days}d ${hours}h` : `up ${hours}h ${mins}m`));
+
+    const rate = d.provider.bytesPerSec;
+    put(
+      'provider',
+      homeDot(d.provider.streaming ? 'warn' : 'ok') +
+        escapeHtml(
+          d.provider.streaming
+            ? `Streaming · ${((rate * 8) / 1e6).toFixed(1)} Mbit/s`
+            : 'Answering · connection free'
+        )
+    );
+
+    const net = d.network || {};
+    const level = net.level === 'poor' ? 'bad' : net.level === 'fair' ? 'warn' : 'ok';
+    put(
+      'network',
+      homeDot(level) +
+        escapeHtml(
+          net.kind === 'wired'
+            ? 'Wired'
+            : `${net.ssid || 'Wi-Fi'}${net.bitrateMbps ? ` · ${net.bitrateMbps} Mbit/s` : ''}`
+        )
+    );
+
+    const gb = (b) => (b == null ? '—' : `${(b / 1073741824).toFixed(0)} GB`);
+    put(
+      'storage',
+      (d.disk.low ? homeDot('bad') : '') +
+        escapeHtml(`${gb(d.disk.free)} free of ${gb(d.disk.total)}`)
+    );
+  } catch (err) {
+    // One honest line beats five dashes: the footer is a health readout, and
+    // "cannot reach the box" is the most important thing it could say. The
+    // three rows that were going to come out of the same answer go with it —
+    // left behind they read as three separate things being broken.
+    if (!foot.isConnected) return;
+    put('portal', homeDot('bad') + escapeHtml(`Can't reach the box — ${err.message}`));
+    for (const key of ['provider', 'network', 'storage']) {
+      foot.querySelector(`[data-stat="${key}"]`)?.closest('.home-stat')?.remove();
+    }
+  }
+
+  // The archive is the owner's drive and has its own endpoint. A profile that
+  // cannot see it simply has no Archive line rather than an error on one.
+  const cell = foot.querySelector('[data-stat="archive"]');
+  if (!reporter.isOwner()) {
+    if (cell) cell.closest('.home-stat').remove();
+    return;
+  }
+  try {
+    const arc = await api('/api/archive/status', { profileId: profiles.current?.id || '' });
+    if (!foot.isConnected) return;
+    put(
+      'archive',
+      homeDot(arc.mounted ? 'ok' : 'warn') +
+        escapeHtml(
+          arc.mounted
+            ? `${Number(arc.indexed || 0).toLocaleString()} files indexed`
+            : 'Drive not mounted'
+        )
+    );
+  } catch {
+    put('archive', homeDot('warn') + 'Unreadable');
+  }
+}
+
+/* ---------------------------------------------------------------- the tick ---
+ *
+ * One second, one pass, for the whole page: the countdowns in the lane, the
+ * blocks in the guide and the line crossing them. Everything it moves is
+ * derived from the clock against timestamps the provider gave us, so there is
+ * no state to keep in step — it reads and it paints.
+ */
+function homeTick() {
+  const view = $('#homeView');
+  if (view.hidden) return;
+
+  for (const card of view.querySelectorAll('.lane-card')) {
+    const channel = landing.channels.find((c) => String(c.id) === card.dataset.channel);
+    if (channel) paintLaneCard(card, channel);
+  }
+
+  const box = view.querySelector('.guide-box');
+  if (box) {
+    const at = Date.now();
+    const HOUR = 3600000;
+    const SPAN = 4 * HOUR;
+
+    // The strip starts at the top of an hour, so the hour turning is what makes
+    // it wrong — the ruler still says the old four hours and the now-line has
+    // walked off the end. Rebuilt once, when it happens, rather than guarded
+    // for on every tick.
+    if (at - landing.guideStart >= HOUR) {
+      if (state.tab === 'home') render();
+      return;
+    }
+
+    for (const slot of box.querySelectorAll('.guide-slot')) {
+      // Cheap and exact: the block already knows where it sits in the span.
+      const from = landing.guideStart + (parseFloat(slot.style.left) / 100) * SPAN;
+      const to = from + (parseFloat(slot.style.width) / 100) * SPAN;
+      slot.classList.toggle('is-now', from <= at && at < to);
+    }
+
+    const slots = box.querySelector('.guide-slots');
+    const line = box.querySelector('.guide-now');
+    if (slots && line) {
+      const strip = slots.getBoundingClientRect();
+      const outer = box.getBoundingClientRect();
+      const fraction = (at - landing.guideStart) / SPAN;
+      line.hidden = fraction < 0 || fraction > 1;
+      line.style.left = `${strip.left - outer.left + strip.width * fraction}px`;
+    }
+  }
 }
 
 /* ------------------------------------------------------- one title ---

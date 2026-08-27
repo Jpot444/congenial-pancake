@@ -572,229 +572,760 @@ svg {
 
 /* ============================================================= home ===
 
- * Reached from the badge, not a tab. One large poster of the last thing
- * watched with a 2x2 of the four before it alongside, and underneath, the two
- * favorite sets side by side.
+ * Reached from the badge, not a tab.
  *
- * The whole page is sized to fit the window rather than scroll. That is the
- * only thing that changed from the first version of it: the shape is the same,
- * the pieces are smaller, and the favorites are the posters themselves rather
- * than four thumbnails on a box that opened a list.
+ * A billboard, the channels that are on right now, four hours of tonight's
+ * guide, and the library's own shelves. It scrolls — the version before this
+ * one deliberately did not, and fitting the window was exactly what kept the
+ * library off the page it is the front door to.
+ *
+ * The billboard is full-bleed, which means escaping a centred column that has
+ * a max width and a gutter. `--page-w` is the document's clientWidth, set from
+ * app.js: `100vw` includes the scrollbar, so it overshoots by half its width
+ * at each edge and the page grows a horizontal scrollbar of its own.
  */
-.home { display: flex; flex-direction: column; gap: 18px; }
+.home {
+  display: flex;
+  flex-direction: column;
+  gap: 46px;
+}
 
-/* Fixed to the corner rather than placed after the content, which would put it
-   somewhere different depending on how much you have watched. It only exists
-   while the home view is rendered, and `[hidden]` on that view takes it with
-   it, so nothing has to remember to hide it elsewhere. */
+/* The billboard IS this page's heading, so the tab's own is a second title for
+   the same thing. */
+.app-shell.is-home .content-head { display: none; }
+/* The rails run to the edge of the column and the billboard past it; the
+   run-off room every other view is padded for would only push the footer
+   further down. */
+.app-shell.is-home { padding-top: 0; padding-bottom: 0; }
+
+/* ---- shared section furniture ---- */
+
+.home-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
+/* A button, not a heading, wherever there is more of the row than fits — the
+   same rule the shelves follow. */
+.home-head.is-link { width: fit-content; cursor: pointer; }
+
+.home-label {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 24px;
+  font-weight: 400;
+  letter-spacing: .04em;
+  color: var(--text);
+  transition: color .18s var(--ease);
+}
+
+.home-count {
+  font-size: 12px;
+  color: var(--muted-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.home-go {
+  display: inline-flex;
+  align-self: center;
+  color: var(--muted-dim);
+  transition: transform .18s var(--ease), color .18s var(--ease);
+}
+.home-go svg { width: 18px; height: 18px; }
+.home-head.is-link:hover .home-label { color: #fff; }
+.home-head.is-link:hover .home-go { color: var(--text); transform: translateX(3px); }
+
+/* ---- the billboard ---- */
+
+.home-bb {
+  position: relative;
+  /* Its own stacking context, so the veil and the glow cannot reach the
+     header sitting above it. */
+  isolation: isolate;
+  width: var(--page-w, 100%);
+  margin-left: calc(50% - var(--page-w, 100%) / 2);
+  margin-bottom: -70px;
+  height: clamp(520px, 74vh, 770px);
+  overflow: hidden;
+}
+
+.bb-slide {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1s var(--ease);
+}
+.bb-slide.is-on { opacity: 1; pointer-events: auto; }
+
+/* Inset past the frame so the drift never uncovers an edge. */
+.bb-art {
+  position: absolute;
+  inset: -7%;
+  background: var(--field, var(--bg-raised));
+  transform: scale(1.02);
+}
+.bb-slide.is-on .bb-art { animation: bb-drift 30s var(--ease) infinite alternate; }
+@keyframes bb-drift {
+  from { transform: scale(1.03) translate3d(0, 0, 0); }
+  to { transform: scale(1.15) translate3d(-2.4%, -1.6%, 0); }
+}
+
+/* The artwork, shown whole, on the clear side of the veil.
+ *
+ * The provider has no wide backdrop to give — a film comes with a 2:3 poster
+ * and a channel with a small wide ident — so nothing here is stretched to fill
+ * the frame. The box is a height and a right edge; the picture keeps its own
+ * shape inside it, which is why a tall poster and a wide logo both land
+ * correctly without either being told which it is. */
+.bb-poster {
+  position: absolute;
+  z-index: 2;
+  right: max(28px, calc(50% - 692px));
+  bottom: 214px;
+  height: clamp(180px, 30vh, 300px);
+  pointer-events: none;
+}
+.bb-poster img { width: 100%; height: 100%; display: block; }
+
+/* A title, in a poster-shaped frame. Contained, not covered — the whole
+   picture or nothing, which is the rule everywhere on this page. A 2:3 poster
+   in a 2:3 frame is unaffected either way; anything the provider sent at a
+   different ratio is shown whole rather than having its edges taken off. */
+.bb-poster.is-poster { aspect-ratio: 2 / 3; }
+.bb-poster.is-poster img {
+  object-fit: contain;
+  border-radius: var(--radius);
+  filter: drop-shadow(0 24px 44px rgba(0, 0, 0, .6));
+}
+
+/* A channel: the ident whole, at whatever shape it came in, and no frame
+   around it — most of these are drawn on transparency already. */
+.bb-poster.is-ident { width: clamp(200px, 22vw, 320px); height: clamp(90px, 12vh, 130px); }
+.bb-poster.is-ident img {
+  object-fit: contain;
+  object-position: bottom right;
+  filter: drop-shadow(0 14px 30px rgba(0, 0, 0, .7));
+}
+
+/* Three passes, because one gradient cannot do three jobs: darken the left so
+   the words have something to sit on, land the foot of the picture on the page
+   colour so there is no seam, and take the top down under the header. */
+.bb-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(11, 7, 7, .96) 0%, rgba(11, 7, 7, .84) 34%,
+                    rgba(11, 7, 7, .2) 64%, rgba(11, 7, 7, .04) 100%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(21, 16, 15, .74) 17%, rgba(21, 16, 15, 0) 48%),
+    linear-gradient(180deg, rgba(0, 0, 0, .62) 0%, rgba(0, 0, 0, 0) 24%);
+}
+
+/* The one thing on the page that moves without being asked. Slow enough to be
+   a room's light rather than an animation. */
+.bb-glow {
+  position: absolute;
+  left: -12%;
+  bottom: -42%;
+  z-index: 2;
+  width: 72%;
+  height: 92%;
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgba(162, 31, 36, .44), rgba(162, 31, 36, 0) 70%);
+  filter: blur(28px);
+  animation: bb-breathe 12s ease-in-out infinite alternate;
+}
+@keyframes bb-breathe {
+  from { opacity: .45; transform: scale(1); }
+  to { opacity: .9; transform: scale(1.14); }
+}
+
+.bb-inner {
+  position: relative;
+  z-index: 3;
+  height: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 28px 138px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.bb-stage { position: relative; min-height: 330px; }
+
+/* Stacked rather than swapped, so the one leaving and the one arriving cross
+   over instead of the block collapsing between them. */
+.bb-copy {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  opacity: 0;
+  transform: translateY(16px);
+  pointer-events: none;
+  transition: opacity .55s var(--ease), transform .55s var(--ease);
+}
+.bb-copy.is-on { opacity: 1; transform: none; pointer-events: auto; }
+
+.bb-eyebrow { display: flex; align-items: center; gap: 11px; margin-bottom: 15px; flex-wrap: wrap; }
+
+.bb-caps {
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .7);
+}
+
+.bb-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--brand-red);
+  color: #fff;
+  font-family: var(--display);
+  font-size: 12px;
+  letter-spacing: .12em;
+}
+.bb-live .dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  animation: pulse 1.9s infinite;
+}
+
+.bb-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 23px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, .32);
+  border-radius: 5px;
+  font-family: var(--display);
+  font-size: 11.5px;
+  letter-spacing: .1em;
+  color: rgba(255, 255, 255, .85);
+}
+
+.bb-title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(46px, 6.2vw, 102px);
+  font-weight: 400;
+  line-height: .92;
+  letter-spacing: .005em;
+  color: #fff;
+  text-shadow: 0 6px 44px rgba(0, 0, 0, .6);
+  max-width: 16ch;
+}
+
+.bb-meta {
+  margin: 16px 0 0;
+  font-size: 14px;
+  color: rgba(255, 255, 255, .74);
+}
+
+.bb-blurb {
+  margin: 13px 0 0;
+  max-width: 50ch;
+  font-size: 15.5px;
+  line-height: 1.62;
+  color: rgba(246, 241, 238, .76);
+  text-wrap: pretty;
+  /* However much the provider wrote, this is what there is room for. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.bb-resume { display: flex; align-items: center; gap: 12px; margin-top: 20px; max-width: 400px; }
+.bb-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .2);
+  overflow: hidden;
+}
+/* White, not crimson: on the billboard red is already the glow and the LIVE
+   pill, and a third red would stop meaning anything. */
+.bb-track i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 0 16px rgba(255, 255, 255, .55);
+  transition: width 1s linear;
+}
+.bb-resume span { font-size: 12.5px; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, .66); }
+
+.bb-cta { display: flex; align-items: center; gap: 12px; margin-top: 26px; flex-wrap: wrap; }
+.bb-play, .bb-more { height: 50px; padding: 0 28px; font-size: 15px; }
+.bb-more {
+  border-color: rgba(255, 255, 255, .32);
+  background: rgba(0, 0, 0, .26);
+  backdrop-filter: blur(8px);
+  color: #fff;
+}
+.bb-more:hover { border-color: #fff; background: rgba(0, 0, 0, .44); }
+
+.bb-icon {
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .28);
+  background: rgba(0, 0, 0, .26);
+  backdrop-filter: blur(8px);
+  color: rgba(255, 255, 255, .82);
+  cursor: pointer;
+  transition: color .18s var(--ease), border-color .18s var(--ease);
+}
+.bb-icon:hover { color: #fff; border-color: #fff; }
+.bb-icon.is-on { color: var(--live); border-color: rgba(255, 107, 94, .6); }
+
+/* Filled rather than drawn: a play triangle and a full heart are shapes, not
+   line glyphs, and the sheet's stroke defaults would hollow both out. */
+.bb-cta svg.is-filled, .lane-play svg.is-filled { fill: currentColor; stroke: none; }
+
+/* ---- the picker ---- */
+
+.bb-pick {
+  position: absolute;
+  right: max(28px, calc(50% - 692px));
+  bottom: 138px;
+  z-index: 4;
+  display: flex;
+  gap: 10px;
+}
+.bb-thumb {
+  position: relative;
+  width: 104px;
+  height: 58px;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--field, var(--bg-raised));
+  opacity: .48;
+  cursor: pointer;
+  transition: opacity .18s var(--ease), transform .18s var(--ease), border-color .18s var(--ease);
+}
+.bb-thumb:hover { opacity: .88; transform: translateY(-2px); }
+.bb-thumb.is-on { opacity: 1; border-color: #fff; }
+.bb-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.bb-thumb-label {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 14px 7px 5px;
+  font-family: var(--display);
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-align: left;
+  color: #fff;
+  background: linear-gradient(0deg, rgba(0, 0, 0, .9), rgba(0, 0, 0, 0));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- on now ---- */
+
+/* Overlapping the foot of the billboard: it is the first thing under it, and
+   the gap that would otherwise sit there is the fold. */
+.home-lane { position: relative; z-index: 5; }
+
+.lane-card {
+  display: block;
+  flex: 0 0 272px;
+  width: 272px;
+  padding: 0;
+  text-align: left;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform .22s var(--ease), border-color .22s var(--ease), box-shadow .22s var(--ease);
+}
+.lane-card:hover {
+  transform: translateY(-4px);
+  border-color: #4A3A36;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, .48);
+}
+
+.lane-ident {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  background: var(--field, var(--bg-raised));
+}
+/* A channel ident is wide and has writing on it — contained on its plate, not
+   cropped into a box that cuts the name in half. */
+.lane-ident img { width: 100%; height: 100%; object-fit: contain; padding: 9% 14%; }
+.lane-ident .fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0 16px;
+  text-align: center;
+  font-family: var(--display);
+  font-size: 27px;
+  letter-spacing: .04em;
+  line-height: 1.04;
+  color: rgba(246, 241, 238, .92);
+}
+
+.lane-live {
+  position: absolute;
+  top: 9px; left: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(8, 8, 10, .78);
+  backdrop-filter: blur(8px);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  color: var(--live);
+}
+.lane-live .dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1.9s infinite;
+}
+.lane-ident .badge.uhd { top: 9px; right: 9px; left: auto; }
+
+.lane-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 6, 6, .42);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  transition: opacity .18s var(--ease);
+}
+.lane-card:hover .lane-play { opacity: 1; }
+.lane-play > span {
+  display: grid;
+  place-items: center;
+  width: 46px; height: 46px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .94);
+  color: #100B0A;
+}
+.lane-play svg { width: 20px; height: 20px; margin-left: 2px; }
+
+.lane-body { display: block; padding: 11px 13px 13px; }
+/* Only when the ident is a logo. A channel with no artwork already has its
+   name across the plate above, and saying it twice on one card is the kind of
+   thing that reads as a bug. */
+.lane-name {
+  display: block;
+  font-family: var(--display);
+  font-size: 14px;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+.lane-ident:has(.fallback) + .lane-body .lane-name { display: none; }
+/* One line each. Two rows of a wrapped programme title would make every card
+   in the lane a different height. */
+.lane-now, .lane-next, .lane-left {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lane-now { margin-top: 2px; font-size: 13.5px; font-weight: 500; line-height: 1.3; }
+.lane-now:empty { display: none; }
+.lane-next { margin-top: 4px; font-size: 11.5px; color: var(--muted-dim); }
+.lane-next:empty { display: none; }
+.lane-bar {
+  display: block;
+  margin-top: 10px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.lane-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--brand-red);
+  transition: width 1s linear;
+}
+.lane-left { margin-top: 6px; font-size: 11px; color: var(--muted-dim); font-variant-numeric: tabular-nums; }
+
+/* ---- tonight's guide ---- */
+
+.guide-box {
+  position: relative;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, #1F1817, #1A1413);
+  overflow: hidden;
+}
+
+.guide-ruler {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  border-bottom: 1px solid var(--line-soft);
+  background: rgba(0, 0, 0, .24);
+}
+.guide-ruler .guide-name {
+  padding: 9px 14px;
+  font-family: var(--display);
+  font-size: 10.5px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+.guide-ticks { position: relative; display: flex; }
+.guide-ticks div {
+  flex: 1;
+  padding: 9px 0 9px 10px;
+  font-size: 11.5px;
+  color: var(--muted-dim);
+  font-variant-numeric: tabular-nums;
+  border-left: 1px solid var(--line-soft);
+}
+
+.guide-row {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  border-bottom: 1px solid var(--line-soft);
+}
+.guide-row:last-of-type { border-bottom: 0; }
+
+.guide-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 14px;
+  border-right: 1px solid var(--line-soft);
+  font-family: var(--display);
+  font-size: 14px;
+  letter-spacing: .04em;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.guide-name span { overflow: hidden; text-overflow: ellipsis; }
+
+/* Blocks are placed by their own timestamps rather than laid out in a row:
+   listings are not all an hour long, and a flex row would draw a half-hour
+   programme the same width as a film. */
+.guide-slots { position: relative; height: 52px; padding: 6px 0; }
+
+.guide-slot {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .045);
+  padding: 0 11px;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .16s var(--ease), color .16s var(--ease);
+}
+.guide-slot:hover { background: rgba(255, 255, 255, .11); color: var(--text); }
+.guide-slot.is-now {
+  background: rgba(162, 31, 36, .3);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255, 120, 110, .36);
+}
+.guide-slot b { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.guide-slot s {
+  text-decoration: none;
+  display: block;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, .42);
+  font-variant-numeric: tabular-nums;
+}
+
+.guide-none {
+  margin: 0;
+  padding: 15px 12px;
+  font-size: 12px;
+  color: var(--muted-dim);
+}
+
+.guide-now {
+  position: absolute;
+  top: 0; bottom: 0;
+  z-index: 6;
+  width: 2px;
+  background: var(--live);
+  box-shadow: 0 0 12px rgba(255, 107, 94, .8);
+  pointer-events: none;
+}
+.guide-now::before {
+  content: '';
+  position: absolute;
+  top: -1px; left: -4px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 10px rgba(255, 107, 94, .9);
+}
+
+/* ---- the rails ---- */
+
+/* Continue watching is 16:10 and larger than the shelves under it: it is the
+   row most likely to be the reason the page was opened. Wide rather than a
+   poster because a history row carries the still the provider sent with it,
+   which is a landscape frame far more often than it is a poster. */
+.home-resume-card { flex: 0 0 296px; width: 296px; }
+.home-resume-card .card-art { aspect-ratio: 16 / 10; background: var(--bg-raised); }
+/* Same rule as everywhere else here: whole picture on a plate, not the middle
+   of one. A history row's still is whatever shape the provider sent, and a
+   16:10 box around a 2:3 poster would be almost entirely somebody's face. */
+.home-resume-card .card-art img { object-fit: contain; }
+.home-resume-card .card-title { font-size: 14px; }
+
+/* ---- the footer ---- */
+
+.home-foot {
+  display: flex;
+  align-items: center;
+  gap: 34px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 22px 0 46px;
+  border-top: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, rgba(0, 0, 0, .24), rgba(0, 0, 0, 0));
+}
+.home-stat { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.home-stat-k {
+  font-family: var(--display);
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+.home-stat-v {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.home-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.home-dot.is-ok { background: #57C88B; }
+.home-dot.is-warn { background: #E9A13B; }
+.home-dot.is-bad { background: var(--live); }
+
+/* Its own line at the end of the footer now rather than pinned to the corner
+   of the window: this page scrolls, and a label fixed to the viewport would
+   sit on top of whatever row you had scrolled to. */
 .home-version {
-  position: fixed;
-  left: max(16px, env(safe-area-inset-left));
-  bottom: max(10px, env(safe-area-inset-bottom));
-  z-index: 5;
+  margin-left: auto;
   font-family: var(--display);
   font-size: 11px;
   letter-spacing: .1em;
   color: var(--muted-dim);
-  opacity: .65;
-  pointer-events: none;
+  opacity: .7;
 }
 
-/* On a phone it is not pinned at all — it is the last line of the page.
- *
- * It used to be fixed above the tab bar, which worked while the bar floated
- * over a page padded to end above it. In the frame the bar is a row of its own
- * and that padding is gone, so a label still pinned to the viewport sat on top
- * of the last row of posters. It is the last thing on the home view already,
- * so letting it simply be that is both simpler and impossible to collide. */
-body.has-tabbar .home-version {
-  position: static;
-  margin-top: 2px;
-  align-self: flex-start;
+/* Laptop windows: the picker is the first thing to go — it is a shortcut to
+   two features the arrow keys also reach, and it is what crowds the words. */
+@media (max-width: 1100px) {
+  .home-bb { height: clamp(460px, 66vh, 620px); }
+  .bb-inner { padding-bottom: 96px; }
+  .bb-pick { display: none; }
+  .bb-poster { bottom: 96px; height: clamp(150px, 24vh, 220px); }
+  .bb-stage { min-height: 280px; }
 }
 
-.home-label {
-  margin: 0 0 10px;
-  font-family: var(--display);
-  font-size: 18px;
-  font-weight: 400;
-  letter-spacing: .04em;
-  color: var(--text);
-}
-
-/* ---- the hero and its 2x2 ---- */
-
-/* Equal columns so the hero and the 2x2 end level: two rows of half-width
-   posters come to the same height as one full-width one. */
-.home-recent-layout {
-  display: grid;
-  /* minmax(0,…) not 1fr: a plain fr track will not shrink below its content's
-     min-content width, and one long film title is enough to push the whole
-     grid wider than the screen. */
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  /* The row track matters as much as the height: a height alone leaves the row
-     `auto`, which sizes to the hero's artwork and overflows the box it was
-     given — the favorites then drew straight over the posters. */
-  grid-template-rows: minmax(0, 1fr);
-  gap: 14px;
-  align-items: stretch;
-  /* THE number for this page. Viewport height rather than width, because with
-     the favorites underneath it is the height that runs out first — and the
-     whole point of this revision is that nothing scrolls.
-     Set as tall as the budget allows rather than as short: the artwork is
-     contained, so a taller block is a box closer to the picture's own shape
-     and therefore less empty margin around it. */
-  height: clamp(200px, 42vh, 400px);
-}
-
-/* Same reason — a flex/grid child holds its content width without this. */
-.home .card { min-width: 0; }
-.home .card-title { overflow-wrap: anywhere; }
-
-.home-quad {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 14px;
-  height: 100%;
-}
-
-/* The art takes whatever is left after the title rather than carrying its own
-   ratio, so a card always fills its share of the block exactly and the two
-   columns end level. min-height:0 because a flex child will not shrink past
-   its content without it. */
-.home-hero,
-.home-quad-card { min-height: 0; }
-
-.home-hero .card-art,
-.home-quad-card .card-art {
-  flex: 1;
-  min-height: 0;
-  height: auto;
-  aspect-ratio: auto;
-  background: var(--bg-raised);
-}
-
-/* Contained, not covered — the whole picture or nothing.
-   These boxes are sized by the layout, so their shape is whatever is left
-   after the block height is divided up; the artwork's shape is whatever the
-   provider sent, and it is not the same. `cover` fills the box by cutting off
-   whatever does not fit, which on a block wider than a 16:9 still means the
-   top and bottom of every one of them. The block above is as tall as the
-   page budget allows precisely so this leaves as little margin as possible. */
-.home-hero .card-art img,
-.home-quad-card .card-art img { object-fit: contain; }
-
-.home-hero .card-title { font-size: 15px; margin-top: 8px; }
-.home-quad-card .card-title {
-  margin-top: 6px;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.home-quad-card .card-sub { font-size: 11px; }
-
-/* ---- the two favorite sets, side by side ---- */
-
-/* Side by side, as they were as boxes. Stacked, the second one lands below the
-   fold, which is the one thing this layout exists to prevent. */
-.home-favs {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-.home-row-head { display: flex; align-items: baseline; gap: 10px; }
-
-/* Only appears when the column is showing fewer than there are, so it is never
-   a link to a page holding exactly what is already on screen. */
-.home-more {
-  border: 0;
-  background: none;
-  padding: 0;
-  font: inherit;
-  font-size: 12px;
-  color: var(--muted-dim);
-  cursor: pointer;
-}
-.home-more:hover { color: var(--text); }
-
-.home-empty { margin: 0; font-size: 13px; color: var(--muted-dim); }
-
-/* Six across a half-width column. A fixed count rather than auto-fill: these
-   sit in a known half of the page, and letting them wrap would put the second
-   line below the fold. */
-.home-tiles {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px;
-}
-
-/* The favorites are the posters themselves now — press one and it opens, where
-   before it took a box, then a list, then the thing. */
-.home-tile { min-width: 0; }
-.home-tile .card-art { height: auto; overflow: hidden; }
-.home-tile.is-poster .card-art { aspect-ratio: 2 / 3; }
-/* Same rule for the favorites. A 2:3 poster in a 2:3 tile is unaffected —
-   contain and cover are the same picture when the shapes match — and a wide
-   one is shown whole instead of having its sides taken off. */
-.home-tile.is-poster .card-art {
-  background: var(--bg-raised);
-}
-.home-tile.is-poster .card-art img { width: 100%; height: 100%; object-fit: contain; }
-
-/* A channel ident is wide and has writing on it. Contained on a plate, not
-   cropped into a poster that cuts the name in half. */
-.home-tile.is-logo .card-art { aspect-ratio: 16 / 10; background: var(--bg-raised); }
-.home-tile.is-logo .card-art img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  padding: 12%;
-}
-
-/* One line. The artwork is what identifies a favorite, and a second line on
-   every tile costs more height than the names are worth. */
-.home-tile .card-title {
-  margin-top: 6px;
-  font-size: 11px;
-  line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* On a phone the whole thing stacks: a hero beside a 2x2 leaves both too
-   small to read at 390px, and two favorite columns even more so. */
+/* On a phone the billboard is a poster with the words under it rather than
+   over it: at 390px there is no column of picture left to write on. */
 @media (max-width: 700px) {
-  .home { gap: 22px; }
-  /* Stacked, so the desktop's fixed block height and the flex sizing that
-     hangs off it both have to be undone. */
-  .home-recent-layout {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto;
-    gap: 14px;
+  .home { gap: 32px; }
+  .home-bb {
     height: auto;
+    margin-bottom: 0;
+    padding-bottom: 22px;
   }
-  .home-hero .card-art,
-  .home-quad-card .card-art { flex: none; }
-  .home-hero .card-art { height: auto; aspect-ratio: 16 / 10; }
-  /* One row of four under the hero rather than a 2x2 — it keeps the favorites
-     nearer the fold on a phone. */
-  .home-quad {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-template-rows: auto;
-    gap: 8px;
-    height: auto;
+  .bb-slides { position: relative; display: block; height: 52vw; }
+  .bb-slide { position: absolute; }
+  .bb-art { inset: 0; }
+  .bb-slide.is-on .bb-art { animation: none; }
+  /* Held to the picture rather than the whole block: the words are under it
+     now, and a veil over them would be page colour laid on page colour. */
+  .bb-veil {
+    inset: 0 0 auto 0;
+    height: 52vw;
+    background: linear-gradient(0deg, var(--bg) 1%, rgba(21, 16, 15, .5) 38%, rgba(21, 16, 15, 0) 82%);
   }
-  /* 16:10 rather than 2:3 — the artwork in this row is mostly wide, and a
-     tall box around a wide picture is margin, not poster. */
-  .home-quad-card .card-art { height: auto; aspect-ratio: 16 / 10; }
-  .home-quad .card-sub { display: none; }
-  .home-favs { grid-template-columns: minmax(0, 1fr); }
-  .home-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .bb-glow { display: none; }
+  /* Into the picture band rather than floating in a corner of it: on a phone
+     the band IS the artwork's place, and there is no clear right-hand side of
+     a 390px page to hang it off. */
+  .bb-poster,
+  .bb-poster.is-poster,
+  .bb-poster.is-ident {
+    inset: 0;
+    right: auto;
+    bottom: auto;
+    width: auto;
+    height: 100%;
+    aspect-ratio: auto;
+    padding: 14px 16px 22px;
+  }
+  /* Contained on both, poster included: the band is 52vw of a phone and a
+     2:3 poster cropped to it would be somebody's chin. */
+  .bb-poster img { object-fit: contain; object-position: center; }
+  .bb-poster.is-poster img { border-radius: var(--radius-sm); box-shadow: none; }
+  .bb-inner { position: relative; height: auto; padding: 0 16px; }
+  .bb-stage { min-height: 0; }
+  .bb-copy { position: relative; opacity: 0; height: 0; overflow: hidden; }
+  .bb-copy.is-on { height: auto; overflow: visible; }
+  .bb-title { font-size: 34px; max-width: none; }
+  .bb-blurb { -webkit-line-clamp: 2; font-size: 14px; }
+  .bb-play, .bb-more { height: 44px; padding: 0 20px; font-size: 14px; }
+  .bb-icon { width: 44px; height: 44px; }
+  .home-label { font-size: 20px; }
+  .lane-card { flex-basis: 216px; width: 216px; }
+  /* The strip needs four hours of width to mean anything; a phone has one
+     column, and the same listings are on each channel's own page. */
+  .home-guide { display: none; }
+  .home-resume-card { width: 216px; flex-basis: 216px; }
+  .home-foot { gap: 18px 22px; padding-bottom: 24px; }
+  .home-version { margin-left: 0; }
+}
+
+/* Nothing on this page moves for somebody who has asked that nothing does.
+   The countdowns still count — they are information, not decoration. */
+@media (prefers-reduced-motion: reduce) {
+  .bb-slide.is-on .bb-art,
+  .bb-glow,
+  .bb-live .dot,
+  .lane-live .dot { animation: none !important; }
+  .bb-slide, .bb-copy { transition: none; }
 }
 
 /* ========================================================== tab bar ===
