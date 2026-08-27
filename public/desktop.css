@@ -1965,6 +1965,17 @@
 
 .desk body.has-tabbar #dkHero .inner { padding-bottom: var(--space-9); }
 
+/* Top right, clear of the words.
+   `bottom: 138px` is measured against the room `.inner` reserves for it with
+   a matching `padding-bottom`. The phone drops that padding to give the copy
+   the height, and left the picker where it was — so it landed in the middle
+   of the blurb. Above the copy there is nothing but picture. */
+.desk body.has-tabbar #dkHero .picker {
+  top: var(--space-6);
+  right: 14px;
+  bottom: auto;
+}
+
 /* The stage keeps its height and the copy keeps its `position: absolute`: the
    billboard holds up to three features and crossfades between them by stacking
    them on top of each other. Take that away and they stop being one billboard
