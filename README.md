@@ -2132,11 +2132,28 @@ mentions leaves binary; binary contains no `<channel>` elements; the feed
 reports HTTP 200 having contributed nothing at all.
 
 That is the worst possible failure — a silently empty guide — and it is why
-three ticked feeds once sat there for a week doing nothing. So the request asks
-for `identity`, and `plainXml` then peels gzip off until what is left is not
-gzip, whatever the headers claim. Four shapes are pinned by tests: a plain
-`.gz` file, one labelled `content-encoding: gzip`, one gzipped *again* on the
-wire, and uncompressed XML.
+three ticked feeds once sat there for a week doing nothing. `plainXml` now
+peels gzip off until what is left is not gzip, whatever the headers claim. Four
+shapes are pinned by tests: a plain `.gz` file, one labelled
+`content-encoding: gzip`, one gzipped *again* on the wire, and uncompressed
+XML.
+
+**The request still asks for `gzip`, not `identity`.** Asking for identity
+looks tidier — the file is already compressed, so why invite a second layer —
+and it 404s two of the three US feeds. A host serving `file.xml.gz` through
+content negotiation treats the `.gz` as an *encoding* rather than as part of
+the name, so refusing that encoding leaves no variant to send and it reports
+the file as missing. Since the unwrapping handles any number of layers there
+was never anything to gain by refusing.
+
+### One feed down must not blank the others
+
+The index is rebuilt from scratch on every refresh, so a single 404 on one of
+three feeds used to throw away every channel that feed covered — the guide goes
+half-blank because a server had a bad minute. Each channel now records which
+feed its listings came from, and a feed that fails keeps what it gave us last
+time. Only for a day: carrying week-old listings forward would be worse than
+admitting there are none.
 
 ### Every feed reports, every time
 

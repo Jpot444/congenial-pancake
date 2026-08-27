@@ -90,6 +90,9 @@ const store = {
   matchedBy: new Map(),
   /** Every channel the guides declared: flattened key -> what they called it. */
   offered: new Map(),
+  /** ourChannelId -> the feed its listings came from, so a failed feed's
+   *  channels can be carried forward instead of vanishing. */
+  fromSource: new Map(),
   channels: [],
   at: 0,
   running: false,
@@ -167,12 +170,14 @@ function chanKey(raw) {
  * short abbreviation and what remains is long enough to be a station name
  * rather than an English word.
  */
-function withoutNetwork(raw) {
-  const tokens = nameTokens(raw);
-  if (tokens.length < 2) return '';
+function withoutNetwork(tokens) {
+  if (!tokens || tokens.length < 2) return '';
   const [first, ...rest] = tokens;
   const tail = rest.join('');
   if (!tail) return '';
+  // "NBC EAST" must not reduce to "east" and go looking for a channel called
+  // East. What is left has to be a name, not a marking.
+  if (rest.every((t) => FEED_WORD.test(t))) return '';
   if (tail.includes(first)) return tail;
   if (first.length >= 2 && first.length <= 4 && /^[a-z]+$/.test(first) && tail.length >= 4) {
     return tail;
@@ -191,6 +196,23 @@ function withoutNetwork(raw) {
  * out loud on the screen.
  */
 const FEED_TAIL = /(east|west|pacific|atlantic|mountain|central|national|network|usa|us)$/;
+const FEED_WORD = /^(east|west|pacific|atlantic|mountain|central|national|network|usa|us)$/;
+
+/**
+ * The tokens worth matching on, with the noise taken out.
+ *
+ * Trimming the END of the joined key is the obvious version and it is not
+ * enough: this provider sells Bravo as "NBC BRAVO (EAST) (D) ᴿᴬᵂ", where the
+ * feed marking is in the MIDDLE and a stray "(D)" sits behind it. Working on
+ * tokens instead removes both wherever they are.
+ *
+ * Single letters go; single DIGITS stay. "(D)" is a marking, but the 2 in
+ * "MTV 2" is the whole difference between two channels, and dropping it would
+ * quietly file MTV 2's listings under MTV.
+ */
+function coreTokens(tokens) {
+  return tokens.filter((t) => !FEED_WORD.test(t) && !/^[a-z]$/.test(t));
+}
 
 function coreKey(key) {
   let s = String(key || '');
@@ -264,14 +286,19 @@ function open(target, redirectsLeft = 5) {
     const lib = u.protocol === 'https:' ? https : http;
     const req = lib.request(u, {
       method: 'GET',
-      /* `identity`, deliberately.
+      /* `gzip`, and not `identity`.
        *
-       * These files are ALREADY gzip — that is what `.xml.gz` means — and
-       * asking for gzip on top invites the server to compress the compressed
-       * file. `plainXml` unwraps as many layers as it finds either way, but
-       * not asking for a second one is cheaper and removes the whole class of
-       * problem at the source. */
-      headers: { 'user-agent': UA, 'accept-encoding': 'identity' },
+       * Asking for identity looks tidier — these files are already gzip, so
+       * why invite a second layer — and it broke two of the three US feeds
+       * with a 404. A host that serves `file.xml.gz` through content
+       * negotiation treats the `.gz` as an ENCODING rather than as part of
+       * the name, and when you refuse that encoding there is no variant left
+       * to send, so it says the file does not exist.
+       *
+       * There is nothing to gain by refusing anyway: `unwrap` peels off as
+       * many layers as it finds, so gzip-around-gzip costs one more pass and
+       * nothing else. */
+      headers: { 'user-agent': UA, 'accept-encoding': 'gzip', accept: '*/*' },
       timeout: FETCH_TIMEOUT_MS,
     }, (res) => {
       const status = res.statusCode || 0;
@@ -479,10 +506,12 @@ function scan(stream, want, into, stats) {
       for (const entry of hit.ids) {
         let tiers = into.get(entry.id);
         if (!tiers) into.set(entry.id, (tiers = new Map()));
-        let list = tiers.get(entry.how);
-        if (!list) tiers.set(entry.how, (list = []));
-        if (list.length >= MAX_PER_CHANNEL) continue;
-        list.push({ title, start, stop });
+        let slot = tiers.get(entry.how);
+        // Which feed this came from is remembered so that a feed which fails
+        // NEXT time can have its channels carried forward rather than lost.
+        if (!slot) tiers.set(entry.how, (slot = { src: stats.source, list: [] }));
+        if (slot.list.length >= MAX_PER_CHANNEL) continue;
+        slot.list.push({ title, start, stop });
       }
       stats.kept += 1;
     };
@@ -575,13 +604,18 @@ function channelKeys(ch) {
     add(String(ch.epgId).toLowerCase(), 'id');
     add(chanKey(ch.epgId), 'id');
   }
-  const name = chanKey(ch.name);
-  add(name, 'name');
+  const tokens = nameTokens(ch.name);
+  add(tokens.join(''), 'name');
   for (const sign of callSigns(ch.name)) add(sign, 'callsign');
-  add(coreKey(name), 'loose');
-  const bare = withoutNetwork(ch.name);
-  add(bare, 'loose');
-  add(coreKey(bare), 'loose');
+
+  // The same name with feed markings and stray single letters taken out, then
+  // that again with the network off the front. "NBC BRAVO (EAST) (D)" becomes
+  // "nbcbravo" and then "bravo", which is what every guide calls it.
+  const core = coreTokens(tokens);
+  add(core.join(''), 'loose');
+  add(withoutNetwork(core), 'loose');
+  add(withoutNetwork(tokens), 'loose');
+  add(coreKey(tokens.join('')), 'loose');
   return out;
 }
 
@@ -623,6 +657,7 @@ function save() {
     at: store.at,
     matchedBy: Object.fromEntries(store.matchedBy),
     channels: rows,
+    fromSource: Object.fromEntries(store.fromSource),
     offered: Object.fromEntries(store.offered),
     lastRun: store.lastRun,
   };
@@ -644,6 +679,7 @@ function load() {
   store.byChannel = new Map();
   store.matchedBy = new Map();
   store.offered = new Map();
+  store.fromSource = new Map();
   try {
     const body = JSON.parse(fs.readFileSync(filePath(), 'utf8'));
     store.at = Number(body.at) || 0;
@@ -651,6 +687,7 @@ function load() {
     store.byChannel = new Map(Object.entries(body.channels || {}));
     store.matchedBy = new Map(Object.entries(body.matchedBy || {}));
     store.offered = new Map(Object.entries(body.offered || {}));
+    store.fromSource = new Map(Object.entries(body.fromSource || {}));
   } catch {
     /* no index yet, which is the normal state on a new box */
   }
@@ -705,6 +742,7 @@ async function refresh({ force = false, sources = null } = {}) {
     const url = source.url || source;
     const keptBefore = stats.kept;
     const seenBefore = stats.seen;
+    stats.source = label;
     try {
       // eslint-disable-next-line no-await-in-loop
       const res = await open(url);
@@ -741,13 +779,36 @@ async function refresh({ force = false, sources = null } = {}) {
    * read. */
   const tidied = new Map();
   const matchedBy = new Map();
+  const fromSource = new Map();
   for (const [id, tiers] of into) {
-    const best = TIERS.find((how) => (tiers.get(how) || []).length);
+    const best = TIERS.find((how) => (tiers.get(how)?.list || []).length);
     if (!best) continue;
-    const listings = tidy(tiers.get(best));
+    const slot = tiers.get(best);
+    const listings = tidy(slot.list);
     if (!listings.length) continue;
     tidied.set(id, listings);
     matchedBy.set(id, best);
+    fromSource.set(id, slot.src);
+  }
+
+  /* A feed that failed keeps what it gave us last time.
+   *
+   * The index is rebuilt from scratch on every refresh, so without this a
+   * single 404 on one of three feeds throws away every channel that feed was
+   * covering — the guide goes half-blank because a server had a bad minute.
+   * Only for a day, though: carrying week-old listings forward would be
+   * worse than admitting there are none.
+   */
+  const failed = new Set(report.filter((r) => !r.ok).map((r) => r.label));
+  let carried = 0;
+  if (failed.size && store.at && Date.now() - store.at < 24 * 60 * 60 * 1000) {
+    for (const [id, listings] of store.byChannel) {
+      if (tidied.has(id) || !failed.has(store.fromSource.get(id))) continue;
+      tidied.set(id, listings);
+      matchedBy.set(id, store.matchedBy.get(id) || 'name');
+      fromSource.set(id, store.fromSource.get(id));
+      carried += 1;
+    }
   }
 
   // An index that came back empty never replaces one that did not. A feed
@@ -755,6 +816,7 @@ async function refresh({ force = false, sources = null } = {}) {
   if (tidied.size || !store.byChannel.size) {
     store.byChannel = tidied;
     store.matchedBy = matchedBy;
+    store.fromSource = fromSource;
     store.at = Date.now();
   }
   // What the guides contain is worth keeping even when nothing matched — that
@@ -766,6 +828,7 @@ async function refresh({ force = false, sources = null } = {}) {
     sources: report,
     channels: tidied.size,
     truncated: stats.truncated,
+    carried,
   };
   store.running = false;
   save();

@@ -286,6 +286,87 @@ function serve(xml) {
   check('so the channel that had nothing now has its listings',
     guide.lookup('930')?.[0]?.title === 'Squawk Box', JSON.stringify(guide.lookup('930')));
 
+  /* ---- markings in the middle of the name ---------------------------- */
+  //
+  // Reported: "NBC CNBC ᴿᴬᵂ is getting listings, but NBC BRAVO (EAST) (D) ᴿᴬᵂ
+  // is not." Trimming the END of the joined key is not enough when the feed
+  // marking is in the MIDDLE and a stray "(D)" sits behind it.
+  console.log('\n  markings that are not at the end');
+  const bravo = guide.channelKeys({ id: 1, name: 'NBC BRAVO (EAST) (D) ᴿᴬᵂ' })
+    .map((k) => k.key);
+  check('a feed marking mid-name comes out', bravo.includes('nbcbravo'),
+    JSON.stringify(bravo));
+  check('and with the network off the front it is just the channel',
+    bravo.includes('bravo'), JSON.stringify(bravo));
+  // The two guards on that, both of which matter.
+  check('but a lone digit is kept — MTV 2 is not MTV',
+    !guide.channelKeys({ id: 1, name: 'MTV 2' }).some((k) => k.key === 'mtv'),
+    JSON.stringify(guide.channelKeys({ id: 1, name: 'MTV 2' })));
+  check('and "NBC EAST" never reduces to "east"',
+    !guide.channelKeys({ id: 1, name: 'NBC EAST' }).some((k) => k.key === 'east'),
+    JSON.stringify(guide.channelKeys({ id: 1, name: 'NBC EAST' })));
+  // The pair from the report: one worked, one did not, and the only
+  // difference is which local guide happens to carry the call sign.
+  check('a call sign is pulled out of a local station name',
+    guide.channelKeys({ id: 1, name: 'CBS 2 (KTVN) RENO HD' })
+      .some((k) => k.key === 'ktvn' && k.how === 'callsign'));
+  check('for both of them, not just the one that worked',
+    guide.channelKeys({ id: 1, name: 'CBS 2 (KUTV) SALT LAKE CITY HD' })
+      .some((k) => k.key === 'kutv' && k.how === 'callsign'));
+
+  let bravoXml = '<?xml version="1.0"?>\n<tv>\n';
+  bravoXml += '<channel id="Bravo.us"><display-name>Bravo</display-name></channel>\n';
+  bravoXml += `<programme start="${stamp(0)}" stop="${stamp(60)}" channel="Bravo.us">`
+    + '<title>Below Deck</title></programme>\n</tv>\n';
+  const bravoFeed = await serve(bravoXml);
+  guide.setChannels([{ id: '960', epgId: '', name: 'NBC BRAVO (EAST) (D) ᴿᴬᵂ' }]);
+  await guide.refresh({ force: true, sources: [{ url: bravoFeed.url, label: 'us1' }] });
+  bravoFeed.stop();
+  check('so the channel gets its listings',
+    guide.lookup('960')?.[0]?.title === 'Below Deck', JSON.stringify(guide.lookup('960')));
+
+  /* ---- one feed down must not blank the others ----------------------- */
+  //
+  // The index is rebuilt from scratch every refresh, so without carrying a
+  // failed feed's channels forward a single 404 on one of three feeds throws
+  // away everything that feed was covering. Which is exactly what a report of
+  // "US1 — HTTP 404, US_SPORTS1 — 250 channels" would have done.
+  console.log('\n  when one feed of several fails');
+  let twoA = '<?xml version="1.0"?>\n<tv>\n'
+    + '<channel id="AAA.us"><display-name>Alpha</display-name></channel>\n'
+    + `<programme start="${stamp(0)}" stop="${stamp(60)}" channel="AAA.us">`
+    + '<title>From Feed A</title></programme>\n</tv>\n';
+  let twoB = '<?xml version="1.0"?>\n<tv>\n'
+    + '<channel id="BBB.us"><display-name>Beta</display-name></channel>\n'
+    + `<programme start="${stamp(0)}" stop="${stamp(60)}" channel="BBB.us">`
+    + '<title>From Feed B</title></programme>\n</tv>\n';
+  const feedA = await serve(twoA);
+  const feedB = await serve(twoB);
+  guide.setChannels([
+    { id: '970', epgId: 'AAA.us', name: 'Alpha' },
+    { id: '971', epgId: 'BBB.us', name: 'Beta' },
+  ]);
+  await guide.refresh({
+    force: true,
+    sources: [{ url: feedA.url, label: 'feed A' }, { url: feedB.url, label: 'feed B' }],
+  });
+  check('both feeds land', Boolean(guide.lookup('970') && guide.lookup('971')));
+
+  // Now A is gone and B still works — the shape of the reported failure.
+  feedA.stop();
+  const half = await guide.refresh({
+    force: true,
+    sources: [{ url: feedA.url, label: 'feed A' }, { url: feedB.url, label: 'feed B' }],
+  });
+  feedB.stop();
+  check('the feed that failed keeps what it gave us last time',
+    guide.lookup('970')?.[0]?.title === 'From Feed A', JSON.stringify(guide.lookup('970')));
+  check('the feed that worked is refreshed as normal',
+    guide.lookup('971')?.[0]?.title === 'From Feed B');
+  check('and the carry-forward is reported rather than hidden',
+    half.lastRun.carried === 1, String(half.lastRun.carried));
+  console.log('       (a server having a bad minute should not half-blank the guide)');
+
   /* ---- and being able to see why ------------------------------------ */
   //
   // The thing that turns "it did not work" into something anybody can act on.
