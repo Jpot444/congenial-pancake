@@ -3837,6 +3837,41 @@ function knownLiveChannels() {
   return [...seen.values()];
 }
 
+/** Where the open guides live, and where to go looking for the current names. */
+const GUIDE_CATALOGUE_HOME = 'https://epgshare01.online/epgshare01/';
+
+/**
+ * Refuse to fetch anything on this network, and say why.
+ *
+ * Both the probe and the directory listing make the box fetch an address of
+ * your choosing and hand you back what came back, which is otherwise a fine
+ * way to read a printer's admin page or a neighbouring service that was never
+ * meant to be reachable from a browser. The portal is unauthenticated by
+ * design, so the guard is on the address rather than on who is asking.
+ */
+function privateAddress(target) {
+  let host;
+  try {
+    host = new URL(target).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  } catch {
+    return 'That is not a web address.';
+  }
+  const isPrivate = host === 'localhost'
+    || host.endsWith('.local')
+    || host.endsWith('.internal')
+    || host === '::1'
+    || host === '0.0.0.0'
+    || /^127\./.test(host)
+    || /^10\./.test(host)
+    || /^192\.168\./.test(host)
+    || /^169\.254\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    // The tailnet this box lives on counts as inside.
+    || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)
+    || /^f[cd][0-9a-f]{2}:/.test(host);
+  return isPrivate ? 'Only addresses out on the internet can be tested.' : '';
+}
+
 /** The provider's whole guide in one request, rather than one call a channel. */
 function providerGuideUrl(cfg) {
   if (!cfg || cfg.mode !== 'xtream' || !cfg.host) return null;
@@ -5040,6 +5075,25 @@ async function handleApi(req, res, pathname, query) {
     });
   }
 
+  /* ---- What this host actually publishes ---- */
+  //
+  // A hardcoded list of feed names is a guess about somebody else's server,
+  // and it goes stale silently: two of three US files began answering 404
+  // while the third downloaded fine, and nothing about that is knowable from
+  // here. The directory page settles it — the same page a person would open
+  // to look, read by the box so the list on screen is the real one.
+  if (pathname === '/api/epg/available') {
+    const home = String(query.get('url') || GUIDE_CATALOGUE_HOME).trim();
+    const bad = privateAddress(home);
+    if (bad) return json(res, 400, { error: bad });
+    try {
+      const files = await guide.listing(home);
+      return json(res, 200, { home, files });
+    } catch (err) {
+      return json(res, 200, { home, files: [], error: err.message });
+    }
+  }
+
   /* ---- What a feed actually says ---- */
   //
   // "HTTP 404" is where a diagnosis stops rather than starts, and two of three
@@ -5053,29 +5107,8 @@ async function handleApi(req, res, pathname, query) {
     if (!/^https?:\/\//i.test(target)) {
       return json(res, 400, { error: 'That is not a web address.' });
     }
-    /* This makes the box fetch a URL of your choosing and hand back what came
-     * back, which is a fine way to read something on the home network that is
-     * not otherwise exposed. The portal is unauthenticated by design, so the
-     * guard is on the address rather than on who is asking. */
-    let host;
-    try {
-      host = new URL(target).hostname.toLowerCase();
-    } catch {
-      return json(res, 400, { error: 'That is not a web address.' });
-    }
-    const isPrivate = host === 'localhost'
-      || host.endsWith('.local')
-      || host.endsWith('.internal')
-      || /^(\[?::1\]?|0\.0\.0\.0)$/.test(host)
-      || /^127\./.test(host)
-      || /^10\./.test(host)
-      || /^192\.168\./.test(host)
-      || /^169\.254\./.test(host)
-      || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
-      || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host);
-    if (isPrivate) {
-      return json(res, 400, { error: 'Only addresses out on the internet can be tested.' });
-    }
+    const bad = privateAddress(target);
+    if (bad) return json(res, 400, { error: bad });
     return json(res, 200, await guide.probe(target));
   }
 

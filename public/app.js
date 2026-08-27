@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '27.4';
+const VERSION = '27.5';
 
 const PAGE_SIZE = 60;
 
@@ -2331,6 +2331,66 @@ const guideSources = {
     }
   },
 
+  /**
+   * Ask the host what it publishes today.
+   *
+   * The tick boxes above are a list written down when this was built, and a
+   * list about somebody else's server is wrong the moment they rename
+   * something. Ticking one of these puts the real address in the box below,
+   * so what gets saved is what the host says exists.
+   */
+  async browse() {
+    const out = $('#guideFound');
+    const button = $('#guideBrowse');
+    out.hidden = false;
+    out.textContent = 'asking the host…';
+    button.disabled = true;
+    try {
+      const d = await api('/api/epg/available');
+      out.textContent = '';
+      if (d.error || !d.files.length) {
+        out.textContent = d.error
+          ? `Could not read the list — ${d.error}`
+          : 'The host did not give a list of files.';
+        return;
+      }
+      const chosen = new Set($('#guideExtra').value.split('\n').map((s) => s.trim()));
+      const head = document.createElement('p');
+      head.className = 'gsrc-lead';
+      head.textContent = `${d.files.length} guides on that host right now. `
+        + 'Tick to add — the ones you already have are ticked.';
+      out.append(head);
+      const grid = document.createElement('div');
+      grid.className = 'gsrc-picks';
+      for (const f of d.files) {
+        const row = document.createElement('label');
+        row.className = 'gsrc-pick';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = chosen.has(f.url)
+          || [...$('#guidePicks').querySelectorAll('input:checked')].some((b) => b.value === f.url);
+        box.addEventListener('change', () => this.toggleExtra(f.url, box.checked));
+        const name = document.createElement('span');
+        name.textContent = f.size ? `${f.name}  (${f.size})` : f.name;
+        row.append(box, name);
+        grid.append(row);
+      }
+      out.append(grid);
+    } catch (err) {
+      out.textContent = err.message || 'Could not ask the host.';
+    } finally {
+      button.disabled = false;
+    }
+  },
+
+  /** Add or remove one address from the free-text box. */
+  toggleExtra(url, on) {
+    const box = $('#guideExtra');
+    const lines = box.value.split('\n').map((s) => s.trim()).filter(Boolean);
+    const without = lines.filter((l) => l !== url);
+    box.value = (on ? [...without, url] : without).join('\n');
+  },
+
   /** Ask the box what that feed actually said, and print it. */
   async probe(url, after) {
     const out = document.createElement('div');
@@ -2516,6 +2576,7 @@ const guideSources = {
 };
 
 $('#guideSave').addEventListener('click', () => guideSources.save());
+$('#guideBrowse').addEventListener('click', () => guideSources.browse());
 
 /* The "why has this got no listings" box. Typed into, so it waits for a
  * pause rather than asking the box on every keystroke. */

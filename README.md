@@ -2142,9 +2142,25 @@ the headers claim, what the first bytes really are, and the top of the body —
 which on a block page or a rate-limit notice says so in words. A name ending
 `.xml.gz` proves nothing about the answer.
 
-Two guards, because this makes the box fetch a URL and show you the result:
-private and loopback addresses are refused, and the provider's own feed never
-hands back its address, since the account password is in the query string.
+A gzipped refusal is unwrapped before the snippet is taken. The first version
+reported "looks like gzip" and threw the body away, which described the shape
+of the answer and none of its content — and a Cloudflare 404 page is exactly
+the case where the words are the whole point.
+
+### Asking the host what it publishes today
+
+`GUIDE_CATALOGUE` is a list of somebody else's filenames written down when this
+was built, and a list like that is wrong the moment they rename something —
+silently, as two 404s from a host still happily serving a third file. **See
+what the host has now** reads the directory index and shows what is actually
+there, with sizes; ticking one puts the real address in the box below. So the
+list on screen is the host's, not one written down months ago.
+
+Both this and the probe go through `privateAddress()`: loopback, RFC1918, link
+local, `.local`/`.internal`, IPv6 ULA and the tailnet range are all refused,
+because otherwise these are a way to make the box read something on the home
+network and hand it back. The provider's own feed never hands back its address
+either, since the account password is in the query string.
 
 ### Why has this channel got no listings?
 

@@ -4328,6 +4328,9 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .gsrc-run.is-bad { color: var(--live); }
 .gsrc-run.is-bad::before { background: var(--live); }
 
+.gsrc-found { margin-top: 8px; }
+.gsrc-found .gsrc-lead { margin-top: 0; }
+
 .gsrc-test {
   background: none;
   border: 1px solid currentColor;

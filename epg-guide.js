@@ -925,11 +925,24 @@ function probe(target) {
     const finish = () => {
       const head = Buffer.concat(chunks);
       const gz = head.length > 1 && head[0] === 0x1f && head[1] === 0x8b;
-      const text = gz ? '' : head.toString('utf8').replace(/[\x00-\x1f\x7f]/g, ' ');
+      /* An error page can be gzipped too, and that is exactly the case where
+       * its words matter most — "looks like gzip" told us the shape of the
+       * refusal and none of its content. A truncated gzip stream cannot be
+       * fully inflated, so this takes whatever came out before it ran out. */
+      let body = head;
+      if (gz) {
+        try {
+          body = zlib.gunzipSync(head);
+        } catch (err) {
+          body = err.buffer || Buffer.alloc(0);
+        }
+      }
+      const text = body.toString('utf8').replace(/[\x00-\x1f\x7f]/g, ' ');
       let looks = 'something else';
-      if (gz) looks = 'gzip, as expected';
-      else if (/^\s*<\?xml|<tv\b/i.test(text)) looks = 'plain XML';
-      else if (/^\s*<(!doctype\s+html|html)\b/i.test(text)) looks = 'an HTML page, not a guide';
+      if (/^\s*<\?xml|<tv\b/i.test(text)) looks = gz ? 'gzipped XML, as expected' : 'plain XML';
+      else if (/^\s*<(!doctype\s+html|html)\b/i.test(text)) {
+        looks = gz ? 'a gzipped HTML page, not a guide' : 'an HTML page, not a guide';
+      } else if (gz) looks = 'gzip, but not XML inside';
       resolve({
         url: target,
         status: res.statusCode || 0,
@@ -960,6 +973,68 @@ function probe(target) {
   })).catch((err) => ({
     url: target, status: 0, error: err.message, took: Date.now() - started,
   }));
+}
+
+/**
+ * What this host actually publishes, read from its own index.
+ *
+ * A hardcoded list of feed names is a guess about somebody else's server that
+ * goes stale silently: two of the three US files started answering 404 while
+ * the third downloaded fine, and no amount of reasoning from here could
+ * settle whether they had been renamed, retired, or were briefly missing. The
+ * directory page answers it outright — and it is the same page a person would
+ * open to check, so there is nothing clever about it.
+ */
+async function listing(url) {
+  const res = await open(url, 5, true);
+  if ((res.statusCode || 0) >= 400) {
+    res.resume();
+    throw new Error(`HTTP ${res.statusCode}`);
+  }
+  const stream = await plainXml(res);
+  const text = await new Promise((resolve, reject) => {
+    const decoder = new StringDecoder('utf8');
+    let out = '';
+    stream.on('data', (c) => {
+      out += decoder.write(c);
+      // An index page is a few tens of kilobytes. Anything past this is not
+      // an index and is not worth reading to the end of.
+      if (out.length > 4 << 20) {
+        stream.destroy();
+        resolve(out);
+      }
+    });
+    stream.on('end', () => resolve(out));
+    stream.on('error', reject);
+  });
+
+  const base = new URL(url);
+  const files = [];
+  const seen = new Set();
+  // Apache and nginx both put the name in an href and then, on the same line,
+  // the date and size. Neither is required — the name is the point.
+  for (const line of text.split(/\r?\n/)) {
+    const href = /href="([^"?][^"]*\.xml\.gz)"/i.exec(line);
+    if (!href) continue;
+    let full;
+    try {
+      full = new URL(href[1], base).toString();
+    } catch {
+      continue;
+    }
+    if (seen.has(full)) continue;
+    seen.add(full);
+    const when = /(\d{1,2}-[A-Za-z]{3}-\d{4}\s+\d{2}:\d{2})/.exec(line);
+    const size = /\s([\d.]+[KMG])\s*(?:<|$)/.exec(line);
+    files.push({
+      name: decodeURIComponent(full.split('/').pop()),
+      url: full,
+      when: when ? when[1] : '',
+      size: size ? size[1] : '',
+    });
+    if (files.length >= 400) break;
+  }
+  return files;
 }
 
 /** What is on this channel — or null if we have nothing for it at all. */
@@ -1060,7 +1135,7 @@ function explain(query) {
 }
 
 module.exports = {
-  configure, setSources, setChannels, refresh, lookup, status, explain, probe, save, load,
+  configure, setSources, setChannels, refresh, lookup, status, explain, probe, listing, save, load,
   // Exported for the suites, which check the joining rather than the network.
   chanKey, coreKey, callSigns, bracketNames, markedTokens, parseStamp, wantedKeys,
   channelKeys, unescapeXml,

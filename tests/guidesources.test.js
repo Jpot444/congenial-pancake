@@ -384,11 +384,58 @@ function serve(xml) {
     said.looks === 'an HTML page, not a guide', said.looks);
   console.log('       (a name ending .xml.gz proves nothing about the answer)');
 
+  // A gzipped error page is exactly the case where the words matter most, and
+  // the first version reported "looks like gzip" and threw the body away.
+  const gzRude = http.createServer((rq, rs) => {
+    rs.writeHead(404, { 'content-type': 'text/html', server: 'cloudflare' });
+    rs.end(zlib.gzipSync(Buffer.from(
+      '<html><head><title>404 Not Found</title></head><body>No such file.</body></html>',
+    )));
+  });
+  const gzPort = await new Promise((r) => gzRude.listen(0, '127.0.0.1', () => r(gzRude.address().port)));
+  const gzSaid = await guide.probe(`http://127.0.0.1:${gzPort}/us1.xml.gz`);
+  gzRude.close();
+  check('a gzipped refusal is unwrapped so its words can be read',
+    /404 Not Found/.test(gzSaid.snippet), JSON.stringify(gzSaid.snippet));
+  check('and named for what is inside it, not just the wrapper',
+    gzSaid.looks === 'a gzipped HTML page, not a guide', gzSaid.looks);
+
+  /* ---- asking the host what it publishes today ----------------------- */
+  //
+  // A list of feed names written down at build time is a guess about somebody
+  // else's server, and it goes stale silently — which is what two 404s from a
+  // host still serving a third file look like.
+  console.log('\n  asking the host what it publishes today');
+  const index = http.createServer((rq, rs) => {
+    rs.writeHead(200, { 'content-type': 'text/html' });
+    rs.end('<html><body><h1>Index of /epgshare01/</h1><pre>'
+      + '<a href="../">../</a>\n'
+      + '<a href="epg_ripper_US2.xml.gz">epg_ripper_US2.xml.gz</a>   27-Aug-2026 04:15   41M\n'
+      + '<a href="epg_ripper_US_LOCALS3.xml.gz">epg_ripper_US_LOCALS3.xml.gz</a>  27-Aug-2026 04:20   12M\n'
+      + '<a href="0_READ_ME_FIRST.html">0_READ_ME_FIRST.html</a>   27-Aug-2026 04:00   2K\n'
+      + '</pre></body></html>');
+  });
+  const idxPort = await new Promise((r) => index.listen(0, '127.0.0.1', () => r(index.address().port)));
+  const files = await guide.listing(`http://127.0.0.1:${idxPort}/epgshare01/`);
+  index.close();
+  check('the guides on the host are listed', files.length === 2, JSON.stringify(files.map((f) => f.name)));
+  check('with addresses that can be saved as they are',
+    files[0].url.endsWith('/epgshare01/epg_ripper_US2.xml.gz'), files[0].url);
+  check('and the size, so a 41M file is not ticked by accident',
+    files[0].size === '41M', files[0].size);
+  check('anything that is not a guide is left out',
+    !files.some((f) => /READ_ME/.test(f.name)));
+  console.log('       (so the list on screen is the host\'s, not one written down months ago)');
+
   const SRC = fs.readFileSync(PATHS.SERVER, 'utf8');
   check('the box refuses to probe its own network',
     /Only addresses out on the internet can be tested/.test(SRC)
     && /\^192\\\.168\\\./.test(SRC));
   console.log('       (it fetches a URL and shows you the body — that needs a guard)');
+  check('and the tailnet counts as its own network too',
+    /100\\\.\(6\[4-9\]/.test(SRC));
+  check('the listing goes through the same guard as the probe',
+    (SRC.match(/privateAddress\(/g) || []).length >= 3);
   check("and never hands back the provider feed's address, which has the password in it",
     /secret: true/.test(SRC) && /source\.secret \? '' : url/.test(fs.readFileSync(PATHS.GUIDE, 'utf8')));
 
