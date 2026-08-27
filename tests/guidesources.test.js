@@ -364,6 +364,50 @@ function serve(xml) {
   check('so it gets its listings', guide.lookup('980')?.[0]?.title === 'The Take',
     JSON.stringify(guide.lookup('980')));
 
+  /* ---- the call sign as the guide spells it -------------------------- */
+  //
+  // Reported: with all four feeds finally loading — 4,455 channels from the
+  // locals guide alone — CBS 2 (KTVN) RENO still had nothing. US stations go
+  // out under their call sign with the transmission type on the end, KTVNDT
+  // rather than KTVN, so `ktvn` and `ktvndt` never meet.
+  console.log('\n  the call sign as the guide spells it');
+  check('a broadcast suffix is trimmed off the guide\'s spelling',
+    guide.stationVariants('ktvndt').includes('ktvn'),
+    JSON.stringify(guide.stationVariants('ktvndt')));
+  check('and off the other transmission types',
+    guide.stationVariants('wcialp').includes('wcia')
+    && guide.stationVariants('ktvntv').includes('ktvn'));
+  check('a call sign that is already bare is left alone',
+    guide.stationVariants('kutv').length === 1, JSON.stringify(guide.stationVariants('kutv')));
+  console.log('       (KUTV ends in TV and is not KU — hence the length floor)');
+  check('and a short name is never trimmed into noise',
+    guide.stationVariants('abc').length === 1 && guide.stationVariants('necn').length === 1);
+
+  let locals = '<?xml version="1.0"?>\n<tv>\n';
+  for (const [id, dn] of [
+    ['KTVNDT.us', 'KTVN (CBS) Reno, NV'],
+    ['KUTV.us', 'KUTV (CBS) Salt Lake City, UT'],
+  ]) locals += `<channel id="${id}"><display-name>${dn}</display-name></channel>\n`;
+  for (const id of ['KTVNDT.us', 'KUTV.us']) {
+    locals += `<programme start="${stamp(0)}" stop="${stamp(60)}" channel="${id}">`
+      + `<title>News on ${id}</title></programme>\n`;
+  }
+  locals += '</tv>\n';
+  const localsFeed = await serve(locals);
+  guide.setChannels([
+    { id: '990', epgId: '', name: 'CBS 2 (KTVN) RENO HD' },
+    { id: '991', epgId: '', name: 'CBS 2 (KUTV) SALT LAKE CITY HD' },
+  ]);
+  await guide.refresh({ force: true, sources: [{ url: localsFeed.url, label: 'locals' }] });
+  localsFeed.stop();
+  check('so the station published as KTVNDT is found',
+    guide.lookup('990')?.[0]?.title === 'News on KTVNDT.us', JSON.stringify(guide.lookup('990')));
+  check('and the one published plainly still is',
+    guide.lookup('991')?.[0]?.title === 'News on KUTV.us');
+  console.log('       (the trimming is done to the GUIDE\'s spelling, not ours —');
+  console.log('        we know ours is a call sign, so inventing suffixes onto it');
+  console.log('        would only make keys nobody uses)');
+
   /* ---- asking a feed what it actually said --------------------------- */
   //
   // "HTTP 404" is where a diagnosis stops rather than starts — especially

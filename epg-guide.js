@@ -305,6 +305,31 @@ function callSigns(name) {
   return out;
 }
 
+/**
+ * A station key, and the same key without its broadcast suffix.
+ *
+ * US locals are published under their call sign with the transmission type
+ * stuck on the end — KTVN goes out as `KTVNDT`, `KTVNTV`, `KTVNLD` — while
+ * the provider sells it as "CBS 2 (KTVN) RENO". `ktvn` and `ktvndt` never
+ * meet, and a locals guide with four thousand channels in it then matches
+ * almost nothing.
+ *
+ * Applied to the GUIDE's spelling rather than to ours, because ours is the
+ * one we can read: we know `ktvn` is the call sign because it was in
+ * brackets, and guessing suffixes onto it would invent keys nobody uses.
+ * Trimming what the guide published needs no guessing at all.
+ */
+const BROADCAST_TAIL = /(dt|tv|ld|lp|ca|hd|sd)$/;
+
+function stationVariants(key) {
+  const s = String(key || '');
+  // Four characters is a call sign; three is an abbreviation that could be
+  // anything, and trimming two off it leaves noise.
+  if (s.length < 6) return [s];
+  const bare = s.replace(BROADCAST_TAIL, '');
+  return bare !== s && bare.length >= 4 ? [s, bare] : [s];
+}
+
 /** Strongest first — which tier of match beats which. */
 const TIERS = ['id', 'name', 'callsign', 'loose'];
 const rank = (how) => {
@@ -504,7 +529,8 @@ function scan(stream, want, into, stats) {
       // bare id we can still recognise on its own.
       let hit = declared.get(guideId) || null;
       if (!hit) {
-        const ids = want.get(guideId.toLowerCase()) || want.get(chanKey(guideId));
+        let ids = want.get(guideId.toLowerCase());
+        for (const v of stationVariants(chanKey(guideId))) ids = ids || want.get(v);
         if (ids) hit = { ids };
       }
       resolved.set(guideId, hit);
@@ -531,17 +557,24 @@ function scan(stream, want, into, stats) {
         }
       }
 
+      // Every spelling this guide entry answers to, including the call sign
+      // with its broadcast suffix trimmed off.
+      const candidates = new Set([id.toLowerCase()]);
+      for (const key of [chanKey(id), ...names.map(chanKey)]) {
+        for (const v of stationVariants(key)) if (v) candidates.add(v);
+      }
+
       // Strongest spelling wins outright: "ESPN2.us" must not be captured by
       // the channel that happens to call itself "ESPN".
       let best = null;
-      for (const key of [id.toLowerCase(), chanKey(id), ...names.map(chanKey)]) {
+      for (const key of candidates) {
         for (const entry of want.get(key) || []) {
           if (!best || rank(entry.how) < rank(best.how)) best = entry;
         }
       }
       if (!best) return;
       const ids = [];
-      for (const key of [id.toLowerCase(), chanKey(id), ...names.map(chanKey)]) {
+      for (const key of candidates) {
         for (const entry of want.get(key) || []) {
           if (!ids.some((e) => e.id === entry.id)) ids.push(entry);
         }
@@ -1179,6 +1212,6 @@ function explain(query) {
 module.exports = {
   configure, setSources, setChannels, refresh, lookup, status, explain, probe, listing, nearestNames, save, load,
   // Exported for the suites, which check the joining rather than the network.
-  chanKey, coreKey, callSigns, bracketNames, markedTokens, parseStamp, wantedKeys,
+  chanKey, coreKey, callSigns, bracketNames, markedTokens, stationVariants, parseStamp, wantedKeys,
   channelKeys, unescapeXml,
 };
