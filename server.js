@@ -3713,7 +3713,7 @@ const LIBRARY_ACTIONS = {
 const libraryCache = new Map();
 const LIBRARY_TTL = 30 * 60 * 1000;
 /** Payload shape version — bump when projectItem gains or loses a field. */
-const LIBRARY_SHAPE = 5;
+const LIBRARY_SHAPE = 6;
 const LIBRARY_CACHE_PATH = path.join(ROOT, 'library-cache.json');
 
 /**
@@ -3819,6 +3819,32 @@ const TITLE_TAGS = new Set([
   'DISCOVERY', 'CINEMAX', 'LIONSGATE', 'A24',
 ]);
 
+/**
+ * The one prefix worth keeping.
+ *
+ * Everything else in front of a title is filing — a language, a country, a
+ * quality, a studio — and belongs on the switcher rather than in the name.
+ * This one is not filing, it is a warning, and a household box that quietly
+ * removed it would be doing nobody a favour.
+ */
+const KEPT_TAGS = new Set(['XXX']);
+
+/**
+ * Does this look like a filing code rather than a word of the title?
+ *
+ * Short, and written the way codes are written: capitals, digits, and the
+ * plus signs the streaming services have taken to. "A+", "AMZ", "D+", "NL",
+ * "4K", "MAX" all qualify; "Mission", "Bytta", "Frost" do not, because they
+ * are not shouted.
+ *
+ * This is looser than the list it backs up, deliberately — the list could
+ * only ever remove prefixes somebody had already thought of, and new ones
+ * arrive with every provider reshuffle. The cost is that a title genuinely
+ * called "IT - Chapter Two" loses its "IT", which is the trade that was
+ * asked for: all of them gone.
+ */
+const looksLikeTag = (token) => token.length <= 5 && /^[A-Z0-9][A-Z0-9+&]*$/.test(token);
+
 /** Marks a title as 4K wherever the provider chose to say so. */
 const UHD_TAG = /(^|[^A-Z0-9])(4K|UHD|2160P)([^A-Z0-9]|$)/i;
 
@@ -3849,8 +3875,11 @@ function splitTitle(raw) {
   const tags = [];
   for (let i = 0; i < 6; i += 1) {
     const m = /^([A-Za-z0-9+&]{1,12})\s*[-|:\u2013\u2022]\s*/.exec(name);
-    if (!m || !TITLE_TAGS.has(m[1].toUpperCase())) break;
-    tags.push(m[1].toUpperCase());
+    if (!m) break;
+    const token = m[1].toUpperCase();
+    if (KEPT_TAGS.has(token)) break;
+    if (!TITLE_TAGS.has(token) && !looksLikeTag(m[1])) break;
+    tags.push(token);
     name = name.slice(m[0].length).trimStart();
   }
   const trimmed = name.trim();

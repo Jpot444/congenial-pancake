@@ -4490,3 +4490,11 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 /* On a phone the row wraps rather than scrolls: three or four short chips
    fit, and a sideways scroller for that few is a gesture nobody discovers. */
 .touch .variant-chip { padding: 8px 14px; font-size: 13px; }
+
+/* Under a search section rather than beside its heading: it belongs to the
+   cards it extends, and a control up in the heading reads as a filter on
+   the section rather than more of it. */
+.search-more {
+  display: block;
+  margin: 12px auto 4px;
+}

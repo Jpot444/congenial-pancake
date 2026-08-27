@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.38';
+const VERSION = '24.39';
 
 const PAGE_SIZE = 60;
 
@@ -3904,8 +3904,29 @@ function renderSearchAll() {
     slot.append(head);
 
     const cards = el('div', `search-cards${section.tab === 'live' ? ' is-live' : ''}`);
-    for (const item of items.slice(0, SEARCH_PER_SECTION)) cards.append(cardFor(item));
+    /* Sixty to begin with, and the rest on request.
+     *
+     * A wide search over a six-figure catalogue can answer with hundreds,
+     * and painting all of them for every keystroke is how a search box
+     * becomes unusable. But a cap that cannot be lifted is a cap that hides
+     * the answer somewhere below the line, so the count says how many were
+     * held back and one press draws them. */
+    const paint = (limit) => {
+      cards.innerHTML = '';
+      for (const item of items.slice(0, limit)) cards.append(cardFor(item));
+    };
+    paint(SEARCH_PER_SECTION);
     slot.append(cards);
+
+    if (items.length > SEARCH_PER_SECTION) {
+      const more = el('button', 'btn btn-ghost btn-sm search-more');
+      more.textContent = `Show all ${items.length.toLocaleString()}`;
+      more.addEventListener('click', () => {
+        paint(items.length);
+        more.remove();
+      });
+      slot.append(more);
+    }
     finish();
   };
 
