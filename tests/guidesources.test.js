@@ -427,7 +427,34 @@ function serve(xml) {
     !files.some((f) => /READ_ME/.test(f.name)));
   console.log('       (so the list on screen is the host\'s, not one written down months ago)');
 
+  // A guide that 404s has nearly always been renamed rather than withdrawn,
+  // so the useful part of "not found" is the neighbouring filename.
+  console.log('\n  and suggests what it was renamed to');
+  const onHost = [
+    { name: 'epg_ripper_US2.xml.gz', size: '41M' },
+    { name: 'epg_ripper_US_LOCALS3.xml.gz', size: '12M' },
+    { name: 'epg_ripper_US_SPORTS1.xml.gz', size: '900K' },
+    { name: 'epg_ripper_UK1.xml.gz', size: '20M' },
+    { name: 'epg_ripper_CA1.xml.gz', size: '9M' },
+  ];
+  const forUs1 = guide.nearestNames('https://h/d/epg_ripper_US1.xml.gz', onHost);
+  check('the same family of file is offered',
+    forUs1.some((f) => f.name === 'epg_ripper_US2.xml.gz'),
+    JSON.stringify(forUs1.map((f) => f.name)));
+  check('and a different country is not',
+    !forUs1.some((f) => /UK1|CA1/.test(f.name)),
+    JSON.stringify(forUs1.map((f) => f.name)));
+  console.log('       (every file here is called epg_ripper_something, so a fixed');
+  console.log('        threshold means nothing — it is measured against that)');
+  check('the closest name sorts first',
+    guide.nearestNames('https://h/d/epg_ripper_US_LOCALS2.xml.gz', onHost)[0].name
+      === 'epg_ripper_US_LOCALS3.xml.gz');
+  check('and a file with no relatives gets no suggestions',
+    guide.nearestNames('https://h/d/epg_ripper_DE1.xml.gz', onHost).length === 0);
+
   const SRC = fs.readFileSync(PATHS.SERVER, 'utf8');
+  check('a failing feed is asked about only on failure',
+    /if \(said\.status >= 400 \|\| said\.error\) \{/.test(SRC));
   check('the box refuses to probe its own network',
     /Only addresses out on the internet can be tested/.test(SRC)
     && /\^192\\\.168\\\./.test(SRC));

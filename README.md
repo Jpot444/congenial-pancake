@@ -2156,6 +2156,12 @@ what the host has now** reads the directory index and shows what is actually
 there, with sizes; ticking one puts the real address in the box below. So the
 list on screen is the host's, not one written down months ago.
 
+A guide that 404s has nearly always been **renamed** rather than withdrawn, so
+"not found" also offers what the host does have in the same family — measured
+against the prefix every file there already shares, since on a host where
+everything is called `epg_ripper_something` a fixed threshold means nothing.
+Picking one swaps it into the feed list.
+
 Both this and the probe go through `privateAddress()`: loopback, RFC1918, link
 local, `.local`/`.internal`, IPv6 ULA and the tailnet range are all refused,
 because otherwise these are a way to make the box read something on the home

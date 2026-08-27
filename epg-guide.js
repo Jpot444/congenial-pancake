@@ -1037,6 +1037,48 @@ async function listing(url) {
   return files;
 }
 
+/**
+ * Of the files a host does have, which look like the one that is missing.
+ *
+ * A guide that 404s has almost always been renamed rather than withdrawn —
+ * `epg_ripper_US1` becomes `epg_ripper_US2`, `US_LOCALS2` becomes
+ * `US_LOCALS3` — so the useful answer to "not found" is not the status code,
+ * it is the neighbouring name. Longest shared prefix, which for this naming
+ * scheme sorts the right one to the top without needing to understand it.
+ */
+function nearestNames(target, files) {
+  let want;
+  try {
+    want = decodeURIComponent(new URL(target).pathname.split('/').pop() || '');
+  } catch {
+    return [];
+  }
+  if (!want) return [];
+  const shared = (a, b) => {
+    let i = 0;
+    while (i < a.length && i < b.length && a[i].toLowerCase() === b[i].toLowerCase()) i += 1;
+    return i;
+  };
+
+  /* Measured against what EVERY file here already shares.
+   *
+   * A fixed threshold is useless: every file on this host is called
+   * `epg_ripper_something`, so eleven characters in common means nothing at
+   * all. What matters is agreeing for longer than the house style does — two
+   * characters past it is the difference between `US1`/`US2` and `US1`/`UK1`.
+   */
+  const houseStyle = files.length
+    ? files.reduce((acc, f) => Math.min(acc, shared(f.name, files[0].name)), files[0].name.length)
+    : 0;
+
+  return files
+    .filter((f) => f.name.toLowerCase() !== want.toLowerCase())
+    .map((f) => ({ ...f, common: shared(f.name, want) }))
+    .filter((f) => f.common >= houseStyle + 2)
+    .sort((a, b) => b.common - a.common || a.name.localeCompare(b.name))
+    .slice(0, 6);
+}
+
 /** What is on this channel — or null if we have nothing for it at all. */
 function lookup(ourId) {
   const list = store.byChannel.get(String(ourId));
@@ -1135,7 +1177,7 @@ function explain(query) {
 }
 
 module.exports = {
-  configure, setSources, setChannels, refresh, lookup, status, explain, probe, listing, save, load,
+  configure, setSources, setChannels, refresh, lookup, status, explain, probe, listing, nearestNames, save, load,
   // Exported for the suites, which check the joining rather than the network.
   chanKey, coreKey, callSigns, bracketNames, markedTokens, parseStamp, wantedKeys,
   channelKeys, unescapeXml,

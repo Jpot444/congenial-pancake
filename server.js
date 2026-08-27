@@ -5109,7 +5109,22 @@ async function handleApi(req, res, pathname, query) {
     }
     const bad = privateAddress(target);
     if (bad) return json(res, 400, { error: bad });
-    return json(res, 200, await guide.probe(target));
+    const said = await guide.probe(target);
+    /* A guide that 404s has almost always been RENAMED rather than
+     * withdrawn, so the status code is not the useful part of the answer —
+     * the neighbouring filename is. Only asked for on a failure, and only of
+     * the directory the missing file was in. */
+    if (said.status >= 400 || said.error) {
+      try {
+        const home = new URL('./', target).toString();
+        if (!privateAddress(home)) {
+          said.alternatives = guide.nearestNames(target, await guide.listing(home));
+        }
+      } catch {
+        /* the host has no index, which is not a second failure worth naming */
+      }
+    }
+    return json(res, 200, said);
   }
 
   /* ---- Why a channel has no listings ---- */

@@ -4329,6 +4329,15 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .gsrc-run.is-bad::before { background: var(--live); }
 
 .gsrc-found { margin-top: 8px; }
+.gsrc-swap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+}
 .gsrc-found .gsrc-lead { margin-top: 0; }
 
 .gsrc-test {

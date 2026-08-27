@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '27.5';
+const VERSION = '27.6';
 
 const PAGE_SIZE = 60;
 
@@ -2410,6 +2410,36 @@ const guideSources = {
       if (d.headers.server) bits.push(`served by ${d.headers.server}`);
       if (d.looks) bits.push(`looks like ${d.looks}`);
       out.textContent = bits.join(' · ') + (d.snippet ? `\n${d.snippet}` : '');
+
+      /* A missing guide has nearly always been renamed, so the useful part of
+       * "not found" is the neighbouring filename — offered as a swap rather
+       * than as something to retype. */
+      if (d.alternatives?.length) {
+        const also = document.createElement('div');
+        also.className = 'gsrc-swap';
+        also.append(Object.assign(document.createElement('span'), {
+          textContent: 'The host does have these — swap one in?',
+        }));
+        for (const f of d.alternatives) {
+          const pick = document.createElement('button');
+          pick.type = 'button';
+          pick.className = 'gsrc-test';
+          pick.textContent = f.size ? `${f.name} (${f.size})` : f.name;
+          pick.addEventListener('click', () => {
+            this.toggleExtra(url, false);
+            // Ticked in the catalogue rather than typed? Untick it, or it
+            // comes straight back on the next save.
+            for (const box of $('#guidePicks').querySelectorAll('input')) {
+              if (box.value === url) box.checked = false;
+            }
+            this.toggleExtra(f.url, true);
+            pick.textContent = `${f.name} — added, now press Save and fetch`;
+            pick.disabled = true;
+          });
+          also.append(pick);
+        }
+        out.append(also);
+      }
     } catch (err) {
       out.textContent = err.message || 'could not test that.';
     }
