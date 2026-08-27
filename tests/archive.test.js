@@ -625,7 +625,19 @@ exit 0
     warn: document.querySelector('#archiveStatus').classList.contains('is-warn'),
     chips: document.querySelectorAll('.folder-chip').length,
     cards: document.querySelectorAll('.archive-card').length,
-    tab: document.querySelector('#tabBar a[data-tab="archive"]') !== null,
+    /* Not on the bottom bar any more. The bar carries four — Live TV,
+       Movies, Series, Downloads — and the archive is one of the two reached
+       from the header menu, which is that bar's overflow. What matters is that
+       it is still reachable on a phone, so this follows it to where it went
+       rather than to where it used to be: the archive is Hunter's own drive
+       and the bar was its only route in, which is why it could not simply be
+       dropped along with the tab. */
+    onBar: document.querySelector('#tabBar a[data-tab="archive"]') !== null,
+    inMenu: (() => {
+      const a = document.querySelector('#mainNav a[data-tab="archive"]');
+      return Boolean(a) && getComputedStyle(a).display !== 'none';
+    })(),
+    menuReachable: getComputedStyle(document.querySelector('#navToggle')).display !== 'none',
   }));
   console.log('   the tab:', JSON.stringify(view));
   check('the archive tab renders its own view', view.shown, JSON.stringify(view));
@@ -633,7 +645,30 @@ exit 0
     view.warn && /not mounted|plugged/i.test(view.status), view.status);
   check('and the index still browses — folders or files are on screen',
     view.chips + view.cards > 0, JSON.stringify(view));
-  check('the phone tab bar has the archive on it', view.tab);
+  check('it is off the phone\'s bottom bar, which carries four', !view.onBar,
+    JSON.stringify(view));
+  check('it is in the header menu, which is that bar\'s overflow', view.inMenu,
+    JSON.stringify(view));
+  check('and that menu can be opened, so the archive is not stranded',
+    view.menuReachable, JSON.stringify(view));
+
+  /* On a phone the search is its magnifier until you tap it, which is what the
+     design draws and the only way it fits beside the other controls. So it gets
+     tapped — and that is worth checking rather than working around, because the
+     collapsed state used to be a dead end: the input was `display: none`, which
+     a label cannot focus, so the icon was a button that did nothing. */
+  const closed = await page.evaluate(() =>
+    Math.round(document.querySelector('#searchInput').getBoundingClientRect().width));
+  await page.locator('.site-header .search').click();
+  await page.waitForTimeout(300);
+  const opened = await page.evaluate(() => ({
+    input: Math.round(document.querySelector('#searchInput').getBoundingClientRect().width),
+    focused: document.activeElement?.id,
+  }));
+  console.log('   search:', JSON.stringify({ closed, ...opened }));
+  check('the search is its icon until tapped', closed === 0, String(closed));
+  check('and tapping it opens a field you can actually type in',
+    opened.input > 150 && opened.focused === 'searchInput', JSON.stringify(opened));
 
   // Search is a server call on this tab, not a client-side filter.
   await page.fill('#searchInput', 'game');

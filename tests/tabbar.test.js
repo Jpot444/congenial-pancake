@@ -73,6 +73,51 @@ const SERIES = {
   check('an iPhone lands in phone layout with the bar up',
     layout.phone && layout.tabbar && layout.cls, JSON.stringify(layout));
 
+  // --- four tabs, and the other two reachable ------------------------------
+  //
+  // The bar carried six. On a 375pt screen that is 62px each — under the 44pt
+  // Apple asks for, with a 10.5px label beneath it. Four is the design, and the
+  // two that left are the two reached some other way: Favorites is the middle
+  // of the home screen, and the Archive moved into the header menu.
+  //
+  // The Archive is the one that matters here. It is Hunter's own drive and has
+  // no other route in, so dropping it from the bar without putting it in the
+  // menu would strand it — the menu used to be hidden outright in phone layout.
+  console.log('\n  what the bar carries');
+  const bar = await page.evaluate(() => ({
+    tabs: [...document.querySelectorAll('#tabBar a')]
+      .filter((a) => a.getClientRects().length)
+      .map((a) => ({
+        tab: a.dataset.tab,
+        label: a.querySelector('span:not(.tab-count) + span, span:nth-of-type(2)')?.textContent
+          ?? a.textContent.trim(),
+        w: Math.round(a.getBoundingClientRect().width),
+      })),
+    menu: [...document.querySelectorAll('#mainNav a')]
+      .map((a) => ({ tab: a.dataset.tab, shown: getComputedStyle(a).display !== 'none' })),
+    toggle: getComputedStyle(document.querySelector('#navToggle')).display !== 'none',
+    owner: reporter.isOwner(),
+  }));
+  console.log('   bar :', JSON.stringify(bar.tabs));
+  console.log('   menu:', JSON.stringify(bar.menu), 'hamburger:', bar.toggle);
+
+  check('four tabs, not six',
+    bar.tabs.length === 4, `${bar.tabs.length}: ${bar.tabs.map((t) => t.tab).join(', ')}`);
+  check('and they are Live TV, Movies, Series, Downloads',
+    bar.tabs.map((t) => t.tab).join(',') === 'live,movies,series,downloads',
+    bar.tabs.map((t) => t.tab).join(','));
+  check('every one of them clears a fingertip',
+    bar.tabs.every((t) => t.w >= 44), JSON.stringify(bar.tabs.map((t) => t.w)));
+
+  const inBar = new Set(bar.tabs.map((t) => t.tab));
+  const inMenu = bar.menu.filter((m) => m.shown).map((m) => m.tab);
+  check('the menu is the overflow rather than a second copy of the bar',
+    inMenu.every((t) => !inBar.has(t)), inMenu.join(','));
+  check('and it is reachable, so nothing on it is stranded', bar.toggle);
+  check('Favorites is on it', inMenu.includes('favorites'), inMenu.join(','));
+  check('and so is the Archive, which has no other way in',
+    !bar.owner || inMenu.includes('archive'), `owner=${bar.owner} menu=${inMenu.join(',')}`);
+
   await page.evaluate((lib) => {
     state.library.series = lib;
     location.hash = '#/series';
@@ -268,15 +313,21 @@ const SERIES = {
   const tail = await page.evaluate(() => {
     const view = document.querySelector('#appView');
     view.scrollTop = view.scrollHeight;
-    const cards = [...view.querySelectorAll('.rail-card, .card')];
-    const last = cards[cards.length - 1];
+    /* The LOWEST thing on the page, not the last one in the markup. The page
+       is rails now, and the last card in document order is somewhere off to
+       the right of a track that has not been scrolled — it reports an empty
+       box, which is neither above the bar nor under it. What the claim is
+       about is whatever sits lowest once you have scrolled to the end. */
+    const boxes = [...view.querySelectorAll('.rail-card, .card, .shelf, .dk-foot, #dkFoot')]
+      .map((e) => e.getBoundingClientRect())
+      .filter((r) => r.width && r.height);
+    const lowest = Math.max(...boxes.map((r) => r.bottom));
     const bar = document.querySelector('#tabBar').getBoundingClientRect();
-    const box = last.getBoundingClientRect();
-    return { bottom: Math.round(box.bottom), barTop: Math.round(bar.top),
-      gap: Math.round(bar.top - box.bottom) };
+    return { boxes: boxes.length, bottom: Math.round(lowest), barTop: Math.round(bar.top),
+      gap: Math.round(bar.top - lowest) };
   });
   console.log('   tail:', JSON.stringify(tail));
-  check('the last poster on the page is above the bar, not under it',
+  check('the last thing on the page is above the bar, not under it',
     tail.bottom <= tail.barTop + 1, JSON.stringify(tail));
   check('and not stranded miles above it by padding that is no longer needed',
     tail.gap < 200, JSON.stringify(tail));

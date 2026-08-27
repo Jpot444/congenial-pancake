@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '28.0';
+const VERSION = '29.0';
 
 const PAGE_SIZE = 60;
 
@@ -550,36 +550,85 @@ function scrollViewTop() {
 /* ----------------------------------------------------------- this device
 
  * A phone and a desktop are far enough apart to be two layouts rather than one
- * that stretches between them. Phone gets the sections as a bottom bar and a
- * fixed number of posters to a row; desktop keeps the hamburger and fits as
- * many as there is room for.
+ * that stretches between them. Phone gets the sections as a bottom bar; desktop
+ * keeps the hamburger.
+ *
+ * TWO questions, not one. They used to be the same question, and an iPad is the
+ * device that shows why they are not:
+ *
+ *   * `html.touch` — should this be built for a finger? 44px targets, and
+ *     anything that only appeared on :hover shown outright. True for every
+ *     iPhone and every iPad — and for anyone who picks Phone by hand, because
+ *     a good deal of what hangs off this class is phone LAYOUT rather than
+ *     target size: the player that puts its transport out over the picture,
+ *     the detail page that stacks. Picking Phone has always meant those, and
+ *     narrowing `touch` to mean only "a finger" would quietly take them away.
+ *   * `device.phone` / `body.has-tabbar` — is this a PHONE-shaped screen? The
+ *     sections move to a bottom bar and the nav becomes its overflow.
+ *
+ * An iPad is the first without the second: a finger, on a screen wide enough
+ * for the portal's own chrome. It used to get both, because a coarse pointer
+ * set `touch` and `touch` WAS phone layout — so an 820pt screen was laid out as
+ * a large phone. It now gets finger-sized targets and the nav, which is what
+ * the design asks for.
+ *
+ * There used to be a posters-per-row setting here as well — 2, 3 or 4, picked
+ * by hand, phone only. It is gone. The grid now names one target poster WIDTH
+ * and lets the column count fall out of the screen, so it is right on an SE, a
+ * Pro Max, an iPad and a desktop without anyone choosing a number, and right on
+ * hardware that does not exist yet. See --poster-min in styles.css.
  *
  * Kept per-device in localStorage rather than in the profile: the same profile
  * is used from both, and only one of them wants any of this.
  */
 
+/* Below this, a screen is phone-shaped. It is the width at which the portal's
+   own header stops fitting — see the laptop breakpoints in desktop.css, whose
+   last step is the one that gets an iPad's 820pt bar down to size. */
+const PHONE_MAX = 820;
+
 const device = {
   phone: false,
-  cols: 2,
+  coarse: false,
+  /** Did a person choose the layout, or are we reading the hardware? */
+  chosen: false,
+
+  /* A finger, or a layout that is built like one. Either is enough. */
+  get touch() { return this.coarse || this.phone; },
 
   init() {
     const saved = localStorage.getItem('portal.touch');
-    // No stored choice? Take the hint from the hardware — a coarse pointer
-    // means a finger, which is every iPhone and iPad.
-    const coarse = window.matchMedia?.('(pointer: coarse)').matches;
-    this.phone = saved === null ? Boolean(coarse) : saved === '1';
+    // A coarse pointer means a finger, which is every iPhone and every iPad.
+    this.coarse = Boolean(window.matchMedia?.('(pointer: coarse)').matches);
+    this.chosen = saved !== null;
+    this.phone = this.chosen ? saved === '1' : this.autoPhone();
 
-    const cols = Number(localStorage.getItem('portal.cols'));
-    this.cols = [2, 3, 4].includes(cols) ? cols : 2;
+    // The column setting is retired. Clear what an older build stored rather
+    // than leaving a key in localStorage that nothing reads.
+    localStorage.removeItem('portal.cols');
     this.apply();
+  },
+
+  /* A finger on a phone-shaped screen. A finger on a bigger one is an iPad,
+     which has the room for the nav and is better off with it. */
+  autoPhone() {
+    return this.coarse && window.innerWidth < PHONE_MAX;
+  },
+
+  /* An iPad turned on its side crosses PHONE_MAX, so the answer has to be
+     re-asked on resize — but never once somebody has chosen for themselves. */
+  reflow() {
+    if (this.chosen) return;
+    const next = this.autoPhone();
+    if (next === this.phone) return;
+    this.phone = next;
+    this.apply();
+    if (state.config) render();
   },
 
   apply() {
     const root = document.documentElement;
-    // Still called `touch`: every sizing rule in the stylesheet hangs off it,
-    // and phone layout is what it has always meant.
-    root.classList.toggle('touch', this.phone);
-    root.style.setProperty('--poster-cols', String(this.cols));
+    root.classList.toggle('touch', this.touch);
 
     const btn = $('#touchToggle');
     btn.classList.toggle('is-on', this.phone);
@@ -592,27 +641,19 @@ const device = {
     for (const b of document.querySelectorAll('#layoutSeg button')) {
       b.classList.toggle('is-on', (b.dataset.phone === '1') === this.phone);
     }
-    for (const b of document.querySelectorAll('#colsSeg button')) {
-      b.classList.toggle('is-on', Number(b.dataset.cols) === this.cols);
-    }
-    // Nothing to choose on a desktop, where the grid fits what it can.
-    $('#colsField').hidden = !this.phone;
 
     syncTabs();
   },
 
   setPhone(on) {
     this.phone = on;
+    this.chosen = true;
     localStorage.setItem('portal.touch', on ? '1' : '0');
     this.apply();
   },
-
-  setCols(n) {
-    this.cols = n;
-    localStorage.setItem('portal.cols', String(n));
-    this.apply();
-  },
 };
+
+addEventListener('resize', () => device.reflow());
 
 /** Mark the open section on whichever nav is showing. */
 function syncTabs() {
@@ -637,12 +678,6 @@ $('#layoutSeg').addEventListener('click', (event) => {
   device.setPhone(button.dataset.phone === '1');
   // The sidebar and the rails lay out differently between the two.
   if (state.config) render();
-});
-
-$('#colsSeg').addEventListener('click', (event) => {
-  const button = event.target.closest('button');
-  if (!button) return;
-  device.setCols(Number(button.dataset.cols));
 });
 
 /* ------------------------------------------------------- multi-view --- */
@@ -3690,18 +3725,57 @@ $('#tourSkip').addEventListener('click', () => tour.finish());
 
 /* ---------------------------------------------------------------- loader */
 
+/* The full-screen overlay, and the projector-lamp sequence that plays over it
+ * the first time it comes up.
+ *
+ * The sequence belongs to STARTING UP, and it runs once. This same overlay is
+ * also what a seek, a prebuffer and a film-details fetch put up, and replaying
+ * a lamp warming up and a wordmark wiping in over four seconds every time one
+ * of those happens would make a three-hundred-millisecond wait feel like a
+ * reboot — and would hold the hairline off screen for longer than the wait it
+ * is reporting. So the first show() is the boot and everything after it gets
+ * the same screen already at rest.
+ *
+ * This used to live in desktop.js, wrapping these methods from outside and only
+ * while the desktop layout was on. It is here now because the startup screen is
+ * every device's, not the desktop's.
+ */
+
+/* How long the CSS sequence runs, end to end: the sub-line is the last thing to
+   start, at 1.75s for 1.5s, and the hairline draws to 2.2s + 1.1s. A little
+   over that covers both. */
+const BOOT_MS = 5200;
+
 const loader = {
+  booted: false,
+
   show(label, detail = '') {
     $('#loaderLabel').textContent = label;
     $('#loaderDetail').textContent = detail;
     this.set(0);
-    $('#loader').hidden = false;
+
+    const node = $('#loader');
+    node.classList.remove('is-done');
+    if (!this.booted) {
+      this.booted = true;
+      node.classList.add('is-booting');
+      /* Taken off again once it has played. Hiding the overlay and showing it
+         again puts the element back into rendering, and a CSS animation still
+         attached to it starts over from the top — which is how a later, quick
+         wait ended up sitting behind a wordmark that had not wiped in yet. */
+      setTimeout(() => node.classList.remove('is-booting'), BOOT_MS);
+    }
+
+    node.hidden = false;
   },
   set(fraction, detail) {
     const pct = Math.max(0, Math.min(100, Math.round(fraction * 100)));
     $('#loaderFill').style.width = `${pct}%`;
     $('#loaderPct').textContent = `${pct}%`;
     if (detail !== undefined) $('#loaderDetail').textContent = detail;
+    // At a hundred per cent the hairline goes white and the dot goes green, so
+    // the last thing the screen does is say it finished rather than vanishing.
+    $('#loader').classList.toggle('is-done', fraction >= 1);
   },
   label(text) {
     $('#loaderLabel').textContent = text;
@@ -5726,7 +5800,13 @@ function detailCard(item, backHash, backLabel) {
   back.append(document.createTextNode(` ${backLabel}`));
   back.addEventListener('click', () => { location.hash = backHash; });
 
+  /* A film's page and a show's page are the same card with different things in
+     it, and on a phone that difference matters to the artwork. A show stacks a
+     season's worth of episodes underneath, so its poster comes down to a strip
+     to keep them in reach; a film has one button and a runtime under it, and
+     shrinking its poster to the same strip buys room for nothing. */
   const card = el('div', 'show-card');
+  card.classList.add(item.kind === 'series' ? 'is-show' : 'is-film');
   const posterWrap = el('div', 'show-poster');
   if (item.logo) {
     const image = el('img');

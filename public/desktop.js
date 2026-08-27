@@ -19,11 +19,6 @@
 (function () {
   'use strict';
 
-  /* The design is drawn for 1440 and degrades to about 1080 through the
-     breakpoints in desktop.css. Below that the phone layout is the better
-     answer, and the user can still force either from This device. */
-  const MIN_WIDTH = 1100;
-
   const root = document.documentElement;
   const $$ = (sel, host) => Array.from((host || document).querySelectorAll(sel));
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) =>
@@ -69,38 +64,32 @@
 
 
   /* ================================================================= gate */
-  /* One place decides whether the desktop design is on, and everything else
-     asks it rather than re-deriving the answer from the window. */
+  /* Whether this layer has started. Everything below asks it rather than
+     re-deriving anything from the window; it goes true once and stays true.
+   *
+   * It used to be a real gate — `!touch && innerWidth >= 1100` — and it asked
+   * two wrong questions. `!touch` disqualified an iPad for being TOUCHED rather
+   * than for being small. The width disqualified a phone outright, which left
+   * the phone on a design this one had moved on from: the same library and the
+   * same facts, drawn a second way and kept in step by hand.
+   *
+   * The portal design is the design now, on a phone as much as on a desktop.
+   * What varies by screen is chrome — `body.has-tabbar` puts the sections in a
+   * bottom bar, and the breakpoints in desktop.css take the header from 1440
+   * down to a phone. Both are questions about width and both are answered in
+   * the stylesheet, which is where a question about width belongs. Nothing
+   * here needs to know, and there is no longer a way back out: the teardown
+   * that used to hand the page back to app.js went with the gate.
+   */
   let on = false;
 
-  function wanted() {
-    return !root.classList.contains('touch') && window.innerWidth >= MIN_WIDTH;
-  }
-
   const applyGate = guard('gate', function applyGate() {
-    const next = wanted();
-    if (next === on) return;
-    on = next;
-    root.classList.toggle('desk', on);
-    if (on) {
-      liftHeader();
-      dressLoader();
-      decorate();
-    } else {
-      teardown();
-    }
+    if (on) return;
+    on = true;
+    root.classList.add('desk');
+    liftHeader();
+    decorate();
   });
-
-  /* Leaving desktop layout has to leave the page as app.js drew it, or the
-     phone inherits furniture it has no design for. Everything this layer
-     adds is marked, so taking it away is one sweep rather than a list of
-     things to remember. */
-  function teardown() {
-    for (const node of $$('[data-dk-owned]')) node.remove();
-    for (const node of $$('[data-dk]')) delete node.dataset.dk;
-    document.querySelector('.site-header')?.classList.remove('lifted');
-    document.querySelector('.app-shell')?.classList.remove('has-catbar');
-  }
 
 
   /* =============================================================== header */
@@ -1400,84 +1389,11 @@
 
 
   /* ====================================================== startup screen */
-  /* The loading screen is a projector lamp coming up to temperature, not a
-     logo with things flying around it. The steps it reports are the portal's
-     real ones — app.js drives this overlay for every long wait it has — so
-     the bar moves at whatever pace the box is actually managing rather than
-     ticking evenly and then hanging on the slow one.
-
-     The popcorn scene is left in the markup and hidden. It is the phone's
-     loading screen and still the right one there; this only replaces it on
-     a desktop, which is what the redesign covers. */
-  const dressLoader = guard('loader', function dressLoader() {
-    const loader = document.querySelector('.loader');
-    if (!loader || loader.querySelector('.dk-lamp')) return;
-
-    loader.insertAdjacentHTML('afterbegin',
-      '<div class="dk-lamp" data-dk-owned="1"></div>'
-      + '<div class="dk-floor" data-dk-owned="1"></div>'
-      + '<span class="dk-stamp" data-dk-owned="1">Private media server</span>');
-    loader.insertAdjacentHTML('beforeend',
-      '<div class="dk-vig" data-dk-owned="1"></div><div class="dk-grain" data-dk-owned="1"></div>');
-
-    /* The mark is already in the markup as the charging bison. The sheen is
-       masked to the silhouette itself, so the light travels across the
-       animal rather than across a rectangle sitting on top of it. */
-    const scene = loader.querySelector('.charge-scene');
-    if (scene && !scene.querySelector('.dk-sheen')) {
-      scene.insertAdjacentHTML('beforeend', '<span class="dk-sheen" data-dk-owned="1"></span>');
-    }
-
-    const title = loader.querySelector('.loader-title');
-    if (title && !loader.querySelector('.dk-sub')) {
-      title.insertAdjacentHTML('afterend',
-        '<p class="dk-sub" data-dk-owned="1">Treasure State Technology Ventures</p>');
-    }
-
-    const readout = loader.querySelector('.loader-readout');
-    if (readout && !readout.querySelector('.dk-dot')) {
-      readout.insertAdjacentHTML('afterbegin', '<span class="dk-dot" data-dk-owned="1"></span>');
-    }
-  });
-
-  /* At a hundred per cent the hairline goes white and the dot goes green, so
-     the last thing the screen does is say it finished rather than simply
-     disappearing. */
-  const appLoaderSet = loader.set.bind(loader);
-  loader.set = function (fraction, detail) {
-    const out = appLoaderSet(fraction, detail);
-    document.querySelector('.loader')?.classList.toggle('done', fraction >= 1);
-    return out;
-  };
-
-  /* The sequence belongs to starting up, and it runs once.
-
-     This overlay is not only the startup screen — app.js puts it up for
-     buffering, for a seek, for fetching a film's details. Replaying a lamp
-     warming up and a wordmark wiping in over four seconds every time one of
-     those happens would make a three-hundred-millisecond wait feel like a
-     reboot, and would hold the hairline off screen for longer than the wait
-     it is reporting. So the first one is the boot, and everything after it
-     gets the same screen already at rest. */
-  let booted = false;
-
-  const appLoaderShow = loader.show.bind(loader);
-  loader.show = function () {
-    const node = document.querySelector('.loader');
-    node?.classList.remove('done');
-    if (on && node && !booted) {
-      booted = true;
-      dressLoader();
-      node.classList.add('dk-run');
-      /* Taken off again once it has played. Hiding the overlay and showing it
-         again puts the element back into rendering, and a CSS animation still
-         attached to it starts over from the top — which is how a later, quick
-         wait ended up sitting behind a wordmark that had not wiped in yet. */
-      setTimeout(() => node.classList.remove('dk-run'), 5200);
-    }
-    return appLoaderShow.apply(this, arguments);
-  };
-
+  /* The projector-lamp startup sequence used to be built here, injected into
+     the loading overlay and gated on the desktop layout being on — which meant
+     no phone and no iPad ever saw it. It has moved into the markup, styles.css
+     and the loader object in app.js, so it is the same startup on every device
+     and does not depend on this layer being loaded. Nothing is left to do here. */
 
   /* =========================================================== dispatch */
   function buildBrowseChrome() {

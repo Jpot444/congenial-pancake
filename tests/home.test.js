@@ -9,10 +9,17 @@
  * billboard offers a choice and never takes it, which is the thing that was
  * actually asked for, and that nothing runs off the side.
  *
+ * The phone used to be the other half of that sentence: the redesign stopped
+ * at 1100px, so a phone kept a landing page of its own — a hero with a 2x2 of
+ * the four before it, and the two favorite sets side by side, everything sized
+ * to fit the window without scrolling. It gets the billboard now, so those
+ * claims go the same way the desktop's did rather than being weakened into
+ * something easier. What replaces them is below: the same page as the
+ * desktop's, one column wide, with nothing running off the side of it.
+ *
  * What did not change, and is still tested exactly as it was: a favorite
  * poster opens the thing on it rather than a page listing it, a channel tunes
- * straight in, artwork is never cropped to fit its box, and the phone layout —
- * which the redesign does not touch — still looks the way it did.
+ * straight in, and artwork is never cropped to fit its box.
  */
 const { chromium } = require('./playwright.js');
 const fs = require('fs');
@@ -336,36 +343,76 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
   await wait(400);
 
   // --- the phone -----------------------------------------------------------
+  //
+  // The same page, one column wide. What is checked is that it IS that page —
+  // billboard at the head of it, the rest as rails — and that a design drawn
+  // for 1440 does not hang off the side of a 390pt screen, which is the way
+  // this goes wrong.
   console.log('\n  on a phone');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => device.setPhone(true));
   await home();
   const phone = await page.evaluate(() => {
-    const tiles = [...document.querySelectorAll('.home-tile')].map((t) => t.getBoundingClientRect());
+    const view = document.querySelector('#appView');
+    const rails = [...document.querySelectorAll('#homeView .shelf')];
+    /* Every laid-out box, so nothing gets to hang off the edge unnoticed.
+     *
+     * Two things are allowed past it. Anything inside something that scrolls
+     * sideways — a rail's track, the guide's grid — is MEANT to be wider than
+     * the screen; that is what scrolling it means, and the scroller itself is
+     * still checked, which is the box that actually has to fit. And the hero's
+     * artwork, which is inset past the frame on purpose and clipped by it. */
+    const inScroller = (e) => {
+      for (let n = e.parentElement; n && n !== document.body; n = n.parentElement) {
+        const ox = getComputedStyle(n).overflowX;
+        if (ox === 'auto' || ox === 'scroll') return true;
+      }
+      return false;
+    };
+    const overhang = [...document.querySelectorAll('#appView *')]
+      .filter((e) => !e.closest('#dkHero') && !inScroller(e))
+      .map((e) => ({ e, r: e.getBoundingClientRect() }))
+      .filter(({ r }) => r.width && r.right > window.innerWidth + 1)
+      .map(({ e, r }) => ({
+        what: e.tagName.toLowerCase() + (e.className ? '.' + String(e.className).trim().split(/\s+/).join('.') : ''),
+        right: Math.round(r.right),
+      }));
     return {
       scrollW: document.documentElement.scrollWidth,
+      bodyScrollW: document.body.scrollWidth,
       innerW: window.innerWidth,
-      widest: Math.max(...tiles.map((t) => t.right)),
-      cols: document.querySelectorAll('.home-fav-col').length,
-      stacked: (() => {
-        const c = [...document.querySelectorAll('.home-fav-col')];
-        return c.length === 2
-          && c[1].getBoundingClientRect().top > c[0].getBoundingClientRect().top;
+      hero: !!document.querySelector('#dkHero'),
+      heroAtTop: (() => {
+        const h = document.querySelector('#dkHero');
+        return h ? Math.round(h.getBoundingClientRect().top) <= Math.round(view.getBoundingClientRect().top) + 1 : false;
       })(),
-      quadInARow: new Set([...document.querySelectorAll('.home-quad-card')]
-        .map((t) => Math.round(t.getBoundingClientRect().top))).size,
+      rails: rails.length,
+      /* A rail is a row you scroll, not a grid that wrapped: its cards all sit
+         on one line and the track reaches past the screen. */
+      railIsARow: rails.length ? rails.every((r) => {
+        const cards = [...r.querySelectorAll('.card')];
+        return cards.length < 2
+          || new Set(cards.map((c) => Math.round(c.getBoundingClientRect().top))).size === 1;
+      }) : false,
+      footer: !!document.querySelector('#dkFoot'),
+      overhang: overhang.length,
+      worst: overhang.length ? Math.max(...overhang.map((o) => o.right)) : 0,
+      // Outermost first: the one that is actually too wide, rather than the
+      // dozen children being carried along by it.
+      offenders: overhang.slice(0, 4),
     };
   });
   console.log('  ', JSON.stringify(phone));
-  check('no sideways scroll on a phone', phone.scrollW <= phone.innerW,
-    `${phone.scrollW} vs ${phone.innerW}`);
-  check('and nothing hanging off the edge', phone.widest <= phone.innerW + 1,
-    String(phone.widest));
-  check('both favorite sets are still there', phone.cols === 2, String(phone.cols));
-  check('stacked on a phone, where side by side is unreadable',
-    phone.stacked, JSON.stringify(phone));
-  check('and the four under the hero are one row, not a 2x2',
-    phone.quadInARow === 1, String(phone.quadInARow));
+  check('no sideways scroll on a phone', phone.bodyScrollW <= phone.innerW,
+    `${phone.bodyScrollW} vs ${phone.innerW}`);
+  check('and nothing hanging off the edge', phone.overhang === 0,
+    `${phone.overhang} box(es), out to ${phone.worst}px — ${JSON.stringify(phone.offenders)}`);
+  check('the billboard is the head of the page', phone.hero && phone.heroAtTop,
+    JSON.stringify({ hero: phone.hero, atTop: phone.heroAtTop }));
+  check('the rest of it is rails', phone.rails >= 2, String(phone.rails));
+  check('and a rail is a row you scroll, not a grid that wrapped',
+    phone.railIsARow, JSON.stringify(phone));
+  check('the box\'s own numbers are still at the foot of it', phone.footer);
   await page.screenshot({ path: SHOTS + '/home-phone.png' });
 
   // --- a profile that has not watched anything -----------------------------

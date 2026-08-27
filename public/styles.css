@@ -159,6 +159,51 @@
   --aspect-poster: 2/3;
   --aspect-channel: 16/9;
 
+  /* ---- how many to a row ----
+   *
+   * One target WIDTH per card shape, never a column count. The count falls out
+   * of the screen through `repeat(auto-fill, minmax(<target>, 1fr))`, which is
+   * why there is no posters-per-row setting any more and why a device nobody
+   * has shipped yet still gets a sensible answer.
+   *
+   * The clamp is the whole trick, and a flat minimum cannot do its job. An iPad
+   * is only about twice a phone across, so a fixed 106px floor that gives three
+   * on a phone forces six on a tablet — posters shrunk to phone size on a screen
+   * with room to spare. The middle term lets the poster GROW with the space
+   * instead of just multiplying, so the count climbs one step at a time.
+   *
+   * cqi, not vw. The middle term has to measure the GRID, and on anything wider
+   * than 860px the grid is not the window: a 236px category sidebar and a 40px
+   * shell gap sit beside it. Measured against the window, an iPad in landscape
+   * thought it had 1024px to fill, asked for 168px posters, and fitted three of
+   * them into the 692px it actually had. Against the container it fits five,
+   * which is what an iPad in portrait already did. The container is declared on
+   * .content, below. Where there is no container ancestor cqi falls back to the
+   * viewport, which is the old behaviour rather than a broken one.
+   *
+   * Measured, not predicted — tests/grid.test.js asserts every one of these:
+   *
+   *   iPhone SE      375pt → 3 across @106px   iPad 11"   820pt → 5 @146px
+   *   iPhone 15 Pro  393pt → 3 across @112px   iPad land 1024pt → 4 @160px
+   *   iPhone Pro Max 440pt → 3 across @128px   desktop   1440pt → 6 @170px
+   *
+   * The floor is 106 rather than the 112 the mockup names: at 112 an SE lands
+   * ~5px short of a third column and drops to two. The ceiling is the width the
+   * desktop grid has always used, so nothing about the desktop moves — six
+   * across at 1440 is what it fitted before this, the sidebar being the reason
+   * it is six and not the seven a full-bleed 1440 would hold.
+   *
+   * 18% is picked, not rounded to. Below about 17.9% an iPad in landscape fits
+   * a fifth column into the 692px the sidebar leaves it and the posters come out
+   * at 124px — narrower than the same posters on a phone, which is the one thing
+   * this rule exists to prevent. Above about 18.6% an iPad in PORTRAIT drops from
+   * five across to four, and five across at 820pt is the number the design asked
+   * for. 18 is the middle of that window.
+   */
+  --poster-min: clamp(106px, 18cqi, 168px);
+  --channel-min: clamp(150px, 24cqi, 232px);
+  --cat-min: clamp(140px, 21cqi, 200px);
+
   /* One easing curve for the whole product. Nothing bounces, nothing
      overshoots, nothing springs. --ease, above, is that curve. */
   --dur-fast: .12s;
@@ -419,7 +464,27 @@ svg {
 #profileDelete { color: #FF8B82; border-color: rgba(255, 107, 94, .34); }
 #profileDelete:hover { color: #fff; border-color: #FF6B5E; }
 
-/* =========================================================== loader === */
+/* ========================================================== startup === */
+/* A projector lamp coming up to temperature, reporting the box's real steps
+   against a hairline. A spinner says "wait"; a hairline says "progress".
+ *
+ * This lived in desktop.css behind `html.desk`, which meant a window at least
+ * 1100px wide being driven by a mouse. Everything narrower — every phone, and
+ * an iPad in the layout an iPad actually gets — fell back to a charging bison
+ * standing in a drift of popping corn, so the screen the product opens with was
+ * the one screen most of its devices never saw. It is one screen now, and it
+ * lives here rather than in the desktop layer because a phone must not need
+ * desktop.js loaded to have a startup sequence.
+ *
+ * Everything is sized with clamps off the viewport, so the same rules give the
+ * mockup's phone lockup at 402pt and the desktop lockup at 1440 without a
+ * breakpoint deciding which one you get.
+ *
+ * The sequence itself only plays on the first show() — the `is-booting` class
+ * is added and removed by the loader object in app.js. The overlay is also what
+ * a seek and a prebuffer put up, and replaying a lamp warm-up over a 300ms wait
+ * would make it read as a reboot.
+ */
 .loader {
   position: fixed;
   inset: 0;
@@ -428,144 +493,335 @@ svg {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background:
-    radial-gradient(120% 90% at 50% 35%, var(--brand-red) 0%, var(--brand-red-deep) 55%, var(--brand-red-dark) 100%);
-  animation: fade .25s var(--ease);
+  /* Near-black, not the brand field. The crimson on this screen is LIGHT — a
+     lamp throwing colour into a dark room — and a crimson ground would leave
+     nothing for it to fall on. */
+  background: #0B0707;
+  isolation: isolate;
+  animation: fade var(--dur-fade) var(--ease);
 }
 
+/* One lockup, centred: mark, wordmark, sub-line, then the hairline and what it
+   is reporting. Nothing is pinned to the bottom edge — a 236px rule belongs to
+   the mark above it, not to the foot of the window. */
 .loader-stage {
-  width: min(520px, 84vw);
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(560px, 88vw);
   text-align: center;
-  padding-bottom: 96px; /* clear of the progress bar pinned to the bottom */
 }
 
-/* Sized off the viewport height, not width — a wide short window would
-   otherwise push the artwork straight through the title and the bar. */
-.charge-scene {
-  position: relative;
-  width: 100%;
-  /* Taller than the mark needs, on purpose: the extra headroom is sky for
-     the popcorn to arc through. At 200px his hump nearly touched the
-     ceiling and every pop clipped instead of clearing him. */
-  height: min(34vh, 230px);
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-}
-
-/* The mark holds still: it's a logo, and scaling it even slightly to fake a
-   gallop visibly distorted it. 68% of the taller stage is the same size he
-   has always been — the stage grew, not him. */
-.charge-bison {
-  height: 68%;
-  width: auto;
-  max-width: 88%;
-  object-fit: contain;
-  display: block;
-  position: relative;
-  z-index: 1;
-  filter: drop-shadow(0 10px 22px rgba(0, 0, 0, .35));
-}
-
-/* Popcorn, redrawn from the real thing. Each kernel is a little inline SVG —
-   puffed lobes over a shaded hull, a crease between them, the amber seed
-   coat showing at its bottom — where these used to be flat dot-clusters.
-   Two mouldings alternate by size class and every kernel carries its own
-   rotation, so no two in the pile read as the same piece.
-
-   All of it stays BEHIND the mark (z-index 0 under his 1): the pile banks up
-   behind the bull, and neither he nor the grass he stands on is ever
-   covered. */
-.corn {
+/* ---- the lamp ---- */
+/* A projector bulb warming up. Held well off the ground colour so the room
+   stays dark and the light is the only thing in it. */
+.loader-lamp {
   position: absolute;
-  left: var(--x);
-  bottom: var(--y, 0px);
-  transform: rotate(var(--r, 0deg));
-  background: center / contain no-repeat;
-  filter: drop-shadow(0 2px 3px rgba(70, 25, 10, .3));
-  z-index: 0;
+  left: 50%;
+  top: 50%;
+  width: min(1500px, 150vw);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  background: radial-gradient(closest-side,
+    rgba(162, 31, 36, .5), rgba(162, 31, 36, .16) 42%,
+    rgba(110, 20, 24, .05) 62%, transparent 74%);
+  filter: blur(12px);
 }
 
-.corn.lg,
-.corn.sm {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 60'%3E%3Cdefs%3E%3CradialGradient id='t' cx='38%25' cy='28%25' r='85%25'%3E%3Cstop offset='0' stop-color='%23FFFDF4'/%3E%3Cstop offset='.55' stop-color='%23FAEED2'/%3E%3Cstop offset='1' stop-color='%23E2C79B'/%3E%3C/radialGradient%3E%3CradialGradient id='s' cx='42%25' cy='32%25' r='80%25'%3E%3Cstop offset='0' stop-color='%23FFF7E4'/%3E%3Cstop offset='1' stop-color='%23DDBE8F'/%3E%3C/radialGradient%3E%3C/defs%3E%3Cellipse cx='20' cy='27' rx='15' ry='13' fill='url(%23s)'/%3E%3Cellipse cx='45' cy='25' rx='14' ry='13' fill='url(%23s)'/%3E%3Cellipse cx='25' cy='43' rx='12' ry='10' fill='url(%23s)'/%3E%3Cellipse cx='43' cy='42' rx='12' ry='10' fill='url(%23s)'/%3E%3Cellipse cx='32' cy='15' rx='15' ry='13' fill='url(%23t)'/%3E%3Cpath d='M29 25q4 5 2 11' stroke='%23C9AA78' stroke-width='2.2' fill='none' stroke-linecap='round'/%3E%3Cpath d='M39 28q-3 4 0 9' stroke='%23D8BF92' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3Cpath d='M31 35l5 3-3 5-5-3z' fill='%23A97B3A'/%3E%3Cellipse cx='27' cy='11' rx='6' ry='4' fill='%23FFFFFF' opacity='.45'/%3E%3C/svg%3E");
+.loader.is-booting .loader-lamp {
+  animation:
+    lampUp 2.4s var(--ease) backwards,
+    lampBreathe 9s ease-in-out 2.4s infinite alternate;
 }
 
-.corn.md {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 60'%3E%3Cdefs%3E%3CradialGradient id='t' cx='36%25' cy='26%25' r='85%25'%3E%3Cstop offset='0' stop-color='%23FFFAEA'/%3E%3Cstop offset='.6' stop-color='%23F7E6BE'/%3E%3Cstop offset='1' stop-color='%23DDBB84'/%3E%3C/radialGradient%3E%3CradialGradient id='s' cx='45%25' cy='35%25' r='80%25'%3E%3Cstop offset='0' stop-color='%23FDF2D9'/%3E%3Cstop offset='1' stop-color='%23D6B47F'/%3E%3C/radialGradient%3E%3C/defs%3E%3Cellipse cx='46' cy='23' rx='13' ry='11' fill='url(%23s)'/%3E%3Cellipse cx='12' cy='36' rx='10' ry='9' fill='url(%23s)'/%3E%3Cellipse cx='34' cy='41' rx='16' ry='13' fill='url(%23s)'/%3E%3Cellipse cx='24' cy='19' rx='16' ry='14' fill='url(%23t)'/%3E%3Cpath d='M33 27q2 5-1 10' stroke='%23C6A263' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3Cpath d='M25 31q4 3 4 8' stroke='%23D7BC8B' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3Cpath d='M38 33l5 2-2 5-5-2z' fill='%23A07130'/%3E%3Cellipse cx='19' cy='14' rx='6' ry='4' fill='%23FFFFFF' opacity='.4'/%3E%3C/svg%3E");
+@keyframes lampUp {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(.55); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
 
-.corn.lg { width: 27px; height: 25px; }
-.corn.md { width: 21px; height: 20px; }
-.corn.sm { width: 15px; height: 14px; }
-
-/* The machine: kernels launch from behind the bull's back, clear his
-   silhouette, drift a little sideways, and fall back into the mound. The
-   launch is quick and the fall is most of the flight, which is what a real
-   pop looks like. They rest occluded behind his body, so the reset between
-   cycles happens where nobody can see it. */
-.corn.pop {
-  animation: pop var(--t, 3.2s) linear var(--d, 0s) infinite;
+@keyframes lampBreathe {
+  from { opacity: .85; }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
 }
 
-@keyframes pop {
-  0%, 6%    { transform: translate(0, 0) rotate(0deg); }
-  14%       { transform: translate(calc(var(--dx, 0px) * .4), calc(var(--h, 130px) * -.88)) rotate(52deg); }
-  21%       { transform: translate(calc(var(--dx, 0px) * .7), calc(var(--h, 130px) * -1)) rotate(96deg); }
-  32%       { transform: translate(var(--dx, 0px), calc(var(--h, 130px) * -.62)) rotate(148deg); }
-  44%       { transform: translate(calc(var(--dx, 0px) * 1.15), calc(var(--h, 130px) * -.14)) rotate(184deg); }
-  50%, 100% { transform: translate(calc(var(--dx, 0px) * 1.2), 0) rotate(196deg); }
+/* A cold pool of light under the lockup, so it stands on something. */
+.loader-floor {
+  position: absolute;
+  left: 50%;
+  bottom: 14%;
+  width: min(900px, 90vw);
+  height: 220px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgba(255, 214, 190, .07), transparent 70%);
 }
 
+.loader-vig {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(124% 104% at 50% 48%,
+    transparent 42%, rgba(6, 4, 4, .5) 80%, rgba(6, 4, 4, .92) 100%);
+}
+
+/* Film grain, stepped so it flickers like a projector gate rather than sliding
+   smoothly, which reads as a video effect instead of as film. */
+.loader-grain {
+  position: absolute;
+  inset: -120%;
+  pointer-events: none;
+  opacity: .05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: gate 1s steps(6) infinite;
+}
+
+@keyframes gate {
+  0% { transform: translate(0, 0); }
+  16% { transform: translate(-3%, 2%); }
+  33% { transform: translate(2%, -3%); }
+  50% { transform: translate(-2%, -2%); }
+  66% { transform: translate(3%, 1%); }
+  83% { transform: translate(-1%, 3%); }
+}
+
+/* ---- the mark ---- */
+/* Sized by width rather than by a share of a stage height: the stage is now the
+   lockup itself, and a width is what the mark is actually drawn against. 168px
+   on a phone is the mockup's number; the ceiling is what the desktop had. */
+.loader-mark {
+  position: relative;
+  display: block;
+  width: clamp(168px, 24vw, 340px);
+}
+
+.loader-bison {
+  display: block;
+  width: 100%;
+  height: auto;
+  filter:
+    drop-shadow(0 10px 40px rgba(162, 31, 36, .55))
+    drop-shadow(0 2px 3px rgba(0, 0, 0, .6));
+}
+
+.loader.is-booting .loader-bison { animation: markIn 1.5s var(--ease) .35s backwards; }
+
+@keyframes markIn {
+  from { opacity: 0; transform: scale(1.1); filter: blur(10px); }
+  to { opacity: 1; transform: scale(1); filter: blur(0); }
+}
+
+/* Masked to the silhouette, so the light travels over the animal rather than
+   over a rectangle sitting on top of it. */
+.loader-sheen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  -webkit-mask-image: url('/bison.png');
+  mask-image: url('/bison.png');
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  background: linear-gradient(105deg, transparent 34%, rgba(255, 242, 235, .9) 50%, transparent 66%);
+  background-size: 280% 100%;
+  background-position: 180% 0;
+  opacity: 0;
+}
+
+.loader.is-booting .loader-sheen { animation: sweep 2.8s var(--ease) 1.45s; }
+
+@keyframes sweep {
+  from { opacity: 1; background-position: 180% 0; }
+  to { opacity: 1; background-position: -120% 0; }
+}
+
+/* ---- the wordmark ---- */
+/* It wipes in behind a bright leading edge — the one thing on screen that
+   moves fast. */
 .loader-title {
-  margin: 22px 0 0;
-  font-size: 25px;
-  font-weight: 600;
+  position: relative;
+  margin: var(--space-7) 0 0;
+  font-family: var(--display);
+  font-size: clamp(48px, 5.6vw, 82px);
+  font-weight: 400;
+  line-height: .94;
+  letter-spacing: -.004em;
+  text-transform: uppercase;
   color: #fff;
-  letter-spacing: -.01em;
+  text-shadow: 0 4px 34px rgba(0, 0, 0, .6);
+}
+
+.loader.is-booting .loader-title {
+  clip-path: inset(0 100% 0 0);
+  animation: wipe 1.05s var(--ease) 1.15s forwards;
+}
+
+@keyframes wipe { to { clip-path: inset(0 -2% 0 0); } }
+
+.loader.is-booting .loader-title::after {
+  content: '';
+  position: absolute;
+  top: 6%;
+  bottom: 10%;
+  width: 2px;
+  left: 0;
+  background: linear-gradient(180deg, transparent, #fff, transparent);
+  box-shadow: 0 0 18px 4px rgba(255, 255, 255, .6);
+  opacity: 0;
+  animation: edge 1.05s var(--ease) 1.15s forwards;
+}
+
+@keyframes edge {
+  0% { opacity: 0; left: 0; }
+  12% { opacity: 1; }
+  92% { opacity: 1; left: 100%; }
+  100% { opacity: 0; left: 100%; }
+}
+
+/* The sub-line settles into place as its letterspacing relaxes. */
+.loader-sub {
+  margin: var(--space-6) 0 0;
+  font-family: var(--display);
+  font-size: clamp(9.5px, .85vw, 11.5px);
+  text-transform: uppercase;
+  color: rgba(246, 241, 238, .56);
+  letter-spacing: .3em;
+}
+
+.loader.is-booting .loader-sub { animation: subIn 1.5s var(--ease) 1.75s backwards; }
+
+@keyframes subIn {
+  from { opacity: 0; letter-spacing: .7em; }
+  to { opacity: 1; letter-spacing: .3em; }
 }
 
 .loader-label {
-  margin: 8px 0 0;
-  font-size: 13.5px;
-  color: rgba(255, 255, 255, .72);
+  margin: var(--space-8) 0 0;
+  font-family: var(--body);
+  font-size: var(--text-sm-plus);
+  color: rgba(246, 241, 238, .62);
 }
 
+/* ---- the meter ---- */
 .loader-progress {
-  position: absolute;
-  left: 0; right: 0; bottom: 0;
-  padding: 22px clamp(18px, 5vw, 56px) clamp(20px, 4vh, 40px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: var(--space-11);
 }
 
+/* A hairline, not a track. */
 .loader-track {
-  height: 5px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, .17);
-  overflow: hidden;
+  width: clamp(236px, 26vw, 340px);
+  height: 1px;
+  background: rgba(255, 255, 255, .16);
+  overflow: visible;
+}
+
+.loader.is-booting .loader-track { animation: drawLine 1.1s var(--ease) 2.2s backwards; }
+
+@keyframes drawLine {
+  from { width: 0; }
+  to { width: clamp(236px, 26vw, 340px); }
 }
 
 .loader-fill {
-  height: 100%;
+  height: 1px;
   width: 0%;
-  border-radius: 999px;
-  background: #fff;
-  transition: width .3s var(--ease);
+  background: linear-gradient(90deg, var(--brand-red), #E4262E);
+  box-shadow: 0 0 12px rgba(226, 38, 46, .85);
+  transition:
+    width var(--dur-bar-slow) var(--ease),
+    background .6s var(--ease),
+    box-shadow .6s var(--ease);
+}
+
+/* At a hundred per cent the hairline goes white and the dot goes green, so the
+   last thing the screen does is say it finished rather than simply vanishing. */
+.loader.is-done .loader-fill {
+  background: linear-gradient(90deg, #fff, #fff);
+  box-shadow: 0 0 16px rgba(255, 255, 255, .7);
 }
 
 .loader-readout {
   display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 11px;
-  font-size: 12px;
+  align-items: center;
+  gap: 11px;
+  width: clamp(236px, 26vw, 340px);
+  margin-top: var(--space-7);
+  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
-  color: rgba(255, 255, 255, .72);
+  color: rgba(246, 241, 238, .62);
 }
 
-#loaderPct { font-weight: 700; color: #fff; }
+.loader-dot {
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--brand-red);
+  box-shadow: 0 0 9px rgba(226, 38, 46, .9);
+  animation: pulse 1.7s infinite;
+}
+
+.loader.is-done .loader-dot {
+  background: var(--ok);
+  box-shadow: 0 0 9px rgba(87, 200, 139, .9);
+  animation: none;
+}
+
+/* The detail reads from the left, hard against the dot; the count holds the
+   right-hand end and does not shift as the number changes. */
+#loaderDetail {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#loaderPct {
+  flex-shrink: 0;
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: .1em;
+  color: rgba(246, 241, 238, .42);
+}
+
+/* A title card, quietly stamped. env() rather than a flat inset because on a
+   phone this corner is where the notch is. */
+.loader-stamp {
+  position: absolute;
+  z-index: 3;
+  top: max(var(--space-10), calc(env(safe-area-inset-top) + var(--space-5)));
+  left: max(24px, env(safe-area-inset-left));
+  font-family: var(--display);
+  font-size: 10px;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: rgba(246, 241, 238, .26);
+}
+
+.loader.is-booting .loader-stamp { animation: fade 1.4s var(--ease) 2.9s backwards; }
 
 @media (prefers-reduced-motion: reduce) {
-  .corn.pop { animation: none; }
+  .loader.is-booting .loader-lamp,
+  .loader.is-booting .loader-bison,
+  .loader.is-booting .loader-sheen,
+  .loader.is-booting .loader-title,
+  .loader.is-booting .loader-sub,
+  .loader.is-booting .loader-track,
+  .loader.is-booting .loader-stamp,
+  .loader-grain,
+  .loader-dot { animation: none !important; }
+  .loader.is-booting .loader-title { clip-path: none; }
+  .loader.is-booting .loader-title::after { display: none; }
 }
 
 /* ---- display face: chrome, headings and numerals ---- */
@@ -575,7 +831,6 @@ svg {
 .hero-title,
 .eyebrow,
 #contentTitle,
-.loader-title,
 .profiles-title,
 .profiles-sub,
 .profile-name,
@@ -598,7 +853,9 @@ svg {
 .brand-sub { font-size: 9.5px; letter-spacing: .16em; }
 .nav a { font-size: 16px; letter-spacing: .06em; }
 #contentTitle { font-size: 34px; letter-spacing: .02em; }
-.loader-title { font-size: 30px; letter-spacing: .05em; }
+/* .loader-title is deliberately absent: the startup screen sets its own face,
+   size and tracking, and it wipes in behind a bright edge that a .02em default
+   from this group would quietly retrack mid-animation. See the startup section. */
 .profiles-title { font-size: clamp(30px, 4.6vw, 46px); letter-spacing: .03em; }
 .profile-name { font-size: 16px; letter-spacing: .05em; }
 .cinema-titles h2 { font-size: 20px; letter-spacing: .04em; }
@@ -1093,18 +1350,29 @@ body.has-tabbar > .tabbar {
   z-index: auto;
 }
 
-/* Phone layout navigates from the bar, so the hamburger and its dropdown are
-   redundant — two ways to the same five places is one too many. */
-.touch .nav-toggle,
-.touch .nav { display: none; }
+/* The menu is the overflow from the bar, not a second copy of it.
+ *
+ * It used to be hidden outright in phone layout — the bar carried all six
+ * sections and two ways to the same six places is one too many. The bar carries
+ * four now, and dropping the menu with it would strand the other two: the
+ * Archive in particular is Hunter's own drive and has no other route in.
+ *
+ * So the menu stays, and the four sections that ARE on the bar are taken out of
+ * it. What is left is Favorites and the Archive — the overflow, which is what a
+ * menu is for. Keep this list in step with the tab bar in index.html.
+ *
+ * Keyed on has-tabbar rather than .touch, and the difference is not academic:
+ * .touch means targets sized for a finger, which an iPad wants while still
+ * navigating from the nav rather than a bar. Hidden on .touch, an iPad would
+ * lose four of its six sections and keep no bar to reach them from. The rule
+ * belongs to the bar existing, so it asks whether the bar exists. */
+body.has-tabbar .nav a[data-tab="live"],
+body.has-tabbar .nav a[data-tab="movies"],
+body.has-tabbar .nav a[data-tab="series"],
+body.has-tabbar .nav a[data-tab="downloads"] { display: none; }
 
-/* A fixed number of posters to a row, chosen per device. The desktop keeps
-   auto-fill, which fits as many as the width allows. */
-.touch .grid,
-.touch .grid.is-live,
-.touch .grid.is-cats {
-  grid-template-columns: repeat(var(--poster-cols, 2), minmax(0, 1fr));
-}
+/* The grid is deliberately NOT overridden here. Phone layout and desktop layout
+   run the same auto-fill rule off the same target widths; the screen decides. */
 
 /* ---- the device settings sheet ---- */
 .device-card { width: min(420px, 100%); }
@@ -1662,7 +1930,16 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .cat span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cat b { font-weight: 400; font-size: 11.5px; color: var(--muted-dim); }
 
-.content { min-width: 0; } /* same reason: let the shelves overflow-scroll */
+.content {
+  min-width: 0; /* same reason: let the shelves overflow-scroll */
+  /* The measuring stick the poster grid sizes itself against — see --poster-min
+     in the tokens. It has to be the column the grid is in rather than the
+     window, because from 860px up a 236px sidebar sits beside it and the two
+     numbers stop agreeing. inline-size only: the height still comes from the
+     content, which is what a scrolling page needs. */
+  container-type: inline-size;
+  container-name: content;
+}
 
 .content-head {
   display: flex;
@@ -1681,16 +1958,19 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .content-meta { margin: 4px 0 0; font-size: 13px; color: var(--muted-dim); }
 
 /* ------------------------------------------------------------- grid --- */
+/* One rule for every screen — see --poster-min in the tokens. The phone used to
+   override this with a hand-picked column count; it no longer needs to, because
+   the target width already answers the question on every device. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--poster-min), 1fr));
   gap: 22px 18px;
 }
 
-.grid.is-live { grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); }
+.grid.is-live { grid-template-columns: repeat(auto-fill, minmax(var(--channel-min), 1fr)); }
 
 /* ---- live categories, as squares ---- */
-.grid.is-cats { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.grid.is-cats { grid-template-columns: repeat(auto-fill, minmax(var(--cat-min), 1fr)); }
 .grid.is-cats .card-art { aspect-ratio: 1 / 1; }
 
 /* The bin tile is a marker, not artwork — the icon sits in the middle at a
@@ -3436,6 +3716,38 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .touch .show-poster { max-width: 180px; }
 .touch .show-episodes .ep-list { max-height: none; }
 
+/* The 180px strip is for a SHOW: it buys back the height a season of episodes
+   needs. A film has one button and a runtime under it, so the same strip
+   shrinks the artwork to buy room for nothing.
+ *
+ * Sized by HEIGHT rather than width, because height is the constraint that
+ * actually bites. Let it have the card's width and a 2:3 poster on a 393pt
+ * screen comes out over 500px tall, which pushes the title and the Play button
+ * off the bottom: the artwork wins and the thing you came to press is below
+ * the fold. So the budget is what is left after the rest of the card — the
+ * title, the runtime and the buttons come to about 500px — and the width falls
+ * out of the ratio. 330 keeps Play on the first screen of a 393x852 phone with
+ * room to spare, and 40vh takes it back down on a shorter one, where an SE
+ * lands about where the strip was. It is 220px wide against the strip's 180. */
+.touch .show-card.is-film .show-poster {
+  height: min(40vh, 330px);
+  width: auto;
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+/* The same, for the other way the card ends up stacked: a narrow window with a
+   mouse in it. Two triggers, one treatment — and it has to be both, because
+   either on its own leaves the other's 180px strip winning. */
+@media (max-width: 720px) {
+  .show-card.is-film .show-poster {
+    height: min(40vh, 330px);
+    width: auto;
+    max-width: 100%;
+    margin-inline: auto;
+  }
+}
+
 /* ---- next episode, once the credits start ---- */
 
 .up-next {
@@ -3977,10 +4289,9 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
   .sidebar.is-open { transform: translateX(0); }
   .content-head h1 { font-size: 22px; }
-  .grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 18px 14px; }
-  .grid.is-live { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
-  /* Two squares to a phone row; below this they stop being readable. */
-  .grid.is-cats { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
+  /* Only the gaps tighten. The column counts are the target widths' business
+     and they already read the viewport — see --poster-min in the tokens. */
+  .grid { gap: 18px 14px; }
   .field-row { grid-template-columns: 1fr; gap: 0; }
   .setup { padding: 56px 0 80px; }
   .player-overlay { padding: 0; }

@@ -18,8 +18,12 @@
 
 /* Room for the fixed bar, and only while there is a bar. Setup and the
    profile gate run without one and would otherwise open on a 68px band of
-   nothing at the top of the screen. */
-.desk body:has(.site-header:not([hidden])) { padding-top: var(--header-h); }
+   nothing at the top of the screen.
+
+   Nor in phone layout, where the bar is not fixed: it is a row of the frame
+   and takes its own room, so reserving the height again puts that same band
+   back — see the phone section at the foot of this file. */
+.desk body:not(.has-tabbar):has(.site-header:not([hidden])) { padding-top: var(--header-h); }
 .desk ::selection { background: var(--brand-red); color: #fff; }
 
 /* The one caps style used for eyebrows throughout. */
@@ -542,7 +546,11 @@
 .desk .rate svg { width: 11px; height: 11px; fill: currentColor; stroke: none; color: var(--warn-soft); }
 
 .desk .grid { gap: var(--space-9) var(--space-7); }
-.desk .grid { grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
+/* Was a hard-coded minmax(168px, 1fr). Same number, one source: this layer only
+   ever runs at >=1100px, where --poster-min has already reached its 168 ceiling.
+   Naming the token keeps the poster width a single decision across all three
+   layouts rather than a value that has to be kept in step by hand. */
+.desk .grid { grid-template-columns: repeat(auto-fill, minmax(var(--poster-min), 1fr)); }
 .desk .grid .card { flex: auto; width: auto; }
 
 
@@ -563,11 +571,93 @@
   .desk .site-header .nav a { padding: var(--space-3) var(--space-5); font-size: var(--text-lg); }
 }
 
+/* Search folds down to its icon, and unfolds when you tap it.
+ *
+ * It used to fold down to an icon and stay there: the input was `display: none`
+ * and `:focus-within` was pinned to the collapsed width, so there was no field
+ * to type into and no way to get one — you could see the magnifier and nothing
+ * else. That was invisible while this design started at 1100px, because the only
+ * screens it applied to were the 20px between 1080 and 1100. It applies to every
+ * iPad now, so it has to actually work.
+ *
+ * The input is zero-width rather than removed, because a label focuses the
+ * control inside it and `display: none` is not focusable — tapping the
+ * magnifier would have done nothing at all. */
 @media (max-width: 1080px) {
   .desk .site-header .search { flex: 0 0 var(--control-h); width: var(--control-h); padding: 0; justify-content: center; }
-  .desk .site-header .search input { display: none; }
-  .desk .site-header .search:focus-within { flex-basis: var(--control-h); width: var(--control-h); }
-  .desk .site-header .search svg { width: 18px; height: 18px; }
+  .desk .site-header .search svg { width: 18px; height: 18px; flex: none; }
+
+  .desk .site-header .search input {
+    width: 0;
+    min-width: 0;
+    padding: 0;
+    opacity: 0;
+    transition: opacity var(--dur-base) var(--ease);
+  }
+
+  .desk .site-header .search:focus-within {
+    flex: 0 1 276px;
+    width: 276px;
+    padding: 0 var(--space-6);
+    gap: var(--space-3);
+    justify-content: flex-start;
+  }
+
+  .desk .site-header .search:focus-within input { width: 100%; opacity: 1; }
+}
+
+/* ---- the nav stays a bar ----
+ *
+ * styles.css turns the nav into a fixed dropdown behind a hamburger below
+ * 1200px, which was right when everything under 1200 was either phone layout or
+ * a laptop the design did not run on. This design does run there now — an iPad
+ * gets it — and its bar is a row of tabs, not a menu button.
+ *
+ * The width that forced the dropdown was touch mode's: 12px/17px links make the
+ * six of them about 464px, more than an iPad has spare. The steps above take
+ * them back down — and the 900px step drops Downloads — so they fit as a row.
+ * Undone rather than left to the breakpoint, because the sticky category bar
+ * underneath assumes a header of a known height and a dropdown that overlays it
+ * would open straight through that bar.
+ *
+ * Only where there is no bottom bar. In phone layout the four main sections are
+ * ON that bar, the nav is the overflow behind the hamburger holding the two
+ * that are not, and styles.css's dropdown is exactly right for it.
+ */
+.desk body:not(.has-tabbar) .site-header .nav {
+  position: static;
+  flex-direction: row;
+  gap: var(--space-2);
+  padding: 0;
+  background: none;
+  border-bottom: 0;
+  transform: none;
+}
+
+.desk body:not(.has-tabbar) .site-header .nav-toggle { display: none; }
+
+/* ---- an iPad in portrait ----
+ *
+ * 820pt is the last step, and the narrowest screen this design runs on: below
+ * it the bottom bar is the better answer. Everything the steps above shed has
+ * already gone — sub-line, profile name, search field — so what is left is a
+ * tab, and the one that goes is the one reachable from elsewhere. Downloads is
+ * marked [data-opt] for exactly this: what is saved carries a badge on its own
+ * poster and a count on the header, so the bar is not the only way to it.
+ *
+ * The brand keeps its full mark. It is the way Home, and shrinking the one
+ * control that is also the logo to buy a few pixels would be the wrong few.
+ */
+@media (max-width: 900px) {
+  .desk .site-header .nav { gap: var(--space-1); }
+  .desk .site-header .nav a { padding: var(--space-3) var(--space-4); font-size: var(--text-md); }
+  .desk .site-header .nav a[data-opt] { display: none; }
+  .desk .header-inner { gap: var(--space-5); }
+  .desk .header-actions { gap: var(--space-2); }
+  /* The gutter and the shell gap are a desktop's, and at this width they are
+     most of the difference between five posters across and four. */
+  .desk .wrap { padding: 0 var(--space-8); }
+  .desk .app-shell { gap: var(--space-9); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1369,293 +1459,11 @@
 
 
 /* ====================================================== startup screen === */
-/* A projector lamp warming up, reporting the portal's real steps against a
-   hairline. A spinner says "wait"; a hairline says "progress". */
-.desk .loader {
-  background: #0B0707;
-  isolation: isolate;
-}
-
-/* The popcorn scene is the phone's loading screen and stays the right one
-   there. On a desktop the mark stands on its own in the lamp. */
-.desk .loader .corn { display: none; }
-.desk .loader .charge-scene { position: relative; }
-
-/* One lockup, in the middle of the screen: mark, wordmark, sub-line, then the
-   hairline and what it is reporting. The portal pins its progress block to
-   the bottom edge, which is right for a bar across the foot of the window and
-   wrong for a 340px rule that belongs to the mark above it. */
-.desk .loader-stage { width: min(560px, 88vw); padding-bottom: 0; }
-
-.desk .loader-progress {
-  position: static;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 0;
-  margin-top: 44px;
-}
-
-.desk .loader-readout { width: clamp(240px, 26vw, 340px); justify-content: flex-start; margin-top: 18px; }
-/* The detail reads from the left, hard against the dot; the count holds the
-   right-hand end and does not shift as the number changes. */
-.desk #loaderDetail { flex: 1; min-width: 0; text-align: left; }
-.desk #loaderPct { flex-shrink: 0; font-weight: 400; }
-
-.desk .loader .charge-bison {
-  filter:
-    drop-shadow(0 10px 40px rgba(162, 31, 36, .55))
-    drop-shadow(0 2px 3px rgba(0, 0, 0, .6));
-}
-
-.desk .loader.dk-run .charge-bison { animation: dkMarkIn 1.5s var(--ease) .35s backwards; }
-
-@keyframes dkMarkIn {
-  from { opacity: 0; transform: scale(1.1); filter: blur(10px); }
-  to { opacity: 1; transform: scale(1); filter: blur(0); }
-}
-
-/* The lamp. A projector bulb coming up to temperature — the crimson is light
-   here, not a surface, which is why the ground stays near-black. */
-.desk .dk-lamp {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: min(1500px, 150vw);
-  aspect-ratio: 1;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  background: radial-gradient(closest-side,
-    rgba(162, 31, 36, .5), rgba(162, 31, 36, .16) 42%,
-    rgba(110, 20, 24, .05) 62%, transparent 74%);
-  filter: blur(12px);
-}
-
-.desk .loader.dk-run .dk-lamp {
-  animation:
-    dkLampUp 2.4s var(--ease) backwards,
-    dkLampBreathe 9s ease-in-out 2.4s infinite alternate;
-}
-
-@keyframes dkLampUp {
-  from { opacity: 0; transform: translate(-50%, -50%) scale(.55); }
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-}
-
-@keyframes dkLampBreathe {
-  from { opacity: .85; }
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
-}
-
-/* A cold pool of light under the lockup so it sits on something. */
-.desk .dk-floor {
-  position: absolute;
-  left: 50%;
-  bottom: 14%;
-  width: min(900px, 90vw);
-  height: 220px;
-  transform: translateX(-50%);
-  pointer-events: none;
-  background: radial-gradient(closest-side, rgba(255, 214, 190, .07), transparent 70%);
-}
-
-.desk .dk-vig {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(124% 104% at 50% 48%,
-    transparent 42%, rgba(6, 4, 4, .5) 80%, rgba(6, 4, 4, .92) 100%);
-}
-
-/* Film grain, stepped so it flickers like a projector gate rather than
-   sliding smoothly, which reads as a video effect instead of as film. */
-.desk .dk-grain {
-  position: absolute;
-  inset: -120%;
-  pointer-events: none;
-  opacity: .05;
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
-  animation: dkGate 1s steps(6) infinite;
-}
-
-@keyframes dkGate {
-  0% { transform: translate(0, 0); }
-  16% { transform: translate(-3%, 2%); }
-  33% { transform: translate(2%, -3%); }
-  50% { transform: translate(-2%, -2%); }
-  66% { transform: translate(3%, 1%); }
-  83% { transform: translate(-1%, 3%); }
-}
-
-/* Masked to the silhouette, so the light travels over the animal rather than
-   over a rectangle sitting on it. */
-.desk .dk-sheen {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  -webkit-mask-image: url('/bison.png');
-  mask-image: url('/bison.png');
-  -webkit-mask-size: contain;
-  mask-size: contain;
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  background: linear-gradient(105deg, transparent 34%, rgba(255, 242, 235, .9) 50%, transparent 66%);
-  background-size: 280% 100%;
-  background-position: 180% 0;
-  opacity: 0;
-}
-
-.desk .loader.dk-run .dk-sheen { animation: dkSweep 2.8s var(--ease) 1.45s; }
-@keyframes dkSweep {
-  from { opacity: 1; background-position: 180% 0; }
-  to { opacity: 1; background-position: -120% 0; }
-}
-
-/* The wordmark wipes in behind a bright leading edge — the one thing on
-   screen that moves fast. */
-.desk .loader-title {
-  position: relative;
-  font-family: var(--display);
-  font-size: clamp(46px, 5.6vw, 82px);
-  line-height: .94;
-  letter-spacing: -.004em;
-  text-transform: uppercase;
-  color: #fff;
-  text-shadow: 0 4px 34px rgba(0, 0, 0, .6);
-}
-
-.desk .loader.dk-run .loader-title { clip-path: inset(0 100% 0 0); animation: dkWipe 1.05s var(--ease) 1.15s forwards; }
-@keyframes dkWipe { to { clip-path: inset(0 -2% 0 0); } }
-
-.desk .loader.dk-run .loader-title::after {
-  content: '';
-  position: absolute;
-  top: 6%;
-  bottom: 10%;
-  width: 2px;
-  left: 0;
-  background: linear-gradient(180deg, transparent, #fff, transparent);
-  box-shadow: 0 0 18px 4px rgba(255, 255, 255, .6);
-  opacity: 0;
-  animation: dkEdge 1.05s var(--ease) 1.15s forwards;
-}
-
-@keyframes dkEdge {
-  0% { opacity: 0; left: 0; }
-  12% { opacity: 1; }
-  92% { opacity: 1; left: 100%; }
-  100% { opacity: 0; left: 100%; }
-}
-
-/* The sub-line settles into place as its letterspacing relaxes. */
-.desk .dk-sub {
-  margin: var(--space-6) 0 0;
-  font-family: var(--display);
-  font-size: clamp(9.5px, .85vw, 11.5px);
-  text-transform: uppercase;
-  color: rgba(246, 241, 238, .56);
-  letter-spacing: .3em;
-  text-align: center;
-}
-
-.desk .loader.dk-run .dk-sub { animation: dkSubIn 1.5s var(--ease) 1.75s backwards; }
-@keyframes dkSubIn {
-  from { opacity: 0; letter-spacing: .7em; }
-  to { opacity: 1; letter-spacing: .3em; }
-}
-
-.desk .loader-label {
-  margin-top: var(--space-8);
-  font-family: var(--body);
-  font-size: var(--text-sm-plus);
-  letter-spacing: 0;
-  text-transform: none;
-  color: rgba(246, 241, 238, .62);
-}
-
-/* A hairline, not a track. */
-.desk .loader-track {
-  width: clamp(240px, 26vw, 340px);
-  height: 1px;
-  border-radius: 0;
-  background: rgba(255, 255, 255, .16);
-  overflow: visible;
-}
-
-.desk .loader.dk-run .loader-track { animation: dkDrawLine 1.1s var(--ease) 2.2s backwards; }
-@keyframes dkDrawLine { from { width: 0; } to { width: clamp(240px, 26vw, 340px); } }
-
-.desk .loader-fill {
-  height: 1px;
-  border-radius: 0;
-  background: linear-gradient(90deg, var(--brand-red), #E4262E);
-  box-shadow: 0 0 12px rgba(226, 38, 46, .85);
-  transition:
-    width var(--dur-bar-slow) var(--ease),
-    background .6s var(--ease),
-    box-shadow .6s var(--ease);
-}
-
-.desk .loader.done .loader-fill {
-  background: linear-gradient(90deg, #fff, #fff);
-  box-shadow: 0 0 16px rgba(255, 255, 255, .7);
-}
-
-.desk .loader-readout { align-items: center; gap: 11px; }
-
-.desk .dk-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--brand-red);
-  box-shadow: 0 0 9px rgba(226, 38, 46, .9);
-  animation: pulse 1.7s infinite;
-}
-
-.desk .loader.done .dk-dot {
-  background: var(--ok);
-  box-shadow: 0 0 9px rgba(87, 200, 139, .9);
-  animation: none;
-}
-
-.desk .loader-pct,
-.desk #loaderPct {
-  font-family: var(--display);
-  font-size: 13px;
-  letter-spacing: .1em;
-  font-variant-numeric: tabular-nums;
-  color: rgba(246, 241, 238, .42);
-}
-
-/* A title card, quietly stamped. */
-.desk .dk-stamp {
-  position: absolute;
-  z-index: 3;
-  top: var(--space-10);
-  left: 32px;
-  font-family: var(--display);
-  font-size: 10px;
-  letter-spacing: .24em;
-  text-transform: uppercase;
-  color: rgba(246, 241, 238, .26);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .desk .loader.dk-run .dk-lamp,
-  .desk .loader.dk-run .charge-bison,
-  .desk .loader.dk-run .dk-sheen,
-  .desk .loader.dk-run .loader-title,
-  .desk .loader.dk-run .loader-title::after,
-  .desk .loader.dk-run .dk-sub,
-  .desk .loader.dk-run .loader-track,
-  .desk .dk-grain,
-  .desk .dk-dot { animation: none !important; }
-  .desk .loader.dk-run .loader-title { clip-path: none; }
-  .desk .loader.dk-run .loader-title::after { display: none; }
-}
+/* The projector lamp used to be defined here, behind `html.desk`, and the phone
+   fell back to a different loading screen entirely. It is the base startup
+   screen now — see the startup section of styles.css — and it is sized off the
+   viewport, so at desktop widths these rules produced nothing this layer still
+   needs to add. The block is gone rather than emptied out. */
 
 
 /* =============================================================== Series === */
@@ -1969,3 +1777,214 @@
 /* Once it is on it stays lit, on the chip and in the bar's own colour. */
 .desk .catchip .chip-pin.on { opacity: 1; }
 .desk .catchip .chip-pin.on svg { fill: currentColor; stroke: none; }
+
+/* ══════════════════════════════════════════════════════ the phone ═════
+ *
+ * The portal design, on a screen 393pt wide.
+ *
+ * There is no separate phone design any more. This design used to stop at
+ * 1100px and the phone had pages of its own — the same library, the same
+ * facts, drawn a different way and kept in step by hand. Every rule below is
+ * the same page at a phone's size: the billboard, the on-now lane, the sticky
+ * category bar, the shelves and the footer are the ones above, narrowed.
+ *
+ * Everything here hangs off `body.has-tabbar` rather than a width, because the
+ * thing it adapts to is the LAYOUT — sections in a bar at the bottom, and the
+ * page a column inside a frame that does not itself scroll. Somebody who picks
+ * Phone on a desktop gets this too, which is what picking it means.
+ */
+
+/* This header is one 52px row, not the two styles.css sizes for below 560px —
+   that bar gives the search a row of its own, this one collapses it to an icon.
+   Set once, as the token, rather than patched into each rule that reads it: the
+   nav dropdown hangs off exactly this number and agrees without being told. */
+.desk body.has-tabbar { --header-h: 52px; }
+
+/* ---- the header is a row of the frame, not a plate over the page ----
+ *
+ * `position: fixed` is right when the document scrolls under a bar. In phone
+ * layout the document does not scroll at all: `body` is a fixed column, the
+ * view inside it is the only scroller, and the header is the row above it —
+ * see the frame in styles.css. A fixed header there is taken out of that
+ * column, so the view claims its height and the page starts underneath it.
+ *
+ * The notch is this element's to clear, not the row's. On .header-inner the
+ * inset would be padding on a .wrap — `width: 100%` with its gutters already
+ * in the border box — and would push the whole bar off the right of the screen
+ * by both of them.
+ */
+.desk body.has-tabbar .site-header {
+  position: static;
+  height: auto;
+  flex: none;
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Never becomes glass. The lifted state is for a bar with a picture running
+   underneath it; here there is nothing behind the bar to show through. */
+.desk body.has-tabbar .site-header.lifted {
+  height: auto;
+  background: var(--header-field);
+  backdrop-filter: none;
+  box-shadow: var(--shadow-header);
+}
+
+.desk body.has-tabbar .header-inner {
+  flex-wrap: nowrap;
+  gap: var(--space-4);
+  height: 52px;
+  min-width: 0;
+}
+
+/* The mark alone. The wordmark beside it is the first thing this design sheds
+   at every step above, and at 393pt it is the difference between reaching the
+   profile chip and not. */
+.desk body.has-tabbar .brand { flex: none; border-right: 0; padding-right: 0; margin-right: 0; }
+.desk body.has-tabbar .brand-words { display: none; }
+.desk body.has-tabbar .brand-bison { width: 34px; }
+.desk body.has-tabbar .site-header.lifted .brand-bison { width: 34px; }
+
+/* Nothing here for the nav on purpose. It is the hamburger's, and the hamburger
+   is the overflow from the bottom bar; styles.css already shows the toggle and
+   lays the dropdown out below 1200px, hanging it off --header-h, which is set
+   correctly above. The only thing this layer had to do was stop turning it back
+   into a row — see `body:not(.has-tabbar)` on that rule further up. */
+
+/* Search stays in the row as its icon. styles.css gives it a row of its own
+   below 560px, which was right for a bar that also had to hold six nav links;
+   this one holds four buttons and the profile chip, and the design draws the
+   magnifier beside them rather than a field under them. */
+.desk body.has-tabbar .site-header .search {
+  order: 0;
+  flex: 0 0 var(--control-h);
+  width: var(--control-h);
+  padding: 0;
+  justify-content: center;
+}
+
+/* Tapped, it takes the whole row rather than the 276px the step above gives it:
+   276px is most of a 393pt screen and there is nowhere for the rest of the bar
+   to go. The rest of the bar steps aside rather than being painted over — an
+   overlaid field is the same width but with the badge showing through one end
+   of it and the buttons sitting on top of the other. */
+.desk body.has-tabbar .header-inner:has(.search:focus-within) .brand,
+.desk body.has-tabbar .header-inner:has(.search:focus-within) .header-actions > :not(.search) {
+  display: none;
+}
+
+.desk body.has-tabbar .header-inner:has(.search:focus-within) .header-actions {
+  flex: 1 1 auto;
+}
+
+.desk body.has-tabbar .site-header .search:focus-within {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.desk body.has-tabbar .header-actions { flex: 0 1 auto; flex-wrap: nowrap; margin-left: auto; gap: var(--space-2); }
+
+/* ---- the category bar ----
+ *
+ * It sticks under the header on a desktop because the header floats over the
+ * page. Here the header is a row above the scroller, so the top of the
+ * scroller IS under the header and the offset is zero.
+ */
+.desk body.has-tabbar #dkCatbar { top: 0; }
+
+/* Two rows, not one.
+ *
+ * On a desktop the chips and the controls share a line: the strip takes what
+ * is left after All / sort / Rows-Grid, and there is plenty left. At 393pt the
+ * controls alone are most of the width, so the strip was squeezed to about
+ * 50px — the categories, which are the point of the bar, became a sliver — and
+ * the controls overflowed the screen anyway. Stacked, the chips get the full
+ * width to scroll through and the controls get a line of their own. */
+.desk body.has-tabbar #dkCatbar .inner {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-7);
+}
+
+.desk body.has-tabbar #dkCatbar .strip { flex: none; }
+.desk body.has-tabbar #dkCatbar .ctrl { gap: var(--space-3); }
+
+/* The segmented holds the right-hand end; the sort takes what is left and is
+   allowed to shrink, which is what stops the row overflowing on an SE. */
+.desk body.has-tabbar #dkCatbar .dk-sel { flex: 1 1 auto; min-width: 0; }
+.desk body.has-tabbar #dkCatbar .dk-sel select { min-width: 0; }
+.desk body.has-tabbar #dkCatbar .dk-seg { flex: none; margin-left: auto; }
+.desk body.has-tabbar #dkCatbar .dk-allbtn { flex: none; }
+
+/* ---- the billboard ----
+ *
+ * 474px rather than 80vh. The hero is one of several things on this page and
+ * on a phone a viewport-height hero is the whole page — you would scroll a
+ * screen before learning there is anything under it.
+ */
+.desk body.has-tabbar #dkHero {
+  height: 474px;
+  min-height: 0;
+}
+
+.desk body.has-tabbar #dkHero .inner { padding-bottom: var(--space-9); }
+
+/* The stage keeps its height and the copy keeps its `position: absolute`: the
+   billboard holds up to three features and crossfades between them by stacking
+   them on top of each other. Take that away and they stop being one billboard
+   and become three blocks down the page. */
+.desk body.has-tabbar #dkHero .stage { min-height: 300px; }
+.desk body.has-tabbar #dkHero h1.big { font-size: 56px; max-width: none; }
+.desk body.has-tabbar #dkHero .blurb { font-size: var(--text-md); max-width: 44ch; }
+.desk body.has-tabbar #dkHero .resume { max-width: none; }
+
+/* ---- the page ---- */
+/* 14px, and the poster grid's gap comes down with it. Both are the desktop's
+   numbers otherwise — a 28px gutter and an 18px gap — and on a 375pt screen
+   the four of them together are 92px, which is most of a third poster. At a
+   106px target that is exactly the difference between three across and two,
+   and two 161px posters on an iPhone SE is the layout this whole change exists
+   to stop. See --poster-min in styles.css for where 106 comes from. */
+.desk body.has-tabbar .wrap { padding: 0 14px; }
+.desk body.has-tabbar .grid { gap: var(--space-8) var(--space-5); }
+.desk body.has-tabbar .app-shell { gap: 0; padding-bottom: var(--space-9); }
+
+/* The page head is a title and, on Live TV, a Multi-view button. Side by side
+   they leave the button about 90px, which it spends breaking its own label
+   across two lines and pushing the count under the title with it. Stacked, the
+   title gets the width it is set at and the button gets its own line. */
+.desk body.has-tabbar .content-head {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  padding: var(--space-8) 0 var(--space-7);
+}
+
+.desk body.has-tabbar #contentTitle { font-size: 46px; }
+.desk body.has-tabbar .content-head .btn { flex: none; }
+
+/* A rail card is 176px here because that is what looks right beside a 1440px
+   billboard. At 393pt it is nearly half the screen — two and a bit to a rail,
+   which reads as a grid that has gone wrong rather than as a row you scroll.
+   132 puts three on screen with the fourth showing enough edge to say the row
+   continues, and it is the number styles.css already uses below 860px; this
+   layer was simply outranking it. */
+.desk body.has-tabbar .rail-card:not(.show-slab) { flex-basis: 132px; width: 132px; }
+
+/* A show slab is not a poster and does not take a poster's width. It is a
+   thumbnail with the facts beside it — 400px on a desktop — and squeezing one
+   into a 132px rail card folds the season pips and the genre tags back over
+   the artwork. It gets nearly the screen instead, with the next one showing an
+   edge so the row still reads as a row. */
+.desk body.has-tabbar .show-slab {
+  flex: 0 0 min(330px, 86vw);
+  width: min(330px, 86vw);
+}
+
+/* A rail is scrolled with a thumb here, so the arrows are a control for a
+   gesture nobody is making — and they sit ON the last poster to do it.
+   styles.css already drops them below 860px; this layer was outranking it. */
+.desk body.has-tabbar .rail-nav { display: none; }
+
+/* The bar is a row beside the page rather than a plate on top of it, so the
+   run-off room the desktop leaves for its own footer is a gap here. */
+.desk body.has-tabbar #dkFoot { padding-bottom: var(--space-8); }
