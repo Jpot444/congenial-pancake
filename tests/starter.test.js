@@ -238,8 +238,15 @@ const STREAMS = CATS.flatMap((c, i) => [
   // Six of the eight fixture categories are on the starter list.
   check('the starter categories are pinned',
     grid.pinned.length === 6, `${grid.pinned.length} pinned`);
+  // The tags are stripped for DISPLAY now, so the label is the short form —
+  // while the matching that decided to pin these still ran on the provider's
+  // full name. Both halves are worth pinning down: the name on screen is
+  // clean, and the category it stands for is the tagged one.
   check('including the ones wearing quality tags',
-    grid.pinned.includes('US| NBC ᴴᴰ/ᴿᴬᵂ ⁶⁰ᶠᵖˢ') && grid.pinned.includes('US| CBS ᴴᴰ/ᴿᴬᵂ ⁶⁰ᶠᵖˢ'),
+    grid.pinned.includes('US| NBC') && grid.pinned.includes('US| CBS'),
+    JSON.stringify(grid.pinned));
+  check('and the tag is gone from the label, not from the category',
+    grid.pinned.every((n) => !/[\u1D2C-\u1D6B\u2070-\u209F]/.test(n)),
     JSON.stringify(grid.pinned));
   check('and the two PPV EVENT rows are told apart',
     grid.keys.includes('live:71') && grid.keys.includes('live:51'),
