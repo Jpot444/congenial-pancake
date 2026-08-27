@@ -40,17 +40,32 @@
 <body>
 
 <!-- ────────────────────────────────────────────── profile gate ─── -->
+<!-- The same room as the startup screen, and deliberately so: the lamp behind
+     the mark, the vignette, the projector-gate grain. This was the one screen
+     in the app that looked like a form rather than like a screening room — a
+     flat crimson field with a title on it — and it is the screen you see every
+     time the app opens. The parts it shares are the startup screen's own
+     rules, extended to these elements rather than copied. -->
 <div class="profiles" id="profileGate" hidden>
+  <span class="profiles-lamp" aria-hidden="true"></span>
+  <span class="profiles-floor" aria-hidden="true"></span>
+
   <div class="profiles-inner">
-    <img class="profiles-bison" src="/bison.png" alt="" />
+    <span class="profiles-mark">
+      <img class="profiles-bison" src="/bison.png" alt="" />
+      <span class="profiles-sheen" aria-hidden="true"></span>
+    </span>
     <h1 class="profiles-title">Who's watching?</h1>
-    <p class="profiles-sub">Treasure Theater</p>
+    <p class="profiles-sub">Treasure State Technology Ventures</p>
     <div class="profile-grid" id="profileGrid"></div>
     <button class="btn btn-ghost btn-manage" id="manageBtn" hidden>Manage profiles</button>
     <!-- The password is optional now. This is where it is turned on or off,
          shown only while managing so it is not the first thing anyone sees. -->
     <button class="btn-lock" id="lockBtn" hidden></button>
   </div>
+
+  <span class="profiles-vig" aria-hidden="true"></span>
+  <span class="profiles-grain" aria-hidden="true"></span>
 </div>
 
 <!-- server health -->

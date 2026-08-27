@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '30.3';
+const VERSION = '30.4';
 
 const PAGE_SIZE = 60;
 
@@ -11932,8 +11932,14 @@ function renderProfileGate() {
   const grid = $('#profileGrid');
   grid.innerHTML = '';
 
+  /* Its place in the queue, which is what staggers the arrival — see the
+     profiles section of styles.css. Set on every tile including Add, so the
+     row fills left to right and nothing lands out of order. */
+  let seat = 0;
+
   for (const profile of profiles.all) {
     const tile = el('button', 'profile-tile');
+    tile.style.setProperty('--i', seat++);
     const avatar = el('span', 'profile-avatar');
     avatar.textContent = profile.emoji;
     avatar.style.background = profile.color;
@@ -11950,6 +11956,7 @@ function renderProfileGate() {
   }
 
   const add = el('button', 'profile-tile profile-add');
+  add.style.setProperty('--i', seat);
   const plus = el('span', 'profile-avatar');
   plus.textContent = '+';
   const addLabel = el('span', 'profile-name');
@@ -12001,11 +12008,23 @@ $('#lockBtn').addEventListener('click', async () => {
   }
 });
 
+/*
+ * How long the opening runs for. The last thing to move is the Manage button
+ * at 1.7s + 0.7s; a little past that the class comes off, so pressing Manage
+ * profiles re-renders the tiles without replaying the lamp.
+ */
+const GATE_ARRIVAL_MS = 2600;
+let gateArrival = null;
+
 function showProfileGate() {
   $('#setupView').hidden = true;
   $('#siteHeader').hidden = true;
   $('#appView').hidden = true;
-  $('#profileGate').hidden = false;
+  const gate = $('#profileGate');
+  gate.hidden = false;
+  gate.classList.add('is-arriving');
+  clearTimeout(gateArrival);
+  gateArrival = setTimeout(() => gate.classList.remove('is-arriving'), GATE_ARRIVAL_MS);
   renderProfileGate();
 }
 
