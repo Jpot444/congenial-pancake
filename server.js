@@ -4336,6 +4336,23 @@ async function handleApi(req, res, pathname, query) {
     }
 
     /* where this profile left off in one specific title */
+    /* Take one row off Continue watching, and nothing else.
+     *
+     * Deliberately not a deletion of the title: it stays in the library, it
+     * stays searchable, it stays in favourites. All this forgets is that it
+     * was watched — which is the whole of what somebody means when they want
+     * a half-finished film off their landing page. The library's own hiding
+     * lives elsewhere, behind Deleted in the sidebar, and is a different
+     * decision with a different way back. */
+    if (suffix === '/history' && req.method === 'DELETE') {
+      const key = query.get('key');
+      if (!key) return json(res, 400, { error: 'key is required' });
+      const before = (profile.history || []).length;
+      profile.history = (profile.history || []).filter((r) => r.key !== key);
+      if (profile.history.length !== before) writeProfiles(data);
+      return json(res, 200, { removed: before - profile.history.length });
+    }
+
     if (suffix === '/progress' && req.method === 'GET') {
       const row = (profile.history || []).find((r) => r.key === query.get('key'));
       if (!row) return json(res, 200, { found: false });

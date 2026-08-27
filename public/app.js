@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.39';
+const VERSION = '24.40';
 
 const PAGE_SIZE = 60;
 
@@ -4619,7 +4619,71 @@ function homeCard(row, className) {
   }
 
   card.addEventListener('click', () => playFromHistory(row));
+
+  /* Take it off the landing page, and nothing more than that.
+   *
+   * Continue watching fills with things half-started and abandoned — a film
+   * somebody sat through ten minutes of and gave up on sits at the front of
+   * the house for weeks. This forgets that it was watched. It is NOT a
+   * deletion: the title stays in the library, stays searchable, stays in
+   * favourites. Hiding a title from the library is a different decision and
+   * lives behind Deleted in the sidebar, with its own way back.
+   *
+   * Its own element rather than a corner of the card, because the card is a
+   * button and a button inside a button is not a thing.
+   */
+  const drop = el('span', 'home-drop');
+  // A span, not a button: the card itself IS a button and one cannot be
+  // nested inside another. The role and the key handling are what a button
+  // would have given it, and this way the card keeps its class, its layout
+  // and its click exactly as they were.
+  drop.setAttribute('role', 'button');
+  drop.setAttribute('tabindex', '0');
+  drop.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  drop.title = 'Remove from Continue watching';
+  drop.setAttribute('aria-label',
+    `Remove ${row.seriesName || row.name || 'this'} from Continue watching`);
+  const forget = async (event) => {
+    event.stopPropagation();
+    event.preventDefault();
+    await forgetWatched(row);
+  };
+  drop.addEventListener('click', forget);
+  drop.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') forget(event);
+  });
+  art.append(drop);
+
   return card;
+}
+
+/**
+ * Forget that a title was watched, without touching the title.
+ *
+ * Removed from the screen first and asked of the box after: the row is
+ * already gone from view by the time anybody could notice the request, and
+ * if the box refuses, it comes back with a word about why rather than a
+ * card that silently returns on the next reload.
+ */
+async function forgetWatched(row) {
+  const key = row.key || `${row.kind}:${row.seriesId ?? row.id}`;
+  const before = state.recentlyWatched || [];
+  state.recentlyWatched = before.filter((r) => (r.key || '') !== key);
+  renderHome();
+  try {
+    const url = `/api/profiles/${profiles.current.id}/history`
+      + `?key=${encodeURIComponent(key)}`;
+    const res = await fetch(url, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `the box answered ${res.status}`);
+    }
+    toast('Removed from Continue watching. It is still in your library.');
+  } catch (err) {
+    state.recentlyWatched = before;
+    renderHome();
+    toast(`Couldn't remove it: ${err.message}`);
+  }
 }
 
 /**
@@ -8238,7 +8302,7 @@ const playback = {
 for (const name of ['waiting', 'stalled', 'error', 'ratechange', 'seeked']) {
   $('#video').addEventListener(name, () => {
     playback.events[name] += 1;
-    if (name === 'waiting') offerLowMode();
+    if (name === 'waiting') noteStall();
   });
 }
 
@@ -8252,11 +8316,48 @@ for (const name of ['waiting', 'stalled', 'error', 'ratechange', 'seeked']) {
  */
 let lowOffered = false;
 const LOW_OFFER_STALLS = 4;
+/** Stalls older than this are somebody else's evening. */
+const LOW_OFFER_WINDOW_MS = 90_000;
+let stallsAt = [];
+
+/**
+ * A `waiting` that is really a stall, rather than something normal.
+ *
+ * The offer was firing while somebody scrolled through titles with nothing
+ * wrong, and the count is why: EVERY seek raises `waiting`, so opening four
+ * things, or scrubbing four times, was indistinguishable from four buffer
+ * stalls. It also counted for the whole session, so four scattered over an
+ * hour arrived together as a verdict.
+ *
+ * A stall is a `waiting` that happens while the picture is meant to be
+ * moving — not paused, not seeking — and it only counts alongside others
+ * from the same minute and a half.
+ */
+function noteStall() {
+  const video = $('#video');
+  if (video.paused || video.seeking) return;
+  const now = Date.now();
+  stallsAt = stallsAt.filter((at) => now - at < LOW_OFFER_WINDOW_MS);
+  stallsAt.push(now);
+  offerLowMode();
+}
 
 function offerLowMode() {
   if (lowOffered || lowMode()) return;
-  if (playback.events.waiting < LOW_OFFER_STALLS) return;
+  if (stallsAt.length < LOW_OFFER_STALLS) return;
   if ($('#playerOverlay').hidden) return;
+  /* And the clock really is behind.
+   *
+   * The events say something happened; the measurement says whether it
+   * mattered. A link that recovers between stalls is not one worth telling
+   * somebody to shrink their picture over, and this is the difference
+   * between a warning and a nag.
+   */
+  const rate = playback.measuredRate();
+  const delivery = playback.deliveryRate();
+  const struggling = (rate !== null && rate < 0.9)
+    || (delivery !== null && delivery < 0.9);
+  if (!struggling) return;
   lowOffered = true;
   toast('This keeps stopping to buffer — your connection is struggling.', {
     action: {
@@ -8282,7 +8383,11 @@ for (const name of ['waiting', 'stalled', 'error', 'seeking', 'seeked', 'loadsta
     if (playback.pendingNotes.length < 6) playback.pendingNotes.push(name);
   });
 }
-$('#video').addEventListener('loadstart', () => playback.reset());
+$('#video').addEventListener('loadstart', () => {
+  // A new source starts a new argument about whether it is arriving.
+  stallsAt = [];
+  playback.reset();
+});
 // Seeking jumps the media clock, so the window either side of it is meaningless.
 $('#video').addEventListener('seeking', () => {
   playback.samples = [];

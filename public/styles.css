@@ -4498,3 +4498,38 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   display: block;
   margin: 12px auto 4px;
 }
+
+/* The X on a Continue watching card.
+ *
+ * Outside the card rather than inside it, because the card is a button and a
+ * button inside a button is not a thing. It waits for the pointer — the
+ * landing page is meant to look like posters, not like a list with controls
+ * on it — and stays put on touch, where there is no hover to wait for. */
+.home .card-art { position: relative; }
+
+.home-drop {
+  position: absolute;
+  top: 8px; right: 8px;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 26px; height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(8, 8, 10, .78);
+  backdrop-filter: blur(8px);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s ease, color .12s ease;
+}
+.home-drop svg {
+  width: 13px; height: 13px;
+  fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round;
+}
+.home .card:hover .home-drop,
+.home-drop:focus-visible { opacity: 1; }
+.home-drop:hover { color: #fff; background: rgba(224, 49, 50, .85); }
+.touch .home-drop { opacity: 1; width: 32px; height: 32px; }
+.touch .home-drop svg { width: 15px; height: 15px; }
