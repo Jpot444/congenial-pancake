@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.34';
+const VERSION = '24.35';
 
 const PAGE_SIZE = 60;
 
@@ -3676,7 +3676,19 @@ const foldedName = (item) => {
   return item.folded;
 };
 
-const SEARCH_TABS = ['live', 'movies', 'series'];
+/**
+ * The pages a search runs from.
+ *
+ * Home is one of them, and used not to be. Typing into the box from the
+ * landing page set the query, painted the landing page again, and produced
+ * nothing at all — the one page somebody is most likely to be standing on
+ * when a title occurs to them was the one page that could not look for it.
+ * Downloads and the archive keep their own searches, which look at their own
+ * things.
+ */
+const SEARCH_TABS = ['home', 'live', 'movies', 'series'];
+
+/** The sections a search fills in. Home has no library of its own to add. */
 const SEARCH_SECTIONS = [
   { tab: 'live', title: 'Live TV' },
   { tab: 'movies', title: 'Movies' },
@@ -5094,13 +5106,14 @@ function render() {
 
   if (state.tab === 'downloads') return renderDownloads();
   if (state.tab === 'archive') return renderArchive();
+  // Before Home's own branch, not after: a search typed from the landing
+  // page is a search, and painting the landing page again is what made it
+  // look like the box did nothing.
+  if (state.query && SEARCH_TABS.includes(state.tab)) return renderSearchAll();
+
   if (state.tab === 'home') return renderHome();
   if (state.tab === 'series' && state.seriesId) return renderShowCard();
   if (state.tab === 'movies' && state.movieId) return renderMovieCard();
-
-  // A search is not a filter on the tab you happen to be standing in — it
-  // asks the whole library at once, and each part answers as it can.
-  if (state.query && SEARCH_TABS.includes(state.tab)) return renderSearchAll();
 
   $('#grid').hidden = false;
 
