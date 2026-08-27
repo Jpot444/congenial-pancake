@@ -3851,6 +3851,129 @@ function knownLiveChannels() {
   return [...seen.values()];
 }
 
+/* ------------------------------------------------------------ NFL scores */
+
+/**
+ * The football slate, from ESPN's public scoreboard.
+ *
+ * Chosen because it needs no key: a key in a page served to the living room
+ * is a key given away, and the alternative feeds all want one. It is
+ * undocumented rather than private — the same endpoint espn.com's own
+ * scoreboard reads — so every field is taken defensively and a shape that has
+ * moved yields no games rather than an exception.
+ *
+ * Mapped HERE rather than in the television, so the app stays a reader: one
+ * place understands ESPN, one cache serves every screen in the house, and the
+ * Shield never learns where any of it came from.
+ */
+const NFL_URL = process.env.NFL_URL
+  || 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
+/* Live scores move on every play, and a living room with four screens open
+ * must not become four requests a second at somebody else's server. */
+const NFL_TTL_MS = 30000;
+let nflCache = { at: 0, games: [], error: '' };
+
+function nflStatus(state) {
+  if (state === 'in') return 'live';
+  if (state === 'post') return 'final';
+  return 'upcoming';
+}
+
+/** One ESPN event as the Game shape `public/tv/js/scores.js` documents. */
+function nflGame(event) {
+  const comp = (event.competitions || [])[0] || {};
+  const status = comp.status || event.status || {};
+  const type = status.type || {};
+  const state = nflStatus(type.state);
+
+  const side = (which) => {
+    const c = (comp.competitors || []).find((x) => x.homeAway === which) || null;
+    if (!c) return null;
+    return {
+      abbr: c.team?.abbreviation || c.team?.shortDisplayName || '',
+      record: (c.records || [])[0]?.summary || '',
+      score: c.score === undefined || c.score === null || c.score === ''
+        ? null : Number(c.score),
+      // ESPN names the team that has the ball by id, not by side.
+      possession: Boolean(comp.situation?.possession)
+        && String(comp.situation.possession) === String(c.id ?? c.team?.id),
+    };
+  };
+
+  const kickoff = Date.parse(comp.date || event.date || '') || 0;
+  let clock = '';
+  if (state === 'live') {
+    const quarter = Number(status.period) || 0;
+    // Overtime is period 5 and calling it Q5 is wrong on television.
+    const label = quarter > 4 ? 'OT' : `Q${quarter}`;
+    clock = [quarter ? label : '', status.displayClock || ''].filter(Boolean).join(' · ');
+  } else if (state === 'final') {
+    clock = type.shortDetail || 'Final';
+  } else if (kickoff) {
+    clock = new Date(kickoff).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+
+  const situation = state === 'live'
+    ? [comp.situation?.shortDownDistanceText, comp.situation?.possessionText]
+      .filter(Boolean).join(' · ')
+    : '';
+
+  // "FOX", "CBS", "NBC", "NFL Network" — close enough for matchChannel(),
+  // which is deliberately loose about the provider's prefixes and suffixes.
+  const network = (comp.broadcasts || [])
+    .flatMap((b) => b.names || [])
+    .filter(Boolean)[0] || '';
+
+  let note = '';
+  if (state === 'upcoming' && kickoff) {
+    const mins = Math.round((kickoff - Date.now()) / 60000);
+    if (mins > 0 && mins < 240) note = `Kicks off in ${mins} min`;
+  }
+
+  return {
+    id: String(event.id || comp.id || ''),
+    status: state,
+    channelMatch: network,
+    channelName: network,
+    redZone: false,
+    away: side('away'),
+    home: side('home'),
+    clock,
+    situation,
+    kickoff,
+    note,
+    // Left null on purpose: where a channel matches, the real EPG start and
+    // stop describe the broadcast better than a guess from the game clock.
+    progress: null,
+    placeholder: false,
+  };
+}
+
+async function nflScores() {
+  if (Date.now() - nflCache.at < NFL_TTL_MS) return nflCache;
+  try {
+    const res = await request(NFL_URL, { headers: { accept: 'application/json' } });
+    if ((res.statusCode || 500) >= 400) {
+      res.resume();
+      throw new Error(`HTTP ${res.statusCode}`);
+    }
+    const body = JSON.parse((await readBody(res)).toString('utf8'));
+    const games = (body.events || []).map(nflGame).filter((g) => g.id);
+    nflCache = { at: Date.now(), games, error: '' };
+  } catch (err) {
+    /* A feed that is down must not take the football row down with it, and it
+     * must not silently serve a slate from last Sunday either. The last good
+     * answer stands for as long as it is worth standing. */
+    const stale = Date.now() - nflCache.at < 10 * 60 * 1000;
+    nflCache = {
+      at: stale ? nflCache.at : Date.now(),
+      games: stale ? nflCache.games : [],
+      error: err.message,
+    };
+  }
+  return nflCache;
+}
+
 /** Where the open guides live, and where to go looking for the current names. */
 const GUIDE_CATALOGUE_HOME = 'https://epgshare01.online/epgshare01/';
 
@@ -5126,6 +5249,16 @@ async function handleApi(req, res, pathname, query) {
     return json(res, 200, {
       channels: ids.map((id) => fresh.find((c) => c.id === id)),
       busy: providerBusy(),
+    });
+  }
+
+  /* ---- The football slate ---- */
+  if (pathname === '/api/scores/nfl') {
+    const slate = await nflScores();
+    return json(res, 200, {
+      games: slate.games,
+      at: slate.at,
+      error: slate.error || undefined,
     });
   }
 

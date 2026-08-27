@@ -30,9 +30,26 @@
  *                         channel matches: real EPG start/stop beats a guess.
  */
 
-const ENDPOINT = '';
+/*
+ * The box, not the feed.
+ *
+ * ESPN's public scoreboard needs no key, but it is still read by the Pi
+ * rather than by the television: one place understands ESPN's shape, one
+ * cache serves every screen in the house, and if the feed is ever swapped for
+ * one that DOES want a key, nothing here has to learn about it. The Pi
+ * already emits the Game shape below, so `normalize()` has almost nothing
+ * left to do.
+ */
+const ENDPOINT = '/api/scores/nfl';
 
-/** Every field a screen may read, with nothing missing. */
+/**
+ * Every field a screen may read, with nothing missing.
+ *
+ * Still here, and still the only place that would change for a different
+ * feed: the Pi happens to hand back this shape already, so most of it is a
+ * pass-through — but a screen must never be handed a row with a field
+ * missing, whatever answered.
+ */
 function normalize(row) {
   return {
     id: String(row.id ?? ''),
@@ -89,22 +106,34 @@ const PLACEHOLDER = [
  * The slate. Never throws and never leaves the row empty: a scores feed that
  * is down must not take the football row down with it.
  */
+let live = false;
+
 export async function getGames() {
-  if (!ENDPOINT) return PLACEHOLDER.map(normalize);
+  if (!ENDPOINT) {
+    live = false;
+    return PLACEHOLDER.map(normalize);
+  }
   try {
     const res = await fetch(ENDPOINT, { headers: { accept: 'application/json' } });
     if (!res.ok) throw new Error(String(res.status));
     const data = await res.json();
     const rows = Array.isArray(data) ? data : (data.games || data.events || []);
     const games = rows.map(normalize).filter((g) => g.id);
-    return games.length ? games : PLACEHOLDER.map(normalize);
+    /* An empty slate is an ANSWER, not a failure — it is Tuesday. Falling
+     * back to the placeholder here would put invented scores on the screen
+     * every day of the week football is not played, which is worse than an
+     * empty row by a distance. */
+    live = true;
+    return games;
   } catch {
-    return PLACEHOLDER.map(normalize);
+    // The feed is unreachable. Say nothing rather than say something wrong.
+    live = true;
+    return [];
   }
 }
 
 /** Whether anything on screen is invented, so the row can say so. */
-export const usingPlaceholders = () => !ENDPOINT;
+export const usingPlaceholders = () => !ENDPOINT || !live;
 
 /**
  * Tie a game to a channel in the real live library.

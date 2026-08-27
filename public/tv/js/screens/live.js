@@ -62,7 +62,7 @@ function gameRow(app) {
   const whip = view.games.filter((g) => g.redZone).length;
   const meta = usingPlaceholders()
     ? 'Scores are placeholder — no feed connected'
-    : `${liveCount} games${whip ? ` · ${whip} whip-around` : ''}`;
+    : `${liveCount} game${liveCount === 1 ? '' : 's'}${whip ? ` · ${whip} whip-around` : ''}`;
 
   const head = rowHead('LIVE NOW', {
     label: labelForSlate(),

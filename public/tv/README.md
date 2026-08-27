@@ -34,26 +34,35 @@ If the box is ever offline at boot, vendor them next to this README and change
 the two `<script>` tags — the app falls back to the `<video>` element's own
 playback when neither is present.
 
-## The scores feed — the one thing that is not real
+## The scores feed — connected
 
-`js/scores.js` is placeholder text. The Xtream guide carries a programme title
-and nothing else: no score, no quarter, no clock, no possession. The game row
-says so on screen ("Scores are placeholder — no feed connected") rather than
-implying a feed exists.
+`ENDPOINT` is `/api/scores/nfl`, served by the Pi from **ESPN's public
+scoreboard**. It needs no key, which is the reason it was chosen: a key in a
+page served to the living room is a key given away.
 
-**To make it real, there are exactly two edits, both in `js/scores.js`:**
+The Pi reads it and maps it, not the television. One place understands ESPN's
+shape, one 30-second cache serves every screen in the house, and if the feed is
+ever swapped for one that DOES want a key, nothing in this folder has to learn
+about it. `normalize()` is still the only place a different feed would touch —
+it is close to a pass-through now because the box already emits the Game shape.
 
-1. Set `ENDPOINT` to the feed's URL. If it needs a key, proxy it through the Pi
-   — a key in a page served to the living room is a key given away.
-2. Make `normalize()` map one row of that feed onto the documented Game shape.
+What comes across: score, quarter and clock, down and distance, which team has
+the ball, the broadcast network, and the kickoff time for anything not started.
+`matchChannel()` ties a game to a real channel by name — loosely, so `FOX` from
+ESPN finds `US| FOX ᴴᴰ` — which is what makes OK on a score card tune the actual
+broadcast. The progress bar still comes from that channel's EPG start and stop,
+because the real thing beats a guess from the game clock.
 
-Nothing else reads the feed. Screens take games from `getGames()` and never look
-at where they came from. `matchChannel()` ties a game to a real channel by name
-(loosely: `FOX` finds `US| FOX ᴴᴰ`), which is what makes OK on a score card tune
-the actual broadcast — so the feed's channel names only have to be close.
+**An empty slate is an answer, not a failure.** On a Tuesday the row is empty,
+and if ESPN is unreachable it stays empty rather than falling back to invented
+scores — placeholder numbers on a television are worse than no numbers by a
+distance. The placeholder slate only appears if `ENDPOINT` is blanked.
 
-What is already real on those cards: the channel, and the broadcast progress
-bar, which comes from that channel's EPG start/stop, not from the placeholder.
+The endpoint can be pointed elsewhere for testing without touching the code:
+
+```sh
+NFL_URL=http://127.0.0.1:9922/ node server.js
+```
 
 ## The screens
 
