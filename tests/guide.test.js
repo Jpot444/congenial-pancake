@@ -28,7 +28,9 @@ const check = (name, ok, detail) => {
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const CHANNELS = [
-  { kind: 'live', id: 501, name: 'US| NEWS ONE', categoryId: 'c1' },
+  // Names as a profile actually stores them: whatever they were called when
+  // they were starred, tags and all.
+  { kind: 'live', id: 501, name: 'US: FOX NEWS HD', categoryId: 'c1' },
   { kind: 'live', id: 502, name: 'US| SPORTS HD', categoryId: 'c1' },
   { kind: 'live', id: 503, name: 'US| NOTHING LISTED', categoryId: 'c1' },
 ];
@@ -86,7 +88,7 @@ const CHANNELS = [
   const rows = await home(CHANNELS);
   console.log('   ', JSON.stringify(rows, null, 1).slice(0, 400));
   check('a row per favourited channel', rows.length === 3, String(rows.length));
-  check('named by the channel', rows[0].channel === 'US| NEWS ONE', rows[0].channel);
+  check('named by the channel', rows[0].channel === 'FOX NEWS HD', rows[0].channel);
   check('saying what is on now', /Now on 501/.test(rows[0].now), rows[0].now);
   check('and what is on after it, with a time',
     /\d{1,2}:\d{2}/.test(rows[0].next) && /Next on 501/.test(rows[0].next), rows[0].next);
@@ -95,10 +97,18 @@ const CHANNELS = [
   console.log('       pressing — half an hour in is a different decision');
 
   console.log('\n  a channel the provider lists nothing for');
-  check('is still a row, and still presses', rows[2].channel === 'US| NOTHING LISTED',
+  check('is still a row, and still presses', rows[2].channel === 'NOTHING LISTED',
     rows[2].channel);
-  check('with nothing invented to fill it',
-    rows[2].now === '' && rows[2].next === '', JSON.stringify(rows[2]));
+  // A hole in the row is a hole most of the page wide on a desktop, which is
+  // what the first version looked like.
+  check('says so rather than leaving a hole in the row',
+    rows[2].now === 'No listing', JSON.stringify(rows[2]));
+  check('and invents no programme for it', rows[2].next === '', rows[2].next);
+
+  console.log('\n  and the names, which favourites stored before the tags came off');
+  check('a leading tag is trimmed for display',
+    rows[0].channel === 'FOX NEWS HD' || rows[0].channel === 'NEWS ONE',
+    rows[0].channel);
 
   console.log('\n  and only the channels, only a few of them');
   console.log('   ', JSON.stringify(asked));
@@ -122,9 +132,27 @@ const CHANNELS = [
   const quiet = await home(CHANNELS);
   console.log('   ', JSON.stringify(quiet));
   check('the rows are still there', quiet.length === 3, String(quiet.length));
-  check('named, and pressable', quiet[0].channel === 'US| NEWS ONE', quiet[0].channel);
+  check('named, and pressable', quiet[0].channel === 'FOX NEWS HD', quiet[0].channel);
   check('with no programme claimed and no error shouted',
     quiet.every((r) => r.now === '' && r.next === ''), JSON.stringify(quiet));
+
+  console.log('\n  and it wears the redesign\'s own heading');
+  //
+  // A section that invents its own heading beside the redesign's reads as
+  // something bolted on, which is exactly how the first version looked.
+  const head = await page.evaluate(() => {
+    const s = document.querySelector('.home-guide');
+    return { shelfHead: !!s?.querySelector('.shelf-head'),
+      title: s?.querySelector('.shelf-title')?.textContent || '',
+      count: s?.querySelector('.shelf-count')?.textContent || '',
+      capped: getComputedStyle(s?.querySelector('.guide-list')).maxWidth };
+  });
+  console.log('   ', JSON.stringify(head));
+  check('the same head every other block on the page uses',
+    head.shelfHead && head.title === "What's on", JSON.stringify(head));
+  check('counted like the others', /channel/.test(head.count), head.count);
+  check('and the rows are capped rather than flung across the window',
+    head.capped !== 'none' && parseInt(head.capped, 10) < 1200, head.capped);
 
   console.log('\n  and no channels at all');
   const none = await home([{ kind: 'movie', id: 9, name: 'A Film' }]);

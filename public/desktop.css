@@ -1895,3 +1895,27 @@
   color: var(--muted);
 }
 .desk .dk-ep .cap s { text-decoration: none; color: var(--muted-dim); }
+
+/* What's on, inside the redesign.
+ *
+ * The section already carries `shelf-head`, so the crimson rule, the caps and
+ * the count pill come from the shelf rules above and this only has to place
+ * the rows. Held to the same reading width as a shelf's first cards rather
+ * than the window: a guide read across a 1900px page is not read at all. */
+.desk .home-guide { margin-top: var(--space-12); scroll-margin-top: 118px; }
+.desk .home-guide .guide-list { max-width: 1040px; }
+
+.desk .guide-row {
+  padding: 12px 14px;
+  border-radius: var(--radius-md, 10px);
+  font-size: 14px;
+}
+.desk .guide-row + .guide-row { border-top: 1px solid var(--line); }
+.desk .guide-row:hover { background: rgba(255, 255, 255, .04); }
+
+.desk .guide-channel {
+  font-family: var(--font-display, inherit);
+  letter-spacing: .04em;
+  color: var(--text);
+}
+.desk .guide-now { font-weight: 500; }

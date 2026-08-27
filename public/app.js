@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.43';
+const VERSION = '24.44';
 
 const PAGE_SIZE = 60;
 
@@ -4622,6 +4622,29 @@ async function playFromHistory(row) {
   openSeries(item);
 }
 
+/**
+ * A leading provider tag, off a name that was stored before they came off.
+ *
+ * The box cleans titles on the way out of the library, but a favourite or a
+ * history row keeps the name it had when it was saved — so a channel starred
+ * in July still reads "US: FOX NEWS HD" on a page built in August. This is
+ * the same shape rule the box uses, applied at the point of display only:
+ * what is stored stays what was starred.
+ */
+const TRIM_TAG = /^([A-Za-z0-9+&]{1,5})\s*[-|:\u2013\u2022]\s*/;
+function trimTag(raw) {
+  let name = String(raw || '').trim();
+  for (let i = 0; i < 4; i += 1) {
+    const m = TRIM_TAG.exec(name);
+    if (!m) break;
+    const token = m[1].toUpperCase();
+    if (token === 'XXX') break;
+    if (!/^[A-Z0-9][A-Z0-9+&]*$/.test(m[1])) break;
+    name = name.slice(m[0].length).trimStart();
+  }
+  return name || String(raw || '').trim();
+}
+
 /** How many channels the guide shows. The box caps it too; this is the row. */
 const GUIDE_CHANNELS = 6;
 
@@ -4643,16 +4666,32 @@ const GUIDE_CHANNELS = 6;
  */
 async function paintGuide(section, channels) {
   section.innerHTML = '';
-  const label = el('h2', 'home-label');
+  /* The redesign's own section heading, not the old one.
+   *
+   * `shelf-head` is what every other block on the desktop home uses — the
+   * crimson rule, the Bebas caps, the count in a pill — and a section that
+   * invents its own heading beside them reads as something bolted on, which
+   * is exactly how this looked. The classes are inert outside `.desk`, so
+   * the phone keeps its own plainer version from styles.css. */
+  const head = el('div', 'shelf-head');
+  const label = el('h2', 'shelf-title');
   label.textContent = "What's on";
-  section.append(label);
+  const count = el('span', 'shelf-count');
+  count.textContent = `${channels.length} channel${channels.length === 1 ? '' : 's'}`;
+  head.append(label, count);
+  section.append(head);
 
   const rows = new Map();
   const list = el('div', 'guide-list');
   for (const channel of channels) {
     const row = el('button', 'guide-row');
     const name = el('span', 'guide-channel');
-    name.textContent = channel.name;
+    // Favourites keep the name they had when they were favourited, which for
+    // anything starred before the prefixes came off is still "US: FOX NEWS
+    // HD". Trimmed here for display rather than rewritten in the profile —
+    // what is stored is what was starred, and rewriting somebody's saved
+    // list to tidy a label is not a trade worth making.
+    name.textContent = trimTag(channel.name);
     const now = el('span', 'guide-now');
     now.textContent = '…';
     const next = el('span', 'guide-next');
@@ -4685,6 +4724,12 @@ async function paintGuide(section, channels) {
     row.next.textContent = coming
       ? `${clockFromTimestamp(coming.start)}  ${coming.title}`
       : '';
+    // A channel the provider lists nothing for is a row with a hole in it
+    // otherwise, and on a wide screen that hole is most of the page.
+    if (!current && !coming) {
+      row.now.textContent = 'No listing';
+      row.now.classList.add('guide-none');
+    }
     // How far through it is, which is the thing you actually want to know
     // before pressing: half an hour into a two-hour film is a different
     // decision from two minutes in.

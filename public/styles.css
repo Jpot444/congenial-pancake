@@ -4664,24 +4664,48 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
  *
  * Now and next, for the channels this profile favourited. A list rather than
  * a grid of cards: three columns of text scan far faster than six tiles when
- * the question is "is anything on", and the channel names are the only part
- * guaranteed to be there — the programmes come from the provider and may not
- * arrive at all. */
-.home-guide { margin-top: 18px; }
+ * the question is "is anything on".
+ *
+ * Capped in width, and that is the whole of what was wrong with the first
+ * version. Left to fill a 1900px window the channel sat on the far left and
+ * its programme on the far right with a thousand pixels of nothing between
+ * them, which is not a listing, it is two columns that happen to share a
+ * row. A guide is read across, so it has to be narrow enough to read across.
+ */
+.home-guide { margin-top: 22px; }
+
+/* Outside the desktop redesign this heading is on its own, so it gets the
+   plainer treatment the rest of the phone layout uses. */
+.home-guide .shelf-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.home-guide .shelf-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.home-guide .shelf-count { font-size: 12px; color: var(--muted-dim); }
 
 .guide-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-width: 940px;
 }
 
 .guide-row {
   display: grid;
-  grid-template-columns: minmax(0, 150px) minmax(0, 1fr) minmax(0, 220px);
+  grid-template-columns: minmax(0, 178px) minmax(0, 1fr) minmax(0, 210px);
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   width: 100%;
-  padding: 9px 12px;
+  padding: 10px 12px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -4709,6 +4733,7 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.guide-none { color: var(--muted-dim); font-style: italic; }
 
 .guide-bar {
   position: absolute;
