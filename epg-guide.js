@@ -93,6 +93,8 @@ const store = {
   /** ourChannelId -> the feed its listings came from, so a failed feed's
    *  channels can be carried forward instead of vanishing. */
   fromSource: new Map(),
+  /** "abcnewyork" -> "wabc", learned from the channels that name both. */
+  byMarket: new Map(),
   channels: [],
   at: 0,
   running: false,
@@ -785,11 +787,48 @@ function channelKeys(ch) {
   // becomes "nbcbravo" and then "bravo", which is what every guide calls it.
   const core = coreTokens(marked);
   add(core.join(''), 'loose');
-  if (marked.some((m) => m.g)) add(marketKey(core), 'loose');
+  const market = marked.some((m) => m.g) ? marketKey(core) : '';
+  if (market) add(market, 'loose');
+  // No call sign of its own? Borrow the one the sister channel names.
+  if (!callSigns(ch.name).length && !bracketNames(marked).length) {
+    const borrowed = store.byMarket.get(market) || store.byMarket.get(core.join(''));
+    if (borrowed) add(borrowed, 'callsign');
+  }
   add(withoutNetwork(core), 'loose');
   add(withoutNetwork(tokens), 'loose');
   add(coreKey(tokens.join('')), 'loose');
   return out;
+}
+
+/**
+ * Which station serves which market, learned from our own channel list.
+ *
+ * The guide does not spell out cities. It publishes `WABC-DT` and
+ * `US: ABC (WABC)` and nothing anywhere says New York, so matching
+ * "ABC HD [NEW YORK]" to it by market was never going to work.
+ *
+ * But the provider sells the same station twice, and the other copy is called
+ * "ABC WABC NEW YORK". That one carries the call sign AND the market, which
+ * is the mapping — ABC plus New York is WABC — and it is sitting in the
+ * library already. So the channels that name a market without a call sign
+ * borrow one from the channels that name both.
+ *
+ * Only where it is unambiguous: one call sign in the name, and the first
+ * spelling of a market wins, so a second station in the same city cannot
+ * quietly reassign the first one's schedule.
+ */
+function stationByMarket(channels) {
+  const map = new Map();
+  for (const ch of channels || []) {
+    const toks = coreTokens(markedTokens(ch.name));
+    const signs = toks.filter((t) => /^[kw][a-z]{2,3}$/.test(t));
+    if (signs.length !== 1) continue;
+    const rest = toks.filter((t) => t !== signs[0] && !/^\d+$/.test(t));
+    if (rest.length < 2) continue;
+    const key = rest.join('');
+    if (!map.has(key)) map.set(key, signs[0]);
+  }
+  return map;
 }
 
 /** Those keys, inverted: key -> the channels of ours that answer to it. */
@@ -900,6 +939,7 @@ function setChannels(channels) {
   store.channels = (Array.isArray(channels) ? channels : []).map((c) => ({
     id: String(c.id), epgId: c.epgId || '', name: c.name || '',
   }));
+  store.byMarket = stationByMarket(store.channels);
 }
 
 const due = () => !store.at || Date.now() - store.at > REFRESH_MS;
@@ -1303,6 +1343,6 @@ function explain(query) {
 module.exports = {
   configure, setSources, setChannels, refresh, lookup, status, explain, probe, listing, nearestNames, save, load,
   // Exported for the suites, which check the joining rather than the network.
-  chanKey, coreKey, callSigns, bracketNames, markedTokens, stationVariants, parseStamp, wantedKeys,
+  chanKey, coreKey, callSigns, bracketNames, markedTokens, stationVariants, stationByMarket, parseStamp, wantedKeys,
   channelKeys, unescapeXml,
 };
