@@ -3880,6 +3880,34 @@ function privateAddress(target) {
   return isPrivate ? 'Only addresses out on the internet can be tested.' : '';
 }
 
+/**
+ * A listing read out of the channel's own name.
+ *
+ * Event channels are sold with the fixture written into the name:
+ *
+ *   MLB 01 | Rockies x Nationals start:2026-08-27 18:05:00 stop:2026-08-28 01:18:20
+ *
+ * No guide on earth carries these — they exist for one night and are renamed
+ * for the next — but the provider has already said exactly what is on and
+ * when, so there is nothing to look up. The times are read as UTC, which is
+ * what this provider publishes; if a fixture shows an hour out, that is the
+ * assumption to revisit.
+ */
+const EVENT_TIMES = /start:\s*(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})[\s\S]*?stop:\s*(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/i;
+
+function listingFromName(name) {
+  const raw = String(name || '');
+  const m = EVENT_TIMES.exec(raw);
+  if (!m) return null;
+  const start = Math.floor(Date.parse(`${m[1]}T${m[2]}Z`) / 1000);
+  const stop = Math.floor(Date.parse(`${m[3]}T${m[4]}Z`) / 1000);
+  if (!start || !stop || stop <= start) return null;
+  // Everything before "start:" is the fixture, minus the separator it was
+  // hanging off.
+  const title = raw.slice(0, m.index).replace(/[|\-–—:\s]+$/, '').trim();
+  return title ? [{ title, start, stop }] : null;
+}
+
 /** The provider's whole guide in one request, rather than one call a channel. */
 function providerGuideUrl(cfg) {
   if (!cfg || cfg.mode !== 'xtream' || !cfg.host) return null;
@@ -5020,6 +5048,8 @@ async function handleApi(req, res, pathname, query) {
     const now = Date.now();
     const fresh = [];
     const stale = [];
+    // Only built if one of the ids might need it — this walks the cache.
+    const liveNames = new Map(knownLiveChannels().map((c) => [String(c.id), c.name]));
     for (const id of ids) {
       /* The outside guide first, and it is not a cache — it is a whole day of
        * listings already on disk, for far more channels than the provider
@@ -5029,6 +5059,13 @@ async function handleApi(req, res, pathname, query) {
       const fromGuide = guide.lookup(id);
       if (fromGuide) {
         fresh.push({ id, known: true, source: 'guide', listings: windowOf(fromGuide, now) });
+        continue;
+      }
+      // An event channel says what is on in its own name. Nothing to look up
+      // and nobody to ask.
+      const fromName = listingFromName(liveNames.get(String(id)));
+      if (fromName) {
+        fresh.push({ id, known: true, source: 'name', listings: windowOf(fromName, now) });
         continue;
       }
       const held = epgCache.get(id);
