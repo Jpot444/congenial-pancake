@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '29.0';
+const VERSION = '29.1';
 
 const PAGE_SIZE = 60;
 
@@ -5281,7 +5281,10 @@ async function paintGuide(section, channels, opts = {}) {
     // all, so a channel starred in July still reads "US: FOX NEWS HD".
     // Trimmed for display only — what is stored stays what was starred.
     who.append(Object.assign(el('span', 'guide-chan-name'),
-      { textContent: trimTag(channel.name) }));
+      // Leading provider tag off, trailing encoding marks off. A guide row is
+      // eleven characters wide before it starts truncating, and "20/20 ᴿᴬᵂ"
+      // spends three of them saying how the stream is packed.
+      { textContent: cleanCatName(trimTag(channel.name)) }));
     if (channel.num) {
       who.append(Object.assign(el('span', 'guide-chan-num'),
         { textContent: String(channel.num) }));
@@ -5633,16 +5636,31 @@ function renderListings() {
     return;
   }
 
+  const inCategory = state.category !== null && state.category !== DELETED_CATEGORY;
   let channels = browsable(source.items).filter((i) => !profiles.isDeleted(i));
-  if (state.category !== null && state.category !== DELETED_CATEGORY) {
+
+  /* Inside a category, that category. Outside one, YOUR CHANNELS.
+   *
+   * "All of Live TV" is eleven thousand channels and a schedule of the first
+   * forty of them alphabetically is a list of things nobody watches. The
+   * favourites are the answer to "what's on" for anyone who has set any; the
+   * whole lot is only the answer for somebody who has not. */
+  const favIds = new Set((profiles.favItems ? profiles.favItems() : [])
+    .filter((i) => i.kind === 'live').map((i) => String(i.id)));
+  let scope = 'all';
+  if (inCategory) {
     channels = channels.filter((i) => String(i.categoryId) === String(state.category));
+    scope = 'category';
+  } else if (favIds.size) {
+    channels = channels.filter((i) => favIds.has(String(i.id)));
+    scope = 'favourites';
   }
 
-  const where = state.category === null
-    ? 'Live TV'
-    : (source.categories.find((c) => String(c.id) === String(state.category))?.name
-       || 'this category');
-  $('#contentTitle').textContent = where;
+  const where = inCategory
+    ? (source.categories.find((c) => String(c.id) === String(state.category))?.name
+       || 'this category')
+    : 'Live TV';
+  $('#contentTitle').textContent = cleanCatName(where);
 
   if (!channels.length) {
     $('#emptyState').hidden = false;
@@ -5654,7 +5672,7 @@ function renderListings() {
   const section = el('section', 'home-guide listings-guide');
   grid.append(section);
   paintGuide(section, shown, {
-    title: "What's on",
+    title: scope === 'favourites' ? "What's on your channels" : "What's on",
     count: shown.length < channels.length
       ? `first ${shown.length} of ${channels.length.toLocaleString()}`
       : `${shown.length} channel${shown.length === 1 ? '' : 's'}`,
@@ -6345,6 +6363,7 @@ function renderSkeletons() {
   grid.hidden = false;
   grid.innerHTML = '';
   grid.classList.toggle('is-live', state.tab === 'live');
+  grid.classList.remove('is-cats', 'is-listings');
   for (let i = 0; i < 18; i += 1) grid.append(el('div', 'skeleton'));
 }
 
@@ -6465,7 +6484,13 @@ function render() {
   const grid = $('#grid');
   grid.innerHTML = '';
   grid.classList.toggle('is-live', state.tab === 'live');
-  grid.classList.remove('is-cats');
+  /* Both mode classes, not just the one.
+   *
+   * `is-listings` turns the grid into a block so the schedule can lay itself
+   * out, and only `is-cats` was ever being cleared — so coming back from
+   * Listings left the channel grid as a single column of mismatched cards.
+   * The two are the same kind of thing and go together. */
+  grid.classList.remove('is-cats', 'is-listings');
 
   // Inside one live category — offer the way back out to the squares.
   if (state.tab === 'live' && state.category !== null) {
