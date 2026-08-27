@@ -1216,6 +1216,13 @@
        browser saying which build it is running, which is the same question
        whatever the page looks like — so it is kept and put back at the end. */
     const stamp = view.querySelector('.home-version');
+    /* Kept for the same reason as the stamp, and for one more: what is on is
+       a fact about the provider rather than a piece of this layout, it costs
+       a call to a single-connection box to get, and throwing it away here
+       would mean fetching it again the moment the page is redrawn. Anything
+       app.js adds to home in future will need a line like this one, which is
+       the price of rebuilding a page somebody else drew. */
+    const guide = view.querySelector('.home-guide');
     view.innerHTML = '';
 
     const channels = profiles.favItems().filter((i) => i.kind === 'live');
@@ -1275,6 +1282,7 @@
        counts as content and a profile with nothing watched and nothing
        starred gets a blank page instead of a sentence telling it why. */
     const bare = !features.length && !view.querySelector('.shelf');
+    if (guide) view.append(guide);
     if (stamp) view.append(stamp);
     $('#appView').append(buildFooter());
     $('#emptyState').hidden = !bare;

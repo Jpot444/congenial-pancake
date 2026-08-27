@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.42';
+const VERSION = '24.43';
 
 const PAGE_SIZE = 60;
 
@@ -4622,6 +4622,83 @@ async function playFromHistory(row) {
   openSeries(item);
 }
 
+/** How many channels the guide shows. The box caps it too; this is the row. */
+const GUIDE_CHANNELS = 6;
+
+/**
+ * "What's on" — now and next, for the channels somebody favourited.
+ *
+ * The listings are real: this provider answers `get_short_epg` per channel,
+ * and the player has been showing them since long before this. What is new
+ * is asking about six channels at once, which is why it goes through the
+ * box's own endpoint rather than firing six calls from here — see the
+ * comment on /api/epg/now for what a single-connection provider does when
+ * six metadata calls arrive while somebody is watching a film.
+ *
+ * Drawn in two passes on purpose. The row appears immediately with the
+ * channel names, because those are already known and the landing page must
+ * not wait on the provider for anything; the programmes drop in when they
+ * arrive. If they never do — provider busy, no listings for that channel —
+ * the row is still a perfectly good list of channels to press.
+ */
+async function paintGuide(section, channels) {
+  section.innerHTML = '';
+  const label = el('h2', 'home-label');
+  label.textContent = "What's on";
+  section.append(label);
+
+  const rows = new Map();
+  const list = el('div', 'guide-list');
+  for (const channel of channels) {
+    const row = el('button', 'guide-row');
+    const name = el('span', 'guide-channel');
+    name.textContent = channel.name;
+    const now = el('span', 'guide-now');
+    now.textContent = '…';
+    const next = el('span', 'guide-next');
+    row.append(name, now, next);
+    row.addEventListener('click', () => openPlayer(channel));
+    rows.set(String(channel.id), { now, next });
+    list.append(row);
+  }
+  section.append(list);
+
+  let data;
+  try {
+    data = await api('/api/epg/now', { ids: channels.map((c) => c.id).join(',') });
+  } catch {
+    // A guide that cannot be had is not an error worth a message. The
+    // channels are still there and still press.
+    for (const { now, next } of rows.values()) { now.textContent = ''; next.textContent = ''; }
+    return;
+  }
+
+  const at = Date.now() / 1000;
+  for (const channel of data.channels || []) {
+    const row = rows.get(String(channel.id));
+    if (!row) continue;
+    const listings = channel.listings || [];
+    const current = listings.find((l) => l.start <= at && at < l.stop);
+    const coming = listings.find((l) => l.start > at);
+
+    row.now.textContent = current ? current.title : '';
+    row.next.textContent = coming
+      ? `${clockFromTimestamp(coming.start)}  ${coming.title}`
+      : '';
+    // How far through it is, which is the thing you actually want to know
+    // before pressing: half an hour into a two-hour film is a different
+    // decision from two minutes in.
+    if (current && current.stop > current.start) {
+      const through = (at - current.start) / (current.stop - current.start);
+      const bar = el('span', 'guide-bar');
+      const fill = el('i');
+      fill.style.width = `${Math.min(100, Math.max(0, through * 100))}%`;
+      bar.append(fill);
+      row.now.append(bar);
+    }
+  }
+}
+
 /** One poster on the home screen, from a history row rather than a library item. */
 function homeCard(row, className) {
   const card = el('button', `card ${className}`);
@@ -4882,6 +4959,15 @@ function renderHome() {
     })
   );
   view.append(favRow);
+
+  // What is on right now, for the channels this profile actually watches.
+  // Appended empty and filled in behind, because the listings come from the
+  // provider and the landing page is not allowed to wait on the provider.
+  if (channels.length) {
+    const guide = el('section', 'home-guide');
+    view.append(guide);
+    paintGuide(guide, channels.slice(0, GUIDE_CHANNELS));
+  }
 
   if (!recent.length && !favs.length) {
     $('#emptyState').hidden = false;

@@ -3710,6 +3710,18 @@ const LIBRARY_ACTIONS = {
   series: ['get_series_categories', 'get_series', 'series'],
 };
 
+/* How many channels a guide may ask about, how long a listing stays good,
+ * and how many the box will fetch in one go.
+ *
+ * The cap is not tuning for its own sake: each one is a separate call to a
+ * provider with a single connection, so six is a guide and sixty is a denial
+ * of service against yourself. The TTL is generous because a programme that
+ * started twenty minutes ago is still the programme that is on. */
+const EPG_MAX_CHANNELS = 8;
+const EPG_TTL_MS = 15 * 60 * 1000;
+const EPG_PER_REQUEST = 4;
+const epgCache = new Map();
+
 const libraryCache = new Map();
 const LIBRARY_TTL = 30 * 60 * 1000;
 /** Payload shape version — bump when projectItem gains or loses a field. */
@@ -4776,6 +4788,77 @@ async function handleApi(req, res, pathname, query) {
   }
 
   if (!cfg) return json(res, 409, { error: 'Not configured' });
+
+  /* ---- What is on, for a handful of channels at once ---- */
+  //
+  // The player already asks for one channel's listings when it tunes in. A
+  // guide on the landing page is the same question asked of six channels at
+  // once, and that is a different problem: this provider allows ONE
+  // connection, and while ffmpeg is streaming through it every metadata call
+  // comes back `{"error":""}`. Six calls fired from a browser while somebody
+  // is watching something would be six failures and a connection contended
+  // for no reason.
+  //
+  // So it is asked here instead, where the box already knows whether the
+  // provider is free, and answered from a cache the rest of the time. A
+  // listing is good for as long as the programme runs; half an hour old is
+  // still true.
+  if (pathname === '/api/epg/now') {
+    if (cfg.mode !== 'xtream') return json(res, 200, { channels: [], reason: 'not-xtream' });
+
+    const ids = String(query.get('ids') || '')
+      .split(',').map((s) => s.trim()).filter(Boolean).slice(0, EPG_MAX_CHANNELS);
+    if (!ids.length) return json(res, 200, { channels: [] });
+
+    const now = Date.now();
+    const fresh = [];
+    const stale = [];
+    for (const id of ids) {
+      const held = epgCache.get(id);
+      if (held && now - held.at < EPG_TTL_MS) fresh.push(held.channel);
+      else stale.push(id);
+    }
+
+    // Playback owns the connection. Whatever is already known is served, and
+    // the rest waits — a guide is worth having, and never worth a stutter.
+    if (stale.length && !providerBusy()) {
+      for (const id of stale.slice(0, EPG_PER_REQUEST)) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const upstream = await request(xtreamApiUrl(cfg, {
+            action: 'get_short_epg', stream_id: id, limit: 4,
+          }));
+          // eslint-disable-next-line no-await-in-loop
+          const body = (await readBody(upstream)).toString('utf8');
+          const data = JSON.parse(body);
+          const listings = (data.epg_listings || []).map(decodeEpg);
+          const channel = { id, listings: listings.map((l) => ({
+            title: l.title || '',
+            start: Number(l.start_timestamp) || 0,
+            stop: Number(l.stop_timestamp) || 0,
+          })).filter((l) => l.start && l.stop) };
+          epgCache.set(id, { at: now, channel });
+          fresh.push(channel);
+        } catch {
+          // A channel the provider has no listings for is not an error, it
+          // is a channel with no listings. Remembered as such so it is not
+          // asked again every few seconds.
+          epgCache.set(id, { at: now, channel: { id, listings: [] } });
+        }
+      }
+    }
+
+    // Anything still unanswered comes back as itself with nothing in it, so
+    // the page can lay out every row it asked for rather than reflowing as
+    // answers trickle in.
+    const answered = new Set(fresh.map((c) => c.id));
+    for (const id of ids) if (!answered.has(id)) fresh.push({ id, listings: [] });
+
+    return json(res, 200, {
+      channels: ids.map((id) => fresh.find((c) => c.id === id)),
+      busy: providerBusy(),
+    });
+  }
 
   /* ---- Xtream passthrough ---- */
   if (pathname === '/api/xtream') {
