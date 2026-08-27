@@ -2111,6 +2111,41 @@ are kept apart per tier and the best one is chosen at the end.
 `KING` — still work; only the feed markings this file already knows about are
 refused.
 
+### The brackets carry the meaning
+
+This provider puts two different things in brackets, and telling them apart is
+most of the matching:
+
+```
+CBS 2 (KTVN) RENO                    the short name — what guides publish
+NBC NEW ENGLAND CABLE NEWS (NECN)    likewise, and not a call sign at all
+NBC BRAVO (EAST) (D)                 which feed, and a variant marking
+NBC E! (WEST)                        E! is the CHANNEL; WEST is the marking
+```
+
+So a bracketed 2–5 letter word becomes a key (that is how `NECN` is found —
+the old K/W call-sign pattern could never see it), while a bracketed *single
+letter* is dropped as a marking.
+
+An **unbracketed** single letter is kept, and that is not fussiness: `E!` is a
+channel whose entire name is one letter. Dropping it the way `(D)` is dropped
+leaves the key `nbc`, and E! then quietly inherits the whole of NBC's schedule
+— a wrong guide, which is worse than an empty one.
+
+### Asking a feed what it actually said
+
+`HTTP 404` is where a diagnosis stops rather than starts, especially when the
+filename is right, the file is published, and another file from the same host
+downloads fine. Each failing feed gets a **why?** button that fetches a couple
+of kilobytes and reports the status, where it ended up after redirects, what
+the headers claim, what the first bytes really are, and the top of the body —
+which on a block page or a rate-limit notice says so in words. A name ending
+`.xml.gz` proves nothing about the answer.
+
+Two guards, because this makes the box fetch a URL and show you the result:
+private and loopback addresses are refused, and the provider's own feed never
+hands back its address, since the account password is in the query string.
+
 ### Why has this channel got no listings?
 
 The one question the feature generates, and the box can answer it: type a

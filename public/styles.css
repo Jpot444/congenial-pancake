@@ -4328,6 +4328,36 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .gsrc-run.is-bad { color: var(--live); }
 .gsrc-run.is-bad::before { background: var(--live); }
 
+.gsrc-test {
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  padding: 0 5px;
+  cursor: pointer;
+  opacity: .75;
+}
+.gsrc-test:hover { opacity: 1; }
+
+/* What the server actually said. Monospaced and pre-wrapped because it is a
+   transcript, not a sentence — the useful part is often a block page's own
+   words, and reflowing them loses the shape. */
+.gsrc-probe {
+  margin: 4px 0 6px 13px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .03);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ---- why has this channel got no listings ---- */
 .gsrc-why { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .gsrc-why input { width: 100%; }

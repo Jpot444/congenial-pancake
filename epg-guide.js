@@ -134,7 +134,23 @@ function safeChar(code) {
  * deliberately aggressive, because the alternative — matching only what is
  * spelled identically — matches almost nothing.
  */
-function nameTokens(raw) {
+/**
+ * The words of a channel name, each remembering whether it was in brackets.
+ *
+ * The brackets carry the meaning. This provider writes "CBS 2 (KTVN) RENO",
+ * "NBC BRAVO (EAST) (D)", "NBC E! (WEST)" — and inside brackets you find both
+ * the thing that identifies the station and the thing that qualifies it:
+ *
+ *   (KTVN) (WCIA) (NECN)   the short name, which is what guides publish
+ *   (EAST) (WEST)          which feed
+ *   (A) (D)                a variant marking
+ *
+ * Outside brackets, a lone letter is a NAME — E! is a channel. Dropping it
+ * because "(D)" was droppable is how "NBC E! (WEST)" ends up keyed as plain
+ * `nbc` and quietly inherits NBC's schedule. Keeping the brackets is what
+ * lets those two cases be told apart.
+ */
+function markedTokens(raw) {
   let s = String(raw || '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -148,11 +164,49 @@ function nameTokens(raw) {
   // Superscript markings — ᴴᴰ, ᴿᴬᵂ — are not letters, so they fall out with
   // the punctuation below; these are the ones that would otherwise survive.
   s = s.replace(/[ᴴᴰⁱ]/g, ' ');
-  return s.replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+
+  const out = [];
+  let depth = 0;
+  let cur = '';
+  let curParen = false;
+  const flush = () => {
+    if (cur) out.push({ t: cur, paren: curParen });
+    cur = '';
+  };
+  for (const ch of s) {
+    if (ch === '(' || ch === '[') { flush(); depth += 1; continue; }
+    if (ch === ')' || ch === ']') { flush(); depth = Math.max(0, depth - 1); continue; }
+    if (/[a-z0-9]/.test(ch)) {
+      if (!cur) curParen = depth > 0;
+      cur += ch;
+      continue;
+    }
+    flush();
+  }
+  flush();
+  return out;
+}
+
+function nameTokens(raw) {
+  return markedTokens(raw).map((m) => m.t);
 }
 
 function chanKey(raw) {
   return nameTokens(raw).join('');
+}
+
+/**
+ * The short name in brackets — KTVN, WCIA, NECN, KUTV.
+ *
+ * A superset of the call-sign rule and a better one: NECN is not a call sign,
+ * it starts with an N, and the old K/W pattern could never see it. What
+ * matters is not the letters it begins with but that the provider put it in
+ * brackets, which is where it puts the name a guide would use.
+ */
+function bracketNames(marked) {
+  return marked
+    .filter((m) => m.paren && /^[a-z]{2,5}$/.test(m.t) && !FEED_WORD.test(m.t))
+    .map((m) => m.t);
 }
 
 /**
@@ -210,8 +264,13 @@ const FEED_WORD = /^(east|west|pacific|atlantic|mountain|central|national|networ
  * "MTV 2" is the whole difference between two channels, and dropping it would
  * quietly file MTV 2's listings under MTV.
  */
-function coreTokens(tokens) {
-  return tokens.filter((t) => !FEED_WORD.test(t) && !/^[a-z]$/.test(t));
+function coreTokens(marked) {
+  return marked
+    // A lone letter goes only if it was in brackets. "(D)" is a marking; the
+    // E in "NBC E! (WEST)" is the channel, and dropping it leaves `nbc`,
+    // which would hand E! the whole of NBC's schedule.
+    .filter((m) => !FEED_WORD.test(m.t) && !(m.paren && /^[a-z]$/.test(m.t)))
+    .map((m) => m.t);
 }
 
 function coreKey(key) {
@@ -275,7 +334,7 @@ function parseStamp(raw) {
 
 /* ----------------------------------------------------------------- fetching */
 
-function open(target, redirectsLeft = 5) {
+function open(target, redirectsLeft = 5, keepErrors = false) {
   return new Promise((resolve, reject) => {
     let u;
     try {
@@ -305,9 +364,12 @@ function open(target, redirectsLeft = 5) {
       const loc = res.headers.location;
       if (status >= 300 && status < 400 && loc && redirectsLeft > 0) {
         res.resume();
-        return resolve(open(new URL(loc, u).toString(), redirectsLeft - 1));
+        return resolve(open(new URL(loc, u).toString(), redirectsLeft - 1, keepErrors));
       }
-      if (status >= 400) {
+      res.finalUrl = u.toString();
+      // The probe wants the body of a failure — a 404 page usually explains
+      // itself — where a refresh only wants to know that it failed.
+      if (status >= 400 && !keepErrors) {
         res.resume();
         return reject(new Error(`HTTP ${status}`));
       }
@@ -604,14 +666,16 @@ function channelKeys(ch) {
     add(String(ch.epgId).toLowerCase(), 'id');
     add(chanKey(ch.epgId), 'id');
   }
-  const tokens = nameTokens(ch.name);
+  const marked = markedTokens(ch.name);
+  const tokens = marked.map((m) => m.t);
   add(tokens.join(''), 'name');
   for (const sign of callSigns(ch.name)) add(sign, 'callsign');
+  for (const short of bracketNames(marked)) add(short, 'callsign');
 
-  // The same name with feed markings and stray single letters taken out, then
-  // that again with the network off the front. "NBC BRAVO (EAST) (D)" becomes
-  // "nbcbravo" and then "bravo", which is what every guide calls it.
-  const core = coreTokens(tokens);
+  // The same name with feed markings and bracketed single letters taken out,
+  // then that again with the network off the front. "NBC BRAVO (EAST) (D)"
+  // becomes "nbcbravo" and then "bravo", which is what every guide calls it.
+  const core = coreTokens(marked);
   add(core.join(''), 'loose');
   add(withoutNetwork(core), 'loose');
   add(withoutNetwork(tokens), 'loose');
@@ -740,6 +804,11 @@ async function refresh({ force = false, sources = null } = {}) {
   for (const source of list) {
     const label = source.label || source;
     const url = source.url || source;
+    /* The provider's own feed carries the account password in its query
+     * string, so its address never leaves the box — which also means it
+     * cannot offer a "why?" button. Everything else is a public URL the
+     * viewer typed or ticked, and is handed back so it can be tested. */
+    const shown = source.secret ? '' : url;
     const keptBefore = stats.kept;
     const seenBefore = stats.seen;
     stats.source = label;
@@ -753,6 +822,7 @@ async function refresh({ force = false, sources = null } = {}) {
       const channels = stats.seen - seenBefore;
       report.push({
         label,
+        url: shown,
         ok: true,
         channels,
         programmes: stats.kept - keptBefore,
@@ -765,7 +835,7 @@ async function refresh({ force = false, sources = null } = {}) {
       });
       if (!channels) store.log(`guide: ${label} — answered, but no XMLTV channels in it`);
     } catch (err) {
-      report.push({ label, ok: false, error: err.message });
+      report.push({ label, url: shown, ok: false, error: err.message });
       store.log(`guide: ${label} — ${err.message}`);
     }
   }
@@ -834,6 +904,62 @@ async function refresh({ force = false, sources = null } = {}) {
   save();
   store.log(`guide: ${tidied.size} channels covered, ${stats.kept} programmes, ${Math.round((Date.now() - started) / 1000)}s`);
   return status();
+}
+
+/**
+ * Ask one feed what it actually says, and report it plainly.
+ *
+ * "HTTP 404" is where a diagnosis stops rather than starts. The filename is
+ * right, the file is published, another file from the same host downloads
+ * fine — so what is the server actually sending? A 404 body nearly always
+ * says: a block page, a rate-limit notice, a redirect to somewhere that then
+ * fails. This fetches a couple of kilobytes and hands back the status, where
+ * it ended up after redirects, what the headers claim, what the first bytes
+ * really are, and the beginning of the body.
+ */
+function probe(target) {
+  const started = Date.now();
+  return open(target, 5, true).then((res) => new Promise((resolve) => {
+    const chunks = [];
+    let size = 0;
+    const finish = () => {
+      const head = Buffer.concat(chunks);
+      const gz = head.length > 1 && head[0] === 0x1f && head[1] === 0x8b;
+      const text = gz ? '' : head.toString('utf8').replace(/[\x00-\x1f\x7f]/g, ' ');
+      let looks = 'something else';
+      if (gz) looks = 'gzip, as expected';
+      else if (/^\s*<\?xml|<tv\b/i.test(text)) looks = 'plain XML';
+      else if (/^\s*<(!doctype\s+html|html)\b/i.test(text)) looks = 'an HTML page, not a guide';
+      resolve({
+        url: target,
+        status: res.statusCode || 0,
+        finalUrl: res.finalUrl,
+        redirected: res.finalUrl !== target,
+        headers: {
+          'content-type': res.headers['content-type'] || '',
+          'content-length': res.headers['content-length'] || '',
+          'content-encoding': res.headers['content-encoding'] || '',
+          server: res.headers.server || '',
+          'last-modified': res.headers['last-modified'] || '',
+        },
+        looks,
+        snippet: text.slice(0, 300).trim(),
+        took: Date.now() - started,
+      });
+    };
+    res.on('data', (c) => {
+      chunks.push(c);
+      size += c.length;
+      if (size >= 2048) {
+        res.destroy();
+        finish();
+      }
+    });
+    res.on('end', finish);
+    res.on('error', finish);
+  })).catch((err) => ({
+    url: target, status: 0, error: err.message, took: Date.now() - started,
+  }));
 }
 
 /** What is on this channel — or null if we have nothing for it at all. */
@@ -934,7 +1060,8 @@ function explain(query) {
 }
 
 module.exports = {
-  configure, setSources, setChannels, refresh, lookup, status, explain, save, load,
+  configure, setSources, setChannels, refresh, lookup, status, explain, probe, save, load,
   // Exported for the suites, which check the joining rather than the network.
-  chanKey, coreKey, callSigns, parseStamp, wantedKeys, channelKeys, unescapeXml,
+  chanKey, coreKey, callSigns, bracketNames, markedTokens, parseStamp, wantedKeys,
+  channelKeys, unescapeXml,
 };

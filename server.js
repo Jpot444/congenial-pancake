@@ -3862,7 +3862,7 @@ function guideRefreshSources(cfg, { includeProvider = true } = {}) {
   const list = [];
   if (includeProvider && cfg?.useProviderGuide !== false && !providerBusy()) {
     const url = providerGuideUrl(cfg);
-    if (url) list.push({ url, label: "the provider's own guide" });
+    if (url) list.push({ url, label: "the provider's own guide", secret: true });
   }
   for (const url of guideSources(cfg)) list.push({ url, label: redactUrl(url) });
   return list;
@@ -5038,6 +5038,45 @@ async function handleApi(req, res, pathname, query) {
       channels: ids.map((id) => fresh.find((c) => c.id === id)),
       busy: providerBusy(),
     });
+  }
+
+  /* ---- What a feed actually says ---- */
+  //
+  // "HTTP 404" is where a diagnosis stops rather than starts, and two of three
+  // feeds from one host saying it — with the filenames verified correct and
+  // the third downloading fine — is not something anybody can reason about
+  // from the outside. So the box asks and repeats the answer: the status, what
+  // the headers claim, what the first bytes really are, and the top of the
+  // body, which on a block or a rate-limit page says so in words.
+  if (pathname === '/api/epg/probe') {
+    const target = String(query.get('url') || '').trim();
+    if (!/^https?:\/\//i.test(target)) {
+      return json(res, 400, { error: 'That is not a web address.' });
+    }
+    /* This makes the box fetch a URL of your choosing and hand back what came
+     * back, which is a fine way to read something on the home network that is
+     * not otherwise exposed. The portal is unauthenticated by design, so the
+     * guard is on the address rather than on who is asking. */
+    let host;
+    try {
+      host = new URL(target).hostname.toLowerCase();
+    } catch {
+      return json(res, 400, { error: 'That is not a web address.' });
+    }
+    const isPrivate = host === 'localhost'
+      || host.endsWith('.local')
+      || host.endsWith('.internal')
+      || /^(\[?::1\]?|0\.0\.0\.0)$/.test(host)
+      || /^127\./.test(host)
+      || /^10\./.test(host)
+      || /^192\.168\./.test(host)
+      || /^169\.254\./.test(host)
+      || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+      || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host);
+    if (isPrivate) {
+      return json(res, 400, { error: 'Only addresses out on the internet can be tested.' });
+    }
+    return json(res, 200, await guide.probe(target));
   }
 
   /* ---- Why a channel has no listings ---- */

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '27.3';
+const VERSION = '27.4';
 
 const PAGE_SIZE = 60;
 
@@ -2317,7 +2317,41 @@ const guideSources = {
       }
       line.className = `gsrc-run ${state}`;
       line.textContent = `${s.label} — ${said}`;
+      // A feed that failed gets a way to ask why. The label is redacted for
+      // reading, so the button carries the real address.
+      if (state === 'is-bad' && s.url) {
+        const test = document.createElement('button');
+        test.type = 'button';
+        test.className = 'gsrc-test';
+        test.textContent = 'why?';
+        test.addEventListener('click', () => this.probe(s.url, line));
+        line.append(' ', test);
+      }
       box.append(line);
+    }
+  },
+
+  /** Ask the box what that feed actually said, and print it. */
+  async probe(url, after) {
+    const out = document.createElement('div');
+    out.className = 'gsrc-probe';
+    out.textContent = 'asking…';
+    after.after(out);
+    try {
+      const d = await api('/api/epg/probe', { url });
+      if (d.error) {
+        out.textContent = `could not reach it at all — ${d.error}`;
+        return;
+      }
+      const bits = [`HTTP ${d.status}`];
+      if (d.redirected) bits.push(`ended up at ${d.finalUrl}`);
+      if (d.headers['content-type']) bits.push(d.headers['content-type']);
+      if (d.headers['content-length']) bits.push(`${d.headers['content-length']} bytes`);
+      if (d.headers.server) bits.push(`served by ${d.headers.server}`);
+      if (d.looks) bits.push(`looks like ${d.looks}`);
+      out.textContent = bits.join(' · ') + (d.snippet ? `\n${d.snippet}` : '');
+    } catch (err) {
+      out.textContent = err.message || 'could not test that.';
     }
   },
 

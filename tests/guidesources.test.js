@@ -325,6 +325,73 @@ function serve(xml) {
   check('so the channel gets its listings',
     guide.lookup('960')?.[0]?.title === 'Below Deck', JSON.stringify(guide.lookup('960')));
 
+  /* ---- the short name in brackets ------------------------------------ */
+  //
+  // Reported as still missing: CBS 3 (WCIA) CHAMPAIGN, NBC E! (WEST),
+  // NBC SPORTS BOSTON (A), NBC NEW ENGLAND CABLE NEWS (NECN) (D).
+  //
+  // The brackets carry the meaning. Inside them this provider puts both the
+  // short name a guide would use and the marking that qualifies it, and the
+  // two have to be told apart.
+  console.log('\n  the short name in brackets');
+  const keysOf = (name) => guide.channelKeys({ id: 1, name }).map((k) => `${k.key}:${k.how}`);
+  check('a bracketed short name becomes a key even without a K or W',
+    keysOf('NBC NEW ENGLAND CABLE NEWS (NECN) (D) ᴿᴬᵂ').includes('necn:callsign'),
+    JSON.stringify(keysOf('NBC NEW ENGLAND CABLE NEWS (NECN) (D) ᴿᴬᵂ')));
+  console.log('       (NECN is not a call sign — it starts with an N)');
+  check('and the K/W ones still work',
+    keysOf('CBS 3 (WCIA) CHAMPAIGN HD').includes('wcia:callsign'));
+  check('a bracketed marking is dropped',
+    keysOf('NBC SPORTS BOSTON (A) ᴿᴬᵂ').includes('nbcsportsboston:loose'),
+    JSON.stringify(keysOf('NBC SPORTS BOSTON (A) ᴿᴬᵂ')));
+
+  // The one that would have done real damage. E! is a channel whose whole
+  // name is one letter; treating it like the "(D)" in Bravo's name leaves
+  // `nbc`, and E! quietly inherits the whole of NBC's schedule.
+  const eKeys = keysOf('NBC E! (WEST) ᴿᴬᵂ');
+  check('an unbracketed lone letter is a name, not a marking',
+    !eKeys.some((k) => k.startsWith('nbc:')), JSON.stringify(eKeys));
+  console.log('       (else E! is keyed `nbc` and shows NBC\'s listings as its own)');
+
+  let necnXml = '<?xml version="1.0"?>\n<tv>\n';
+  necnXml += '<channel id="NECN.us"><display-name>NECN</display-name></channel>\n';
+  necnXml += `<programme start="${stamp(0)}" stop="${stamp(60)}" channel="NECN.us">`
+    + '<title>The Take</title></programme>\n</tv>\n';
+  const necnFeed = await serve(necnXml);
+  guide.setChannels([{ id: '980', epgId: '', name: 'NBC NEW ENGLAND CABLE NEWS (NECN) (D) ᴿᴬᵂ' }]);
+  await guide.refresh({ force: true, sources: [{ url: necnFeed.url, label: 'locals' }] });
+  necnFeed.stop();
+  check('so it gets its listings', guide.lookup('980')?.[0]?.title === 'The Take',
+    JSON.stringify(guide.lookup('980')));
+
+  /* ---- asking a feed what it actually said --------------------------- */
+  //
+  // "HTTP 404" is where a diagnosis stops rather than starts — especially
+  // when the filename is right, the file is published, and another file from
+  // the same host downloads fine. The body of a refusal usually says why.
+  console.log('\n  asking a feed what it actually said');
+  const rude = http.createServer((rq, rs) => {
+    rs.writeHead(404, { 'content-type': 'text/html', server: 'cloudflare' });
+    rs.end('<html><body>Rate limited. Try again later.</body></html>');
+  });
+  const rudePort = await new Promise((r) => rude.listen(0, '127.0.0.1', () => r(rude.address().port)));
+  const said = await guide.probe(`http://127.0.0.1:${rudePort}/us1.xml.gz`);
+  rude.close();
+  check('the status comes back', said.status === 404, String(said.status));
+  check('and the body, which is where the reason usually is',
+    /Rate limited/.test(said.snippet), said.snippet);
+  check('and what the bytes really are, whatever the name said',
+    said.looks === 'an HTML page, not a guide', said.looks);
+  console.log('       (a name ending .xml.gz proves nothing about the answer)');
+
+  const SRC = fs.readFileSync(PATHS.SERVER, 'utf8');
+  check('the box refuses to probe its own network',
+    /Only addresses out on the internet can be tested/.test(SRC)
+    && /\^192\\\.168\\\./.test(SRC));
+  console.log('       (it fetches a URL and shows you the body — that needs a guard)');
+  check("and never hands back the provider feed's address, which has the password in it",
+    /secret: true/.test(SRC) && /source\.secret \? '' : url/.test(fs.readFileSync(PATHS.GUIDE, 'utf8')));
+
   /* ---- one feed down must not blank the others ----------------------- */
   //
   // The index is rebuilt from scratch every refresh, so without carrying a
