@@ -1,0 +1,95 @@
+/*
+ * Treasure Theater design tokens, verbatim from the design system bundle
+ * (treasure-theater-design-system-320446e7). The portal's own tokens live in
+ * public/styles.css; these are the same values, kept here so the TV app is a
+ * self-contained folder that can be dropped into public/tv/ and served as-is.
+ *
+ * Bebas Neue is self-hosted twice over: the portal's copy under /fonts first,
+ * then this folder's own copy, so the app renders correctly whether it is
+ * served from the portal root or opened standing alone.
+ */
+
+@font-face {
+  font-family: 'Bebas Neue';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/bebas-neue-latin.woff2') format('woff2'),
+       url('../assets/fonts/bebas-neue-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Bebas Neue';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/bebas-neue-latin-ext.woff2') format('woff2'),
+       url('../assets/fonts/bebas-neue-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+:root {
+  /* brand — sampled from the Treasure State Capital mark itself */
+  --brand-red: #A21F24;
+  --brand-red-deep: #6E1418;
+  --brand-red-dark: #3A0A0D;
+  --brand-red-light: #B0242A;
+  --brand-red-shade: #8C1A1F;
+
+  /* surfaces */
+  --bg: #15100F;
+  --bg-raised: #1D1715;
+  --bg-card: #241C1A;
+  --line: #3A2D2A;
+  --line-soft: #2A211F;
+  --line-hover-warm: #4A3A36;
+
+  /* text */
+  --text: #F6F1EE;
+  --muted: #A3928C;
+  --muted-dim: #705F5A;
+  --on-light: #08080a;
+
+  /* semantic */
+  --live: #FF6B5E;
+  --live-soft: #ff8b82;
+  --ok: #57C88B;
+  --ok-soft: #7FD4A0;
+  --warn: #E9A13B;
+  --warn-soft: #F0C36A;
+  --uhd: #FFD98A;
+
+  /* profile swatches, in the order the profile editor offers them */
+  --swatch-1: #A21F24;
+  --swatch-2: #6E1418;
+  --swatch-3: #2F5D50;
+  --swatch-4: #2B4C7E;
+  --swatch-5: #7A4E1D;
+  --swatch-6: #4A3A63;
+
+  /* type */
+  --display: 'Bebas Neue', 'Haettenschweiler', 'Arial Narrow', sans-serif;
+  --body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --leading-body: 1.6;
+
+  /* shape */
+  --radius: 14px;
+  --radius-sm: 9px;
+  --radius-xs: 6px;
+  --radius-pill: 999px;
+  --shadow-header: 0 10px 30px rgba(0, 0, 0, .38);
+  --shadow-card: 0 10px 26px rgba(0, 0, 0, .32);
+  --shadow-float: 0 12px 40px rgba(0, 0, 0, .5);
+  --inset-resumed: inset 3px 0 0 var(--brand-red);
+  --scrim-bottom: linear-gradient(0deg, rgba(0, 0, 0, .78), rgba(0, 0, 0, 0));
+  --blur-badge: blur(8px);
+  --brand-field: radial-gradient(120% 90% at 50% 35%, var(--brand-red) 0%, var(--brand-red-deep) 55%, var(--brand-red-dark) 100%);
+  --header-field: linear-gradient(180deg, var(--brand-red-light) 0%, var(--brand-red) 58%, var(--brand-red-shade) 100%);
+  --fallback-tile: linear-gradient(150deg, #2A201E, #17110F);
+
+  /* motion — one curve for the whole product; nothing bounces */
+  --ease: cubic-bezier(.22, .61, .36, 1);
+}
