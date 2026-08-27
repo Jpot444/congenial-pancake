@@ -95,8 +95,16 @@ const store = {
   fromSource: new Map(),
   /** "abcnewyork" -> "wabc", learned from the channels that name both. */
   byMarket: new Map(),
-  /** The country codes our own channels are sold under — usually just "us". */
-  countries: new Set(),
+  /**
+   * The only country whose guides count. "us" unless told otherwise.
+   *
+   * Inferring this from the provider's own tags was the first attempt and it
+   * does not work: plenty of channels are sold with no country on them at all
+   * — "ABC (EAST)" carries nothing — so the set came back empty and the check
+   * quietly disabled itself. It is a setting now, because "I only watch US
+   * channels" is a fact about the viewer rather than something to deduce.
+   */
+  country: 'us',
   /** ourChannelId -> the guide entry that matched but had no schedule. */
   emptyMatch: new Map(),
   channels: [],
@@ -621,6 +629,12 @@ function scan(stream, want, into, stats) {
       // bare id we can still recognise on its own.
       let hit = declared.get(guideId) || null;
       if (!hit) {
+        // Same refusal as above, for a feed that never declared the channel.
+        const abroad = /\.([a-z]{2})$/.exec(guideId.toLowerCase());
+        if (abroad && store.country && abroad[1] !== store.country) {
+          resolved.set(guideId, null);
+          return null;
+        }
         let ids = want.get(guideId.toLowerCase());
         for (const v of stationVariants(chanKey(guideId))) ids = ids || want.get(v);
         if (ids) hit = { ids };
@@ -651,14 +665,20 @@ function scan(stream, want, into, stats) {
 
       // Every spelling this guide entry answers to, including the call sign
       // with its broadcast suffix trimmed off.
-      const candidates = new Set([id.toLowerCase()]);
-      /* The bare form of an id is only offered where the country agrees.
-       * `ABC.au` still matches anything whose epg id IS "abc.au"; what it may
-       * not do is become plain `abc` and answer for an American station. */
+      /* A guide channel from another country is not ours, whatever it is
+       * called.
+       *
+       * An XMLTV id ends in the country that publishes it, and ABC.us and
+       * ABC.au are two different broadcasters — so this is refused outright
+       * rather than merely kept out of the name matching. A half-measure lets
+       * the Australian ABC back in through its display name instead, which is
+       * how a US affiliate came to be showing "News Breakfast". An id with no
+       * country on it is nobody's in particular and stays allowed. */
       const home = /\.([a-z]{2})$/.exec(id.toLowerCase());
-      const foreign = home && store.countries.size && !store.countries.has(home[1]);
-      const fromId = foreign ? [] : [chanKey(id)];
-      for (const key of [...fromId, ...names.map(chanKey)]) {
+      if (home && store.country && home[1] !== store.country) return;
+
+      const candidates = new Set([id.toLowerCase()]);
+      for (const key of [chanKey(id), ...names.map(chanKey)]) {
         for (const v of stationVariants(key)) if (v) candidates.add(v);
       }
       // "WABC (ABC) New York, NY" also answers to `abcnewyork`, which is what
@@ -972,20 +992,16 @@ function setSources(urls) {
     .slice(0, 12);
 }
 
+/** Which country's guides to accept, or '' for all of them. */
+function setCountry(code) {
+  store.country = String(code || '').trim().toLowerCase().slice(0, 2);
+}
+
 function setChannels(channels) {
   store.channels = (Array.isArray(channels) ? channels : []).map((c) => ({
     id: String(c.id), epgId: c.epgId || '', name: c.name || '', country: c.country || '',
   }));
   store.byMarket = stationByMarket(store.channels);
-  /* Which countries we actually buy channels in.
-   *
-   * An XMLTV id ends in the country that publishes it — ABC.us and ABC.au are
-   * two different broadcasters, and dropping the suffix made them one key.
-   * That is how a US ABC affiliate came to be showing "News Breakfast", which
-   * is the Australian ABC's morning programme. */
-  store.countries = new Set(
-    (channels || []).map((c) => String(c.country || '').toLowerCase()).filter(Boolean)
-  );
 }
 
 const due = () => !store.at || Date.now() - store.at > REFRESH_MS;
@@ -1322,6 +1338,7 @@ function status() {
     byGuess,
     offered: store.offered.size,
     sources: store.sources,
+    country: store.country,
     lastRun: store.lastRun,
     stale: due(),
   };
@@ -1393,7 +1410,7 @@ function explain(query) {
 }
 
 module.exports = {
-  configure, setSources, setChannels, refresh, lookup, status, explain, probe, listing, nearestNames, save, load,
+  configure, setSources, setChannels, refresh, lookup, status, explain, probe, listing, nearestNames, setCountry, save, load,
   // Exported for the suites, which check the joining rather than the network.
   chanKey, coreKey, callSigns, bracketNames, markedTokens, stationVariants, stationByMarket, parseStamp, wantedKeys,
   channelKeys, unescapeXml,

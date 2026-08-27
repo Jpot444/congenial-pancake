@@ -3962,6 +3962,9 @@ function refreshGuide({ force = false } = {}) {
     return Promise.resolve({ ...guide.status(), blocked: 'no-channels' });
   }
   guide.setSources(guideSources(cfg));
+  /* Only guides for the country you actually watch. Default US; '' accepts
+     every country, for anyone whose library is not one nation's. */
+  guide.setCountry(cfg?.guideCountry === undefined ? 'us' : cfg.guideCountry);
   guide.setChannels(channels);
   const sources = guideRefreshSources(cfg);
   if (!sources.length) return Promise.resolve(guide.status());
@@ -5191,6 +5194,7 @@ async function handleApi(req, res, pathname, query) {
     // refresh happened to run on — the channel you are asking about may well
     // be one that has appeared since.
     const channels = knownLiveChannels();
+    guide.setCountry(cfg?.guideCountry === undefined ? 'us' : cfg.guideCountry);
     guide.setChannels(channels);
     return json(res, 200, { ...guide.explain(query.get('q') || ''), known: channels.length });
   }
@@ -5218,6 +5222,7 @@ async function handleApi(req, res, pathname, query) {
          * are for reading, not for round-tripping. */
         sources: guideSources(cfg),
         useProviderGuide: cfg?.useProviderGuide !== false,
+        guideCountry: cfg?.guideCountry === undefined ? 'us' : cfg.guideCountry,
         hasProviderGuide: Boolean(providerGuideUrl(cfg)),
         known,
         blocked: known || st.covered ? null : 'no-channels',
@@ -5251,6 +5256,9 @@ async function handleApi(req, res, pathname, query) {
       }
       if (incoming.useProviderGuide !== undefined) {
         cfg.useProviderGuide = Boolean(incoming.useProviderGuide);
+      }
+      if (incoming.country !== undefined) {
+        cfg.guideCountry = String(incoming.country || '').trim().toLowerCase().slice(0, 2);
       }
       writeConfig(cfg);
       guide.setSources(guideSources(cfg));

@@ -1065,8 +1065,17 @@
     const resume = (state.recentlyWatched || []).find((r) => r.duration && r.position);
     if (resume) {
       const pct = Math.round((resume.position / resume.duration) * 100);
+      /* A history row remembers what you watched, not what it looked like —
+         no poster, no logo — so the billboard for Continue watching came up
+         as bare gradient. The library still has the title; this is the same
+         record, looked up for its artwork only. */
+      const shelf = state.library[resume.kind === 'series' ? 'series' : 'movies'];
+      const art = (shelf?.items || []).find(
+        (i) => String(i.id) === String(resume.seriesId ?? resume.id)
+      );
       out.push({
         kind: 'resume',
+        art,
         eyebrow: '<span class="caps">Continue watching</span>',
         tags: [resume.season && resume.episode ? `S${resume.season} E${resume.episode}` : 'Resume'],
         title: resume.seriesName || resume.name || '',
@@ -1142,7 +1151,8 @@
     features.forEach((f, i) => {
       const art = hero.querySelectorAll('.slide .art')[i];
       art.style.setProperty('--field', FIELDS[i % FIELDS.length]);
-      const logo = f.item?.logo;
+      const source = f.item || f.art;
+      const logo = source?.logo;
       if (logo && !looksAnimated(logo)) {
         const image = document.createElement('img');
         image.alt = '';
@@ -1153,7 +1163,7 @@
            with a 400px station logo blows it up to six times its size and
            crops it, which is the giant half-an-abc. Marked so the styling
            can centre it at its own size instead of covering with it. */
-        if (f.item.kind === 'live') art.closest('.slide')?.classList.add('is-mark');
+        if (source.kind === 'live') art.closest('.slide')?.classList.add('is-mark');
       }
       const chip = hero.querySelector(`.picker button[data-i="${i}"] .bg`);
       if (chip) chip.style.setProperty('--field', FIELDS[i % FIELDS.length]);
