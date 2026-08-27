@@ -3713,7 +3713,7 @@ const LIBRARY_ACTIONS = {
 const libraryCache = new Map();
 const LIBRARY_TTL = 30 * 60 * 1000;
 /** Payload shape version — bump when projectItem gains or loses a field. */
-const LIBRARY_SHAPE = 3;
+const LIBRARY_SHAPE = 4;
 const LIBRARY_CACHE_PATH = path.join(ROOT, 'library-cache.json');
 
 /**
@@ -3784,24 +3784,83 @@ function persistLibraryCache() {
   cacheWriteTimer.unref?.();
 }
 
+/**
+ * Provider tags that get bolted onto the FRONT of a title.
+ *
+ * This provider names things like a man typing with his elbows: "4K-MAX-
+ * Trading Places", "EN - The Batman", "MAX - Succession". None of it is the
+ * title, all of it sorts and searches as though it were, and a grid of it
+ * reads as a list of the word MAX.
+ *
+ * A list rather than a shape, deliberately. "Strip any short capitalised run
+ * before a dash" would also eat "IT - Chapter Two" and "US - Us", which are
+ * films. Everything here is a language, a country, a quality or a studio, and
+ * nothing here is a film. Anything FOLLOWING the title — the year, a country
+ * in brackets — is left exactly as it is; that part is information.
+ */
+const TITLE_TAGS = new Set([
+  // quality and packaging
+  '4K', 'UHD', 'HD', 'FHD', 'SD', 'HQ', 'HEVC', 'H265', 'H264', 'X265', 'X264',
+  '1080P', '720P', '2160P', 'MULTI', 'MULTISUB', 'SUB', 'DUB', 'VIP', 'PPV',
+  '3D', 'IMAX', 'REMUX', 'BLURAY', 'WEB', 'WEBDL',
+  // languages and countries — IT is left out on purpose, it is a film
+  'EN', 'ENG', 'US', 'USA', 'UK', 'GB', 'CA', 'AU', 'NZ', 'IE',
+  'FR', 'FRA', 'ES', 'ESP', 'SPA', 'DE', 'GER', 'DEU', 'NL', 'PT', 'BR', 'POR',
+  'AR', 'ARA', 'TR', 'TUR', 'RU', 'RUS', 'PL', 'POL', 'SE', 'SWE', 'NO', 'DK',
+  'FI', 'GR', 'RO', 'HU', 'CZ', 'IN', 'HI', 'PK', 'MX', 'LAT', 'LATINO',
+  'AFR', 'ASIA', 'EU', 'EX-YU', 'EXYU', 'SCAND', 'BALKAN',
+  // studios and services
+  'MAX', 'HBO', 'NF', 'NETFLIX', 'AMZN', 'AMAZON', 'PRIME', 'DSNY', 'DISNEY',
+  'DSNP', 'APPLE', 'ATVP', 'ATV', 'PMNT', 'PARAMOUNT', 'PMTP', 'PEACOCK',
+  'PCOK', 'HULU', 'STARZ', 'SHO', 'SHOWTIME', 'CRAV', 'BRITBOX', 'MGM', 'AMC',
+  'DISCOVERY', 'CINEMAX', 'LIONSGATE', 'A24',
+]);
+
+/** Marks a title as 4K wherever the provider chose to say so. */
+const UHD_TAG = /(^|[^A-Z0-9])(4K|UHD|2160P)([^A-Z0-9]|$)/i;
+
+/**
+ * The title with the provider's prefixes taken off the front.
+ *
+ * Repeated, because they stack: "4K-MAX- Trading Places" is two of them. It
+ * only ever removes from the FRONT, only whole tags from the list above, and
+ * it gives up and hands back the original rather than return an empty string
+ * — a title made entirely of tags is more likely a channel than a mistake.
+ */
+function cleanTitle(raw) {
+  const original = String(raw || '').trim();
+  let name = original;
+  for (let i = 0; i < 6; i += 1) {
+    const m = /^([A-Za-z0-9+&]{1,12})\s*[-|:\u2013\u2022]\s*/.exec(name);
+    if (!m || !TITLE_TAGS.has(m[1].toUpperCase())) break;
+    name = name.slice(m[0].length).trimStart();
+  }
+  return name.trim() || original;
+}
+
+/** Is this title 4K, by anything the provider said anywhere in the name? */
+const isUhd = (raw) => UHD_TAG.test(String(raw || ''));
+
 function projectItem(row, kind) {
   if (kind === 'live') {
     return {
       kind,
       id: row.stream_id,
-      name: row.name,
+      name: cleanTitle(row.name),
       logo: row.stream_icon || '',
       categoryId: String(row.category_id ?? ''),
       epgId: row.epg_channel_id || '',
+      uhd: isUhd(row.name),
     };
   }
   if (kind === 'movie') {
     return {
       kind,
       id: row.stream_id,
-      name: row.name,
+      name: cleanTitle(row.name),
       logo: row.stream_icon || '',
       categoryId: String(row.category_id ?? ''),
+      uhd: isUhd(row.name),
       ext: row.container_extension || 'mp4',
       rating: row.rating || '',
       // Upload time, used to sort the New Releases row newest-first.
@@ -3811,9 +3870,10 @@ function projectItem(row, kind) {
   return {
     kind,
     id: row.series_id,
-    name: row.name,
+    name: cleanTitle(row.name),
     logo: row.cover || '',
     categoryId: String(row.category_id ?? ''),
+    uhd: isUhd(row.name),
     rating: row.rating || '',
     // Feed the genre shelves — provider categories carry no genre split.
     genre: row.genre || '',

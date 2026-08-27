@@ -1614,6 +1614,16 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 .badge.live { color: var(--live); }
 
+/* 4K sits on the right so it never fights SAVED or LIVE for the corner —
+   one says what the copy is doing, the other what it is, and both are worth
+   seeing at once. */
+.badge.uhd {
+  left: auto; right: 10px;
+  color: #FFD98A;
+  letter-spacing: .08em;
+  padding: 3px 7px;
+}
+
 .badge .dot {
   width: 5px; height: 5px;
   border-radius: 50%;
@@ -1947,6 +1957,25 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 .ep-dl svg { width: 15px; height: 15px; }
 .ep:hover .ep-dl { opacity: 1; }
+
+/* The size, beside the download button and on the same terms: it appears
+   when the row is under the cursor, because it is only ever read as part of
+   deciding whether to press that button. Space is held either way so the
+   button does not jump sideways as it fades in. */
+.ep-size {
+  flex-shrink: 0;
+  min-width: 62px;
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.ep:hover .ep-size,
+.ep:focus-within .ep-size { opacity: 1; }
+/* No hover on a touch screen, so it simply stays. */
+.touch .ep-size { opacity: 1; }
 .ep-dl:hover { color: var(--text); }
 
 .empty {

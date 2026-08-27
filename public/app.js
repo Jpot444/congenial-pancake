@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.35';
+const VERSION = '24.36';
 
 const PAGE_SIZE = 60;
 
@@ -4260,6 +4260,15 @@ function cardFor(item) {
     art.append(fb);
   }
 
+  // 4K sits apart from the badges below because it is not a state — SAVED
+  // and LIVE say what this copy is doing, this says what it IS, and the two
+  // are worth seeing at once rather than one winning.
+  if (item.uhd) {
+    const uhd = el('div', 'badge uhd');
+    uhd.textContent = '4K';
+    art.append(uhd);
+  }
+
   if (item.kind === 'live') {
     const badge = el('div', 'badge live');
     badge.append(el('span', 'dot'));
@@ -4788,10 +4797,15 @@ async function renderMovieCard() {
 
   const seconds = parseRuntime(info);
   runtime.textContent = seconds ? hms(seconds) : '';
+  // How big it is, on the line that already carries the year and the genre.
+  // Worth knowing before pressing anything on this box: it decides whether
+  // the film is worth downloading, and whether it will stream at all.
+  const bytes = mediaBytes(info);
   describe({
     year: info?.releasedate || '',
     genre: info?.genre || '',
     plot: info?.plot || '',
+    extra: [item.uhd ? '4K' : '', bytes ? formatBytes(bytes) : ''].filter(Boolean).join(' · '),
   });
 }
 
@@ -10083,6 +10097,39 @@ async function fetchVodInfo(item) {
   }
 }
 
+/**
+ * How many bytes a title is, from whatever the provider bothered to say.
+ *
+ * Panels are inconsistent about this: some give a `size` outright, in bytes
+ * and sometimes as a string; most give only a bitrate, in kilobits, next to
+ * a duration. Bitrate times runtime is not the file size to the byte, but it
+ * is the right order of magnitude and it is the number somebody is actually
+ * asking for — whether this will fit, and how long it will take.
+ *
+ * Returns 0 when there is nothing to go on, which reads as "no size shown"
+ * rather than a confident zero.
+ */
+function mediaBytes(info) {
+  if (!info) return 0;
+  const stated = Number(info.size ?? info.filesize ?? info.file_size);
+  if (Number.isFinite(stated) && stated > 1024) return stated;
+
+  const kbps = Number(info.bitrate);
+  const secs = Number(info.duration_secs) || hmsToSeconds(info.duration);
+  if (kbps > 0 && secs > 0) return (kbps * 1000 * secs) / 8;
+  return 0;
+}
+
+/** An episode's size, which panels hang off the episode or its info block. */
+const episodeBytes = (episode) => mediaBytes(episode?.info) || mediaBytes(episode);
+
+/** "01:53:20" to seconds. Returns 0 for anything that is not that. */
+function hmsToSeconds(text) {
+  const m = /^(\d+):(\d{2}):(\d{2})$/.exec(String(text || '').trim());
+  if (!m) return 0;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+}
+
 function applyVodInfo(info) {
   if (!info) return;
   const bits = [info.releasedate, info.genre, info.duration].filter(Boolean);
@@ -10313,6 +10360,13 @@ async function renderSeries(item, mount, onInfo) {
         name.append(mark);
       }
 
+      // How big this one is, from whatever the provider chose to say. Sat
+      // beside the download button because that is the only moment the
+      // number matters — it is the difference between pressing it and not.
+      const bytes = episodeBytes(episode);
+      const size = el('span', 'ep-size');
+      size.textContent = bytes ? formatBytes(bytes) : '';
+
       const grab = el('button', 'ep-dl');
       // Say what is already true before it is asked for again: a saved
       // episode shows a check, one on its way shows so, and pressing either
@@ -10340,7 +10394,7 @@ async function renderSeries(item, mount, onInfo) {
         if (done.ok) showSeason(season);
       });
 
-      row.append(num, name, grab);
+      row.append(num, name, size, grab);
       row.addEventListener('click', () => startEpisode(season, index));
       list.append(row);
     });
