@@ -167,17 +167,29 @@ function markedTokens(raw) {
 
   const out = [];
   let depth = 0;
+  let group = 0;
+  let groups = 0;
   let cur = '';
-  let curParen = false;
+  let curGroup = 0;
   const flush = () => {
-    if (cur) out.push({ t: cur, paren: curParen });
+    if (cur) out.push({ t: cur, paren: curGroup > 0, g: curGroup });
     cur = '';
   };
   for (const ch of s) {
-    if (ch === '(' || ch === '[') { flush(); depth += 1; continue; }
-    if (ch === ')' || ch === ']') { flush(); depth = Math.max(0, depth - 1); continue; }
+    if (ch === '(' || ch === '[') {
+      flush();
+      depth += 1;
+      if (depth === 1) { groups += 1; group = groups; }
+      continue;
+    }
+    if (ch === ')' || ch === ']') {
+      flush();
+      depth = Math.max(0, depth - 1);
+      if (!depth) group = 0;
+      continue;
+    }
     if (/[a-z0-9]/.test(ch)) {
-      if (!cur) curParen = depth > 0;
+      if (!cur) curGroup = group;
       cur += ch;
       continue;
     }
@@ -203,10 +215,27 @@ function chanKey(raw) {
  * matters is not the letters it begins with but that the provider put it in
  * brackets, which is where it puts the name a guide would use.
  */
+function bracketGroups(marked) {
+  const groups = new Map();
+  for (const m of marked) {
+    if (!m.g) continue;
+    if (!groups.has(m.g)) groups.set(m.g, []);
+    groups.get(m.g).push(m.t);
+  }
+  return groups;
+}
+
 function bracketNames(marked) {
-  return marked
-    .filter((m) => m.paren && /^[a-z]{2,5}$/.test(m.t) && !FEED_WORD.test(m.t))
-    .map((m) => m.t);
+  const out = [];
+  for (const toks of bracketGroups(marked).values()) {
+    // One short word is a station: (KTVN), (NECN). TWO words is a place —
+    // [NEW YORK], [BATON ROUGE] — and keying on "new" or "rouge" would match
+    // whatever else in the world happens to be called that.
+    if (toks.length === 1 && /^[a-z]{3,5}$/.test(toks[0]) && !FEED_WORD.test(toks[0])) {
+      out.push(toks[0]);
+    }
+  }
+  return out;
 }
 
 /**
@@ -233,6 +262,9 @@ function withoutNetwork(tokens) {
   // East. What is left has to be a name, not a marking.
   if (rest.every((t) => FEED_WORD.test(t))) return '';
   if (tail.includes(first)) return tail;
+  // E! after "NBC". Only for a network this provider actually files under,
+  // so "BBC ONE" cannot become "one".
+  if (NETWORKS.has(first) && tail.length >= 1) return tail;
   if (first.length >= 2 && first.length <= 4 && /^[a-z]+$/.test(first) && tail.length >= 4) {
     return tail;
   }
@@ -265,11 +297,15 @@ const FEED_WORD = /^(east|west|pacific|atlantic|mountain|central|national|networ
  * quietly file MTV 2's listings under MTV.
  */
 function coreTokens(marked) {
+  const marking = new Set();
+  for (const [g, toks] of bracketGroups(marked)) {
+    // "(D)", "(A)", "(PC)" qualify a channel; nothing that short in brackets
+    // is its name. Outside brackets a lone letter IS a name — E! — and
+    // dropping it leaves `nbc`, which hands E! the whole of NBC's schedule.
+    if (toks.length === 1 && toks[0].length <= 2) marking.add(g);
+  }
   return marked
-    // A lone letter goes only if it was in brackets. "(D)" is a marking; the
-    // E in "NBC E! (WEST)" is the channel, and dropping it leaves `nbc`,
-    // which would hand E! the whole of NBC's schedule.
-    .filter((m) => !FEED_WORD.test(m.t) && !(m.paren && /^[a-z]$/.test(m.t)))
+    .filter((m) => !FEED_WORD.test(m.t) && !(m.g && marking.has(m.g)))
     .map((m) => m.t);
 }
 
@@ -328,6 +364,36 @@ function stationVariants(key) {
   if (s.length < 6) return [s];
   const bare = s.replace(BROADCAST_TAIL, '');
   return bare !== s && bare.length >= 4 ? [s, bare] : [s];
+}
+
+/**
+ * Networks this provider files channels under.
+ *
+ * Only used to allow a very short remainder: "NBC E!" has to be able to
+ * reduce to `e`, because E! is a channel whose entire name is one letter. A
+ * general rule that short would let "BBC ONE" become "one", so it is limited
+ * to the handful of prefixes this catalogue actually uses.
+ */
+const NETWORKS = new Set(['nbc', 'cbs', 'abc', 'fox', 'cw', 'pbs', 'the']);
+
+/**
+ * The network and the market, with the local channel number taken out.
+ *
+ * The provider writes "ABC 2 HD [BATON ROUGE]" and the guide writes
+ * "WBRZ (ABC) Baton Rouge, LA". Neither is going to match the other whole,
+ * but both reduce to `abcbatonrouge`: drop the number on our side, drop the
+ * call sign and the state code on theirs.
+ */
+function marketKey(tokens) {
+  const t = tokens.filter((x) => !/^\d+$/.test(x));
+  return t.length >= 2 ? t.join('') : '';
+}
+
+function guideMarketKey(tokens) {
+  let t = tokens.slice();
+  if (t.length > 2 && /^[kw][a-z]{2,3}$/.test(t[0])) t = t.slice(1);
+  if (t.length > 2 && /^[a-z]{2}$/.test(t[t.length - 1])) t = t.slice(0, -1);
+  return t.length >= 2 ? t.join('') : '';
 }
 
 /** Strongest first — which tier of match beats which. */
@@ -563,6 +629,12 @@ function scan(stream, want, into, stats) {
       for (const key of [chanKey(id), ...names.map(chanKey)]) {
         for (const v of stationVariants(key)) if (v) candidates.add(v);
       }
+      // "WABC (ABC) New York, NY" also answers to `abcnewyork`, which is what
+      // "ABC HD [NEW YORK]" reduces to.
+      for (const raw of names) {
+        const market = guideMarketKey(nameTokens(raw));
+        if (market) candidates.add(market);
+      }
 
       // Strongest spelling wins outright: "ESPN2.us" must not be captured by
       // the channel that happens to call itself "ESPN".
@@ -693,7 +765,10 @@ function scan(stream, want, into, stats) {
 function channelKeys(ch) {
   const out = [];
   const add = (key, how) => {
-    if (key && key.length >= 2 && !out.some((k) => k.key === key)) out.push({ key, how });
+    // One character is allowed, because E! exists. Nothing else here
+    // produces a key that short, and a key that short only ever matches a
+    // guide channel spelled exactly the same way.
+    if (key && !out.some((k) => k.key === key)) out.push({ key, how });
   };
   if (ch.epgId) {
     add(String(ch.epgId).toLowerCase(), 'id');
@@ -710,6 +785,7 @@ function channelKeys(ch) {
   // becomes "nbcbravo" and then "bravo", which is what every guide calls it.
   const core = coreTokens(marked);
   add(core.join(''), 'loose');
+  if (marked.some((m) => m.g)) add(marketKey(core), 'loose');
   add(withoutNetwork(core), 'loose');
   add(withoutNetwork(tokens), 'loose');
   add(coreKey(tokens.join('')), 'loose');
