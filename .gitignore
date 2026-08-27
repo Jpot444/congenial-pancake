@@ -13,3 +13,6 @@ auto-update.log
 .auto-update-held
 .auto-update-state.json
 thumbs/
+
+# Screenshots the suites write while running.
+tests/shots/

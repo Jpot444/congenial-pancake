@@ -1,0 +1,13 @@
+#!/bin/sh
+for a in "$@"; do target="$a"; done
+echo "$target" >> /home/user/congenial-pancake/tests/probework/probed.log
+echo "$target" > /home/user/congenial-pancake/tests/probework/last-probed.txt
+wc -c < "$target" > /home/user/congenial-pancake/tests/probework/last-size.txt 2>/dev/null || echo 0 > /home/user/congenial-pancake/tests/probework/last-size.txt
+case "$target" in
+
+  *)
+    cat <<'JSON'
+{"streams":[{"codec_type":"video","codec_name":"h264","avg_frame_rate":"24/1","r_frame_rate":"24/1","time_base":"1/90000","start_time":"0"},{"codec_type":"audio","codec_name":"aac","profile":"HE-AAC","sample_rate":"48000","channels":2,"time_base":"1/48000","start_time":"0"}],"format":{"duration":"6","start_time":"0"}}
+JSON
+    ;;
+esac
