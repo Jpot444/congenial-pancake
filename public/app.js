@@ -554,16 +554,21 @@ function scrollViewTop() {
  * TWO questions, not one. They used to be the same question, and an iPad is the
  * device that shows why they are not:
  *
- *   * `html.touch` — is this a finger? Controls are sized for one: 44px targets,
- *     and anything that only appeared on :hover is shown outright. True for
- *     every iPhone and every iPad.
+ *   * `html.touch` — should this be built for a finger? 44px targets, and
+ *     anything that only appeared on :hover shown outright. True for every
+ *     iPhone and every iPad — and for anyone who picks Phone by hand, because
+ *     a good deal of what hangs off this class is phone LAYOUT rather than
+ *     target size: the player that puts its transport out over the picture,
+ *     the detail page that stacks. Picking Phone has always meant those, and
+ *     narrowing `touch` to mean only "a finger" would quietly take them away.
  *   * `device.phone` / `body.has-tabbar` — is this a PHONE-shaped screen? The
  *     sections move to a bottom bar and the nav becomes its overflow.
  *
- * An iPad is the first: a finger, on a screen wide enough for the portal's own
- * chrome. It used to get both, because a coarse pointer set `touch` and `touch`
- * meant phone layout — so an 820pt screen was laid out as a large phone. It now
- * gets finger-sized targets and the nav, which is what the design asks for.
+ * An iPad is the first without the second: a finger, on a screen wide enough
+ * for the portal's own chrome. It used to get both, because a coarse pointer
+ * set `touch` and `touch` WAS phone layout — so an 820pt screen was laid out as
+ * a large phone. It now gets finger-sized targets and the nav, which is what
+ * the design asks for.
  *
  * There used to be a posters-per-row setting here as well — 2, 3 or 4, picked
  * by hand, phone only. It is gone. The grid now names one target poster WIDTH
@@ -582,14 +587,17 @@ const PHONE_MAX = 820;
 
 const device = {
   phone: false,
-  touch: false,
+  coarse: false,
   /** Did a person choose the layout, or are we reading the hardware? */
   chosen: false,
+
+  /* A finger, or a layout that is built like one. Either is enough. */
+  get touch() { return this.coarse || this.phone; },
 
   init() {
     const saved = localStorage.getItem('portal.touch');
     // A coarse pointer means a finger, which is every iPhone and every iPad.
-    this.touch = Boolean(window.matchMedia?.('(pointer: coarse)').matches);
+    this.coarse = Boolean(window.matchMedia?.('(pointer: coarse)').matches);
     this.chosen = saved !== null;
     this.phone = this.chosen ? saved === '1' : this.autoPhone();
 
@@ -602,7 +610,7 @@ const device = {
   /* A finger on a phone-shaped screen. A finger on a bigger one is an iPad,
      which has the room for the nav and is better off with it. */
   autoPhone() {
-    return this.touch && window.innerWidth < PHONE_MAX;
+    return this.coarse && window.innerWidth < PHONE_MAX;
   },
 
   /* An iPad turned on its side crosses PHONE_MAX, so the answer has to be
@@ -5189,7 +5197,13 @@ function detailCard(item, backHash, backLabel) {
   back.append(document.createTextNode(` ${backLabel}`));
   back.addEventListener('click', () => { location.hash = backHash; });
 
+  /* A film's page and a show's page are the same card with different things in
+     it, and on a phone that difference matters to the artwork. A show stacks a
+     season's worth of episodes underneath, so its poster comes down to a strip
+     to keep them in reach; a film has one button and a runtime under it, and
+     shrinking its poster to the same strip buys room for nothing. */
   const card = el('div', 'show-card');
+  card.classList.add(item.kind === 'series' ? 'is-show' : 'is-film');
   const posterWrap = el('div', 'show-poster');
   if (item.logo) {
     const image = el('img');

@@ -52,19 +52,33 @@ app is called everywhere except its `<title>`.
 iOS caches home-screen icons hard: an existing shortcut keeps the old tile
 until it is removed and added again.
 
-## The desktop portal
+## The portal design
 
-The portal design lives in two files of its own — `public/desktop.css` and
+The design lives in two files of its own — `public/desktop.css` and
 `public/desktop.js` — rather than in the middle of `styles.css` and `app.js`.
-Both are inert unless `html.desk` is set, which happens on any screen at least
-**820px** wide that is not in phone layout.
+The names are historical: it was the desktop's, and it is now the product's.
 
-820, not the 1100 it used to be: an **iPad in portrait** gets this design now.
-The breakpoints below degrade the header down to that width in a deliberate
-order — company sub-line, then the profile name, then the search field collapses
-to its icon, and last the one tab marked `[data-opt]`, Downloads, which is the
-only section with another way in. **The phone layout is untouched by all of
-it**; that is a separate design and this is not it.
+**It runs everywhere.** `html.desk` is set on every screen. It used to require
+`!touch && innerWidth >= 1100`, which asked two other questions instead: `!touch`
+disqualified an iPad for being *touched* rather than for being small, and the
+width disqualified a phone outright — so the phone kept a landing page, a browse
+page and a Live TV page of its own. The same library and the same facts, drawn a
+second way and kept in step by hand.
+
+What varies by screen is chrome, not design, and that is settled in the
+stylesheet where a question about width belongs:
+
+- **1440 down to 900** — the header sheds in a deliberate order: the company
+  sub-line, then the profile name, then the search field collapses to its icon.
+- **900 down to 820** — an iPad in portrait. What is left to shed is a tab, and
+  the one that goes is `[data-opt]` — Downloads, the only section with another
+  way in.
+- **Below that** — phone layout: `body.has-tabbar`. The sections move to the
+  bottom bar, the nav becomes the hamburger's overflow, the header stops being a
+  plate over the page and becomes a row of the frame, the category bar sticks to
+  the top of the scroller instead of to the underside of the header, and the
+  billboard comes down from `80vh` to 474px. That block is at the foot of
+  `desktop.css`.
 
 `desktop.js` is a layer on top of `app.js`, never a replacement for it. `app.js`
 still decides what is on the page and where the data came from; this wraps
@@ -743,7 +757,9 @@ An iPad now gets finger-sized targets **and** the nav. The auto-detection is
 its side is not a different app, and never re-asked once a person has chosen for
 themselves in This device.
 
-Phone layout is a different shape, not a scaled-down desktop:
+Phone layout is the same *design* — the billboard, the category bar, the rails,
+the show slabs, the footer — wearing different chrome. What differs is the
+chrome, and it differs for reasons a thumb and a 393pt screen make obvious:
 
 - **The sections move to a bottom bar** — four of them: Live TV, Movies, Series
   and Downloads, where a thumb reaches, the way a native app puts them. The bar
@@ -755,8 +771,8 @@ Phone layout is a different shape, not a scaled-down desktop:
 
   - **Home was never a tab.** The badge in the top left is the way back, and two
     routes to the same place is one too many.
-  - **Favorites** is the middle of the home screen — both columns of it, each
-    with an *All 240 ›* into the full list.
+  - **Favorites** is a rail on the home screen, *Your favorites*, with the
+    heading itself the way into the full list.
   - **The Archive** is Hunter's own drive and appears for nobody else.
 
   The header's menu holds the last two. It used to be hidden outright in phone
@@ -817,6 +833,33 @@ Phone layout is a different shape, not a scaled-down desktop:
   landed on top of the last row of posters.
 
   A desktop is untouched: no bar, ordinary document scrolling, sticky header.
+- **The header stops floating.** On a desktop it is `position: fixed` and the
+  document reserves its height at the top. Inside the frame the document does
+  not scroll, so a fixed header is taken out of the column, the view claims its
+  height and the page starts underneath it — and the reserved height becomes a
+  band of nothing above the bar. It is a static row of the frame here, one 52px
+  line with the wordmark dropped and the search collapsed to its icon, and
+  `--header-h` is set to that so the nav dropdown, which hangs off exactly that
+  number, lands where the header actually ends.
+- **The category bar sticks to the scroller, not to the header.** `top:
+  var(--header-h)` is right when the header floats over the page. Here the
+  header is a row *above* the scroller, so the top of the scroller already is
+  under it and the offset is zero. Its two halves also stack: on a desktop the
+  chips and the controls share a line, and at 393pt the controls alone are most
+  of the width — the chips, which are the point of the bar, were squeezed to
+  about 50px and the controls overflowed the screen anyway.
+- **The billboard is 474px**, not `min(770px, 80vh)`. A viewport-height hero on
+  a phone is the whole page: you would scroll a screen before learning there is
+  anything under it. The copy stays absolutely positioned inside it, because the
+  billboard holds up to three features and crossfades between them by stacking
+  them — take that away and it stops being one billboard and becomes three
+  blocks down the page.
+- **Rails come down to 132px cards** so three fit with a fourth showing an edge,
+  and the arrows go: a rail is scrolled with a thumb here, so they are a control
+  for a gesture nobody is making, drawn on top of the last poster. Show slabs
+  are the exception — a slab is a thumbnail with the facts beside it, and at a
+  poster's width its season pips and genre tags fold back over the artwork, so
+  it takes nearly the screen with the next one showing an edge.
 - **No posters-per-row setting.** There used to be one — 2, 3 or 4, chosen by
   hand in the same panel, phone layout only. It defaulted to 2, which is why an
   iPad opened on two 385px posters: half a screen each, on the device with the
@@ -887,11 +930,11 @@ Three details carry it:
 The pointer is tracked by id as well as captured, so a refused capture degrades
 to a working drag rather than no drag at all.
 
-The desktop portal's category chips are dragged the same way, for the same
-reason and with the same three details — horizontally, and swapping at a
-neighbour's midpoint on the x axis. "Desktop" there means the layout, not the
-hardware: an iPad in landscape is wide enough for it and can be set to it by
-hand, and HTML5 drag-and-drop would silently do nothing on exactly that device.
+The category bar's chips are dragged the same way, for the same reason and with
+the same three details — horizontally, and swapping at a neighbour's midpoint on
+the x axis. That bar is on every screen now, phone included, so the pointer-event
+version is not a nicety for one layout: HTML5 drag-and-drop would silently do
+nothing on the majority of the devices this runs on.
 
 ## Row headers open the whole row
 

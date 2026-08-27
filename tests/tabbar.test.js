@@ -313,15 +313,21 @@ const SERIES = {
   const tail = await page.evaluate(() => {
     const view = document.querySelector('#appView');
     view.scrollTop = view.scrollHeight;
-    const cards = [...view.querySelectorAll('.rail-card, .card')];
-    const last = cards[cards.length - 1];
+    /* The LOWEST thing on the page, not the last one in the markup. The page
+       is rails now, and the last card in document order is somewhere off to
+       the right of a track that has not been scrolled — it reports an empty
+       box, which is neither above the bar nor under it. What the claim is
+       about is whatever sits lowest once you have scrolled to the end. */
+    const boxes = [...view.querySelectorAll('.rail-card, .card, .shelf, .dk-foot, #dkFoot')]
+      .map((e) => e.getBoundingClientRect())
+      .filter((r) => r.width && r.height);
+    const lowest = Math.max(...boxes.map((r) => r.bottom));
     const bar = document.querySelector('#tabBar').getBoundingClientRect();
-    const box = last.getBoundingClientRect();
-    return { bottom: Math.round(box.bottom), barTop: Math.round(bar.top),
-      gap: Math.round(bar.top - box.bottom) };
+    return { boxes: boxes.length, bottom: Math.round(lowest), barTop: Math.round(bar.top),
+      gap: Math.round(bar.top - lowest) };
   });
   console.log('   tail:', JSON.stringify(tail));
-  check('the last poster on the page is above the bar, not under it',
+  check('the last thing on the page is above the bar, not under it',
     tail.bottom <= tail.barTop + 1, JSON.stringify(tail));
   check('and not stranded miles above it by padding that is no longer needed',
     tail.gap < 200, JSON.stringify(tail));

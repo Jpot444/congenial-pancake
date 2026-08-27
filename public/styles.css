@@ -3683,6 +3683,19 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .touch .show-poster { max-width: 180px; }
 .touch .show-episodes .ep-list { max-height: none; }
 
+/* The strip is for a SHOW: it buys back the height a season of episodes needs.
+   A film has one button and a runtime under it, so the same strip shrinks the
+   artwork to buy room for nothing — it gets the width of the card, which on a
+   phone is most of the screen and the size the design draws it at.
+
+   Both selectors, because the strip is set twice: once under .touch and once
+   at 720px, and either one on its own leaves the other winning. */
+.touch .show-card.is-film .show-poster { max-width: none; }
+
+@media (max-width: 720px) {
+  .show-card.is-film .show-poster { max-width: none; }
+}
+
 /* ---- next episode, once the credits start ---- */
 
 .up-next {

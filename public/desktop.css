@@ -18,8 +18,12 @@
 
 /* Room for the fixed bar, and only while there is a bar. Setup and the
    profile gate run without one and would otherwise open on a 68px band of
-   nothing at the top of the screen. */
-.desk body:has(.site-header:not([hidden])) { padding-top: var(--header-h); }
+   nothing at the top of the screen.
+
+   Nor in phone layout, where the bar is not fixed: it is a row of the frame
+   and takes its own room, so reserving the height again puts that same band
+   back — see the phone section at the foot of this file. */
+.desk body:not(.has-tabbar):has(.site-header:not([hidden])) { padding-top: var(--header-h); }
 .desk ::selection { background: var(--brand-red); color: #fff; }
 
 /* The one caps style used for eyebrows throughout. */
@@ -587,8 +591,12 @@
  * Undone rather than left to the breakpoint, because the sticky category bar
  * underneath assumes a header of a known height and a dropdown that overlays it
  * would open straight through that bar.
+ *
+ * Only where there is no bottom bar. In phone layout the four main sections are
+ * ON that bar, the nav is the overflow behind the hamburger holding the two
+ * that are not, and styles.css's dropdown is exactly right for it.
  */
-.desk .site-header .nav {
+.desk body:not(.has-tabbar) .site-header .nav {
   position: static;
   flex-direction: row;
   gap: var(--space-2);
@@ -598,7 +606,7 @@
   transform: none;
 }
 
-.desk .site-header .nav-toggle { display: none; }
+.desk body:not(.has-tabbar) .site-header .nav-toggle { display: none; }
 
 /* ---- an iPad in portrait ----
  *
@@ -1691,3 +1699,196 @@
   letter-spacing: .05em;
 }
 .desk .guide-prog-title { font-size: 13px; }
+
+
+/* ══════════════════════════════════════════════════════ the phone ═════
+ *
+ * The portal design, on a screen 393pt wide.
+ *
+ * There is no separate phone design any more. This design used to stop at
+ * 1100px and the phone had pages of its own — the same library, the same
+ * facts, drawn a different way and kept in step by hand. Every rule below is
+ * the same page at a phone's size: the billboard, the on-now lane, the sticky
+ * category bar, the shelves and the footer are the ones above, narrowed.
+ *
+ * Everything here hangs off `body.has-tabbar` rather than a width, because the
+ * thing it adapts to is the LAYOUT — sections in a bar at the bottom, and the
+ * page a column inside a frame that does not itself scroll. Somebody who picks
+ * Phone on a desktop gets this too, which is what picking it means.
+ */
+
+/* This header is one 52px row, not the two styles.css sizes for below 560px —
+   that bar gives the search a row of its own, this one collapses it to an icon.
+   Set once, as the token, rather than patched into each rule that reads it: the
+   nav dropdown hangs off exactly this number and agrees without being told. */
+.desk body.has-tabbar { --header-h: 52px; }
+
+/* ---- the header is a row of the frame, not a plate over the page ----
+ *
+ * `position: fixed` is right when the document scrolls under a bar. In phone
+ * layout the document does not scroll at all: `body` is a fixed column, the
+ * view inside it is the only scroller, and the header is the row above it —
+ * see the frame in styles.css. A fixed header there is taken out of that
+ * column, so the view claims its height and the page starts underneath it.
+ *
+ * The notch is this element's to clear, not the row's. On .header-inner the
+ * inset would be padding on a .wrap — `width: 100%` with its gutters already
+ * in the border box — and would push the whole bar off the right of the screen
+ * by both of them.
+ */
+.desk body.has-tabbar .site-header {
+  position: static;
+  height: auto;
+  flex: none;
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Never becomes glass. The lifted state is for a bar with a picture running
+   underneath it; here there is nothing behind the bar to show through. */
+.desk body.has-tabbar .site-header.lifted {
+  height: auto;
+  background: var(--header-field);
+  backdrop-filter: none;
+  box-shadow: var(--shadow-header);
+}
+
+.desk body.has-tabbar .header-inner {
+  flex-wrap: nowrap;
+  gap: var(--space-4);
+  height: 52px;
+  min-width: 0;
+}
+
+/* The mark alone. The wordmark beside it is the first thing this design sheds
+   at every step above, and at 393pt it is the difference between reaching the
+   profile chip and not. */
+.desk body.has-tabbar .brand { flex: none; border-right: 0; padding-right: 0; margin-right: 0; }
+.desk body.has-tabbar .brand-words { display: none; }
+.desk body.has-tabbar .brand-bison { width: 34px; }
+.desk body.has-tabbar .site-header.lifted .brand-bison { width: 34px; }
+
+/* Nothing here for the nav on purpose. It is the hamburger's, and the hamburger
+   is the overflow from the bottom bar; styles.css already shows the toggle and
+   lays the dropdown out below 1200px, hanging it off --header-h, which is set
+   correctly above. The only thing this layer had to do was stop turning it back
+   into a row — see `body:not(.has-tabbar)` on that rule further up. */
+
+/* Search collapses to its icon and stays in the row. styles.css gives it a row
+   of its own below 560px, which was right for a bar that had to hold six nav
+   links as well; this one holds four buttons and the profile chip. */
+.desk body.has-tabbar .site-header .search {
+  order: 0;
+  flex: 0 0 var(--control-h);
+  width: var(--control-h);
+  padding: 0;
+  justify-content: center;
+}
+
+.desk body.has-tabbar .site-header .search input { display: none; }
+.desk body.has-tabbar .header-actions { flex: 0 1 auto; flex-wrap: nowrap; margin-left: auto; gap: var(--space-2); }
+
+/* ---- the category bar ----
+ *
+ * It sticks under the header on a desktop because the header floats over the
+ * page. Here the header is a row above the scroller, so the top of the
+ * scroller IS under the header and the offset is zero.
+ */
+.desk body.has-tabbar #dkCatbar { top: 0; }
+
+/* Two rows, not one.
+ *
+ * On a desktop the chips and the controls share a line: the strip takes what
+ * is left after All / sort / Rows-Grid, and there is plenty left. At 393pt the
+ * controls alone are most of the width, so the strip was squeezed to about
+ * 50px — the categories, which are the point of the bar, became a sliver — and
+ * the controls overflowed the screen anyway. Stacked, the chips get the full
+ * width to scroll through and the controls get a line of their own. */
+.desk body.has-tabbar #dkCatbar .inner {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-7);
+}
+
+.desk body.has-tabbar #dkCatbar .strip { flex: none; }
+.desk body.has-tabbar #dkCatbar .ctrl { gap: var(--space-3); }
+
+/* The segmented holds the right-hand end; the sort takes what is left and is
+   allowed to shrink, which is what stops the row overflowing on an SE. */
+.desk body.has-tabbar #dkCatbar .dk-sel { flex: 1 1 auto; min-width: 0; }
+.desk body.has-tabbar #dkCatbar .dk-sel select { min-width: 0; }
+.desk body.has-tabbar #dkCatbar .dk-seg { flex: none; margin-left: auto; }
+.desk body.has-tabbar #dkCatbar .dk-allbtn { flex: none; }
+
+/* ---- the billboard ----
+ *
+ * 474px rather than 80vh. The hero is one of several things on this page and
+ * on a phone a viewport-height hero is the whole page — you would scroll a
+ * screen before learning there is anything under it.
+ */
+.desk body.has-tabbar #dkHero {
+  height: 474px;
+  min-height: 0;
+}
+
+.desk body.has-tabbar #dkHero .inner { padding-bottom: var(--space-9); }
+
+/* The stage keeps its height and the copy keeps its `position: absolute`: the
+   billboard holds up to three features and crossfades between them by stacking
+   them on top of each other. Take that away and they stop being one billboard
+   and become three blocks down the page. */
+.desk body.has-tabbar #dkHero .stage { min-height: 300px; }
+.desk body.has-tabbar #dkHero h1.big { font-size: 56px; max-width: none; }
+.desk body.has-tabbar #dkHero .blurb { font-size: var(--text-md); max-width: 44ch; }
+.desk body.has-tabbar #dkHero .resume { max-width: none; }
+
+/* ---- the page ---- */
+/* 14px, and the poster grid's gap comes down with it. Both are the desktop's
+   numbers otherwise — a 28px gutter and an 18px gap — and on a 375pt screen
+   the four of them together are 92px, which is most of a third poster. At a
+   106px target that is exactly the difference between three across and two,
+   and two 161px posters on an iPhone SE is the layout this whole change exists
+   to stop. See --poster-min in styles.css for where 106 comes from. */
+.desk body.has-tabbar .wrap { padding: 0 14px; }
+.desk body.has-tabbar .grid { gap: var(--space-8) var(--space-5); }
+.desk body.has-tabbar .app-shell { gap: 0; padding-bottom: var(--space-9); }
+
+/* The page head is a title and, on Live TV, a Multi-view button. Side by side
+   they leave the button about 90px, which it spends breaking its own label
+   across two lines and pushing the count under the title with it. Stacked, the
+   title gets the width it is set at and the button gets its own line. */
+.desk body.has-tabbar .content-head {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  padding: var(--space-8) 0 var(--space-7);
+}
+
+.desk body.has-tabbar #contentTitle { font-size: 46px; }
+.desk body.has-tabbar .content-head .btn { flex: none; }
+
+/* A rail card is 176px here because that is what looks right beside a 1440px
+   billboard. At 393pt it is nearly half the screen — two and a bit to a rail,
+   which reads as a grid that has gone wrong rather than as a row you scroll.
+   132 puts three on screen with the fourth showing enough edge to say the row
+   continues, and it is the number styles.css already uses below 860px; this
+   layer was simply outranking it. */
+.desk body.has-tabbar .rail-card:not(.show-slab) { flex-basis: 132px; width: 132px; }
+
+/* A show slab is not a poster and does not take a poster's width. It is a
+   thumbnail with the facts beside it — 400px on a desktop — and squeezing one
+   into a 132px rail card folds the season pips and the genre tags back over
+   the artwork. It gets nearly the screen instead, with the next one showing an
+   edge so the row still reads as a row. */
+.desk body.has-tabbar .show-slab {
+  flex: 0 0 min(330px, 86vw);
+  width: min(330px, 86vw);
+}
+
+/* A rail is scrolled with a thumb here, so the arrows are a control for a
+   gesture nobody is making — and they sit ON the last poster to do it.
+   styles.css already drops them below 860px; this layer was outranking it. */
+.desk body.has-tabbar .rail-nav { display: none; }
+
+/* The bar is a row beside the page rather than a plate on top of it, so the
+   run-off room the desktop leaves for its own footer is a gap here. */
+.desk body.has-tabbar #dkFoot { padding-bottom: var(--space-8); }

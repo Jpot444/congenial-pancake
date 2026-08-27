@@ -54,15 +54,21 @@ const MOVIES = {
   })),
 };
 
-/* Every device the design names, plus the two that broke it. `phone` is the
-   layout, not the hardware: it is what the device sheet's toggle sets. */
+/* Every device the design names, plus the two that broke it.
+ *
+ * `cols` is the browse page — a category open as a grid, which is the page the
+ * design draws and the one this is about. `withSidebar` is the same page
+ * reached the other way, by picking a category from the sidebar column, which
+ * puts that 236px column back and takes it out of the grid's width. Both are
+ * real states and the count differs between them, so both are checked rather
+ * than one of them being quietly the answer. */
 const CASES = [
-  { name: 'iPhone SE',        w: 375,  h: 667,  phone: true,  cols: 3 },
-  { name: 'iPhone 15 Pro',    w: 393,  h: 852,  phone: true,  cols: 3 },
-  { name: 'iPhone Pro Max',   w: 440,  h: 956,  phone: true,  cols: 3 },
-  { name: 'iPad 11 portrait', w: 820,  h: 1180, phone: true,  cols: 5 },
-  { name: 'iPad 11 landscape', w: 1024, h: 768, phone: true,  cols: 4 },
-  { name: 'desktop',          w: 1440, h: 900,  phone: false, cols: 6 },
+  { name: 'iPhone SE',         w: 375,  h: 667,  cols: 3, withSidebar: 3 },
+  { name: 'iPhone 15 Pro',     w: 393,  h: 852,  cols: 3, withSidebar: 3 },
+  { name: 'iPhone Pro Max',    w: 440,  h: 956,  cols: 3, withSidebar: 3 },
+  { name: 'iPad 11 portrait',  w: 820,  h: 1180, cols: 5, withSidebar: 5 },
+  { name: 'iPad 11 landscape', w: 1024, h: 768,  cols: 5, withSidebar: 4 },
+  { name: 'desktop',           w: 1440, h: 900,  cols: 7, withSidebar: 6 },
 ];
 
 /* The count read off the rendered boxes: how many cards share the top row.
@@ -87,14 +93,15 @@ function measure() {
   const seen = [];
 
   for (const c of CASES) {
-    const page = await browser.newPage({ viewport: { width: c.w, height: c.h } });
+    // hasTouch is what puts a device in phone layout — a coarse pointer on a
+    // screen narrower than 820. Set on the context rather than by toggling
+    // afterwards, so the page reads the same thing real hardware would.
+    const page = await browser.newPage({
+      viewport: { width: c.w, height: c.h },
+      hasTouch: c.w < 1200,
+      isMobile: c.w < 500,
+    });
     page.on('pageerror', (e) => { console.log('  PAGE ERROR', e.message); fails.push('pageerror'); });
-
-    // The layout is per-device and stored locally, so it has to be set before
-    // the page reads it rather than toggled afterwards.
-    await page.addInitScript((phone) => {
-      localStorage.setItem('portal.touch', phone ? '1' : '0');
-    }, c.phone);
 
     await page.route('**/api/profiles/*/taste', (r) =>
       r.fulfill({ status: 200, contentType: 'application/json',
@@ -107,25 +114,34 @@ function measure() {
     }
 
     // Land on Movies first: setting the hash runs the router, and the router
-    // clears the open category — so the category is picked after that settles.
+    // clears whatever was open — so the page is chosen after that settles.
     await page.evaluate((lib) => {
       state.library.movies = lib;
       location.hash = '#/movies';
     }, MOVIES);
-    await wait(800);
+    await wait(900);
+
+    /* The browse page: one shelf opened as a grid, which is how the category
+       bar opens a category and the page the design draws. No sidebar. */
     await page.evaluate(() => {
-      state.shelf = null;
-      state.category = 'ac';   // a category renders the poster grid, not shelves
+      state.shelf = window.buildShelves('movies')[0].title;
+      state.visible = 60;
       render();
     });
     await page.waitForFunction(() => [...document.querySelectorAll('.grid')]
       .some((g) => g.querySelector('.card') && g.getClientRects().length), { timeout: 10000 });
     await wait(400);
-
     const m = await page.evaluate(measure);
-    seen.push({ device: c, got: m });
+
+    /* The same page reached from the sidebar, which puts its column back. */
+    await page.evaluate(() => { state.shelf = null; state.category = 'ac'; render(); });
+    await wait(700);
+    const withSidebar = await page.evaluate(measure);
+
+    seen.push({ device: c, got: m, sidebar: withSidebar });
     console.log(`   ${c.name.padEnd(19)} ${String(c.w).padStart(4)}pt  `
-      + `column ${String(m.column).padStart(4)}px  →  ${m.cols} across @ ${m.poster}px`);
+      + `column ${String(m.column).padStart(4)}px → ${m.cols} across @ ${m.poster}px`
+      + `   (from the sidebar: ${withSidebar.cols} @ ${withSidebar.poster}px)`);
 
     await page.screenshot({ path: `${__dirname}/shots/grid-${c.w}.png` });
     await page.close();
@@ -136,6 +152,12 @@ function measure() {
   for (const { device, got } of seen) {
     check(`${device.name} · ${device.w}pt fits ${device.cols} across`,
       got.cols === device.cols, `got ${got.cols}${got.note ? ` (${got.note})` : ''}`);
+  }
+
+  console.log('\n  and with the sidebar column open');
+  for (const { device, sidebar } of seen) {
+    check(`${device.name} fits ${device.withSidebar} across beside the sidebar`,
+      sidebar.cols === device.withSidebar, `got ${sidebar.cols}`);
   }
 
   // --- and none of them is a hand-picked number ----------------------------
@@ -169,14 +191,16 @@ function measure() {
 
   // --- the desktop did not move --------------------------------------------
   //
-  // The whole change is a phone and tablet change. The desktop grid asked for
-  // 168px posters before it and asks for 168px now, so it must land on exactly
-  // what it always did — six across at 170px inside a 1108px column.
+  // The desktop grid asked for 168px posters before any of this and asks for
+  // 168px now, so where the page is the same the count must be the same. The
+  // page reached from the sidebar is that page: six across at 170px in a
+  // 1108px column, exactly what it fitted before.
   console.log('\n  the desktop is where it was');
-  const desk = seen.find((s) => !s.device.phone);
-  check('six across on a desktop, unchanged', desk.got.cols === 6, `got ${desk.got.cols}`);
-  check('at the width it always used', Math.abs(desk.got.poster - 170) <= 2,
-    `${desk.got.poster}px`);
+  const desk = seen.find((s) => s.device.name === 'desktop');
+  check('six across beside the sidebar, unchanged', desk.sidebar.cols === 6,
+    `got ${desk.sidebar.cols}`);
+  check('at the width it always used', Math.abs(desk.sidebar.poster - 170) <= 2,
+    `${desk.sidebar.poster}px`);
 
   // --- and the setting it replaced is gone ---------------------------------
   console.log('\n  the setting it replaced');

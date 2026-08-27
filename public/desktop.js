@@ -19,14 +19,6 @@
 (function () {
   'use strict';
 
-  /* The design is drawn for 1440 and degrades through the breakpoints in
-     desktop.css. The last of those steps takes it to 820 — an iPad in portrait,
-     which is the narrowest screen the portal's own header still fits on once it
-     has shed the company sub-line, the profile name and the Downloads tab.
-     Below that the phone layout is the better answer, and the user can still
-     force either from This device. */
-  const MIN_WIDTH = 820;
-
   const root = document.documentElement;
   const $$ = (sel, host) => Array.from((host || document).querySelectorAll(sel));
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) =>
@@ -68,43 +60,32 @@
 
 
   /* ================================================================= gate */
-  /* One place decides whether the desktop design is on, and everything else
-     asks it rather than re-deriving the answer from the window. */
+  /* Whether this layer has started. Everything below asks it rather than
+     re-deriving anything from the window; it goes true once and stays true.
+   *
+   * It used to be a real gate — `!touch && innerWidth >= 1100` — and it asked
+   * two wrong questions. `!touch` disqualified an iPad for being TOUCHED rather
+   * than for being small. The width disqualified a phone outright, which left
+   * the phone on a design this one had moved on from: the same library and the
+   * same facts, drawn a second way and kept in step by hand.
+   *
+   * The portal design is the design now, on a phone as much as on a desktop.
+   * What varies by screen is chrome — `body.has-tabbar` puts the sections in a
+   * bottom bar, and the breakpoints in desktop.css take the header from 1440
+   * down to a phone. Both are questions about width and both are answered in
+   * the stylesheet, which is where a question about width belongs. Nothing
+   * here needs to know, and there is no longer a way back out: the teardown
+   * that used to hand the page back to app.js went with the gate.
+   */
   let on = false;
 
-  /* Phone LAYOUT is what rules this out, not a finger. They used to be the same
-     class: a coarse pointer set `touch`, and `touch` meant the bottom bar — so
-     an iPad was disqualified for being touched rather than for being small, and
-     an 820pt screen got laid out as a large phone. The question here is whether
-     the sections are in a bar at the bottom, which is what has-tabbar says. */
-  function wanted() {
-    return !document.body.classList.contains('has-tabbar')
-      && window.innerWidth >= MIN_WIDTH;
-  }
-
   const applyGate = guard('gate', function applyGate() {
-    const next = wanted();
-    if (next === on) return;
-    on = next;
-    root.classList.toggle('desk', on);
-    if (on) {
-      liftHeader();
-      decorate();
-    } else {
-      teardown();
-    }
+    if (on) return;
+    on = true;
+    root.classList.add('desk');
+    liftHeader();
+    decorate();
   });
-
-  /* Leaving desktop layout has to leave the page as app.js drew it, or the
-     phone inherits furniture it has no design for. Everything this layer
-     adds is marked, so taking it away is one sweep rather than a list of
-     things to remember. */
-  function teardown() {
-    for (const node of $$('[data-dk-owned]')) node.remove();
-    for (const node of $$('[data-dk]')) delete node.dataset.dk;
-    document.querySelector('.site-header')?.classList.remove('lifted');
-    document.querySelector('.app-shell')?.classList.remove('has-catbar');
-  }
 
 
   /* =============================================================== header */
