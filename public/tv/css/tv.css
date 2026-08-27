@@ -1021,6 +1021,30 @@ a { color: var(--text); text-decoration: none; }
 }
 .guide-head .now { font-family: var(--display); font-size: 22px; letter-spacing: .2em; color: var(--live); }
 .guide-head .meta { margin-left: auto; font-size: 22px; color: var(--muted-dim); }
+
+/* Four of these channels at once, without leaving the schedule to ask for it.
+   Sized like a nav pill because that is what it is. */
+.guide-mv {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  padding: 0 24px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  font-family: var(--display);
+  font-size: 24px;
+  letter-spacing: .06em;
+  color: var(--text);
+  cursor: pointer;
+}
+.guide-mv svg { flex: none; }
+.guide-mv.f {
+  background: var(--text);
+  color: var(--on-light);
+  border-color: var(--text);
+}
 .guide-times { display: flex; padding: 0 48px 10px; }
 .guide-times .spacer { flex: none; width: 300px; }
 .guide-times .cols { flex: 1; display: flex; }

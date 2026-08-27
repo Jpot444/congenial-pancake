@@ -157,6 +157,22 @@ const PLAYLIST = [
   }));
   console.log('   guide :', JSON.stringify(guided));
   check('the guide opens', guided.guide, JSON.stringify(guided));
+
+  /* A guide is a schedule for channels that belong together, and here that is
+     the category the channel on screen is in — not the flip list, which is a
+     good order to press CHANNEL UP through and a poor thing to read. */
+  const schedule = await page.evaluate(() => ({
+    head: document.querySelector('.guide-head h2')?.textContent || '',
+    rows: [...document.querySelectorAll('.guide-name')].map((n) => n.textContent),
+    multi: Boolean(document.querySelector('.guide-mv')),
+  }));
+  console.log('   sched :', JSON.stringify(schedule));
+  check('and it is the category of what is playing, by name',
+    schedule.head === 'USA ENTERTAINMENT', schedule.head);
+  check('listing that category and nothing else',
+    schedule.rows.length === 2 && schedule.rows.every((n) => n.startsWith('ABC') || n.startsWith('NBC')),
+    schedule.rows.join(' | '));
+  check('with a way into multi-view from inside it', schedule.multi);
   check('over the same video element it was already playing',
     guided.probe === 'tuned' && guided.src === 'blob:', JSON.stringify(guided));
 

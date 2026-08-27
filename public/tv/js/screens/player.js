@@ -3,8 +3,10 @@
  *
  * Full-bleed picture, a broadcast score bug in the corner, and one line of
  * chrome across the bottom. From there:
- *   ▼    the guide — channel × time, the programme on now in brand crimson,
- *        scrolling in its own container so the page never moves under it
+ *   ▼    the guide — the CATEGORY this channel belongs to, channel × time,
+ *        the programme on now in brand crimson, scrolling in its own container
+ *        so the page never moves under it, and a way into multi-view from
+ *        inside the schedule
  *   OK   the channel bar — flip channels without leaving the picture
  *   BACK closes whichever is open, then leaves the player
  *
@@ -14,7 +16,7 @@
  * element is given the URL and does what it can.
  */
 
-import { el, clear, plateText, cleanName } from '../ui.js';
+import { el, clear, plateText, cleanName, icon } from '../ui.js';
 import { focus } from '../focus.js';
 import { getPlay, postHistory } from '../api.js';
 import { state, loadLibrary, loadEpg, nowOn, nextOn, airProgress, favorites, pinnedIds }
@@ -24,6 +26,11 @@ import { getGames, matchChannel, usingPlaceholders } from '../scores.js';
 export const fullbleed = true;
 
 const GUIDE_ROWS = 12;
+/* How many channels of a category the guide will put on screen at once. Every
+   row is a channel the box may have to ask the provider about, and it allows
+   one connection — so this is a window on the category, centred on what is
+   being watched, rather than the whole of it. */
+const GUIDE_ROWS_MAX = 24;
 const GUIDE_SPAN_HOURS = 6;
 const HISTORY_EVERY_MS = 30000;
 
@@ -56,6 +63,7 @@ let from = 'live';
 let overlay = null;          // null | 'guide' | 'bar'
 let media = { video: null, hls: null, mpegts: null };
 let channels = [];
+let guideChannels = [];
 let epg = new Map();
 let game = null;
 let historyTimer = null;
@@ -77,7 +85,12 @@ export async function render(hostNode, app, params) {
 
   const lib = await loadLibrary('live');
   channels = flipList(lib);
-  epg = await loadEpg(channels.map((c) => String(c.epgId || c.id)));
+  guideChannels = guideList(lib);
+  /* One call for both lists — the guide's category and the bar's flip list
+     overlap heavily, and asking twice would spend the one connection twice. */
+  epg = await loadEpg(
+    [...guideChannels, ...channels].map((c) => String(c.epgId || c.id))
+  );
   game = matchGame(channel);
 
   paint();
@@ -127,7 +140,12 @@ function videoNode() {
  */
 function repaint() {
   paint();
-  if (overlay === 'guide') focus.reset(10, 0);
+  if (overlay === 'guide') {
+    /* Open on the channel being watched rather than at the top of the
+       category: in a pack of two hundred, row one is not where you are. */
+    const at = guideChannels.findIndex((c) => String(c.id) === String(channel.id));
+    focus.reset(10 + Math.max(0, at), 0);
+  }
   else if (overlay === 'bar') {
     focus.reset(30, Math.max(0, channels.findIndex((c) => String(c.id) === String(channel.id))));
   } else focus.reset(-1, 0);
@@ -234,7 +252,49 @@ function backLabel() {
 
 /* ----------------------------------------------------------------- guide ── */
 
-/** The channels worth putting in the guide and the flip list, in that order. */
+/**
+ * What the guide lists: the category the channel on screen belongs to.
+ *
+ * A guide is a schedule for a group of channels that belong together, and on
+ * this provider that group is the category — the sports pack, the locals, the
+ * movie channels. It used to list the flip list instead (this channel, then
+ * favourites, then pinned categories, then whatever came next), which is a
+ * good order to press CHANNEL UP through and a poor thing to read a schedule
+ * off: pressing ▼ while watching a game showed the news channels somebody
+ * hearted last week.
+ *
+ * In the provider's own order, which is channel-number order, so it reads the
+ * way a guide has always read. A channel with no category at all — an event
+ * row, mostly — falls back to the flip list rather than showing one row.
+ */
+function guideList(lib) {
+  const items = lib.items || [];
+  const category = String(channel.categoryId ?? '');
+  if (!category) return flipList(lib);
+
+  const inCategory = items.filter((c) => String(c.categoryId) === category);
+  if (inCategory.length < 2) return flipList(lib);
+
+  /* Capped because every row is a channel the box may have to ask the
+     provider about, and it allows one connection. The channel being watched
+     is always in the window, even in a category of three hundred. */
+  const at = inCategory.findIndex((c) => String(c.id) === String(channel.id));
+  if (inCategory.length <= GUIDE_ROWS_MAX || at < 0) return inCategory.slice(0, GUIDE_ROWS_MAX);
+  const from = Math.min(
+    Math.max(0, at - Math.floor(GUIDE_ROWS_MAX / 2)),
+    inCategory.length - GUIDE_ROWS_MAX
+  );
+  return inCategory.slice(from, from + GUIDE_ROWS_MAX);
+}
+
+/** What the guide calls itself: the category, or the honest fallback. */
+function guideTitle() {
+  const category = (state.library.live && state.library.live.categories || [])
+    .find((c) => String(c.id) === String(channel.categoryId));
+  return category ? cleanName(category.name).toUpperCase() : 'GUIDE';
+}
+
+/** The channels worth putting in the flip list, in that order. */
 function flipList(lib) {
   const items = lib.items || [];
   const byId = new Map(items.map((c) => [String(c.id), c]));
@@ -263,8 +323,19 @@ function guide() {
   const wrap = el('div', 'guide');
 
   const head = el('div', 'guide-head');
-  head.append(el('h2', null, 'GUIDE'), el('span', 'now', 'NOW'));
+  head.append(el('h2', null, guideTitle()), el('span', 'now', 'NOW'));
   head.append(el('span', 'meta', '◀ ▶ across the hours · BACK to the game'));
+
+  /* Four of these channels at once, from the guide, without going back out to
+     Live TV first. Row 9 puts it directly above the first guide row, so ▲ from
+     the top of the schedule lands on it. */
+  const quad = el('button', 'guide-mv ring');
+  quad.dataset.r = 9;
+  quad.dataset.c = 0;
+  quad.dataset.kind = 'guidemulti';
+  quad.dataset.lift = 'pill';
+  quad.append(icon('multiview', 26), el('span', null, 'MULTI-VIEW'));
+  head.append(quad);
   wrap.append(head);
 
   const start = hourFloor(Date.now());
@@ -283,7 +354,7 @@ function guide() {
   const body = el('div', 'guide-body');
   const scroll = el('div', 'guide-scroll');
   scroll.dataset.scroller = 'guide';
-  channels.forEach((chan, i) => scroll.append(guideRow(chan, 10 + i, start)));
+  guideChannels.forEach((chan, i) => scroll.append(guideRow(chan, 10 + i, start)));
   body.append(scroll);
   wrap.append(body);
   return wrap;
@@ -592,6 +663,15 @@ export function onKey(key, { back, ok }) {
 }
 
 export function activate(node, app) {
+  /* Four at once, straight from the schedule. The shell calls leave() on the
+     way out, which is what stops this channel before multi-view opens its
+     own — the provider allows one connection and would refuse the rest. */
+  if (node.dataset.kind === 'guidemulti') {
+    overlay = null;
+    app.go('multi');
+    return;
+  }
+
   const next = node._channel;
   if (!next) return;
   if (String(next.id) === String(channel.id)) {
