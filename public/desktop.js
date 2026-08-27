@@ -80,7 +80,6 @@
     root.classList.toggle('desk', on);
     if (on) {
       liftHeader();
-      dressLoader();
       decorate();
     } else {
       teardown();
@@ -1361,84 +1360,11 @@
 
 
   /* ====================================================== startup screen */
-  /* The loading screen is a projector lamp coming up to temperature, not a
-     logo with things flying around it. The steps it reports are the portal's
-     real ones — app.js drives this overlay for every long wait it has — so
-     the bar moves at whatever pace the box is actually managing rather than
-     ticking evenly and then hanging on the slow one.
-
-     The popcorn scene is left in the markup and hidden. It is the phone's
-     loading screen and still the right one there; this only replaces it on
-     a desktop, which is what the redesign covers. */
-  const dressLoader = guard('loader', function dressLoader() {
-    const loader = document.querySelector('.loader');
-    if (!loader || loader.querySelector('.dk-lamp')) return;
-
-    loader.insertAdjacentHTML('afterbegin',
-      '<div class="dk-lamp" data-dk-owned="1"></div>'
-      + '<div class="dk-floor" data-dk-owned="1"></div>'
-      + '<span class="dk-stamp" data-dk-owned="1">Private media server</span>');
-    loader.insertAdjacentHTML('beforeend',
-      '<div class="dk-vig" data-dk-owned="1"></div><div class="dk-grain" data-dk-owned="1"></div>');
-
-    /* The mark is already in the markup as the charging bison. The sheen is
-       masked to the silhouette itself, so the light travels across the
-       animal rather than across a rectangle sitting on top of it. */
-    const scene = loader.querySelector('.charge-scene');
-    if (scene && !scene.querySelector('.dk-sheen')) {
-      scene.insertAdjacentHTML('beforeend', '<span class="dk-sheen" data-dk-owned="1"></span>');
-    }
-
-    const title = loader.querySelector('.loader-title');
-    if (title && !loader.querySelector('.dk-sub')) {
-      title.insertAdjacentHTML('afterend',
-        '<p class="dk-sub" data-dk-owned="1">Treasure State Technology Ventures</p>');
-    }
-
-    const readout = loader.querySelector('.loader-readout');
-    if (readout && !readout.querySelector('.dk-dot')) {
-      readout.insertAdjacentHTML('afterbegin', '<span class="dk-dot" data-dk-owned="1"></span>');
-    }
-  });
-
-  /* At a hundred per cent the hairline goes white and the dot goes green, so
-     the last thing the screen does is say it finished rather than simply
-     disappearing. */
-  const appLoaderSet = loader.set.bind(loader);
-  loader.set = function (fraction, detail) {
-    const out = appLoaderSet(fraction, detail);
-    document.querySelector('.loader')?.classList.toggle('done', fraction >= 1);
-    return out;
-  };
-
-  /* The sequence belongs to starting up, and it runs once.
-
-     This overlay is not only the startup screen — app.js puts it up for
-     buffering, for a seek, for fetching a film's details. Replaying a lamp
-     warming up and a wordmark wiping in over four seconds every time one of
-     those happens would make a three-hundred-millisecond wait feel like a
-     reboot, and would hold the hairline off screen for longer than the wait
-     it is reporting. So the first one is the boot, and everything after it
-     gets the same screen already at rest. */
-  let booted = false;
-
-  const appLoaderShow = loader.show.bind(loader);
-  loader.show = function () {
-    const node = document.querySelector('.loader');
-    node?.classList.remove('done');
-    if (on && node && !booted) {
-      booted = true;
-      dressLoader();
-      node.classList.add('dk-run');
-      /* Taken off again once it has played. Hiding the overlay and showing it
-         again puts the element back into rendering, and a CSS animation still
-         attached to it starts over from the top — which is how a later, quick
-         wait ended up sitting behind a wordmark that had not wiped in yet. */
-      setTimeout(() => node.classList.remove('dk-run'), 5200);
-    }
-    return appLoaderShow.apply(this, arguments);
-  };
-
+  /* The projector-lamp startup sequence used to be built here, injected into
+     the loading overlay and gated on the desktop layout being on — which meant
+     no phone and no iPad ever saw it. It has moved into the markup, styles.css
+     and the loader object in app.js, so it is the same startup on every device
+     and does not depend on this layer being loaded. Nothing is left to do here. */
 
   /* =========================================================== dispatch */
   function buildBrowseChrome() {

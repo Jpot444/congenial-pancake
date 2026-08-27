@@ -548,9 +548,14 @@ function scrollViewTop() {
 /* ----------------------------------------------------------- this device
 
  * A phone and a desktop are far enough apart to be two layouts rather than one
- * that stretches between them. Phone gets the sections as a bottom bar and a
- * fixed number of posters to a row; desktop keeps the hamburger and fits as
- * many as there is room for.
+ * that stretches between them. Phone gets the sections as a bottom bar; desktop
+ * keeps the hamburger.
+ *
+ * There used to be a posters-per-row setting here as well — 2, 3 or 4, picked
+ * by hand, phone only. It is gone. The grid now names one target poster WIDTH
+ * and lets the column count fall out of the screen, so it is right on an SE, a
+ * Pro Max, an iPad and a desktop without anyone choosing a number, and right on
+ * hardware that does not exist yet. See --poster-min in styles.css.
  *
  * Kept per-device in localStorage rather than in the profile: the same profile
  * is used from both, and only one of them wants any of this.
@@ -558,7 +563,6 @@ function scrollViewTop() {
 
 const device = {
   phone: false,
-  cols: 2,
 
   init() {
     const saved = localStorage.getItem('portal.touch');
@@ -567,8 +571,9 @@ const device = {
     const coarse = window.matchMedia?.('(pointer: coarse)').matches;
     this.phone = saved === null ? Boolean(coarse) : saved === '1';
 
-    const cols = Number(localStorage.getItem('portal.cols'));
-    this.cols = [2, 3, 4].includes(cols) ? cols : 2;
+    // The column setting is retired. Clear what an older build stored rather
+    // than leaving a key in localStorage that nothing reads.
+    localStorage.removeItem('portal.cols');
     this.apply();
   },
 
@@ -577,7 +582,6 @@ const device = {
     // Still called `touch`: every sizing rule in the stylesheet hangs off it,
     // and phone layout is what it has always meant.
     root.classList.toggle('touch', this.phone);
-    root.style.setProperty('--poster-cols', String(this.cols));
 
     const btn = $('#touchToggle');
     btn.classList.toggle('is-on', this.phone);
@@ -590,11 +594,6 @@ const device = {
     for (const b of document.querySelectorAll('#layoutSeg button')) {
       b.classList.toggle('is-on', (b.dataset.phone === '1') === this.phone);
     }
-    for (const b of document.querySelectorAll('#colsSeg button')) {
-      b.classList.toggle('is-on', Number(b.dataset.cols) === this.cols);
-    }
-    // Nothing to choose on a desktop, where the grid fits what it can.
-    $('#colsField').hidden = !this.phone;
 
     syncTabs();
   },
@@ -602,12 +601,6 @@ const device = {
   setPhone(on) {
     this.phone = on;
     localStorage.setItem('portal.touch', on ? '1' : '0');
-    this.apply();
-  },
-
-  setCols(n) {
-    this.cols = n;
-    localStorage.setItem('portal.cols', String(n));
     this.apply();
   },
 };
@@ -635,12 +628,6 @@ $('#layoutSeg').addEventListener('click', (event) => {
   device.setPhone(button.dataset.phone === '1');
   // The sidebar and the rails lay out differently between the two.
   if (state.config) render();
-});
-
-$('#colsSeg').addEventListener('click', (event) => {
-  const button = event.target.closest('button');
-  if (!button) return;
-  device.setCols(Number(button.dataset.cols));
 });
 
 /* ------------------------------------------------------- multi-view --- */
@@ -3209,18 +3196,57 @@ $('#tourSkip').addEventListener('click', () => tour.finish());
 
 /* ---------------------------------------------------------------- loader */
 
+/* The full-screen overlay, and the projector-lamp sequence that plays over it
+ * the first time it comes up.
+ *
+ * The sequence belongs to STARTING UP, and it runs once. This same overlay is
+ * also what a seek, a prebuffer and a film-details fetch put up, and replaying
+ * a lamp warming up and a wordmark wiping in over four seconds every time one
+ * of those happens would make a three-hundred-millisecond wait feel like a
+ * reboot — and would hold the hairline off screen for longer than the wait it
+ * is reporting. So the first show() is the boot and everything after it gets
+ * the same screen already at rest.
+ *
+ * This used to live in desktop.js, wrapping these methods from outside and only
+ * while the desktop layout was on. It is here now because the startup screen is
+ * every device's, not the desktop's.
+ */
+
+/* How long the CSS sequence runs, end to end: the sub-line is the last thing to
+   start, at 1.75s for 1.5s, and the hairline draws to 2.2s + 1.1s. A little
+   over that covers both. */
+const BOOT_MS = 5200;
+
 const loader = {
+  booted: false,
+
   show(label, detail = '') {
     $('#loaderLabel').textContent = label;
     $('#loaderDetail').textContent = detail;
     this.set(0);
-    $('#loader').hidden = false;
+
+    const node = $('#loader');
+    node.classList.remove('is-done');
+    if (!this.booted) {
+      this.booted = true;
+      node.classList.add('is-booting');
+      /* Taken off again once it has played. Hiding the overlay and showing it
+         again puts the element back into rendering, and a CSS animation still
+         attached to it starts over from the top — which is how a later, quick
+         wait ended up sitting behind a wordmark that had not wiped in yet. */
+      setTimeout(() => node.classList.remove('is-booting'), BOOT_MS);
+    }
+
+    node.hidden = false;
   },
   set(fraction, detail) {
     const pct = Math.max(0, Math.min(100, Math.round(fraction * 100)));
     $('#loaderFill').style.width = `${pct}%`;
     $('#loaderPct').textContent = `${pct}%`;
     if (detail !== undefined) $('#loaderDetail').textContent = detail;
+    // At a hundred per cent the hairline goes white and the dot goes green, so
+    // the last thing the screen does is say it finished rather than vanishing.
+    $('#loader').classList.toggle('is-done', fraction >= 1);
   },
   label(text) {
     $('#loaderLabel').textContent = text;

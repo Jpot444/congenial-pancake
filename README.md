@@ -99,7 +99,9 @@ What the desktop gets that the phone does not:
   steps against a hairline rather than a spinner. It runs once — the same
   overlay is also what buffering and seeking put up, and replaying a
   four-second lamp-and-wipe for a three-hundred-millisecond wait would mean a
-  reboot every time you skipped forward.
+  reboot every time you skipped forward. It is no longer part of this layer:
+  every device gets it now, so it lives in `styles.css` and `app.js` — see
+  *Loading screen and prebuffering*.
 
 Everything is written against the design tokens at the top of `styles.css` —
 the colours, the half-pixel type sizes and the spacing rhythm — which is where
@@ -776,9 +778,49 @@ Phone layout is a different shape, not a scaled-down desktop:
   landed on top of the last row of posters.
 
   A desktop is untouched: no bar, ordinary document scrolling, sticky header.
-- **A fixed number of posters to a row**, 2, 3 or 4, set in the same panel.
-  Desktop keeps `auto-fill` and takes as many as the width allows, so the
-  choice only appears in phone layout.
+- **No posters-per-row setting.** There used to be one — 2, 3 or 4, chosen by
+  hand in the same panel, phone layout only. It defaulted to 2, which is why an
+  iPad opened on two 385px posters: half a screen each, on the device with the
+  most room. Picking a number per device is the wrong shape of answer anyway,
+  because the number that is right depends on a width nobody wants to think
+  about, and it is wrong again on the next phone.
+
+  The grid names one target **width** per card shape instead, and
+  `repeat(auto-fill, minmax(<target>, 1fr))` works out the count — the same rule
+  on a phone, a tablet and a desktop, with no override in `.touch` at all:
+
+  ```css
+  --poster-min: clamp(106px, 18cqi, 168px);
+  ```
+
+  The clamp is the whole trick. A flat minimum cannot do this job: an iPad is
+  only about twice a phone across, so a fixed floor that gives three on a phone
+  forces six on a tablet — posters shrunk to phone size on a screen with room to
+  spare. The middle term lets the poster *grow* with the space instead of just
+  multiplying, so the count climbs one step at a time.
+
+  | | column | across | poster |
+  |---|---|---|---|
+  | iPhone SE · 375pt | 347px | 3 | 106px |
+  | iPhone 15 Pro · 393pt | 365px | 3 | 112px |
+  | iPhone Pro Max · 440pt | 412px | 3 | 128px |
+  | iPad 11″ portrait · 820pt | 784px | 5 | 146px |
+  | iPad 11″ landscape · 1024pt | 692px | 4 | 160px |
+  | desktop · 1440pt | 1108px | 6 | 170px |
+
+  `cqi`, not `vw`: the middle term has to measure the **grid**, and from 860px
+  up the grid is not the window — a 236px category sidebar and a 40px shell gap
+  sit beside it. Measured against the window, an iPad in landscape believed it
+  had 1024px, asked for 168px posters and fitted five into the 692px it really
+  had: 124px each, narrower than the same poster on a phone. `.content` carries
+  `container-type: inline-size` so the query has something to measure.
+
+  18% is picked, not rounded to. Below about 17.9% that fifth column comes back
+  in landscape; above about 18.6% an iPad in *portrait* drops from five across
+  to four. The ceiling is 168px, the width the desktop grid has always asked
+  for, so the desktop does not move — six across at 170px is what it fitted
+  before any of this. `tests/grid.test.js` asserts every row of that table, that
+  no step down the range shrinks a poster, and that the desktop is unchanged.
 
 The class behind it is still `.touch`, because every sizing rule in the
 stylesheet already hangs off that name and phone layout is what it has always
@@ -911,11 +953,27 @@ Turning the filter off works, but expect the original wait.
 
 ## Loading screen and prebuffering
 
-Movies and episodes wait on a full-screen loading screen — charging bison,
-prairie grass, and a progress bar pinned to the bottom of the viewport. **On a
-desktop the same overlay is dressed as a projector lamp** — see *The desktop
-portal* above — but it is the same element reporting the same numbers, and
-everything below applies to both. The percentage is real, not decorative:
+Movies and episodes wait on a full-screen loading screen: a projector lamp
+coming up to temperature, film grain stepped like a projector gate, a sheen
+masked to the bison silhouette, the wordmark wiping in behind a bright edge, and
+a hairline reporting the box's real steps.
+
+**It is the same screen on every device.** It used to be two. The lamp was part
+of the desktop redesign and appeared only in a window at least 1100px wide being
+driven by a mouse; everything narrower — every phone, and an iPad in the layout
+an iPad actually gets — fell back to a charging bison standing in a drift of
+popping corn. So the screen the product opens with was the one screen most of
+its devices never saw. The lamp now lives in `index.html`, `styles.css` and the
+`loader` object in `app.js` rather than being injected by `desktop.js`, so a
+phone does not need the desktop layer loaded to have a startup sequence, and it
+is sized with `clamp()` off the viewport rather than switched at a breakpoint.
+
+The sequence plays **once**, on the first `loader.show()`. This overlay is also
+what a seek, a prebuffer and a film-details fetch put up, and replaying a
+four-second lamp warm-up over a 300ms wait would feel like a reboot — so
+everything after the first one gets the same screen already at rest.
+
+The percentage is real, not decorative:
 
 - **Library loads** stream the response and report bytes received against
   `Content-Length` (which the server sets explicitly on every JSON reply).
