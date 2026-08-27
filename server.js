@@ -6150,10 +6150,14 @@ guide.configure({ dir: ROOT, log: (line) => console.log(`  ${line}`) });
  * matters: a box that has just started is busy loading the library and
  * recovering downloads, and scanning a few hundred megabytes of XML on top of
  * that is how a Pi ends up thrashing before anyone has pressed anything. */
+/* Half an hour when there is an index to fall back on; two minutes when there
+ * is not. A box with no listings at all — a new one, or one whose index was
+ * thrown away because the matching rules changed under it — should not sit
+ * blank for half an hour to spare a load it is not carrying yet. */
 setTimeout(() => {
   refreshGuide();
   setInterval(() => refreshGuide(), 60 * 60 * 1000).unref?.();
-}, 30 * 60 * 1000).unref?.();
+}, (guide.status().covered ? 30 : 2) * 60 * 1000).unref?.();
 
 // Downloads from before the browser-native conversion existed are still .mkv;
 // bring them up to date so their playback stops depending on HLS sessions.

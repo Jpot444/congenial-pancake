@@ -682,6 +682,7 @@ function serve(xml) {
   /* ---- what the box does with it ------------------------------------ */
   console.log('\n  the box\'s side');
   const SERVER = fs.readFileSync(PATHS.SERVER, 'utf8');
+  const GUIDE_SRC = fs.readFileSync(PATHS.GUIDE, 'utf8');
   check('the guide is consulted before the provider is asked',
     /const fromGuide = guide\.lookup\(id\);/.test(SERVER)
     && SERVER.indexOf('const fromGuide') < SERVER.indexOf('const held = epgCache.get(id)'));
@@ -697,7 +698,14 @@ function serve(xml) {
   check('a day of listings is not shipped to a phone in one answer',
     /function windowOf/.test(SERVER) && /\.slice\(0, 16\)/.test(SERVER));
   check('the first refresh waits for the box to finish booting',
-    /30 \* 60 \* 1000\)\.unref/.test(SERVER));
+    /\(guide\.status\(\)\.covered \? 30 : 2\) \* 60 \* 1000\)\.unref/.test(SERVER));
+  console.log('       (half an hour with an index to fall back on, two minutes without)');
+  // The index caches DECISIONS, not data, so rules that change must void it.
+  check('an index built by older matching rules is not trusted',
+    /const MATCH_SHAPE = \d+;/.test(GUIDE_SRC)
+    && /Number\(body\.shape\) !== MATCH_SHAPE/.test(GUIDE_SRC));
+  console.log('       (else a US station goes on showing an Australian schedule');
+  console.log('        for three deploys after the fix, which is what happened)');
   check('feeds are offered rather than switched on behind your back',
     /const GUIDE_CATALOGUE/.test(SERVER) && !/GUIDE_CATALOGUE\.map\(\(c\) => c\.url\)/.test(SERVER));
 

@@ -1976,6 +1976,15 @@
   bottom: auto;
 }
 
+/* And the first lane stops climbing into the billboard.
+ *
+ * `margin-top: -96px` starts the page before the picture has finished, which
+ * on a 770px desktop hero eats a strip of photograph below the copy. On a
+ * 474px one the copy fills the lower half, so the same 96px landed on the
+ * buttons: measured at 393pt, the lane began at 429 and the Watch live row
+ * ran 449 to 499 — the whole of it underneath. */
+.desk body.has-tabbar #dkLane { margin-top: 0; }
+
 /* The stage keeps its height and the copy keeps its `position: absolute`: the
    billboard holds up to three features and crossfades between them by stacking
    them on top of each other. Take that away and they stop being one billboard

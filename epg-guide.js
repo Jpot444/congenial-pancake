@@ -60,6 +60,18 @@ const MAX_PER_CHANNEL = 64;
  */
 const MAX_OFFERED = 40000;
 /**
+ * The matching rules' version. Bump it whenever they change.
+ *
+ * The index is a CACHE of decisions, not of data: which guide channel answers
+ * for which of ours was worked out by rules that live in this file, and a
+ * saved index made under older rules keeps serving their mistakes for six
+ * hours, or across a restart, or forever if nobody thinks to press a button.
+ * That is how a US affiliate went on showing an Australian schedule for three
+ * deploys after the fix. An index written under a different number is thrown
+ * away on load and rebuilt.
+ */
+const MATCH_SHAPE = 3;
+/**
  * Decompressed bytes one source may spend before we stop reading it.
  *
  * This is a limit on TIME, not on memory — the scan holds one chunk and the
@@ -938,6 +950,7 @@ function save() {
   const rows = {};
   for (const [id, list] of store.byChannel) rows[id] = list;
   const body = {
+    shape: MATCH_SHAPE,
     at: store.at,
     matchedBy: Object.fromEntries(store.matchedBy),
     channels: rows,
@@ -966,6 +979,12 @@ function load() {
   store.fromSource = new Map();
   try {
     const body = JSON.parse(fs.readFileSync(filePath(), 'utf8'));
+    // Written by rules that are no longer the rules. Everything in it is a
+    // conclusion those rules reached, so none of it survives.
+    if (Number(body.shape) !== MATCH_SHAPE) {
+      store.log('guide: matching has changed since this index was built — rebuilding');
+      return;
+    }
     store.at = Number(body.at) || 0;
     store.lastRun = body.lastRun || null;
     store.byChannel = new Map(Object.entries(body.channels || {}));
