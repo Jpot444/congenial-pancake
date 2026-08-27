@@ -264,7 +264,14 @@ function open(target, redirectsLeft = 5) {
     const lib = u.protocol === 'https:' ? https : http;
     const req = lib.request(u, {
       method: 'GET',
-      headers: { 'user-agent': UA, 'accept-encoding': 'gzip' },
+      /* `identity`, deliberately.
+       *
+       * These files are ALREADY gzip — that is what `.xml.gz` means — and
+       * asking for gzip on top invites the server to compress the compressed
+       * file. `plainXml` unwraps as many layers as it finds either way, but
+       * not asking for a second one is cheaper and removes the whole class of
+       * problem at the source. */
+      headers: { 'user-agent': UA, 'accept-encoding': 'identity' },
       timeout: FETCH_TIMEOUT_MS,
     }, (res) => {
       const status = res.statusCode || 0;
@@ -295,28 +302,48 @@ function open(target, redirectsLeft = 5) {
  */
 function plainXml(res) {
   const enc = String(res.headers['content-encoding'] || '').toLowerCase();
-  if (enc.includes('gzip')) return Promise.resolve(res.pipe(zlib.createGunzip()));
-  if (enc.includes('deflate')) return Promise.resolve(res.pipe(zlib.createInflate()));
+  let stream = res;
+  if (enc.includes('gzip')) stream = res.pipe(zlib.createGunzip());
+  else if (enc.includes('deflate')) stream = res.pipe(zlib.createInflate());
+  return unwrap(stream, 0);
+}
 
+/**
+ * Peel gzip off a stream until what is left is not gzip.
+ *
+ * Once is the obvious number and it is wrong. `epg_ripper_US1.xml.gz` is a
+ * gzip FILE; ask for it with `accept-encoding: gzip` and a server may gzip the
+ * transfer as well, so the response is gzip wrapped around gzip wrapped around
+ * XML. Unwrapping only the layer the header mentions leaves binary, and binary
+ * contains no `<channel>` elements — so the feed reports HTTP 200, contributes
+ * nothing, and says nothing about it. That is a silent empty guide, which is
+ * the worst way for this to fail.
+ */
+function unwrap(stream, depth) {
+  if (depth >= 3) return Promise.resolve(stream);
   return new Promise((resolve) => {
     let settled = false;
+    const done = (s) => {
+      if (settled) return;
+      settled = true;
+      resolve(s);
+    };
     const decide = () => {
       if (settled) return;
-      settled = true;
-      const head = res.read() || Buffer.alloc(0);
+      const head = stream.read() || Buffer.alloc(0);
       const out = new PassThrough();
-      const gz = head.length > 1 && head[0] === 0x1f && head[1] === 0x8b;
       if (head.length) out.write(head);
-      res.pipe(out);
-      resolve(gz ? out.pipe(zlib.createGunzip()) : out);
+      stream.pipe(out);
+      if (head.length > 1 && head[0] === 0x1f && head[1] === 0x8b) {
+        settled = true;
+        resolve(unwrap(out.pipe(zlib.createGunzip()), depth + 1));
+        return;
+      }
+      done(out);
     };
-    res.once('readable', decide);
-    res.once('end', () => {
-      if (settled) return;
-      settled = true;
-      resolve(new PassThrough().end());
-    });
-    res.once('error', decide);
+    stream.once('readable', decide);
+    stream.once('end', () => done(new PassThrough().end()));
+    stream.once('error', () => done(new PassThrough().end()));
   });
 }
 
@@ -402,6 +429,8 @@ function scan(stream, want, into, stats) {
       const re = /<display-name\b[^>]*>([\s\S]*?)<\/display-name>/gi;
       let m;
       while ((m = re.exec(body))) names.push(unescapeXml(m[1]));
+
+      stats.seen += 1;
 
       /* Remembered whether we want it or not. This is the only record of what
        * the guides actually contain, and it is what lets the box answer "you
@@ -605,6 +634,16 @@ function save() {
 }
 
 function load() {
+  /* Cleared first, so a missing file means "nothing" rather than "whatever
+   * was in memory". It only matters to the suites, which point the module at
+   * a fresh directory several times in one process — but a load that leaves
+   * the previous index standing made a broken feed look like a working one
+   * for a whole afternoon of testing, so it is worth not doing. */
+  store.at = 0;
+  store.lastRun = null;
+  store.byChannel = new Map();
+  store.matchedBy = new Map();
+  store.offered = new Map();
   try {
     const body = JSON.parse(fs.readFileSync(filePath(), 'utf8'));
     store.at = Number(body.at) || 0;
@@ -658,13 +697,14 @@ async function refresh({ force = false, sources = null } = {}) {
   const started = Date.now();
   const want = wantedKeys(store.channels);
   const into = new Map();
-  const stats = { kept: 0, offered: new Map(), truncated: false };
+  const stats = { kept: 0, seen: 0, offered: new Map(), truncated: false };
   const report = [];
 
   for (const source of list) {
     const label = source.label || source;
     const url = source.url || source;
-    const before = stats.kept;
+    const keptBefore = stats.kept;
+    const seenBefore = stats.seen;
     try {
       // eslint-disable-next-line no-await-in-loop
       const res = await open(url);
@@ -672,7 +712,20 @@ async function refresh({ force = false, sources = null } = {}) {
       const xml = await plainXml(res);
       // eslint-disable-next-line no-await-in-loop
       await scan(xml, want, into, stats);
-      report.push({ label, ok: true, programmes: stats.kept - before });
+      const channels = stats.seen - seenBefore;
+      report.push({
+        label,
+        ok: true,
+        channels,
+        programmes: stats.kept - keptBefore,
+        /* A feed that answered 200 and declared no channels at all is not a
+         * feed with nothing on it — it is something that was not XMLTV: a
+         * login page, an error in HTML, or a gzip layer that never came off.
+         * Reported as its own thing, because "0 channels" and "0 matched"
+         * need completely different fixes. */
+        notXmltv: channels === 0,
+      });
+      if (!channels) store.log(`guide: ${label} — answered, but no XMLTV channels in it`);
     } catch (err) {
       report.push({ label, ok: false, error: err.message });
       store.log(`guide: ${label} — ${err.message}`);

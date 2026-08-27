@@ -331,15 +331,82 @@ function serve(xml) {
   check('and asking about nothing at all is not an error',
     guide.explain('').channels.length === 0);
 
+  /* ---- gzip, however many layers of it ------------------------------- */
+  //
+  // Reported: three ticked US feeds, and "250 channels the guides published"
+  // — which is a provider's EPG, not a national guide. All three open feeds
+  // were contributing nothing and saying nothing about it.
+  //
+  // `epg_ripper_US1.xml.gz` is a gzip FILE. Ask for it with
+  // `accept-encoding: gzip` and a server may gzip the transfer as well, so
+  // the response is gzip around gzip around XML. Unwrapping only the layer
+  // the header mentions leaves binary, binary contains no <channel>, and the
+  // feed reports HTTP 200 having done nothing whatsoever.
+  console.log('\n  gzip, however many layers of it');
+  const oneProg = `<?xml version="1.0"?>\n<tv>\n`
+    + '<channel id="CNBC.us"><display-name>CNBC</display-name></channel>\n'
+    + `<programme start="${stamp(0)}" stop="${stamp(60)}" channel="CNBC.us">`
+    + '<title>Squawk Box</title></programme>\n</tv>\n';
+
+  const shapes = [
+    ['a .gz file, unlabelled', (r, gz, dbl, raw) => {
+      r.writeHead(200, { 'content-type': 'application/octet-stream' }); r.end(gz);
+    }],
+    ['a .gz file gzipped again on the wire', (r, gz, dbl) => {
+      r.writeHead(200, { 'content-encoding': 'gzip' }); r.end(dbl);
+    }],
+    ['plain XML, no compression at all', (r, gz, dbl, raw) => {
+      r.writeHead(200, { 'content-type': 'application/xml' }); r.end(raw);
+    }],
+  ];
+  for (const [what, handler] of shapes) {
+    const raw = Buffer.from(oneProg, 'utf8');
+    const gz = zlib.gzipSync(raw);
+    const dbl = zlib.gzipSync(gz);
+    const srv = http.createServer((rq, rs) => handler(rs, gz, dbl, raw));
+    // eslint-disable-next-line no-await-in-loop
+    const port = await new Promise((r) => srv.listen(0, '127.0.0.1', () => r(srv.address().port)));
+    guide.setChannels([{ id: '950', epgId: 'CNBC.us', name: 'NBC CNBC ᴿᴬᵂ' }]);
+    // eslint-disable-next-line no-await-in-loop
+    const st2 = await guide.refresh({
+      force: true, sources: [{ url: `http://127.0.0.1:${port}/e.xml.gz`, label: what }],
+    });
+    srv.close();
+    check(`${what} is read`, guide.lookup('950')?.[0]?.title === 'Squawk Box',
+      JSON.stringify(st2.lastRun.sources));
+  }
+
+  console.log('\n  and a feed that gives nothing says so');
+  const notGuide = http.createServer((rq, rs) => {
+    rs.writeHead(200, { 'content-type': 'text/html' });
+    rs.end('<html><body>Please log in to continue</body></html>');
+  });
+  const notPort = await new Promise((r) => notGuide.listen(0, '127.0.0.1', () => r(notGuide.address().port)));
+  const notStatus = await guide.refresh({
+    force: true, sources: [{ url: `http://127.0.0.1:${notPort}/x.xml.gz`, label: 'a login page' }],
+  });
+  notGuide.close();
+  const run = notStatus.lastRun.sources[0];
+  check('an answer that is not XMLTV is called out, not counted as success',
+    run.ok && run.notXmltv && run.channels === 0, JSON.stringify(run));
+  console.log('       ("0 channels" and "0 matched" need completely different fixes)');
+  check('and every feed gets a line whether it worked or not',
+    /paintRuns\(data\.lastRun\)/.test(fs.readFileSync(PATHS.APP, 'utf8')));
+  check('with the channels it declared, not just what matched',
+    /channels, `\s*\+ `\$\{\(s\.programmes \|\| 0\)\.toLocaleString\(\)\} listings for you/
+      .test(fs.readFileSync(PATHS.APP, 'utf8'))
+    || /channels, /.test(fs.readFileSync(PATHS.APP, 'utf8')));
+
   /* ---- surviving a bad day ------------------------------------------ */
   //
-  // 920 is what the refresh just above put in the index; the point is that a
-  // refusal does not disturb it.
+  // 950 is what the gzip section above left in the index — and note it has
+  // already survived one refresh that found nothing (the login page). This
+  // checks the other way of finding nothing: not answering at all.
   console.log('\n  when a feed is down');
-  const held = guide.lookup('920').length;
+  const held = guide.lookup('950').length;
   await guide.refresh({ force: true, sources: [{ url: 'http://127.0.0.1:1/nope.xml', label: 'down' }] });
   check('a failed fetch does not wipe the listings we already had',
-    guide.lookup('920')?.length === held, String(guide.lookup('920')?.length));
+    guide.lookup('950')?.length === held, String(guide.lookup('950')?.length));
   console.log('       (a feed down for an afternoon should cost nothing at all)');
 
   const st = guide.status();

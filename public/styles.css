@@ -4303,6 +4303,31 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 .gsrc-status { font-size: 12.5px; color: var(--muted-dim); }
 
+/* ---- what each feed gave us ---- */
+.gsrc-runs { margin-top: 9px; display: flex; flex-direction: column; gap: 3px; }
+
+.gsrc-run {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted-dim);
+  padding-left: 13px;
+  position: relative;
+}
+
+.gsrc-run::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok, #7ed957);
+}
+
+.gsrc-run.is-bad { color: var(--live); }
+.gsrc-run.is-bad::before { background: var(--live); }
+
 /* ---- why has this channel got no listings ---- */
 .gsrc-why { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .gsrc-why input { width: 100%; }

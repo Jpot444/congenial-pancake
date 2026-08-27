@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '27.1';
+const VERSION = '27.2';
 
 const PAGE_SIZE = 60;
 
@@ -2284,6 +2284,41 @@ const guideSources = {
     running.hidden = !data.running;
     running.textContent = 'Reading the guides… this takes a few minutes.';
     $('#guideSave').disabled = Boolean(data.running);
+    this.paintRuns(data.lastRun);
+  },
+
+  /**
+   * A line per feed, saying what it actually gave us.
+   *
+   * The summary above only ever spoke up when coverage was zero, so a box
+   * where the provider's guide worked and all three open feeds silently
+   * contributed nothing looked entirely healthy. It is not a summary's job to
+   * hide that: every feed gets a line, every time.
+   */
+  paintRuns(lastRun) {
+    const box = $('#guideRuns');
+    const runs = lastRun?.sources || [];
+    box.hidden = !runs.length;
+    box.innerHTML = '';
+    for (const s of runs) {
+      const line = document.createElement('div');
+      let state = 'is-ok';
+      let said;
+      if (!s.ok) {
+        state = 'is-bad';
+        said = s.error;
+      } else if (s.notXmltv) {
+        // Different fix from "0 matched", so it gets different words.
+        state = 'is-bad';
+        said = 'answered, but there was no XMLTV in it';
+      } else {
+        said = `${(s.channels || 0).toLocaleString()} channels, `
+          + `${(s.programmes || 0).toLocaleString()} listings for you`;
+      }
+      line.className = `gsrc-run ${state}`;
+      line.textContent = `${s.label} — ${said}`;
+      box.append(line);
+    }
   },
 
   /**

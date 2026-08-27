@@ -2123,6 +2123,39 @@ This is why the scan remembers every channel the guides declared, not just the
 ones it wanted. Building the index does not need that list; explaining it does,
 and without it the only way forward is ticking boxes at random.
 
+### Gzip, however many layers of it
+
+`epg_ripper_US1.xml.gz` is a gzip **file**. Ask for it with
+`accept-encoding: gzip` and a server may gzip the transfer as well, so the
+response is gzip around gzip around XML. Unwrapping only the layer the header
+mentions leaves binary; binary contains no `<channel>` elements; the feed
+reports HTTP 200 having contributed nothing at all.
+
+That is the worst possible failure — a silently empty guide — and it is why
+three ticked feeds once sat there for a week doing nothing. So the request asks
+for `identity`, and `plainXml` then peels gzip off until what is left is not
+gzip, whatever the headers claim. Four shapes are pinned by tests: a plain
+`.gz` file, one labelled `content-encoding: gzip`, one gzipped *again* on the
+wire, and uncompressed XML.
+
+### Every feed reports, every time
+
+The summary line only ever spoke up when coverage was zero, so a box where the
+provider's guide worked and every open feed silently gave nothing looked
+entirely healthy. Each feed now gets its own line with **the channels it
+declared**, not just what matched:
+
+```
+United States — 12,431 channels, 840 listings for you
+US sports    — answered, but there was no XMLTV in it
+Canada       — HTTP 404
+```
+
+"0 channels" and "0 matched" need completely different fixes — the first means
+what came back was not a guide at all (a login page, an HTML error, a gzip
+layer that never came off), the second means the join failed — so they are
+reported as different things.
+
 ### The feed list is a form field
 
 It is sent to the settings screen **whole, never redacted**, and there is a
