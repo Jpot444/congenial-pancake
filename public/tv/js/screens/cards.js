@@ -4,7 +4,7 @@
  * same size with the same ring.
  */
 
-import { el, artwork, plateText } from '../ui.js';
+import { el, artwork, plateText, cleanName } from '../ui.js';
 
 /** The wrapper every focusable card shares: row, column, and what it is. */
 function focusable(node, { r, c, lift, name, sub, kind }) {
@@ -20,10 +20,10 @@ function focusable(node, { r, c, lift, name, sub, kind }) {
 /** 320px wide, 16:10 art: a channel, with what is on it underneath. */
 export function channelCard(channel, { r, c, now }) {
   const card = focusable(el('div', 'chan-card'), {
-    r, c, kind: 'chan', name: channel.name, sub: now || '',
+    r, c, kind: 'chan', name: cleanName(channel.name), sub: now || '',
   });
   const art = artwork(el('div', 'chan-art ring'), channel.logo, channel.name);
-  card.append(art, el('div', 'card-name', channel.name));
+  card.append(art, el('div', 'card-name', cleanName(channel.name)));
   card.append(el('div', 'card-sub', now || (channel.num ? `Channel ${channel.num}` : '')));
   card._item = channel;
   return card;
@@ -32,7 +32,7 @@ export function channelCard(channel, { r, c, now }) {
 /** A square category tile. */
 export function categoryCard(category, { r, c, count }) {
   const card = focusable(el('div', 'cat-card'), {
-    r, c, kind: 'cat', lift: 'tile', name: category.name, sub: `${count} channels`,
+    r, c, kind: 'cat', lift: 'tile', name: cleanName(category.name), sub: `${count} channels`,
   });
   const art = el('div', 'cat-art ring');
   const words = plateText(category.name).split(' ');
@@ -44,7 +44,7 @@ export function categoryCard(category, { r, c, count }) {
     plate.textContent = plateText(category.name);
   }
   art.append(plate);
-  card.append(art, el('div', 'card-name', category.name));
+  card.append(art, el('div', 'card-name', cleanName(category.name)));
   card.append(el('div', 'card-sub', `${count} channels`));
   card._item = category;
   return card;
@@ -69,7 +69,7 @@ export function allCategoriesCard({ r, c, total }) {
  */
 export function posterCard(item, { r, c, sub, subClass, progress, kind }) {
   const card = focusable(el('div', 'poster'), {
-    r, c, kind: kind || item.kind, name: item.name, sub: sub || '',
+    r, c, kind: kind || item.kind, name: cleanName(item.name), sub: sub || '',
   });
   const art = artwork(el('div', 'poster-art ring'), item.logo || item.poster, item.name);
   if (Number.isFinite(progress) && progress > 0) {
@@ -79,7 +79,7 @@ export function posterCard(item, { r, c, sub, subClass, progress, kind }) {
     track.append(fill);
     art.append(track);
   }
-  card.append(art, el('div', 'card-name', item.name));
+  card.append(art, el('div', 'card-name', cleanName(item.name)));
   if (sub) card.append(el('div', `card-sub ${subClass || ''}`.trim(), sub));
   card._item = item;
   return card;

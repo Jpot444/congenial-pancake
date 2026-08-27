@@ -14,7 +14,7 @@
  * element is given the URL and does what it can.
  */
 
-import { el, clear, plateText } from '../ui.js';
+import { el, clear, plateText, cleanName } from '../ui.js';
 import { focus } from '../focus.js';
 import { getPlay, postHistory } from '../api.js';
 import { state, loadLibrary, loadEpg, nowOn, nextOn, airProgress, favorites, pinnedIds }
@@ -87,7 +87,6 @@ export async function render(hostNode, app, params) {
 function paint() {
   const root = el('div', 'player');
   root.append(videoNode());
-  root.append(el('div', 'player-watermark', plateText(channel.name)));
 
   if (game) root.append(scoreBug(game));
 
@@ -173,7 +172,7 @@ function scrim() {
   const line = el('div', 'now-line');
   const liveTag = el('span', 'now-live');
   liveTag.append(el('span', 'live-dot'), 'LIVE');
-  line.append(liveTag, el('span', 'now-chan', channel.name));
+  line.append(liveTag, el('span', 'now-chan', cleanName(channel.name)));
   line.append(el('span', 'now-tech', techLine()));
   left.append(line);
 
@@ -296,7 +295,7 @@ function guideRow(chan, r, startMs) {
   const row = el('div', 'guide-row');
   const name = el('div', 'guide-chan');
   name.append(el('span', 'guide-num', chan.num ? String(chan.num) : '—'));
-  name.append(el('span', 'guide-name', chan.name));
+  name.append(el('span', 'guide-name', cleanName(chan.name)));
   row.append(name);
 
   const listings = epg.get(String(chan.epgId || chan.id)) || [];

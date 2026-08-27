@@ -6,7 +6,7 @@
  * a screen you arrive at rather than a menu you hover.
  */
 
-import { el, clear } from '../ui.js';
+import { el, clear, cleanName } from '../ui.js';
 import { loadLibrary, loadTaste, continueWatching, affinity, state } from '../state.js';
 import { posterCard, rowHead, strip, rowBlock } from './cards.js';
 
@@ -130,7 +130,7 @@ function allRow() {
 export function onFocus(node) {
   const item = node && node._item;
   if (!item || !spot.title) return;
-  spot.title.textContent = item.name;
+  spot.title.textContent = cleanName(item.name);
   const bits = [];
   if (item.rating) bits.push(`★ ${item.rating}`);
   if (item.genre) bits.push(item.genre);

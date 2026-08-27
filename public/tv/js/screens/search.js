@@ -6,7 +6,7 @@
  * provider connection. Nothing is asked of the provider per keystroke.
  */
 
-import { el, clear, hms, gb } from '../ui.js';
+import { el, clear, hms, gb, cleanName } from '../ui.js';
 import { focus } from '../focus.js';
 import { searchArchive } from '../api.js';
 import { state, loadLibrary, isOwner } from '../state.js';
@@ -119,7 +119,7 @@ function right() {
     row.append(art);
 
     const mid = el('div', 'result-mid');
-    mid.append(el('span', 'result-name', hit.name));
+    mid.append(el('span', 'result-name', cleanName(hit.name)));
     mid.append(el('span', 'result-meta', hit.meta));
     row.append(mid);
     row.append(el('span', 'result-kind', hit.kind));

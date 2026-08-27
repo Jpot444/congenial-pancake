@@ -54,13 +54,36 @@ export function icon(name, size = 24) {
  * logo at all, and a legible name at 10 feet beats a broken image every time.
  */
 
+/*
+ * The provider writes its quality tags in superscript letters — ᴴᴰ, ᴿᴬᵂ,
+ * ⁶⁰ᶠᵖˢ, ⁸ᴷ — which are ordinary characters as far as anything else is
+ * concerned, so they survive every plain-text tidy and end up on screen. The
+ * browser portal strips them by codepoint range; this is that same rule, and
+ * it has to live here because a TV shows the same names the portal does.
+ */
+const SUPERSCRIPTS = /[ʰ-˿ᴬ-ᵫᶠ-ᶿ⁰-₟]+/g;
+
+/** A provider name as it should be READ: no superscript tags, no double spaces. */
+export function cleanName(raw) {
+  const name = String(raw || '');
+  if (!SUPERSCRIPTS.test(name)) return name.trim();
+  SUPERSCRIPTS.lastIndex = 0;
+  const out = name
+    .replace(SUPERSCRIPTS, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([)\]])/g, '$1')
+    .replace(/[\s|/·-]+$/, '')
+    .trim();
+  return out || name.trim();
+}
+
 /** Strip the provider's country prefix and quality suffixes for a plate. */
 export function plateText(name) {
-  return String(name || '')
+  return cleanName(name)
     .replace(/^[A-Z]{2}\|\s*/i, '')
     .replace(/\b(FHD|UHD|HD|SD|4K|H265|HEVC|RAW)\b/gi, '')
     .replace(/\s{2,}/g, ' ')
-    .trim() || String(name || '');
+    .trim() || cleanName(name);
 }
 
 /** Two lines beat one long one on a square tile. */
@@ -80,6 +103,14 @@ function plateNode(name, className) {
 /**
  * Art with a plate underneath it: the image is only shown once it has loaded,
  * so a slow or dead logo URL never leaves a blank hole where a name should be.
+ *
+ * The image goes into the container straight away, transparent, and is
+ * revealed when it loads. It used to be held out of the page until then, which
+ * is why NOTHING ever appeared: a lazily-loaded image that is not in a
+ * document has no viewport to be near, so the browser never starts the
+ * request, `load` never fires, and every card in the app fell back to its
+ * name plate for ever. In the page it is an ordinary lazy image again —
+ * off-screen rows still wait their turn.
  */
 export function artwork(container, logo, name) {
   const plate = plateNode(name);
@@ -88,11 +119,15 @@ export function artwork(container, logo, name) {
   const image = new Image();
   image.loading = 'lazy';
   image.alt = '';
-  image.onload = () => {
+  image.className = 'art-img';
+  image.addEventListener('load', () => {
+    image.classList.add('on');
     plate.remove();
-    container.prepend(image);
-  };
+  });
+  /* A logo the provider lists but does not serve leaves the plate up. */
+  image.addEventListener('error', () => image.remove());
   image.src = img(logo);
+  container.prepend(image);
   return container;
 }
 

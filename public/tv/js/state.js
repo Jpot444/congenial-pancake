@@ -65,10 +65,37 @@ export async function refreshHealth() {
 
 /* ------------------------------------------------------------- library ── */
 
+/*
+ * What this profile has thrown away.
+ *
+ * The portal hides titles and whole categories rather than deleting them —
+ * the provider still carries them and will keep sending them — and it keeps
+ * both lists in the profile's prefs on the box. That is the same prefs record
+ * this app already loads, so honouring it is just a matter of reading it: a
+ * channel binned on the phone is binned on the TV, with nothing to sync.
+ */
+export function isDeleted(item) {
+  if (!item) return false;
+  return ((state.prefs && state.prefs.deletedItems) || []).includes(favKey(item));
+}
+
+export function isDeletedCategory(id) {
+  return ((state.prefs && state.prefs.deletedCategories) || []).includes(String(id));
+}
+
 export async function loadLibrary(tab) {
   if (state.library[tab]) return state.library[tab];
   try {
     const data = await getLibrary(tab);
+    /* Filtered once, here, rather than screen by screen: every row, grid,
+       guide and search on the TV reads this object, and a bin that only some
+       of them respected would be worse than no bin at all. */
+    const goneCategory = new Set(
+      (data.categories || []).filter((c) => isDeletedCategory(c.id)).map((c) => String(c.id))
+    );
+    data.categories = (data.categories || []).filter((c) => !goneCategory.has(String(c.id)));
+    data.items = (data.items || [])
+      .filter((i) => !isDeleted(i) && !goneCategory.has(String(i.categoryId)));
     state.library[tab] = data;
     delete state.errors[tab];
     return data;

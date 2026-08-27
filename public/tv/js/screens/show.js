@@ -10,7 +10,7 @@
  * and carries the design system's crimson edge when it is the one to resume.
  */
 
-import { el, clear, artwork, hms, icon } from '../ui.js';
+import { el, clear, artwork, hms, icon, cleanName } from '../ui.js';
 import { getSeriesInfo, getDownloads, queueDownload } from '../api.js';
 import { state, recentlyWatched, continueWatching } from '../state.js';
 
@@ -69,7 +69,7 @@ function right() {
 
   const head = el('div');
   head.append(el('div', 'eyebrow', 'SERIES'));
-  head.append(el('div', 'show-title', show.name));
+  head.append(el('div', 'show-title', cleanName(show.name)));
   head.append(el('div', 'show-meta', metaLine()));
   const plot = (info && info.info && info.info.plot) || '';
   if (plot) head.append(el('div', 'show-syn', plot));

@@ -13,7 +13,7 @@
  * from that channel's EPG.
  */
 
-import { el, clear } from '../ui.js';
+import { el, clear, cleanName } from '../ui.js';
 import { loadLibrary, loadEpg, nowOn, airProgress, favorites, pinnedIds, pinnedFirst, state }
   from '../state.js';
 import { getGames, usingPlaceholders, matchChannel } from '../scores.js';
@@ -21,6 +21,9 @@ import { channelCard, categoryCard, allCategoriesCard, rowHead, strip, rowBlock 
 
 const CHANNELS_IN_ROW = 14;
 const CATS_PER_GRID_ROW = 8;
+/* Five 320px cards and four 24px gaps is 1,696 of the 1,792 the stage leaves
+   between its margins — the widest a channel grid goes without reflowing. */
+const CHANS_PER_GRID_ROW = 5;
 
 let view = { games: [], channels: [], categories: [], epg: new Map(), lib: null };
 /** What row 2 is showing: favourites and pins, or one chosen category. */
@@ -30,6 +33,12 @@ let catsExpanded = false;
 export async function render(host, app) {
   const lib = await loadLibrary('live');
   view.lib = lib;
+
+  /* A chosen category is a screen of its own, not a row inside this one. It
+     used to swap the contents of row 2 and leave the games above it and the
+     category tiles below, so opening a category showed a strip of it and then
+     a list of all the others — which is neither the category nor the list. */
+  if (channelSource) return renderCategory(host);
 
   const [games] = await Promise.all([getGames()]);
   view.games = games;
@@ -52,6 +61,54 @@ export async function render(host, app) {
   if (state.errors.live) {
     root.append(el('div', 'empty', `The live library did not load: ${state.errors.live}`));
   }
+  clear(host).append(root);
+}
+
+/* -------------------------------------------------------- one category ── */
+
+/**
+ * Everything in one category, as a grid.
+ *
+ * Row numbers start at 1 and go up one per line of the grid, so ▲▼ moves a
+ * line at a time and the page scrolls with it — the same thing every other
+ * screen does, since each line is an ordinary rowblock.
+ */
+async function renderCategory(host) {
+  const channels = (view.lib.items || [])
+    .filter((c) => String(c.categoryId) === String(channelSource.id));
+  view.channels = channels;
+
+  /* The guide is asked about what is on screen first; the box answers for a
+     few unseen channels per call by design, so the rest fill in on the way
+     back rather than queueing hundreds of provider calls. */
+  view.epg = await loadEpg(channels.slice(0, 40).map((c) => String(c.epgId || c.id)));
+
+  const root = el('div', 'screen');
+
+  const head = el('div', 'rowhead');
+  const title = el('h2', null, cleanName(channelSource.name).toUpperCase());
+  head.append(title);
+  head.append(el('span', 'meta',
+    `${channels.length} channel${channels.length === 1 ? '' : 's'} · BACK for all categories`));
+  root.append(head);
+
+  if (!channels.length) {
+    root.append(el('div', 'empty', 'No channels in this category.'));
+    clear(host).append(root);
+    return;
+  }
+
+  for (let i = 0; i < channels.length; i += CHANS_PER_GRID_ROW) {
+    const r = 1 + i / CHANS_PER_GRID_ROW;
+    const cards = channels.slice(i, i + CHANS_PER_GRID_ROW).map((channel, c) => {
+      const listing = nowOn(view.epg.get(String(channel.epgId || channel.id)));
+      return channelCard(channel, { r, c, now: listing ? listing.title : '' });
+    });
+    const block = el('div', 'rowblock');
+    block.append(strip(cards));
+    root.append(block);
+  }
+
   clear(host).append(root);
 }
 
@@ -324,7 +381,7 @@ export function activate(node, app) {
   if (kind === 'cat') {
     channelSource = node._item;
     catsExpanded = false;
-    app.go('live', { focusRow: 2, focusCol: 0 });
+    app.go('live', { focusRow: 1, focusCol: 0 });
     return;
   }
 

@@ -97,7 +97,6 @@ function paint(stream) {
   video.setAttribute('playsinline', '');
   video.autoplay = true;
   root.append(video);
-  root.append(el('div', 'player-watermark', plateText(job.title)));
 
   scrimNode = el('div', 'player-scrim');
   root.append(scrimNode);

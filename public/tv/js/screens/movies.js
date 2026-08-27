@@ -11,7 +11,7 @@
  * call for every card the D-pad passes over would be a poor way to spend it.
  */
 
-import { el, clear } from '../ui.js';
+import { el, clear, cleanName } from '../ui.js';
 import { api } from '../api.js';
 import { loadLibrary, loadTaste, continueWatching, affinity, state } from '../state.js';
 import { posterCard, rowHead, strip, rowBlock } from './cards.js';
@@ -137,7 +137,7 @@ function topRatedRow() {
 export function onFocus(node) {
   const item = node && node._item;
   if (!item || !spot.title) return;
-  spot.title.textContent = item.name;
+  spot.title.textContent = cleanName(item.name);
   spot.meta.textContent = metaLine(item);
   spot.syn.textContent = plots.get(String(item.id)) || '';
   loadPlotSoon(item);
@@ -163,7 +163,7 @@ function loadPlotSoon(item) {
       const info = data && data.info ? data.info : null;
       const plot = (info && info.plot) || '';
       plots.set(String(item.id), plot);
-      if (spot.title && spot.title.textContent === item.name) {
+      if (spot.title && spot.title.textContent === cleanName(item.name)) {
         spot.syn.textContent = plot;
         if (info && (info.releaseDate || info.genre)) {
           spot.meta.textContent = [info.releaseDate, info.genre, item.rating ? `★ ${item.rating}` : '']

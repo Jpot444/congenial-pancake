@@ -100,7 +100,6 @@ function cellNode(cell, i) {
   cell.video = video;
   node.append(video);
 
-  node.append(el('div', 'quad-watermark', plateText(cell.channel.name)));
 
   const game = slate.find((g) => matchChannel(g, [cell.channel]));
   const badge = el('div', 'quad-badge');

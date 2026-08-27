@@ -458,6 +458,20 @@ a { color: var(--text); text-decoration: none; }
   position: relative;
 }
 .chan-art img { max-width: 78%; max-height: 68%; object-fit: contain; }
+
+/* A logo that has not arrived yet is in the page but not on it, so the plate
+   holds the tile until the picture is ready to take it over. Both live in the
+   same grid cell: a second row would shove the plate off centre for as long as
+   the image took to load. */
+.chan-art > *,
+.cat-art > * { grid-area: 1 / 1; }
+
+.art-img {
+  opacity: 0;
+  transition: opacity .22s var(--ease);
+}
+
+.art-img.on { opacity: 1; }
 .plate {
   font-family: var(--display);
   font-size: 40px;
@@ -896,17 +910,6 @@ a { color: var(--text); text-decoration: none; }
   object-fit: contain;
   background: #08080A;
 }
-.player-watermark {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  font-family: var(--display);
-  font-size: 200px;
-  letter-spacing: .06em;
-  color: rgba(246, 241, 238, .05);
-  pointer-events: none;
-}
 .scorebug {
   position: absolute;
   left: 64px;
@@ -1141,16 +1144,6 @@ a { color: var(--text); text-decoration: none; }
   transform: none;
   box-shadow: 0 0 0 3px var(--bg), 0 0 0 7px var(--text), var(--shadow-float);
   border-color: var(--line-hover-warm);
-}
-.quad-watermark {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  font-family: var(--display);
-  font-size: 112px;
-  letter-spacing: .06em;
-  color: rgba(246, 241, 238, .05);
 }
 .quad-badge {
   position: absolute;
