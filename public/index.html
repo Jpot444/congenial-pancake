@@ -590,6 +590,15 @@
           </svg>
           <span id="wideSearchLabel">All languages</span>
         </button>
+        <!-- Live TV only, beside multi-view: both are ways of looking at a
+        whole category at once rather than one channel at a time. -->
+        <button class="btn btn-ghost btn-sm" id="listingsBtn" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="mv-icon">
+            <rect x="3" y="4" width="18" height="16" rx="1.5"/>
+            <path d="M3 9h18M9 9v11M14 9v11"/>
+          </svg>
+          <span id="listingsLabel">Listings</span>
+        </button>
         <!-- Live TV only: four things side by side means nothing elsewhere. -->
         <button class="btn btn-ghost btn-sm" id="multiviewBtn" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true" class="mv-icon">

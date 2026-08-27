@@ -4821,3 +4821,9 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   .guide-grid { overflow-x: auto; }
   .guide-axis, .guide-body { min-width: 720px; }
 }
+
+/* The schedule standing in for the channel grid. It is the same guide the
+   landing page carries, so it only needs the room the grid was using. */
+.grid.is-listings { display: block; }
+.listings-guide { margin-top: 0; }
+.listings-guide .guide-grid { max-width: none; }

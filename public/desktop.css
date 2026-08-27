@@ -1919,3 +1919,6 @@
   letter-spacing: .05em;
 }
 .desk .guide-prog-title { font-size: 13px; }
+
+.desk .listings-guide { margin-top: 0; }
+.desk .listings-guide .guide-grid { max-width: none; }

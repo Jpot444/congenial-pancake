@@ -3714,12 +3714,17 @@ const LIBRARY_ACTIONS = {
  * and how many the box will fetch in one go.
  *
  * The cap is not tuning for its own sake: each one is a separate call to a
- * provider with a single connection, so six is a guide and sixty is a denial
- * of service against yourself. The TTL is generous because a programme that
- * started twenty minutes ago is still the programme that is on. */
-const EPG_MAX_CHANNELS = 8;
+ * provider with a single connection. The page may ASK about forty — a
+ * category listing is a whole page of channels, not a handful of favourites
+ * — but only six are fetched per request, and the rest come back empty and
+ * fill in on the next poll. A guide that arrives a row at a time is a guide;
+ * forty calls fired at once is a denial of service against yourself.
+ *
+ * The TTL is generous because a programme that started twenty minutes ago is
+ * still the programme that is on. */
+const EPG_MAX_CHANNELS = 40;
 const EPG_TTL_MS = 15 * 60 * 1000;
-const EPG_PER_REQUEST = 4;
+const EPG_PER_REQUEST = 6;
 const epgCache = new Map();
 
 const libraryCache = new Map();
@@ -4835,7 +4840,7 @@ async function handleApi(req, res, pathname, query) {
           const body = (await readBody(upstream)).toString('utf8');
           const data = JSON.parse(body);
           const listings = (data.epg_listings || []).map(decodeEpg);
-          const channel = { id, listings: listings.map((l) => ({
+          const channel = { id, known: true, listings: listings.map((l) => ({
             title: l.title || '',
             start: Number(l.start_timestamp) || 0,
             stop: Number(l.stop_timestamp) || 0,
@@ -4846,16 +4851,22 @@ async function handleApi(req, res, pathname, query) {
           // A channel the provider has no listings for is not an error, it
           // is a channel with no listings. Remembered as such so it is not
           // asked again every few seconds.
-          epgCache.set(id, { at: now, channel: { id, listings: [] } });
+          epgCache.set(id, { at: now, channel: { id, known: true, listings: [] } });
         }
       }
     }
 
-    // Anything still unanswered comes back as itself with nothing in it, so
-    // the page can lay out every row it asked for rather than reflowing as
-    // answers trickle in.
+    /* Anything still unanswered comes back as itself with nothing in it, so
+     * the page can lay out every row it asked for rather than reflowing as
+     * answers trickle in — but marked `known: false`, which is the whole
+     * difference between "this channel has no listings" and "the box has not
+     * got to this channel yet".
+     *
+     * Without that the page cannot tell them apart, and either says "no
+     * listings" about a channel that has some, or leaves a row blank for ten
+     * seconds waiting for an answer that already came back empty. */
     const answered = new Set(fresh.map((c) => c.id));
-    for (const id of ids) if (!answered.has(id)) fresh.push({ id, listings: [] });
+    for (const id of ids) if (!answered.has(id)) fresh.push({ id, known: false, listings: [] });
 
     return json(res, 200, {
       channels: ids.map((id) => fresh.find((c) => c.id === id)),

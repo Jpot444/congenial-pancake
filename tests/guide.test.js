@@ -50,6 +50,7 @@ const CHANNELS = [
   let answer = (ids) => ({
     channels: ids.map((id) => ({
       id,
+      known: true,
       listings: id === '503' ? [] : [
         { title: `Now on ${id}`, start: now - 900, stop: now + 900 },
         { title: `Next on ${id}`, start: now + 900, stop: now + 3600 },
@@ -208,12 +209,102 @@ const CHANNELS = [
   check('it caches, so a landing page does not re-ask every visit',
     /epgCache\.set/.test(SERVER) && /EPG_TTL_MS/.test(SERVER));
   check('it caches the empty answer too, so a channel with no listings is',
-    /epgCache\.set\(id, \{ at: now, channel: \{ id, listings: \[\] \} \}\)/.test(SERVER));
+    /epgCache\.set\(id, \{ at: now, channel: \{ id, known: true, listings: \[\] \} \}\)/.test(SERVER));
   console.log('       not asked about again every few seconds');
   check('it caps how many channels one request may cover',
     /EPG_MAX_CHANNELS/.test(SERVER) && /slice\(0, EPG_MAX_CHANNELS\)/.test(SERVER));
   check('and answers for every id it was asked about, listed or not',
     /for \(const id of ids\) if \(!answered\.has\(id\)\)/.test(SERVER));
+  // The distinction the whole multi-pass fill rests on. An empty answer means
+  // one of two quite different things — "asked, nothing there" and "have not
+  // got to it yet" — and a page that cannot tell them apart either gives up on
+  // channels it never asked about, or keeps asking about ones that will never
+  // answer. So the box says which it is, per channel.
+  check('an unanswered channel is marked as such, not as having nothing on',
+    /if \(!answered\.has\(id\)\) fresh\.push\(\{ id, known: false, listings: \[\] \}\)/.test(SERVER));
+
+  /* ---- and the same guide over a whole category ------------------------ */
+  //
+  // "In Live TV > any category there is a multiview button next to 'Live TV'.
+  // Next to that button I want a live listings button that puts all channels
+  // in the category into a schedule like I have on the homepage."
+  //
+  // Same grid, pointed at the page instead of at favourites. It answers a
+  // different question from the channel grid: the grid is "which channel",
+  // this is "what is on".
+  console.log('\n  Live TV as a schedule');
+  const CHANS = Array.from({ length: 50 }, (_, i) => ({
+    kind: 'live', id: String(700 + i), name: `US: CHANNEL ${i}`, num: 100 + i,
+    categoryId: i < 30 ? 'sport' : 'news',
+  }));
+  await page.route('**/api/epg/now*', (r) => {
+    const ids = String(new URL(r.request().url()).searchParams.get('ids') || '').split(',');
+    asked.push(ids);
+    return r.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ channels: ids.map((id) => ({
+        id, known: true,
+        listings: [{ title: `On ${id}`, start: now - 600, stop: now + 2400 }] })) }) });
+  });
+
+  const openListings = (category) => page.evaluate(async (args) => {
+    state.config.mode = 'xtream';
+    state.library.live = { categories: [{ id: 'sport', name: 'Sport' },
+      { id: 'news', name: 'News' }], items: args.items };
+    state.tab = 'live';
+    state.query = '';
+    state.category = args.category;
+    state.listings = false;
+    location.hash = '#/live';
+    await new Promise((r) => setTimeout(r, 400));
+    state.category = args.category;
+    document.querySelector('#listingsBtn').click();
+    await new Promise((r) => setTimeout(r, 1200));
+    return {
+      hidden: document.querySelector('#listingsBtn').hidden,
+      label: document.querySelector('#listingsLabel').textContent,
+      on: document.querySelector('#listingsBtn').classList.contains('is-on'),
+      rows: document.querySelectorAll('.listings-guide .guide-row').length,
+      count: document.querySelector('.listings-guide .shelf-count')?.textContent || '',
+      title: document.querySelector('#contentTitle').textContent,
+      cards: document.querySelectorAll('#grid .card').length,
+    };
+  }, { items: CHANS, category });
+
+  asked = [];
+  const sport = await openListings('sport');
+  console.log('   ', JSON.stringify(sport));
+  check('the button is offered on Live TV', sport.hidden === false, String(sport.hidden));
+  check('and pressing it replaces the channel grid with a schedule',
+    sport.rows > 0 && sport.cards === 0, JSON.stringify(sport));
+  check('for the channels in THIS category, not the whole of Live TV',
+    sport.rows === 30, String(sport.rows));
+  check('named after the category it is showing', sport.title === 'Sport', sport.title);
+  check('and the button now offers the way back', sport.on && sport.label === 'Channels',
+    JSON.stringify(sport));
+
+  console.log('\n  and a category bigger than one page of guide');
+  asked = [];
+  const all = await openListings(null);
+  console.log('   ', JSON.stringify(all));
+  // Every row is one call to a provider with a single connection. Fifty at
+  // once is an evening of nothing working.
+  check('a big category is capped rather than asked about in full',
+    all.rows === 40, String(all.rows));
+  check('and says so, rather than quietly showing forty of fifty',
+    /first 40 of 50/.test(all.count), all.count);
+
+  console.log('\n  and it is Live TV\'s alone');
+  const elsewhere = await page.evaluate(async () => {
+    location.hash = '#/movies';
+    await new Promise((r) => setTimeout(r, 500));
+    return { hidden: document.querySelector('#listingsBtn').hidden,
+      listings: state.listings };
+  });
+  console.log('   ', JSON.stringify(elsewhere));
+  check('no listings button on Movies — a schedule is a thing channels have',
+    elsewhere.hidden === true, String(elsewhere.hidden));
+  check('and leaving Live TV puts the schedule away with it',
+    elsewhere.listings === false, String(elsewhere.listings));
 
   await browser.close();
   console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(', ')}` : '\nall passed');

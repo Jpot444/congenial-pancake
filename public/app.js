@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '24.45';
+const VERSION = '24.46';
 
 const PAGE_SIZE = 60;
 
@@ -64,6 +64,8 @@ const state = {
   libraryAll: { live: null, movies: null, series: null },
   /** Whether search is currently looking past the English/US filter. */
   searchWide: false,
+  /** Live TV showing a schedule rather than a grid of channels. */
+  listings: false,
   visible: PAGE_SIZE,
   filtered: [],
   downloads: { items: [], active: null, queued: 0 },
@@ -660,6 +662,30 @@ $('#colsSeg').addEventListener('click', (event) => {
 function applyMultiviewButton() {
   $('#multiviewBtn').hidden = state.tab !== 'live';
 }
+
+/**
+ * The listings button, beside multi-view and for the same reason.
+ *
+ * Both are ways of looking at a whole category at once rather than one
+ * channel at a time — multi-view by watching four of them, this by reading
+ * what is on all of them. It belongs to Live TV alone: a schedule is a thing
+ * channels have and films do not.
+ */
+function applyListingsButton() {
+  const button = $('#listingsBtn');
+  button.hidden = state.tab !== 'live' || state.config?.mode !== 'xtream';
+  button.classList.toggle('is-on', state.listings);
+  $('#listingsLabel').textContent = state.listings ? 'Channels' : 'Listings';
+  button.title = state.listings
+    ? 'Back to the channel grid'
+    : "What's on, across everything on this page";
+}
+
+$('#listingsBtn').addEventListener('click', () => {
+  state.listings = !state.listings;
+  applyListingsButton();
+  render();
+});
 
 $('#multiviewBtn').addEventListener('click', () => multiview.open());
 
@@ -4649,6 +4675,11 @@ function trimTag(raw) {
 const GUIDE_CHANNELS = 6;
 /** Hours across the grid. More and the columns cannot hold a title. */
 const GUIDE_HOURS = 4;
+/** A page of guide. Every row is one call to a one-connection provider. */
+const LISTINGS_MAX = 40;
+/** How many times to go back for rows the box had not fetched yet. */
+const GUIDE_PASSES = 8;
+const GUIDE_PASS_MS = 1200;
 
 /**
  * "What's on" — now and next, for the channels somebody favourited.
@@ -4666,7 +4697,7 @@ const GUIDE_HOURS = 4;
  * arrive. If they never do — provider busy, no listings for that channel —
  * the row is still a perfectly good list of channels to press.
  */
-async function paintGuide(section, channels) {
+async function paintGuide(section, channels, opts = {}) {
   section.innerHTML = '';
 
   /* The redesign's own section heading — the crimson rule, the Bebas caps,
@@ -4674,9 +4705,10 @@ async function paintGuide(section, channels) {
      something bolted on. */
   const head = el('div', 'shelf-head');
   const label = el('h2', 'shelf-title');
-  label.textContent = "Tonight's guide";
+  label.textContent = opts.title || "Tonight's guide";
   const count = el('span', 'shelf-count');
-  count.textContent = `${channels.length} favorite channel${channels.length === 1 ? '' : 's'}`;
+  count.textContent = opts.count
+    || `${channels.length} favorite channel${channels.length === 1 ? '' : 's'}`;
   head.append(label, count);
   section.append(head);
 
@@ -4693,6 +4725,9 @@ async function paintGuide(section, channels) {
   const span = endAt - startAt;
   /** Where a moment falls across the window, 0 to 1. */
   const across = (at) => Math.min(1, Math.max(0, (at - startAt) / span));
+
+  section.dataset.from = String(startAt);
+  section.dataset.span = String(span);
 
   const grid = el('div', 'guide-grid');
 
@@ -4756,18 +4791,59 @@ async function paintGuide(section, channels) {
 
   section.append(grid);
 
+  /* Filled in over several passes, not one.
+   *
+   * The box will only fetch a handful of channels per request — one call to
+   * a single-connection provider each — so a page of forty comes back mostly
+   * empty the first time and fills in as it is asked again. Which is the
+   * right shape for it: rows appearing one at a time is a guide arriving,
+   * and forty calls fired at once is a denial of service against yourself.
+   *
+   * It stops when nothing new arrived, so a category the provider has no
+   * listings for costs a couple of requests rather than a poll for ever. */
+  const waiting = new Set(tracks.keys());
+  for (let pass = 0; pass < GUIDE_PASSES && waiting.size; pass += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const landed = await fillGuide(tracks, waiting, section);
+    if (landed === null) return;                       // asked and refused
+    if (!landed) break;                                // nothing new to wait for
+    // eslint-disable-next-line no-await-in-loop
+    if (waiting.size) await new Promise((r) => setTimeout(r, GUIDE_PASS_MS));
+  }
+  // Whatever never arrived says so, rather than sitting blank for ever.
+  for (const id of waiting) {
+    const held = tracks.get(id);
+    const blank = held?.track.querySelector('.guide-prog-title');
+    if (blank && !blank.textContent) blank.textContent = 'No listings';
+  }
+}
+
+/**
+ * One pass at the listings. Returns how many rows it filled, or null if the
+ * box refused outright.
+ */
+async function fillGuide(tracks, waiting, section) {
+  if (!section.isConnected) return null;               // the page moved on
   let data;
   try {
-    data = await api('/api/epg/now', { ids: channels.map((c) => c.id).join(',') });
+    data = await api('/api/epg/now', { ids: [...waiting].join(',') });
   } catch {
     // A guide that cannot be had is not an error worth a message.
-    for (const { track } of tracks.values()) {
-      track.querySelector('.guide-prog-title').textContent = 'No listings';
+    for (const id of waiting) {
+      const blank = tracks.get(id)?.track.querySelector('.guide-prog-title');
+      if (blank) blank.textContent = 'No listings';
     }
-    return;
+    waiting.clear();
+    return null;
   }
 
+  let filled = 0;
   const now = Date.now() / 1000;
+  const startAt = Number(section.dataset.from);
+  const span = Number(section.dataset.span);
+  const across = (at) => Math.min(1, Math.max(0, (at - startAt) / span));
+  const endAt = startAt + span;
+
   for (const channel of data.channels || []) {
     const held = tracks.get(String(channel.id));
     if (!held) continue;
@@ -4777,11 +4853,23 @@ async function paintGuide(section, channels) {
       .filter((l) => l.stop > startAt && l.start < endAt)
       .sort((a, b) => a.start - b.start);
 
+    /* Nothing yet is not the same as nothing at all.
+     *
+     * `known` is the box saying it asked and there was nothing, as against
+     * it not having got to this channel — it only fetches a few per request.
+     * Without the distinction a row either claims "no listings" about a
+     * channel that has some, or sits blank for ten seconds waiting for an
+     * answer that already came back empty. */
     if (!listings.length) {
-      held.track.querySelector('.guide-prog-title').textContent = 'No listings';
+      if (!channel.known) continue;
+      waiting.delete(String(channel.id));
+      const blank = held.track.querySelector('.guide-prog-title');
+      if (blank) blank.textContent = 'No listings';
       continue;
     }
 
+    waiting.delete(String(channel.id));
+    filled += 1;
     held.track.innerHTML = '';
     for (const listing of listings) {
       const left = across(listing.start);
@@ -4801,6 +4889,7 @@ async function paintGuide(section, channels) {
       held.track.append(slab);
     }
   }
+  return filled;
 }
 
 /**
@@ -4986,6 +5075,65 @@ function homeFavColumn({ title, items, hash, empty, shown }) {
   for (const item of items.slice(0, shown)) grid.append(homeFavTile(item));
   col.append(grid);
   return col;
+}
+
+/**
+ * Live TV as a schedule rather than a grid of channels.
+ *
+ * The same guide the landing page carries, pointed at whatever is on this
+ * page instead of at favourites — so a category is a category's schedule,
+ * and All is the first page of everything. It answers a different question
+ * from the grid: the grid is "which channel", this is "what is on".
+ *
+ * Capped, and the cap is not shyness. Every row is one call to a provider
+ * with a single connection, so a category of four hundred channels asked
+ * about at once is an evening of nothing working. Forty is a page of guide.
+ */
+function renderListings() {
+  const grid = $('#grid');
+  grid.hidden = false;
+  grid.className = 'grid is-listings';
+  grid.innerHTML = '';
+  $('#loadMore').hidden = true;
+  $('#emptyState').hidden = true;
+
+  const source = state.library.live;
+  if (!source) {
+    $('#emptyState').hidden = false;
+    $('#emptyState').textContent = 'Live TV has not loaded yet.';
+    return;
+  }
+
+  let channels = browsable(source.items).filter((i) => !profiles.isDeleted(i));
+  if (state.category !== null && state.category !== DELETED_CATEGORY) {
+    channels = channels.filter((i) => String(i.categoryId) === String(state.category));
+  }
+
+  const where = state.category === null
+    ? 'Live TV'
+    : (source.categories.find((c) => String(c.id) === String(state.category))?.name
+       || 'this category');
+  $('#contentTitle').textContent = where;
+
+  if (!channels.length) {
+    $('#emptyState').hidden = false;
+    $('#emptyState').textContent = 'No channels here to build a schedule from.';
+    return;
+  }
+
+  const shown = channels.slice(0, LISTINGS_MAX);
+  const section = el('section', 'home-guide listings-guide');
+  grid.append(section);
+  paintGuide(section, shown, {
+    title: "What's on",
+    count: shown.length < channels.length
+      ? `first ${shown.length} of ${channels.length.toLocaleString()}`
+      : `${shown.length} channel${shown.length === 1 ? '' : 's'}`,
+  });
+
+  $('#contentMeta').textContent = shown.length < channels.length
+    ? `Showing ${shown.length} of ${channels.length.toLocaleString()} channels`
+    : '';
 }
 
 function renderHome() {
@@ -5610,6 +5758,7 @@ function render() {
   // rather than once at startup. Kept out of syncTabs, which device.init()
   // reaches before this module has been initialised at all.
   applyMultiviewButton();
+  applyListingsButton();
   applyWideSearchButton();
 
   // EVERY tab's furniture goes away here, before the per-tab branches — not
@@ -5627,6 +5776,10 @@ function render() {
   // page is a search, and painting the landing page again is what made it
   // look like the box did nothing.
   if (state.query && SEARCH_TABS.includes(state.tab)) return renderSearchAll();
+
+  // A schedule for whatever is on this page. After the search branch, so a
+  // search still searches; before the grid, because it replaces it.
+  if (state.tab === 'live' && state.listings) return renderListings();
 
   if (state.tab === 'home') return renderHome();
   if (state.tab === 'series' && state.seriesId) return renderShowCard();
@@ -7267,6 +7420,11 @@ async function goTo(tab) {
   // returns before render(), and a Live TV button left sitting on Movies is
   // the kind of thing that only shows up when something else is broken.
   applyMultiviewButton();
+  // Leaving Live TV leaves the listings behind with it — coming back to a
+  // schedule you opened twenty minutes ago is not what anyone means by
+  // going to Live TV.
+  if (tab !== 'live') state.listings = false;
+  applyListingsButton();
   applyWideSearchButton();
   state.category = null;
   state.shelf = null;
@@ -11505,6 +11663,7 @@ async function startApp() {
   // Before anything renders, so controls are the right size on first paint.
   device.init();
   applyMultiviewButton();
+  applyListingsButton();
   applyWideSearchButton();
   try {
     const config = await api('/api/config');
