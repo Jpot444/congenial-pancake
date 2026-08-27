@@ -1476,6 +1476,16 @@ home screen and nowhere else. Bump it on every deploy:
 It is a plain string, not a number, so `18.10` follows `18.9` perfectly happily
 and nothing rounds anything off.
 
+The rule that gets broken is the first one. The 24 series ran to `24.46`,
+because each new thing arrived in the middle of a working session and taking
+the second part felt like the modest choice every single time — through the
+whole-library search, low bandwidth mode, saving to the device, ranked search,
+one card per title, the 4K mark, adult titles by name, the desktop redesign,
+the guide, and the listings. Every one of those was a new feature and every one
+of them should have taken a whole number. The test is not how big the change
+felt to write; it is whether the portal can now do something it could not do
+before. If it can, the whole number moves, even if three of them move in a day.
+
 It is read from the client bundle rather than reported by the server on
 purpose. The question it answers is "did my push actually reach the Pi", and a
 stale number means the code running in front of you is stale — which is exactly
