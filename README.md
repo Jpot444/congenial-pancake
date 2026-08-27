@@ -2151,7 +2151,10 @@ the case where the words are the whole point.
 
 `GUIDE_CATALOGUE` is a list of somebody else's filenames written down when this
 was built, and a list like that is wrong the moment they rename something —
-silently, as two 404s from a host still happily serving a third file. **See
+silently, as two 404s from a host still happily serving a third file. It
+happened: `US1` became `US2` and `US_LOCALS2` became `US_LOCALS1`, with nothing
+announcing either. **When a catalogue entry stops working, trust the host's
+index over this file.** **See
 what the host has now** reads the directory index and shows what is actually
 there, with sizes; ticking one puts the real address in the box below. So the
 list on screen is the host's, not one written down months ago.
@@ -2229,6 +2232,19 @@ Canada       — HTTP 404
 what came back was not a guide at all (a login page, an HTML error, a gzip
 layer that never came off), the second means the join failed — so they are
 reported as different things.
+
+### The form must survive its own poll
+
+The panel polls itself every three seconds while a fetch runs, and the repaint
+rebuilt the tick boxes from the *stored* settings — so unticking a dead feed
+came back three seconds later, and two guides answering 404 survived being
+removed twice. Anything the viewer touches sets `dirty`, and a dirty form is
+never rebuilt from the server; a successful save clears it.
+
+Feed lists are deduplicated on both sides, too. The swap button adds a URL to
+the free-text box while the same feed may still be ticked in the catalogue, and
+one feed listed twice is one feed downloaded and scanned twice for exactly the
+same listings.
 
 ### The feed list is a form field
 

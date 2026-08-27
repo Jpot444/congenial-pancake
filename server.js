@@ -584,7 +584,9 @@ function guideSources(cfg) {
     .filter((u) => u && !u.includes('…'));
   const legacy = String(cfg?.epgUrl || '').trim();
   if (legacy && !legacy.includes('…') && !list.includes(legacy)) list.unshift(legacy);
-  return list.slice(0, 12);
+  // Deduplicated here as well as on the way in: one feed listed twice is one
+  // feed downloaded and scanned twice for exactly the same listings.
+  return [...new Set(list)].slice(0, 12);
 }
 
 /* ----------------------------------------------------------------- fetching */
@@ -3801,10 +3803,16 @@ function loadLibraryCache() {
  * decision to take on a viewer's behalf. Pick the ones that match what you
  * actually watch — a US household wants the first two and nothing else, and
  * every feed added is another few hundred megabytes to scan.
+ *
+ * These names go stale. `US1` became `US2` and `US_LOCALS2` became
+ * `US_LOCALS1` without anything announcing it, and a list written down here
+ * cannot know that — it just starts answering 404. Which is why the screen
+ * can read the host's own index: when one of these stops working, trust that
+ * over this.
  */
 const GUIDE_CATALOGUE = [
-  { label: 'United States', url: 'https://epgshare01.online/epgshare01/epg_ripper_US1.xml.gz' },
-  { label: 'US local stations', url: 'https://epgshare01.online/epgshare01/epg_ripper_US_LOCALS2.xml.gz' },
+  { label: 'United States', url: 'https://epgshare01.online/epgshare01/epg_ripper_US2.xml.gz' },
+  { label: 'US local stations', url: 'https://epgshare01.online/epgshare01/epg_ripper_US_LOCALS1.xml.gz' },
   { label: 'US sports', url: 'https://epgshare01.online/epgshare01/epg_ripper_US_SPORTS1.xml.gz' },
   { label: 'United Kingdom', url: 'https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz' },
   { label: 'Canada', url: 'https://epgshare01.online/epgshare01/epg_ripper_CA1.xml.gz' },

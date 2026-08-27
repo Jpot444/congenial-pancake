@@ -680,6 +680,41 @@ function serve(xml) {
     /\.filter\(\(u\) => u && !u\.includes\('…'\)\)/.test(SERVER));
   console.log('       (a redacted URL can never resolve; it only fails every six hours)');
 
+  /* ---- the form must survive its own poll --------------------------- */
+  //
+  // Reported: two feeds answering 404 were unticked and replaced, and both
+  // came back on the next fetch. The panel polls itself every three seconds
+  // while a fetch runs, and the repaint rebuilt the tick boxes from the
+  // STORED settings — throwing away the change that had just been made.
+  console.log('\n  edits survive the panel repainting itself');
+  check('the form is only rebuilt when it is not being edited',
+    /if \(!this\.dirty\) \{/.test(APP));
+  check('touching a tick box marks it as edited',
+    /box\.addEventListener\('change', \(\) => \{ this\.dirty = true; \}\)/.test(APP));
+  check('as does typing in the feed box',
+    /\$\('#guideExtra'\)\.addEventListener\('input', \(\) => \{ guideSources\.dirty = true; \}\)/.test(APP));
+  check('and a save clears it, so the next poll paints normally',
+    /this\.dirty = false;\s*\n\s*this\.paint\(/.test(APP));
+
+  // The same report showed US_SPORTS1 fetched twice — once ticked in the
+  // catalogue and once added by the swap button.
+  check('a feed listed twice is only fetched once',
+    /const urls = \[\.\.\.new Set\(\[/.test(APP));
+  check('and deduplicated on the box\'s side as well',
+    /return \[\.\.\.new Set\(list\)\]\.slice\(0, 12\)/.test(SRC));
+
+  // The names that were wrong all along. Scoped to the catalogue itself —
+  // the old ones still appear in comments, which is where they belong.
+  const catalogue = /const GUIDE_CATALOGUE = \[([\s\S]*?)\n\];/.exec(SRC);
+  check('the catalogue is where the offered feeds are listed', Boolean(catalogue));
+  check('it points at the files that exist',
+    /epg_ripper_US2\.xml\.gz/.test(catalogue[1])
+    && /epg_ripper_US_LOCALS1\.xml\.gz/.test(catalogue[1]));
+  check('and not at the two that answer 404',
+    !/epg_ripper_US1\.xml\.gz/.test(catalogue[1])
+    && !/epg_ripper_US_LOCALS2\.xml\.gz/.test(catalogue[1]),
+    catalogue[1].slice(0, 200));
+
   const INDEX = fs.readFileSync(PATHS.INDEX, 'utf8');
   check('the panel is in the health modal', /id="guidePanel"/.test(INDEX));
   check('and can be asked why a channel has none', /id="guideWhy"/.test(INDEX));

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '27.6';
+const VERSION = '27.7';
 
 const PAGE_SIZE = 60;
 
@@ -2216,6 +2216,8 @@ const guideSources = {
   timer: null,
   catalogue: [],
   known: 0,
+  /** Set the moment anything on this form is touched; cleared by a save. */
+  dirty: false,
 
   async load() {
     const panel = $('#guidePanel');
@@ -2251,27 +2253,38 @@ const guideSources = {
     if (data.known !== undefined) this.known = data.known;
     const chosen = new Set(data.sources || []);
 
-    $('#guideProvider').checked = data.useProviderGuide !== false;
     $('#guideProvider').closest('.gsrc-row').hidden = !data.hasProviderGuide;
 
-    // The catalogue as tick boxes, with anything hand-entered kept in the
-    // box underneath so a URL nobody offered is not silently dropped.
-    const picks = $('#guidePicks');
-    picks.innerHTML = '';
-    const known = new Set(this.catalogue.map((c) => c.url));
-    for (const entry of this.catalogue) {
-      const row = document.createElement('label');
-      row.className = 'gsrc-pick';
-      const box = document.createElement('input');
-      box.type = 'checkbox';
-      box.value = entry.url;
-      box.checked = chosen.has(entry.url);
-      const name = document.createElement('span');
-      name.textContent = entry.label;
-      row.append(box, name);
-      picks.append(row);
+    /* The form is rebuilt only when it is not being edited.
+     *
+     * This panel polls itself every three seconds while a fetch is running,
+     * and rebuilding the tick boxes from the stored settings on every poll
+     * silently threw away whatever had just been changed. Unticking a dead
+     * feed came straight back, which is exactly how two guides that answer
+     * 404 survived being removed twice.
+     */
+    if (!this.dirty) {
+      $('#guideProvider').checked = data.useProviderGuide !== false;
+      // The catalogue as tick boxes, with anything hand-entered kept in the
+      // box underneath so a URL nobody offered is not silently dropped.
+      const picks = $('#guidePicks');
+      picks.innerHTML = '';
+      const known = new Set(this.catalogue.map((c) => c.url));
+      for (const entry of this.catalogue) {
+        const row = document.createElement('label');
+        row.className = 'gsrc-pick';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.value = entry.url;
+        box.checked = chosen.has(entry.url);
+        box.addEventListener('change', () => { this.dirty = true; });
+        const name = document.createElement('span');
+        name.textContent = entry.label;
+        row.append(box, name);
+        picks.append(row);
+      }
+      $('#guideExtra').value = [...chosen].filter((u) => !known.has(u)).join('\n');
     }
-    $('#guideExtra').value = [...chosen].filter((u) => !known.has(u)).join('\n');
 
     $('#guideCover').textContent = data.covered
       ? `${data.covered.toLocaleString()} of ${(this.known || 0).toLocaleString()} channels`
@@ -2385,6 +2398,7 @@ const guideSources = {
 
   /** Add or remove one address from the free-text box. */
   toggleExtra(url, on) {
+    this.dirty = true;
     const box = $('#guideExtra');
     const lines = box.value.split('\n').map((s) => s.trim()).filter(Boolean);
     const without = lines.filter((l) => l !== url);
@@ -2576,10 +2590,13 @@ const guideSources = {
 
   async save() {
     const button = $('#guideSave');
-    const urls = [
+    // Deduplicated: a feed can be both ticked in the catalogue and typed in
+    // the box below — which is what the swap button does — and sending it
+    // twice means downloading and scanning it twice for the same listings.
+    const urls = [...new Set([
       ...[...$('#guidePicks').querySelectorAll('input:checked')].map((b) => b.value),
       ...$('#guideExtra').value.split('\n').map((s) => s.trim()).filter(Boolean),
-    ];
+    ])];
     button.disabled = true;
     $('#guideNote').textContent = 'Saving…';
     try {
@@ -2593,6 +2610,7 @@ const guideSources = {
       // The fetch runs on the box long after this returns, so the panel goes
       // straight into watching rather than claiming it is done — unless the
       // box said it could not start, in which case there is nothing to watch.
+      this.dirty = false;
       this.paint({ ...data, running: !data.blocked });
       if (data.blocked) this.stop();
       else this.watch();
@@ -2611,6 +2629,8 @@ $('#guideBrowse').addEventListener('click', () => guideSources.browse());
 /* The "why has this got no listings" box. Typed into, so it waits for a
  * pause rather than asking the box on every keystroke. */
 let whyTimer = null;
+$('#guideProvider').addEventListener('change', () => { guideSources.dirty = true; });
+$('#guideExtra').addEventListener('input', () => { guideSources.dirty = true; });
 $('#guideWhy').addEventListener('input', () => {
   clearTimeout(whyTimer);
   whyTimer = setTimeout(() => guideSources.explain($('#guideWhy').value), 350);
