@@ -3,6 +3,7 @@ prefs.json
 profiles.json
 reports.json
 library-cache.json
+epg-guide.json
 downloads/
 hls/
 .DS_Store

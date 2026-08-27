@@ -593,7 +593,7 @@ const BIG = 3.2 * 1024 ** 3;   // the kind of file that shows nothing for a whil
   fs.rmSync(DIR, { recursive: true, force: true });
   fs.mkdirSync(path.join(DIR, 'store'), { recursive: true });
   fs.cpSync(PATHS.PUBLIC, path.join(DIR, 'public'), { recursive: true });
-  for (const f of ['server.js', 'local-library.js']) {
+  for (const f of ['server.js', 'local-library.js', 'epg-guide.js']) {
     fs.copyFileSync(path.join(PATHS.ROOT, f), path.join(DIR, f));
   }
   fs.writeFileSync(path.join(DIR, 'profiles.json'), JSON.stringify({

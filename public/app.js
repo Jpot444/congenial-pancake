@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '25.0';
+const VERSION = '26.0';
 
 const PAGE_SIZE = 60;
 
@@ -2200,6 +2200,187 @@ document.addEventListener('fullscreenchange', () => {
  * when the card filled up silently — storage is the headline, and the panel
  * polls while open so the bar moves as downloads land and get deleted.
  */
+/**
+ * Where the listings come from.
+ *
+ * The provider answers `get_short_epg` for a minority of what it sells, and
+ * for everything else the guide is blank however patiently you ask. The fix
+ * is to read an XMLTV feed somebody else publishes and join it to our
+ * channels by name and id, and this panel is the whole of the setting up.
+ *
+ * It reports coverage rather than success, because those are different
+ * questions: a fetch that worked and matched nothing is the failure people
+ * actually hit, and "1,318 of 1,680 channels" says so where a tick would not.
+ */
+const guideSources = {
+  timer: null,
+  catalogue: [],
+  known: 0,
+
+  async load() {
+    const panel = $('#guidePanel');
+    panel.hidden = !reporter.isOwner();
+    if (panel.hidden) return;
+    try {
+      const data = await api('/api/epg/sources');
+      this.paint(data);
+      // While a scan is running the numbers move, so the panel follows it.
+      // Once it settles the polling stops — this is a settings screen, not a
+      // dashboard.
+      if (data.running) this.watch();
+      else this.stop();
+    } catch {
+      $('#guideNote').textContent = 'Could not read the guide settings.';
+    }
+  },
+
+  watch() {
+    clearInterval(this.timer);
+    this.timer = setInterval(() => this.load(), 3000);
+  },
+
+  stop() {
+    clearInterval(this.timer);
+    this.timer = null;
+  },
+
+  paint(data) {
+    // A save answers with the settings, not with the catalogue or the channel
+    // count, so what is already known is kept rather than blanked.
+    if (data.catalogue) this.catalogue = data.catalogue;
+    if (data.known !== undefined) this.known = data.known;
+    const chosen = new Set(data.sources || []);
+
+    $('#guideProvider').checked = data.useProviderGuide !== false;
+    $('#guideProvider').closest('.gsrc-row').hidden = !data.hasProviderGuide;
+
+    // The catalogue as tick boxes, with anything hand-entered kept in the
+    // box underneath so a URL nobody offered is not silently dropped.
+    const picks = $('#guidePicks');
+    picks.innerHTML = '';
+    const known = new Set(this.catalogue.map((c) => c.url));
+    for (const entry of this.catalogue) {
+      const row = document.createElement('label');
+      row.className = 'gsrc-pick';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = entry.url;
+      box.checked = chosen.has(entry.url);
+      const name = document.createElement('span');
+      name.textContent = entry.label;
+      row.append(box, name);
+      picks.append(row);
+    }
+    $('#guideExtra').value = [...chosen].filter((u) => !known.has(u)).join('\n');
+
+    $('#guideCover').textContent = data.covered
+      ? `${data.covered.toLocaleString()} of ${(this.known || 0).toLocaleString()} channels`
+      : '';
+    const said = this.summary(data);
+    const note = $('#guideNote');
+    note.textContent = said.text;
+    note.classList.toggle('is-bad', said.bad);
+    const running = $('#guideRunning');
+    running.hidden = !data.running;
+    running.textContent = 'Reading the guides… this takes a few minutes.';
+    $('#guideSave').disabled = Boolean(data.running);
+  },
+
+  /**
+   * The one paragraph that says whether this is working.
+   *
+   * `bad` is not "no listings" — a box nobody has set up yet is not broken,
+   * it is new. It means something was tried and did not work, which is the
+   * only state worth colouring.
+   */
+  summary(data) {
+    if (data.running) return { text: 'Reading the guides now.', bad: false };
+    // Nothing to match a guide against until the box has seen the channel
+    // list, and it will not fetch the catalogue just to build a guide.
+    if (data.blocked === 'no-channels') {
+      return {
+        text: 'The box has not loaded your channel list yet. Open Live TV once, '
+          + 'then come back and press this again.',
+        bad: false,
+      };
+    }
+    if (!data.covered) {
+      if (!(data.sources || []).length && data.useProviderGuide === false) {
+        return {
+          text: 'Nothing is switched on, so listings come from the provider one '
+            + 'channel at a time — which is why most channels show none.',
+          bad: false,
+        };
+      }
+      const failed = (data.lastRun?.sources || []).filter((s) => !s.ok);
+      if (failed.length) {
+        return { text: `Nothing matched. ${failed[0].label}: ${failed[0].error}.`, bad: true };
+      }
+      if (!data.lastRun) {
+        return { text: 'Not fetched yet. Save and fetch to try it.', bad: false };
+      }
+      return {
+        text: 'Fetched, but nothing matched our channel names. Try a guide for '
+          + 'the country these channels are from.',
+        bad: true,
+      };
+    }
+    const bits = [`${data.programmes.toLocaleString()} listings.`];
+    if (data.byName) {
+      const chans = (n) => `${n.toLocaleString()} channel${n === 1 ? '' : 's'}`;
+      bits.push(`${chans(data.byId)} matched on the id the provider gave them, `
+        + `${data.byName.toLocaleString()} on ${data.byName === 1 ? 'its' : 'their'} `
+        + 'name alone — a name match is a good guess, not a promise.');
+    }
+    if (data.lastRun?.truncated) bits.push('One feed was too big to read to the end.');
+    if (data.at) bits.push(`Last read ${whenWords(data.at)}.`);
+    return { text: bits.join(' '), bad: false };
+  },
+
+  async save() {
+    const button = $('#guideSave');
+    const urls = [
+      ...[...$('#guidePicks').querySelectorAll('input:checked')].map((b) => b.value),
+      ...$('#guideExtra').value.split('\n').map((s) => s.trim()).filter(Boolean),
+    ];
+    button.disabled = true;
+    $('#guideNote').textContent = 'Saving…';
+    try {
+      const res = await fetch('/api/epg/sources', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ urls, useProviderGuide: $('#guideProvider').checked }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+      // The fetch runs on the box long after this returns, so the panel goes
+      // straight into watching rather than claiming it is done — unless the
+      // box said it could not start, in which case there is nothing to watch.
+      this.paint({ ...data, running: !data.blocked });
+      if (data.blocked) this.stop();
+      else this.watch();
+    } catch (err) {
+      const note = $('#guideNote');
+      note.textContent = err.message || 'Could not save that.';
+      note.classList.add('is-bad');
+      button.disabled = false;
+    }
+  },
+};
+
+$('#guideSave').addEventListener('click', () => guideSources.save());
+
+/** "four minutes ago", for a timestamp the viewer should not have to subtract. */
+function whenWords(at) {
+  const mins = Math.round((Date.now() - at) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
 const health = {
   timer: null,
   lastBad: false,
@@ -2209,6 +2390,7 @@ const health = {
     $('#healthModal').hidden = false;
     this.paintPlayback();
     this.loadReports();
+    guideSources.load();
     await this.refresh();
     clearInterval(this.timer);
     this.timer = setInterval(() => {
@@ -2319,6 +2501,7 @@ const health = {
     $('#healthModal').hidden = true;
     clearInterval(this.timer);
     this.timer = null;
+    guideSources.stop();
   },
 
   async refresh() {

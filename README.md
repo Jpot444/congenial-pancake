@@ -2042,6 +2042,76 @@ Logos use `object-fit: contain`, not `cover`: a station logo cropped square is
 unreadable, which is the same reason the channel grid contains rather than
 covers.
 
+## Where the listings come from
+
+The provider answers `get_short_epg` one channel at a time, and for most of
+what it sells it answers with nothing. That is not something you can fix by
+asking harder — the listings are not there — so the box reads guides published
+in XMLTV instead and joins them to our channels. Three sources, tried in this
+order:
+
+1. **The provider's own `xmltv.php`.** The whole account in one request rather
+   than one per channel, and in practice populated for channels the per-channel
+   call refuses. It goes first because where it has listings they describe the
+   actual stream you will be watching. It is also the only source that costs
+   anything: it comes down the single connection, so it is skipped entirely
+   while somebody is watching something.
+2. **Open guides** — epgshare01 and the like, offered as a list on the health
+   screen. These are the coverage win; they cover the channels the provider
+   never filled in. They are ordinary web downloads and never wait for anyone.
+3. **`get_short_epg`**, still, for whatever is in neither.
+
+Set up under **Pi health → Listings**. Feeds are offered rather than switched
+on by default: they are somebody else's server, and quietly fetching half a
+gigabyte a day from a stranger is not a decision to make on a viewer's behalf.
+
+### The join
+
+A guide calls it `ESPN`. The provider calls it `US: ESPN HD` and files it under
+`epg_channel_id` of either `ESPN.us` or `somefeed-4471`. `chanKey()` flattens
+all of that — country prefix, country suffix, `HD`/`FHD`/`4K`/`RAW`, the
+fullwidth `ᴴᴰ`, punctuation — down to `espn`, and channels are matched on the
+id first and the name second.
+
+**An id match and a name match are not the same thing** and the screen says
+which is which. An id is something the provider asserted; a name match is our
+guess that two strings mean the same station. It is deliberately an aggressive
+guess, because matching only what is spelled identically matches almost
+nothing — but it is why the coverage line reports the two separately.
+
+The channel list comes out of the library cache, never from a fresh provider
+pull: building a guide is not a good enough reason to fetch a 141MB catalogue.
+On a box that has not shown Live TV since it started there is no list yet, and
+the screen says so rather than appearing to do nothing.
+
+### Why the scan is written the way it is
+
+A national guide is a few hundred megabytes of XML and the Pi has a 1G ceiling.
+The obvious version — download it, parse it, then pick out the channels we own
+— dies on the first one.
+
+So it is done the other way round. The set of channels we own is known *before*
+the fetch starts, the document is scanned as it streams in, and a programme
+belonging to nobody is dropped where it is read. Two details carry it:
+
+- **Only the opening tag is matched.** Capturing whole elements allocates a
+  string for the body of every programme in the document, upwards of 99% of
+  which belong to channels nobody here has. Reading the `channel` attribute out
+  of the small opening tag first, and slicing the body only for the survivors,
+  is the difference between flat memory and 800MB.
+- **Channel ids are resolved once, not once per programme.** The same id
+  appears on every one of its programmes, and `chanKey` is half a dozen regex
+  replaces.
+
+Measured: a 371MB feed scans in ~14s and moves peak RSS from 51MB to 103MB.
+What lands on disk is a few hundred kilobytes — our channels, a day and a half
+of listings, capped at 64 programmes each.
+
+`MAX_BYTES` is therefore a limit on **time, not memory**; a feed past it is cut
+off, and whatever was past the cut is silently missing, so it is set well above
+anything anyone publishes. A refresh that comes back empty never replaces an
+index that is not — a feed down for an afternoon should cost nothing.
+
 ## Live latency
 
 Xtream servers dump a deep backlog the instant you connect. Measured on this

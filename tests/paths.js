@@ -16,5 +16,6 @@ module.exports = {
   APP: path.join(ROOT, 'public', 'app.js'),
   INDEX: path.join(ROOT, 'public', 'index.html'),
   SERVER: path.join(ROOT, 'server.js'),
+  GUIDE: path.join(ROOT, 'epg-guide.js'),
   PUBLIC: path.join(ROOT, 'public'),
 };

@@ -103,6 +103,50 @@
       <p class="health-note" id="lowModeNote" hidden></p>
     </div>
 
+    <!-- Where the listings come from. The provider has none for most of what
+         it sells, so this is the screen that fixes a blank guide — and the
+         coverage line is the first thing on it, because "did it work" is the
+         only question anybody opens this to ask. -->
+    <div class="gsrc" id="guidePanel" hidden>
+      <h3>
+        Listings
+        <span class="gsrc-cover" id="guideCover"></span>
+      </h3>
+      <p class="gsrc-note" id="guideNote">Checking…</p>
+
+      <label class="gsrc-row">
+        <input type="checkbox" id="guideProvider" />
+        <span class="gsrc-words">
+          <strong>The provider's own guide</strong>
+          <small>
+            One request for the whole account instead of one per channel. Free
+            to use and already paid for — but only read while nothing is
+            playing, since it comes down the same single connection.
+          </small>
+        </span>
+      </label>
+
+      <p class="gsrc-lead">
+        Open guides. These cover the channels the provider left blank. They are
+        somebody else's server, so pick the ones you actually watch — each one
+        is a few hundred megabytes to read through.
+      </p>
+      <div class="gsrc-picks" id="guidePicks"></div>
+
+      <label class="field gsrc-field">
+        <span>Any other XMLTV feed <small>(one per line)</small></span>
+        <textarea id="guideExtra" rows="2" spellcheck="false"
+                  placeholder="https://example.com/guide.xml.gz"></textarea>
+      </label>
+
+      <div class="gsrc-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="guideSave">
+          Save and fetch
+        </button>
+        <span class="gsrc-status" id="guideRunning" hidden></span>
+      </div>
+    </div>
+
     <!-- What everyone else has sent in. Sits outside #healthBody for the same
          reason the connection test does: that block is replaced wholesale by
          the poll every few seconds. -->

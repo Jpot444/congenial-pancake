@@ -4202,6 +4202,107 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .low-mode-words strong { font-size: 14px; font-weight: 600; }
 .low-mode-words small { font-size: 12.5px; line-height: 1.45; color: var(--muted-dim); }
 
+/* --- where the listings come from ------------------------------------- */
+
+.gsrc {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.gsrc h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+/* Deliberately not .health-note, which is the alarm style. What this line
+   usually says is "1,318 listings, last read two hours ago" — good news, and
+   good news in a red box teaches people to ignore red boxes. It goes red only
+   when something is actually wrong. */
+.gsrc-note {
+  margin: 0 0 4px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .03);
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.gsrc-note.is-bad {
+  border-color: rgba(255, 107, 94, .3);
+  background: rgba(255, 107, 94, .07);
+  color: var(--live);
+}
+
+/* The answer to "did it work", so it reads as a figure rather than a label. */
+.gsrc-cover {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted-dim);
+}
+
+.gsrc-row {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  cursor: pointer;
+  margin: 11px 0;
+}
+
+.gsrc-row input { margin-top: 3px; flex-shrink: 0; }
+.gsrc-words { display: flex; flex-direction: column; gap: 3px; }
+.gsrc-words strong { font-size: 14px; font-weight: 600; }
+.gsrc-words small { font-size: 12.5px; line-height: 1.45; color: var(--muted-dim); }
+
+.gsrc-lead {
+  margin: 12px 0 8px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted-dim);
+}
+
+/* Two columns where there is room: the list is nine items and a single
+   column pushes everything below it off the modal. */
+.gsrc-picks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 5px 14px;
+}
+
+.gsrc-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.gsrc-pick input { flex-shrink: 0; }
+
+.gsrc-field { margin-top: 12px; }
+.gsrc-field textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 12.5px;
+}
+
+.gsrc-actions {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-top: 11px;
+  flex-wrap: wrap;
+}
+
+.gsrc-status { font-size: 12.5px; color: var(--muted-dim); }
+
 /* conn-, not speed-: .health-speed is the block this sits inside, and a
    .speed- name here once collided with an absolutely-positioned pill and threw
    the note out of the card and halfway up the screen. */

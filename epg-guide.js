@@ -1,0 +1,591 @@
+'use strict';
+
+/**
+ * Listings from XMLTV feeds.
+ *
+ * The provider answers `get_short_epg` one channel at a time, and for a great
+ * many channels it answers with nothing at all. That leaves the guide mostly
+ * blank, and no amount of asking harder fixes it: the listings are not there.
+ *
+ * XMLTV is the way round it. It is the format every guide in this world is
+ * published in, and there are three kinds of source worth having:
+ *
+ *   1. The provider's own `xmltv.php`. Same listings as `get_short_epg`, but
+ *      the whole account in ONE request instead of one request per channel —
+ *      and, in practice, populated for channels the per-channel call refuses.
+ *   2. Open guides — epgshare01 and the like — which cover the channels the
+ *      provider never bothered to fill in. These are the coverage win.
+ *   3. Nothing else. If a channel is in neither, it has no listings, and the
+ *      guide says so rather than pretending.
+ *
+ * The reason this is its own file: the scan has to be careful in a way the
+ * rest of the box does not. A country-wide guide is a few hundred megabytes
+ * of XML, the Pi has a 1G ceiling, and the naive version — download it, parse
+ * it, then pick out the channels we own — dies on the first one. So it is
+ * done the other way round. The set of channels we own is known BEFORE the
+ * fetch starts, the document is scanned as it arrives, and a programme that
+ * belongs to nobody is dropped without ever being kept. What lands on disk is
+ * a few hundred kilobytes: our channels, a day and a half of listings, and
+ * nothing else.
+ *
+ * Nothing here touches the provider's one connection except the provider's
+ * own feed, which the caller gates. The open guides are ordinary web
+ * downloads and can run while somebody is watching something.
+ */
+
+const fs = require('fs');
+const path = require('path');
+const zlib = require('zlib');
+const http = require('http');
+const https = require('https');
+const { PassThrough } = require('stream');
+const { StringDecoder } = require('string_decoder');
+
+/* ------------------------------------------------------------------ limits */
+
+/** How far back a programme may start and still be worth keeping. */
+const WINDOW_BACK_MS = 3 * 60 * 60 * 1000;
+/** And how far ahead. A day and a half covers "tonight" from any hour. */
+const WINDOW_FWD_MS = 36 * 60 * 60 * 1000;
+/** Per channel, in that window. Bounds the index no matter what arrives. */
+const MAX_PER_CHANNEL = 64;
+/**
+ * Decompressed bytes one source may spend before we stop reading it.
+ *
+ * This is a limit on TIME, not on memory — the scan holds one chunk and the
+ * handful of programmes it kept, so a feed twice this size would cost no more
+ * RAM than a small one. It is set well above the biggest guide anybody
+ * publishes because the failure it prevents is a feed that has gone wrong,
+ * and stopping early on a feed that is merely large costs real listings:
+ * whatever is past the cut is silently missing, and the channels at the end
+ * of the alphabet are the ones that lose.
+ */
+const MAX_BYTES = 1536 * 1024 * 1024;
+/** Guides are published a few times a day. Six hours is plenty. */
+const REFRESH_MS = 6 * 60 * 60 * 1000;
+/** A slow feed should not hold the refresh open forever. */
+const FETCH_TIMEOUT_MS = 120000;
+
+const UA = 'Mozilla/5.0 (compatible; TreasureTheater/1.0)';
+
+/* ------------------------------------------------------------------- state */
+
+const store = {
+  dir: __dirname,
+  log: () => {},
+  sources: [],
+  /** ourChannelId -> [{ title, start, stop }] */
+  byChannel: new Map(),
+  /** ourChannelId -> 'id' | 'name', how the match was made. */
+  matchedBy: new Map(),
+  channels: [],
+  at: 0,
+  running: false,
+  lastRun: null,
+};
+
+/* -------------------------------------------------------------- text tools */
+
+const ENTITIES = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+};
+
+function unescapeXml(raw) {
+  return String(raw || '')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => safeChar(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => safeChar(parseInt(d, 10)))
+    .replace(/&([a-z]+);/gi, (m, name) => {
+      const hit = ENTITIES[name.toLowerCase()];
+      return hit === undefined ? m : hit;
+    })
+    .trim();
+}
+
+function safeChar(code) {
+  if (!Number.isFinite(code) || code < 1 || code > 0x10ffff) return '';
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The join key between a channel we have and a channel a guide publishes.
+ *
+ * Providers and guides name the same channel a dozen ways: "US: ESPN HD",
+ * "ESPN", "ESPN.us", "ESPN ᴴᴰ". This flattens all of them to `espn`. It is
+ * deliberately aggressive, because the alternative — matching only what is
+ * spelled identically — matches almost nothing.
+ */
+function chanKey(raw) {
+  let s = String(raw || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+  // "us: espn", "uk | sky one", "en - bbc"
+  s = s.replace(/^[a-z]{2,3}\s*[:|—–-]\s*/, '');
+  // The country suffix an XMLTV id carries: "espn.us"
+  s = s.replace(/\.[a-z]{2}$/, '');
+  // Quality and feed words, wherever they appear.
+  s = s.replace(/\b(fhd|uhd|hd|sd|4k|8k|hevc|h265|h264|raw|backup|alt|feed|plus|channel|tv)\b/g, ' ');
+  s = s.replace(/[ᴴᴰⁱ]/g, ' ');
+  return s.replace(/[^a-z0-9]+/g, '');
+}
+
+/* ------------------------------------------------------------------- times */
+
+/**
+ * XMLTV stamps look like `20260827180000 +0000`, and sometimes the offset is
+ * missing. Absent an offset the spec says local time; in practice a feed that
+ * omits it is nearly always publishing UTC, so that is what we assume — and
+ * being an hour out on a guide is a smaller sin than showing nothing.
+ */
+function parseStamp(raw) {
+  const m = /^\s*(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})?\s*([+-]\d{4})?/.exec(String(raw || ''));
+  if (!m) return 0;
+  const [, y, mo, d, h, mi, se, off] = m;
+  let t = Date.UTC(+y, +mo - 1, +d, +h, +mi, +(se || 0));
+  if (off) {
+    const sign = off[0] === '-' ? -1 : 1;
+    t -= sign * ((+off.slice(1, 3)) * 60 + (+off.slice(3, 5))) * 60000;
+  }
+  return Math.floor(t / 1000);
+}
+
+/* ----------------------------------------------------------------- fetching */
+
+function open(target, redirectsLeft = 5) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try {
+      u = new URL(target);
+    } catch {
+      return reject(new Error('That does not look like a URL.'));
+    }
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.request(u, {
+      method: 'GET',
+      headers: { 'user-agent': UA, 'accept-encoding': 'gzip' },
+      timeout: FETCH_TIMEOUT_MS,
+    }, (res) => {
+      const status = res.statusCode || 0;
+      const loc = res.headers.location;
+      if (status >= 300 && status < 400 && loc && redirectsLeft > 0) {
+        res.resume();
+        return resolve(open(new URL(loc, u).toString(), redirectsLeft - 1));
+      }
+      if (status >= 400) {
+        res.resume();
+        return reject(new Error(`HTTP ${status}`));
+      }
+      resolve(res);
+    });
+    req.on('timeout', () => req.destroy(new Error('timed out')));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+/**
+ * Hand back a stream of plain XML, whatever the far end sent.
+ *
+ * Content-encoding cannot be trusted here: the open guides are served as
+ * `.xml.gz` FILES, which is not the same thing as a gzip-encoded response,
+ * and some hosts label it both ways or neither. So the first bytes decide —
+ * gzip's magic number is unambiguous where the headers are not.
+ */
+function plainXml(res) {
+  const enc = String(res.headers['content-encoding'] || '').toLowerCase();
+  if (enc.includes('gzip')) return Promise.resolve(res.pipe(zlib.createGunzip()));
+  if (enc.includes('deflate')) return Promise.resolve(res.pipe(zlib.createInflate()));
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const decide = () => {
+      if (settled) return;
+      settled = true;
+      const head = res.read() || Buffer.alloc(0);
+      const out = new PassThrough();
+      const gz = head.length > 1 && head[0] === 0x1f && head[1] === 0x8b;
+      if (head.length) out.write(head);
+      res.pipe(out);
+      resolve(gz ? out.pipe(zlib.createGunzip()) : out);
+    };
+    res.once('readable', decide);
+    res.once('end', () => {
+      if (settled) return;
+      settled = true;
+      resolve(new PassThrough().end());
+    });
+    res.once('error', decide);
+  });
+}
+
+/* ------------------------------------------------------------------ the scan */
+
+/**
+ * Either kind of element we care about, whole. Self-closing forms are ignored
+ * on purpose: a `<channel/>` has no name and a `<programme/>` has no title, so
+ * neither can tell us anything.
+ */
+const OPEN = /<(channel|programme)\b([^>]*)>/gi;
+
+/**
+ * The four attributes we read, compiled once.
+ *
+ * This looks like premature tuning and is not: `attr()` runs four times per
+ * programme against a feed with a million of them, and building a RegExp each
+ * time was measurably the most expensive thing in the scan.
+ */
+const ATTRS = {
+  id: /\bid=(["'])([\s\S]*?)\1/i,
+  channel: /\bchannel=(["'])([\s\S]*?)\1/i,
+  start: /\bstart=(["'])([\s\S]*?)\1/i,
+  stop: /\bstop=(["'])([\s\S]*?)\1/i,
+};
+const attr = (attrs, name) => {
+  const m = ATTRS[name].exec(attrs);
+  return m ? unescapeXml(m[2]) : '';
+};
+
+/**
+ * Read one XMLTV document, keeping only what belongs to us.
+ *
+ * `want` maps a channel key to the ids of our channels that answer to it, and
+ * is built before a byte is downloaded — that is the whole trick. A programme
+ * whose channel is not in there is dropped where it is read, so the peak cost
+ * of scanning a 400MB guide is one chunk plus what we chose to keep.
+ */
+function scan(stream, want, into, stats) {
+  return new Promise((resolve, reject) => {
+    const now = Date.now();
+    const from = Math.floor((now - WINDOW_BACK_MS) / 1000);
+    const to = Math.floor((now + WINDOW_FWD_MS) / 1000);
+
+    /** Guide's channel id -> [our channel ids], for ids it declared. */
+    const declared = new Map();
+    /* A chunk boundary lands wherever the network put it, which is regularly
+     * in the middle of a multi-byte character — and `chunk.toString('utf8')`
+     * turns each half into a replacement character. On an English feed you
+     * would never notice; on a Dutch or Turkish one it corrupts a title every
+     * few hundred kilobytes. The decoder holds the split bytes back until the
+     * rest of the character arrives. */
+    const decoder = new StringDecoder('utf8');
+    let buf = '';
+    let bytes = 0;
+    let stopped = false;
+
+    /* Which of our channels a guide's channel id belongs to, remembered.
+     *
+     * The same id appears on every one of a channel's programmes — tens of
+     * thousands of times across a national guide — and answering it means
+     * running `chanKey`, which is half a dozen regex replaces. Working it out
+     * once per id rather than once per programme is the difference between a
+     * scan that takes twenty seconds and one that takes three minutes. */
+    const resolved = new Map();
+    const ours = (guideId) => {
+      if (resolved.has(guideId)) return resolved.get(guideId);
+      // Declared in a <channel> block, or — plenty of feeds skip those — a
+      // bare id we can still recognise on its own.
+      const hit = declared.get(guideId)
+        || (want.get(guideId.toLowerCase()) || want.get(chanKey(guideId))
+          ? { ids: want.get(guideId.toLowerCase()) || want.get(chanKey(guideId)), how: 'id' }
+          : null);
+      resolved.set(guideId, hit);
+      return hit;
+    };
+
+    const takeChannel = (attrs, body) => {
+      const id = attr(attrs, 'id');
+      if (!id) return;
+      // An id match is worth more than a name match, so it is tried first and
+      // wins outright: "ESPN2.us" must not be captured by the channel that
+      // happens to call itself "ESPN".
+      const byId = want.get(id.toLowerCase()) || want.get(chanKey(id));
+      if (byId) return void declared.set(id, { ids: byId, how: 'id' });
+      const re = /<display-name\b[^>]*>([\s\S]*?)<\/display-name>/gi;
+      let m;
+      while ((m = re.exec(body))) {
+        const byName = want.get(chanKey(unescapeXml(m[1])));
+        if (byName) return void declared.set(id, { ids: byName, how: 'name' });
+      }
+    };
+
+    const takeProgramme = (attrs, body, hit) => {
+      const start = parseStamp(attr(attrs, 'start'));
+      const stop = parseStamp(attr(attrs, 'stop'));
+      if (!start || !stop || stop <= start) return;
+      if (stop < from || start > to) return;
+      const tm = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(body);
+      const title = unescapeXml(tm ? tm[1] : '');
+      if (!title) return;
+
+      for (const ourId of hit.ids) {
+        let list = into.get(ourId);
+        if (!list) into.set(ourId, (list = []));
+        if (list.length >= MAX_PER_CHANNEL) continue;
+        list.push({ title, start, stop });
+        const held = stats.matchedBy.get(ourId);
+        if (!held || (held === 'name' && hit.how === 'id')) {
+          stats.matchedBy.set(ourId, hit.how);
+        }
+      }
+      stats.kept += 1;
+    };
+
+    /*
+     * Match the OPENING TAG only, then decide whether to look at the body.
+     *
+     * The obvious version matches whole elements — open tag, body, close tag —
+     * in one regex, and it is why the first draft of this file peaked at
+     * 800MB on a 450MB feed. Capturing the body allocates a string for every
+     * programme in the document, and in a national guide upwards of 99% of
+     * them belong to channels nobody here has. Reading the `channel`
+     * attribute out of the small opening tag first, and slicing the body only
+     * for the handful that survive, keeps the scan flat: the ones we discard
+     * are stepped over with indexOf and never become strings at all.
+     */
+    const onChunk = (chunk) => {
+      if (stopped) return;
+      bytes += chunk.length;
+      if (bytes > MAX_BYTES) {
+        stopped = true;
+        stream.destroy();
+        stats.truncated = true;
+        return;
+      }
+      buf += decoder.write(chunk);
+
+      let pos = 0;
+      OPEN.lastIndex = 0;
+      let m;
+      while ((m = OPEN.exec(buf))) {
+        const kind = m[1].toLowerCase();
+        const attrs = m[2];
+        const bodyStart = OPEN.lastIndex;
+        // <programme ... /> — no body, so no title, so nothing to learn.
+        if (attrs.endsWith('/')) {
+          pos = bodyStart;
+          continue;
+        }
+        const close = kind === 'channel' ? '</channel>' : '</programme>';
+        const end = buf.indexOf(close, bodyStart);
+        if (end === -1) {
+          // The element runs past what has arrived. Leave it in the buffer
+          // and pick it up when the rest of it turns up.
+          pos = m.index;
+          break;
+        }
+        if (kind === 'programme') {
+          const chan = attr(attrs, 'channel');
+          const hit = chan && ours(chan);
+          if (hit) takeProgramme(attrs, buf.slice(bodyStart, end), hit);
+        } else {
+          takeChannel(attrs, buf.slice(bodyStart, end));
+        }
+        pos = end + close.length;
+        OPEN.lastIndex = pos;
+      }
+      if (pos) buf = buf.slice(pos);
+      // A tail that never closes — a truncated download, a feed with a stray
+      // "<" — must not be allowed to grow into the whole file. Only ever
+      // trimmed when nothing at all was consumed, so a legitimately large
+      // element still gets to finish arriving.
+      if (!pos && buf.length > 4 << 20) buf = buf.slice(-4096);
+    };
+
+    stream.on('data', onChunk);
+    stream.on('error', (err) => (stopped ? resolve(stats) : reject(err)));
+    stream.on('end', () => resolve(stats));
+    stream.on('close', () => resolve(stats));
+  });
+}
+
+/* --------------------------------------------------------------- the index */
+
+/** Every key our channels answer to, pointing back at their ids. */
+function wantedKeys(channels) {
+  const want = new Map();
+  const add = (key, id) => {
+    if (!key) return;
+    let set = want.get(key);
+    if (!set) want.set(key, (set = []));
+    if (!set.includes(id)) set.push(id);
+  };
+  for (const ch of channels) {
+    const id = String(ch.id);
+    if (ch.epgId) {
+      add(String(ch.epgId).toLowerCase(), id);
+      add(chanKey(ch.epgId), id);
+    }
+    add(chanKey(ch.name), id);
+  }
+  return want;
+}
+
+function tidy(list) {
+  const seen = new Set();
+  return list
+    .filter((p) => {
+      const key = `${p.start}:${p.title}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.start - b.start)
+    .slice(0, MAX_PER_CHANNEL);
+}
+
+/* -------------------------------------------------------------------- disk */
+
+const filePath = () => path.join(store.dir, 'epg-guide.json');
+
+function save() {
+  const rows = {};
+  for (const [id, list] of store.byChannel) rows[id] = list;
+  const body = {
+    at: store.at,
+    matchedBy: Object.fromEntries(store.matchedBy),
+    channels: rows,
+    lastRun: store.lastRun,
+  };
+  try {
+    fs.writeFileSync(filePath(), JSON.stringify(body), { mode: 0o600 });
+  } catch (err) {
+    store.log(`guide: could not save the index (${err.message})`);
+  }
+}
+
+function load() {
+  try {
+    const body = JSON.parse(fs.readFileSync(filePath(), 'utf8'));
+    store.at = Number(body.at) || 0;
+    store.lastRun = body.lastRun || null;
+    store.byChannel = new Map(Object.entries(body.channels || {}));
+    store.matchedBy = new Map(Object.entries(body.matchedBy || {}));
+  } catch {
+    /* no index yet, which is the normal state on a new box */
+  }
+}
+
+/* ---------------------------------------------------------------- the work */
+
+function configure(opts = {}) {
+  if (opts.dir) store.dir = opts.dir;
+  if (opts.log) store.log = opts.log;
+  load();
+}
+
+function setSources(urls) {
+  store.sources = (Array.isArray(urls) ? urls : [])
+    .map((u) => String(u || '').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function setChannels(channels) {
+  store.channels = (Array.isArray(channels) ? channels : []).map((c) => ({
+    id: String(c.id), epgId: c.epgId || '', name: c.name || '',
+  }));
+}
+
+const due = () => !store.at || Date.now() - store.at > REFRESH_MS;
+
+/**
+ * Fetch every source and rebuild the index.
+ *
+ * Sources are read in order and merged, first answer winning per channel, so
+ * the list is a preference order: put the provider's own feed first if you
+ * trust it most, an open guide first if you do not.
+ */
+async function refresh({ force = false, sources = null } = {}) {
+  if (store.running) return status();
+  const list = sources || store.sources;
+  if (!list.length) return status();
+  if (!force && !due()) return status();
+  if (!store.channels.length) return status();
+
+  store.running = true;
+  const started = Date.now();
+  const want = wantedKeys(store.channels);
+  const into = new Map();
+  const stats = { kept: 0, matchedBy: new Map(), truncated: false };
+  const report = [];
+
+  for (const source of list) {
+    const label = source.label || source;
+    const url = source.url || source;
+    const before = stats.kept;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await open(url);
+      // eslint-disable-next-line no-await-in-loop
+      const xml = await plainXml(res);
+      // eslint-disable-next-line no-await-in-loop
+      await scan(xml, want, into, stats);
+      report.push({ label, ok: true, programmes: stats.kept - before });
+    } catch (err) {
+      report.push({ label, ok: false, error: err.message });
+      store.log(`guide: ${label} — ${err.message}`);
+    }
+  }
+
+  const tidied = new Map();
+  for (const [id, list2] of into) tidied.set(id, tidy(list2));
+
+  // An index that came back empty never replaces one that did not. A feed
+  // that is down for an afternoon should cost nothing at all.
+  if (tidied.size || !store.byChannel.size) {
+    store.byChannel = tidied;
+    store.matchedBy = stats.matchedBy;
+    store.at = Date.now();
+  }
+  store.lastRun = {
+    at: Date.now(),
+    took: Date.now() - started,
+    sources: report,
+    channels: tidied.size,
+    truncated: stats.truncated,
+  };
+  store.running = false;
+  save();
+  store.log(`guide: ${tidied.size} channels covered, ${stats.kept} programmes, ${Math.round((Date.now() - started) / 1000)}s`);
+  return status();
+}
+
+/** What is on this channel — or null if we have nothing for it at all. */
+function lookup(ourId) {
+  const list = store.byChannel.get(String(ourId));
+  return list && list.length ? list : null;
+}
+
+function status() {
+  let programmes = 0;
+  for (const list of store.byChannel.values()) programmes += list.length;
+  let byId = 0;
+  let byName = 0;
+  for (const how of store.matchedBy.values()) {
+    if (how === 'id') byId += 1;
+    else byName += 1;
+  }
+  return {
+    at: store.at,
+    running: store.running,
+    covered: store.byChannel.size,
+    channels: store.channels.length,
+    programmes,
+    byId,
+    byName,
+    sources: store.sources,
+    lastRun: store.lastRun,
+    stale: due(),
+  };
+}
+
+module.exports = {
+  configure, setSources, setChannels, refresh, lookup, status, save, load,
+  // Exported for the suites, which check the joining rather than the network.
+  chanKey, parseStamp, wantedKeys, unescapeXml,
+};

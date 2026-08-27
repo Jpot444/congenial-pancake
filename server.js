@@ -52,6 +52,7 @@ const DOWNLOAD_INDEX = path.join(DOWNLOAD_DIR, 'index.json');
  * the Mac it was scanned from than on the Pi it plays from — while the index
  * itself is path-relative and therefore the same file in both places. */
 const archive = require('./local-library');
+const guide = require('./epg-guide');
 const ARCHIVE_ROOT = process.env.ARCHIVE_ROOT || '/mnt/archive';
 const ARCHIVE_INDEX = path.join(ROOT, 'library-index.ndjson');
 
@@ -557,8 +558,26 @@ function publicConfig(cfg) {
     username: cfg.username || '',
     playlistUrl: cfg.playlistUrl || '',
     epgUrl: cfg.epgUrl || '',
+    epgUrls: guideSources(cfg),
+    useProviderGuide: cfg.useProviderGuide !== false,
     preferredFormat: cfg.preferredFormat || 'm3u8',
   };
+}
+
+/**
+ * The outside guide feeds, as a list.
+ *
+ * `epgUrl` was a single optional field nobody ever filled in. It is still
+ * read, so a box that had one keeps it, but the setting is a list now —
+ * coverage comes from stacking a country guide against a sports one against
+ * a locals one, and one box was never going to be enough.
+ */
+function guideSources(cfg) {
+  const raw = Array.isArray(cfg?.epgUrls) ? cfg.epgUrls : [];
+  const list = raw.map((u) => String(u || '').trim()).filter(Boolean);
+  const legacy = String(cfg?.epgUrl || '').trim();
+  if (legacy && !list.includes(legacy)) list.unshift(legacy);
+  return list.slice(0, 12);
 }
 
 /* ----------------------------------------------------------------- fetching */
@@ -3727,6 +3746,19 @@ const EPG_TTL_MS = 15 * 60 * 1000;
 const EPG_PER_REQUEST = 6;
 const epgCache = new Map();
 
+/**
+ * The slice of a day's listings worth sending to a browser.
+ *
+ * The guide index holds a day and a half so the page can be opened at any
+ * hour without a refetch; a single answer only ever needs what is on now and
+ * what follows it. Sending the lot would be a megabyte of JSON per poll.
+ */
+function windowOf(listings, now) {
+  const from = Math.floor(now / 1000) - 3600;
+  const to = Math.floor(now / 1000) + 12 * 3600;
+  return listings.filter((l) => l.stop > from && l.start < to).slice(0, 16);
+}
+
 const libraryCache = new Map();
 const LIBRARY_TTL = 30 * 60 * 1000;
 /** Payload shape version — bump when projectItem gains or loses a field. */
@@ -3749,6 +3781,115 @@ function loadLibraryCache() {
   } catch {
     /* no cache yet */
   }
+}
+
+/* ------------------------------------------------------- the outside guide */
+
+/**
+ * Guides worth offering, so nobody has to go and find a URL.
+ *
+ * These are the open XMLTV feeds the IPTV world runs on. They are listed
+ * rather than switched on by default: they are somebody else's server, and
+ * quietly making the box fetch half a gigabyte a day from a stranger is not a
+ * decision to take on a viewer's behalf. Pick the ones that match what you
+ * actually watch — a US household wants the first two and nothing else, and
+ * every feed added is another few hundred megabytes to scan.
+ */
+const GUIDE_CATALOGUE = [
+  { label: 'United States', url: 'https://epgshare01.online/epgshare01/epg_ripper_US1.xml.gz' },
+  { label: 'US local stations', url: 'https://epgshare01.online/epgshare01/epg_ripper_US_LOCALS2.xml.gz' },
+  { label: 'US sports', url: 'https://epgshare01.online/epgshare01/epg_ripper_US_SPORTS1.xml.gz' },
+  { label: 'United Kingdom', url: 'https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz' },
+  { label: 'Canada', url: 'https://epgshare01.online/epgshare01/epg_ripper_CA1.xml.gz' },
+  { label: 'Netherlands', url: 'https://epgshare01.online/epgshare01/epg_ripper_NL1.xml.gz' },
+  { label: 'Germany', url: 'https://epgshare01.online/epgshare01/epg_ripper_DE1.xml.gz' },
+  { label: 'Turkey', url: 'https://epgshare01.online/epgshare01/epg_ripper_TR1.xml.gz' },
+  { label: 'Everything, every country', url: 'https://epgshare01.online/epgshare01/epg_ripper_ALL_SOURCES1.xml.gz' },
+];
+
+/**
+ * Every live channel the box currently knows about.
+ *
+ * Read out of the library cache rather than pulled from the provider on
+ * purpose: the guide refresh must never be the reason a 141MB catalogue gets
+ * fetched. If the cache is cold the refresh simply waits for the next tick,
+ * by which time somebody will have opened Live TV and filled it.
+ */
+function knownLiveChannels() {
+  const seen = new Map();
+  for (const [key, entry] of libraryCache) {
+    if (!key.startsWith(`v${LIBRARY_SHAPE}:live:`)) continue;
+    for (const item of entry.payload?.items || []) {
+      if (!seen.has(String(item.id))) {
+        seen.set(String(item.id), {
+          id: item.id, epgId: item.epgId || '', name: item.name || '',
+        });
+      }
+    }
+  }
+  return [...seen.values()];
+}
+
+/** The provider's whole guide in one request, rather than one call a channel. */
+function providerGuideUrl(cfg) {
+  if (!cfg || cfg.mode !== 'xtream' || !cfg.host) return null;
+  const u = new URL(normalizeHost(cfg.host) + '/xmltv.php');
+  u.searchParams.set('username', cfg.username);
+  u.searchParams.set('password', cfg.password);
+  return u.toString();
+}
+
+/**
+ * Assemble the source list for one refresh.
+ *
+ * The provider's own feed goes FIRST, so where it has listings they win: they
+ * are the ones actually describing the stream you will be watching, and an
+ * open guide's idea of what is on "ESPN" is a good guess rather than a fact.
+ * The open guides then fill the enormous hole underneath.
+ *
+ * It is also the only source that costs anything. It comes off the one
+ * connection, so it is skipped while somebody is watching — the open guides
+ * are ordinary downloads and never wait for anyone.
+ */
+function guideRefreshSources(cfg, { includeProvider = true } = {}) {
+  const list = [];
+  if (includeProvider && cfg?.useProviderGuide !== false && !providerBusy()) {
+    const url = providerGuideUrl(cfg);
+    if (url) list.push({ url, label: "the provider's own guide" });
+  }
+  for (const url of guideSources(cfg)) list.push({ url, label: redactUrl(url) });
+  return list;
+}
+
+let guideRefreshing = null;
+
+function refreshGuide({ force = false } = {}) {
+  if (guideRefreshing) return guideRefreshing;
+  const cfg = readConfig();
+  const channels = knownLiveChannels();
+  /* Nothing to match against yet.
+   *
+   * The channel list comes out of the library cache, and on a box that has
+   * not shown Live TV since it started there is not one. Waiting is right —
+   * pulling the catalogue to build a guide would be the tail wagging the dog
+   * — but it must be SAID, because the alternative is a viewer pressing Save
+   * and fetch and watching nothing happen at all. */
+  if (!channels.length) {
+    return Promise.resolve({ ...guide.status(), blocked: 'no-channels' });
+  }
+  guide.setSources(guideSources(cfg));
+  guide.setChannels(channels);
+  const sources = guideRefreshSources(cfg);
+  if (!sources.length) return Promise.resolve(guide.status());
+  guideRefreshing = guide.refresh({ force, sources })
+    .catch((err) => {
+      console.log(`  Guide: refresh failed — ${err.message}`);
+      return guide.status();
+    })
+    .finally(() => {
+      guideRefreshing = null;
+    });
+  return guideRefreshing;
 }
 
 /**
@@ -4067,6 +4208,14 @@ async function handleApi(req, res, pathname, query) {
         mode: incoming.mode === 'm3u' ? 'm3u' : 'xtream',
         preferredFormat: incoming.preferredFormat === 'ts' ? 'ts' : 'm3u8',
       };
+
+      // Guide settings belong to the box, not to a mode — an Xtream account
+      // needs outside listings at least as badly as an M3U one does. Carried
+      // over from the stored config so connecting a provider never silently
+      // drops feeds that were already set up.
+      const held = readConfig();
+      next.epgUrls = guideSources(held);
+      next.useProviderGuide = held?.useProviderGuide !== false;
 
       if (next.mode === 'xtream') {
         if (!incoming.host || !incoming.username || !incoming.password) {
@@ -4822,6 +4971,16 @@ async function handleApi(req, res, pathname, query) {
     const fresh = [];
     const stale = [];
     for (const id of ids) {
+      /* The outside guide first, and it is not a cache — it is a whole day of
+       * listings already on disk, for far more channels than the provider
+       * will answer for one at a time. When it has the channel there is
+       * nothing to ask anybody, so the row paints immediately and the one
+       * connection is never touched. */
+      const fromGuide = guide.lookup(id);
+      if (fromGuide) {
+        fresh.push({ id, known: true, source: 'guide', listings: windowOf(fromGuide, now) });
+        continue;
+      }
       const held = epgCache.get(id);
       if (held && now - held.at < EPG_TTL_MS) fresh.push(held.channel);
       else stale.push(id);
@@ -4872,6 +5031,73 @@ async function handleApi(req, res, pathname, query) {
       channels: ids.map((id) => fresh.find((c) => c.id === id)),
       busy: providerBusy(),
     });
+  }
+
+  /* ---- Where the listings come from ---- */
+  //
+  // The provider has no listings at all for most of what it sells, and the
+  // only way round that is to read a guide somebody else publishes. This is
+  // the screen for saying which ones, and for seeing whether it worked —
+  // coverage is the whole point, so it is the number reported first.
+  if (pathname === '/api/epg/sources') {
+    if (req.method === 'GET') {
+      const st = guide.status();
+      const known = knownLiveChannels().length;
+      return json(res, 200, {
+        ...st,
+        sources: guideSources(cfg).map(redactUrl),
+        useProviderGuide: cfg?.useProviderGuide !== false,
+        hasProviderGuide: Boolean(providerGuideUrl(cfg)),
+        known,
+        blocked: known || st.covered ? null : 'no-channels',
+        catalogue: GUIDE_CATALOGUE,
+      });
+    }
+
+    if (req.method === 'POST') {
+      if (!cfg) return json(res, 400, { error: 'Connect a provider first.' });
+      let incoming;
+      try {
+        incoming = JSON.parse(await collectRequestBody(req));
+      } catch {
+        return json(res, 400, { error: 'Invalid JSON' });
+      }
+
+      if (Array.isArray(incoming.urls)) {
+        const urls = incoming.urls
+          .map((u) => String(u || '').trim())
+          .filter(Boolean)
+          .slice(0, 12);
+        for (const u of urls) {
+          if (!/^https?:\/\//i.test(u)) {
+            return json(res, 400, { error: `That is not a web address: ${u}` });
+          }
+        }
+        cfg.epgUrls = urls;
+        // The single legacy field has been folded into the list; leaving it
+        // set would resurrect a removed feed on the next read.
+        delete cfg.epgUrl;
+      }
+      if (incoming.useProviderGuide !== undefined) {
+        cfg.useProviderGuide = Boolean(incoming.useProviderGuide);
+      }
+      writeConfig(cfg);
+      guide.setSources(guideSources(cfg));
+
+      // Refreshing takes minutes on a big feed, so the answer does not wait
+      // for it. The screen polls this endpoint and watches `running`.
+      const known = knownLiveChannels().length;
+      if (incoming.refresh !== false && known) refreshGuide({ force: true });
+      return json(res, 200, {
+        ...guide.status(),
+        sources: guideSources(cfg).map(redactUrl),
+        useProviderGuide: cfg.useProviderGuide !== false,
+        known,
+        blocked: known ? null : 'no-channels',
+      });
+    }
+
+    return json(res, 405, { error: 'Method not allowed' });
   }
 
   /* ---- Xtream passthrough ---- */
@@ -5597,6 +5823,19 @@ recoverOrphanedDownloads();
 reportDiskSpace();
 loadLibraryCache();
 archive.configure({ root: ARCHIVE_ROOT, indexPath: ARCHIVE_INDEX });
+guide.configure({ dir: ROOT, log: (line) => console.log(`  ${line}`) });
+
+/* The guide, kept current in the background.
+ *
+ * Half an hour after boot, then hourly — and the module itself decides
+ * whether anything is actually due, which is once every six hours. The delay
+ * matters: a box that has just started is busy loading the library and
+ * recovering downloads, and scanning a few hundred megabytes of XML on top of
+ * that is how a Pi ends up thrashing before anyone has pressed anything. */
+setTimeout(() => {
+  refreshGuide();
+  setInterval(() => refreshGuide(), 60 * 60 * 1000).unref?.();
+}, 30 * 60 * 1000).unref?.();
 
 // Downloads from before the browser-native conversion existed are still .mkv;
 // bring them up to date so their playback stops depending on HLS sessions.
