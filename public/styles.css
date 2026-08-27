@@ -696,6 +696,39 @@ svg {
 .card .card-bin.is-restore { opacity: 1; }
 .card .card-bin.is-restore:hover { color: #7FD4A0; border-color: #7FD4A0; }
 
+/* Left of the bin, same plate. Stays on once it is on: a pin you cannot see
+   is a setting you forget you made, and the order of the grid then looks
+   arbitrary rather than chosen. */
+.card .card-pin {
+  position: absolute;
+  top: 8px; right: 44px;
+  z-index: 3;
+  width: 30px; height: 30px;
+  background: rgba(0, 0, 0, .66);
+  border-color: rgba(255, 255, 255, .18);
+  color: rgba(255, 255, 255, .82);
+  opacity: 0;
+  transition: opacity .16s var(--ease), color .16s var(--ease), border-color .16s var(--ease);
+}
+
+.card .card-pin svg { width: 15px; height: 15px; }
+.card:hover .card-pin { opacity: 1; }
+.card .card-pin:hover { color: var(--text); border-color: rgba(255, 255, 255, .4); }
+.card .card-pin.is-on { opacity: 1; color: var(--accent, #E8B44B); border-color: rgba(232, 180, 75, .5); }
+
+/* Where a tile has no bin — the movies and series pickers — the pin takes the
+   corner rather than leaving a gap where the bin would have been. */
+.card.cat-card:not(:has(.card-bin)) .card-pin { right: 8px; }
+
+/* A heading inside a grid, for the two kinds of thing under Deleted. */
+.grid-split {
+  grid-column: 1 / -1;
+  margin: 6px 0 -4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted-dim);
+}
+
 /* ============================================================= home ===
 
  * Reached from the badge, not a tab. One large poster of the last thing

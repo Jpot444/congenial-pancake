@@ -29,6 +29,9 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const num = (n) => Number(n || 0).toLocaleString('en-US');
+  /* Superscript encoding marks off a category name, for display only. app.js
+     owns the rule; this reads it rather than keeping a second copy of it. */
+  const catName = (n) => (window.cleanCatName ? window.cleanCatName(n) : String(n || ''));
 
   /* Anything that touches the DOM goes through this. See the note above. */
   const guard = (label, fn) => function () {
@@ -61,6 +64,7 @@
     heart: '<svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.9-9.3-9.2C1.3 8.4 3.2 5 6.6 5c2 0 3.5 1.2 4.4 2.4l1 1.3 1-1.3C13.9 6.2 15.4 5 17.4 5c3.4 0 5.3 3.4 3.9 6.8C19.5 16.1 12 21 12 21z"/></svg>',
     heartF: '<svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.9-9.3-9.2C1.3 8.4 3.2 5 6.6 5c2 0 3.5 1.2 4.4 2.4l1 1.3 1-1.3C13.9 6.2 15.4 5 17.4 5c3.4 0 5.3 3.4 3.9 6.8C19.5 16.1 12 21 12 21z" fill="currentColor" stroke="none"/></svg>',
     info: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.6v.1"/></svg>',
+    bin: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>',
   };
 
 
@@ -480,11 +484,21 @@
     const chips = catbar?.querySelector('#dkChips');
     if (!chips) return;
     chips.innerHTML = barConfig.cats.map((c) => {
-      const pin = c.pinned ? ICON.pinF : '';
+      /* Every chip gets a pin, not just the pinned ones.
+         The mark was only ever shown once a category WAS pinned, which left
+         no way to pin one from the bar — the only place it could be done was
+         a shelf heading you had to scroll to, or a sidebar this layout does
+         not have. */
+      const can = c.catId != null;
+      const mark = can
+        ? `<span class="chip-pin${c.pinned ? ' on' : ''}" role="button" tabindex="-1"
+            title="${c.pinned ? 'Unpin' : 'Pin to the front'}"
+            aria-label="${c.pinned ? 'Unpin' : 'Pin to the front'}">${c.pinned ? ICON.pinF : ICON.pin}</span>`
+        : '';
       return `<button type="button" class="catchip${c.pinned ? ' pinned' : ''}"`
-        + ` data-c="${esc(c.name)}"${c.catId != null ? ` data-cat-id="${esc(c.catId)}"` : ''}`
+        + ` data-c="${esc(c.name)}"${can ? ` data-cat-id="${esc(c.catId)}"` : ''}`
         + ` title="${c.pinned ? 'Pinned — drag to reorder' : ''}">`
-        + `${pin}${esc(c.name)}<b>${num(c.count)}</b></button>`;
+        + `${mark}${esc(catName(c.name))}<b>${num(c.count)}</b></button>`;
     }).join('');
   }
 
@@ -502,7 +516,7 @@
     sheet.querySelector('#dkSheetLead').textContent = barConfig.lead;
     sheet.querySelector('#dkCatList').innerHTML = hits.length
       ? hits.map((c) => `<button type="button" data-c="${esc(c.name)}">`
-        + `<span>${esc(c.name)}</span><b>${num(c.count)}</b></button>`).join('')
+        + `<span>${esc(catName(c.name))}</span><b>${num(c.count)}</b></button>`).join('')
       : '<p class="none">No category matches that.</p>';
   }
 
@@ -521,7 +535,18 @@
     if (seg) return barConfig.onView(seg.dataset.v);
 
     const chip = e.target.closest('.catchip');
-    if (chip) return pickCategory(chip.dataset.c);
+    if (chip) {
+      // The pin sits inside the chip, so it has to claim the click before the
+      // chip reads it as "open this category".
+      if (e.target.closest('.chip-pin') && chip.dataset.catId != null) {
+        e.stopPropagation();
+        e.preventDefault();
+        profiles.togglePin(state.tab, chip.dataset.catId);
+        render();
+        return undefined;
+      }
+      return pickCategory(chip.dataset.c);
+    }
 
     const row = e.target.closest('#dkCatList button[data-c]');
     if (row) {
@@ -848,7 +873,7 @@
     for (const cat of ordered.slice(0, 9)) {
       const items = arrange(byCat.get(String(cat.id)) || []);
       if (!items.length) continue;
-      host.append(liveRail(cat.name, num(counts.get(String(cat.id)) || 0),
+      host.append(liveRail(catName(cat.name), num(counts.get(String(cat.id)) || 0),
         items.slice(0, 14), cat));
     }
 
@@ -945,6 +970,9 @@
         ${item.uhd ? '<span class="uhd">4K</span>' : ''}
         <span class="mk">${esc(shortMark(item.name))}</span>
         ${item.num ? `<span class="no">${esc(item.num)}</span>` : ''}
+        <span class="dk-bin" role="button" tabindex="0"
+          title="Hide this channel — it stops showing in lists and search"
+          aria-label="Hide this channel">${ICON.bin}</span>
         <span class="go"><span>${ICON.play}</span></span>
         <span class="fav${fav ? ' on' : ''}" role="button" tabindex="0"
           title="${fav ? 'Remove from your channels' : 'Add to your channels'}"
@@ -968,6 +996,17 @@
       e.stopPropagation();
       e.preventDefault();
       profiles.toggleFav(item);
+      render();
+    });
+
+    /* Sits exactly where the channel number is, and takes its place on hover.
+       The number is reference information you read once; the bin is the thing
+       you reach for, and the corner it wants is already spoken for by the
+       heart. */
+    card.querySelector('.dk-bin').addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      profiles.toggleDeleted(item);
       render();
     });
     card.addEventListener('click', () => openPlayer(item));

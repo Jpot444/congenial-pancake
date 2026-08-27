@@ -1922,3 +1922,50 @@
 
 .desk .listings-guide { margin-top: 0; }
 .desk .listings-guide .guide-grid { max-width: none; }
+
+/* ---- the bin on a channel plate -------------------------------------
+   Takes the channel number's place on hover. The number is reference you
+   read once; the bin is the thing you reach for, and the corner it would
+   otherwise want is already the heart's. */
+.desk .cht .dk-bin {
+  position: absolute;
+  left: 10px; bottom: 10px;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  background: rgba(0, 0, 0, .72);
+  color: rgba(255, 255, 255, .85);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity .16s ease, color .16s ease, border-color .16s ease;
+}
+
+.desk .cht .dk-bin svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.desk .cht:hover .dk-bin { opacity: 1; }
+.desk .cht:hover .no { opacity: 0; }
+.desk .cht .dk-bin:hover { color: #FF6B5E; border-color: #FF6B5E; }
+.desk .cht .no { transition: opacity .16s ease; }
+
+/* ---- pin on a category chip ----------------------------------------- */
+.desk .catchip .chip-pin {
+  display: inline-grid;
+  place-items: center;
+  width: 17px; height: 17px;
+  margin-right: 5px;
+  vertical-align: -3px;
+  border-radius: 5px;
+  color: inherit;
+  opacity: .38;
+  cursor: pointer;
+  transition: opacity .14s ease, color .14s ease, background .14s ease;
+}
+
+.desk .catchip .chip-pin svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.desk .catchip:hover .chip-pin { opacity: .8; }
+.desk .catchip .chip-pin:hover { opacity: 1; background: rgba(255, 255, 255, .12); }
+/* Once it is on it stays lit, on the chip and in the bar's own colour. */
+.desk .catchip .chip-pin.on { opacity: 1; }
+.desk .catchip .chip-pin.on svg { fill: currentColor; stroke: none; }

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '27.13';
+const VERSION = '28.0';
 
 const PAGE_SIZE = 60;
 
@@ -1496,6 +1496,7 @@ const multiview = {
       const id = String(cat.id);
       box.append(liveCategoryCard(cat, counts.get(id) || 0, covers.get(id) || '', {
         bin: false,
+        tab: this.source,
         onOpen: () => { this.browsing = cat; this.results(''); },
       }));
     }
@@ -6015,7 +6016,12 @@ function renderLiveCategories() {
   }
 
   // A way in to the hidden ones, at the end and only once there are some.
-  if (!showingHidden && hidden.length) {
+  //
+  // Counted across BOTH kinds. It used to appear only when a whole CATEGORY
+  // had been hidden, so hiding channels one at a time — which is the common
+  // way to use this — put them somewhere with no door on it.
+  const goneChans = profiles.deletedItems('live');
+  if (!showingHidden && (hidden.length || goneChans.length)) {
     const tile = el('button', 'card cat-card cat-card-bin');
     const art = el('div', 'card-art');
     const mark = el('div', 'fallback');
@@ -6025,7 +6031,10 @@ function renderLiveCategories() {
     const title = el('h3', 'card-title');
     title.textContent = 'Deleted';
     const sub = el('p', 'card-sub');
-    sub.textContent = `${hidden.length.toLocaleString()} categor${hidden.length === 1 ? 'y' : 'ies'}`;
+    const bits = [];
+    if (hidden.length) bits.push(`${hidden.length.toLocaleString()} categor${hidden.length === 1 ? 'y' : 'ies'}`);
+    if (goneChans.length) bits.push(`${goneChans.length.toLocaleString()} channel${goneChans.length === 1 ? '' : 's'}`);
+    sub.textContent = bits.join(' · ');
     tile.append(art, title, sub);
     tile.addEventListener('click', () => {
       state.category = DELETED_CATS;
@@ -6034,18 +6043,39 @@ function renderLiveCategories() {
     frag.append(tile);
   }
 
+  /* Hidden channels live in here as well as hidden categories.
+   *
+   * Both were described as collecting under Deleted and only the categories
+   * ever did, so a channel hidden from a grid had nowhere to be restored
+   * from. Their bins read as restore arrows in here and are always visible,
+   * since this is the only way back and hover is not a gesture a phone has. */
+  let restorable = 0;
+  if (showingHidden) {
+    const goneHere = profiles.deletedItems('live');
+    restorable = goneHere.length;
+    if (goneHere.length) {
+      const head = el('h3', 'grid-split');
+      head.textContent = `Hidden channels (${goneHere.length.toLocaleString()})`;
+      frag.append(head);
+      for (const item of goneHere) frag.append(cardFor(item));
+    }
+  }
+
   grid.append(frag);
 
   const empty = $('#emptyState');
-  empty.hidden = ordered.length > 0;
-  if (!ordered.length) {
+  empty.hidden = ordered.length + restorable > 0;
+  if (!ordered.length && !restorable) {
     empty.textContent = showingHidden ? 'Nothing hidden.' : 'No live categories.';
   }
 
-  $('#contentMeta').textContent = ordered.length
-    ? `${ordered.length.toLocaleString()} categor${ordered.length === 1 ? 'y' : 'ies'}` +
-      (showingHidden ? ' hidden' : '')
-    : '';
+  const meta = [];
+  if (ordered.length) {
+    meta.push(`${ordered.length.toLocaleString()} categor${ordered.length === 1 ? 'y' : 'ies'}`
+      + (showingHidden ? ' hidden' : ''));
+  }
+  if (restorable) meta.push(`${restorable.toLocaleString()} channel${restorable === 1 ? '' : 's'} hidden`);
+  $('#contentMeta').textContent = meta.join(' · ');
   $('#loadMore').hidden = true;
 
   if (!showingHidden) maybeExplainLivePins();
@@ -6087,7 +6117,34 @@ function maybeExplainLivePins() {
  * category from inside a modal re-renders the page behind it, which is not
  * what anybody pressing it there means.
  */
-function liveCategoryCard(cat, count, cover, { onOpen = null, bin: withBin = true } = {}) {
+/**
+ * A category name with the provider's shouting taken off.
+ *
+ * Categories arrive as "US| FOX ᴴᴰ/ᴿᴬᵂ ⁶⁰ᶠᵖˢ ⁸ᴷ" — the superscripts say how
+ * the stream is encoded, which is not what anyone is scanning a list of
+ * categories for. Stripped for DISPLAY only: what is stored, matched and
+ * counted stays exactly what the provider said, so nothing downstream has to
+ * know this happened.
+ */
+const SUPERSCRIPTS = /[\u02B0-\u02FF\u1D2C-\u1D6B\u1DA0-\u1DBF\u2070-\u209F]+/g;
+
+function cleanCatName(raw) {
+  const name = String(raw || '');
+  if (!SUPERSCRIPTS.test(name)) return name.trim();
+  SUPERSCRIPTS.lastIndex = 0;
+  const cut = name
+    .replace(SUPERSCRIPTS, ' ')
+    // "ᴴᴰ/ᴿᴬᵂ" leaves a slash with nothing either side of it. Only touched
+    // when something was actually removed, so "SPORTS/NEWS" keeps its slash.
+    .replace(/\s*\/\s*/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return cut || name.trim();
+}
+
+function liveCategoryCard(cat, count, cover, {
+  onOpen = null, bin: withBin = true, pin: withPin = true, tab = 'live',
+} = {}) {
   const card = el('button', 'card cat-card');
 
   const art = el('div', 'card-art');
@@ -6133,8 +6190,29 @@ function liveCategoryCard(cat, count, cover, { onOpen = null, bin: withBin = tru
     art.append(bin);
   }
 
+  /* Pinning lived only in the sidebar rows, which is the one place a phone
+     never sees and the tiles are the main way in on every layout. Left of the
+     bin, and it stays visible once it is on — a pin you cannot see is a
+     setting you forget you made. */
+  if (withPin) {
+    const on = profiles.isPinned(tab, cat.id);
+    const pin = el('button', `icon-btn card-pin${on ? ' is-on' : ''}`);
+    pin.title = on ? 'Unpin' : 'Pin to the top';
+    pin.setAttribute('aria-label', pin.title);
+    pin.innerHTML = on
+      ? '<svg viewBox="0 0 24 24"><path d="M9 4h6l-1 6 4 3v2H6v-2l4-3z" fill="currentColor" stroke="none"/><path d="M12 15v5"/></svg>'
+      : '<svg viewBox="0 0 24 24"><path d="M9 4h6l-1 6 4 3v2H6v-2l4-3z"/><path d="M12 15v5"/></svg>';
+    pin.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const nowPinned = profiles.togglePin(tab, cat.id);
+      toast(nowPinned ? `Pinned “${cleanCatName(cat.name)}”.` : `Unpinned “${cleanCatName(cat.name)}”.`);
+      render();
+    });
+    art.append(pin);
+  }
+
   const title = el('h3', 'card-title');
-  title.textContent = cat.name;
+  title.textContent = cleanCatName(cat.name);
 
   // Under the title rather than badged over the art — the logo is the whole
   // point of the tile, and a badge sits on top of it.
