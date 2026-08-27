@@ -3683,17 +3683,36 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .touch .show-poster { max-width: 180px; }
 .touch .show-episodes .ep-list { max-height: none; }
 
-/* The strip is for a SHOW: it buys back the height a season of episodes needs.
-   A film has one button and a runtime under it, so the same strip shrinks the
-   artwork to buy room for nothing — it gets the width of the card, which on a
-   phone is most of the screen and the size the design draws it at.
+/* The 180px strip is for a SHOW: it buys back the height a season of episodes
+   needs. A film has one button and a runtime under it, so the same strip
+   shrinks the artwork to buy room for nothing.
+ *
+ * Sized by HEIGHT rather than width, because height is the constraint that
+ * actually bites. Let it have the card's width and a 2:3 poster on a 393pt
+ * screen comes out over 500px tall, which pushes the title and the Play button
+ * off the bottom: the artwork wins and the thing you came to press is below
+ * the fold. So the budget is what is left after the rest of the card — the
+ * title, the runtime and the buttons come to about 500px — and the width falls
+ * out of the ratio. 330 keeps Play on the first screen of a 393x852 phone with
+ * room to spare, and 40vh takes it back down on a shorter one, where an SE
+ * lands about where the strip was. It is 220px wide against the strip's 180. */
+.touch .show-card.is-film .show-poster {
+  height: min(40vh, 330px);
+  width: auto;
+  max-width: 100%;
+  margin-inline: auto;
+}
 
-   Both selectors, because the strip is set twice: once under .touch and once
-   at 720px, and either one on its own leaves the other winning. */
-.touch .show-card.is-film .show-poster { max-width: none; }
-
+/* The same, for the other way the card ends up stacked: a narrow window with a
+   mouse in it. Two triggers, one treatment — and it has to be both, because
+   either on its own leaves the other's 180px strip winning. */
 @media (max-width: 720px) {
-  .show-card.is-film .show-poster { max-width: none; }
+  .show-card.is-film .show-poster {
+    height: min(40vh, 330px);
+    width: auto;
+    max-width: 100%;
+    margin-inline: auto;
+  }
 }
 
 /* ---- next episode, once the credits start ---- */
