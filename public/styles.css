@@ -4303,6 +4303,42 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 .gsrc-status { font-size: 12.5px; color: var(--muted-dim); }
 
+/* ---- why has this channel got no listings ---- */
+.gsrc-why { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.gsrc-why input { width: 100%; }
+
+.gsrc-why-out { margin-top: 9px; display: flex; flex-direction: column; gap: 7px; }
+
+.gsrc-why-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .03);
+}
+
+.gsrc-why-row.is-on { border-color: rgba(126, 217, 87, .28); }
+.gsrc-why-row strong { font-size: 13px; }
+.gsrc-why-verdict { font-size: 12px; color: var(--muted-dim); }
+
+/* The keys are the answer, so they are shown as what they are — machine
+   text — rather than dressed up as prose. */
+.gsrc-why-keys {
+  font-size: 11.5px;
+  color: var(--muted-dim);
+  word-break: break-all;
+  opacity: .85;
+}
+
+.gsrc-why-near, .gsrc-why-note {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted-dim);
+  margin: 0;
+}
+
 /* conn-, not speed-: .health-speed is the block this sits inside, and a
    .speed- name here once collided with an absolutely-positioned pill and threw
    the note out of the card and halfway up the screen. */

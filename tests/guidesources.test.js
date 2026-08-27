@@ -181,12 +181,103 @@ function serve(xml) {
   check('scanning the feed cost well under a megabyte of heap',
     after - before < 4 << 20, `${Math.round((after - before) / 1024)}KB`);
 
+  /* ---- the NBC problem ---------------------------------------------- */
+  //
+  // "I saved and fetched the US feeds but I am not getting NBC listings."
+  //
+  // Because the provider sells "NBC EAST" and "NBC WEST" and a national guide
+  // publishes one "NBC". Neither is wrong and the exact keys never meet. So
+  // there is a second attempt with the feed marking dropped — and it is
+  // recorded as the compromise it is, because an east-coast schedule against
+  // a west-coast feed is three hours out.
+  console.log('\n  the channel the guide spells differently');
+  check('a feed marking is dropped for a second attempt',
+    guide.coreKey(guide.chanKey('NBC EAST')) === guide.chanKey('NBC'),
+    guide.coreKey(guide.chanKey('NBC EAST')));
+  check('but the exact spelling is still preferred',
+    guide.channelKeys({ id: 1, name: 'NBC EAST' })[0].how === 'name');
+  check('and the compromise is labelled as one',
+    guide.channelKeys({ id: 1, name: 'NBC EAST' }).some((k) => k.how === 'loose'));
+  check('a call sign inside a name is worth trying',
+    guide.callSigns('NBC (WNBC) NEW YORK').includes('wnbc'));
+  check('but WEST is a feed marking, not a station',
+    guide.callSigns('NBC WEST').length === 0, JSON.stringify(guide.callSigns('NBC WEST')));
+  check('and two letters is never a key',
+    !guide.channelKeys({ id: 1, name: 'AB' }).some((k) => k.key.length < 2));
+
+  console.log('\n  and it does not mix two schedules into one channel');
+  let two = '<?xml version="1.0"?>\n<tv>\n';
+  two += '<channel id="NBCEast.us"><display-name>NBC East</display-name></channel>\n';
+  two += '<channel id="NBC.us"><display-name>NBC</display-name></channel>\n';
+  two += `<programme start="${stamp(0)}" stop="${stamp(60)}" channel="NBCEast.us">`
+    + '<title>The Right One</title></programme>\n';
+  two += `<programme start="${stamp(0)}" stop="${stamp(60)}" channel="NBC.us">`
+    + '<title>Three Hours Out</title></programme>\n';
+  two += '</tv>\n';
+  const twoFeed = await serve(two);
+  guide.setChannels([{ id: '910', epgId: '', name: 'US| NBC EAST' }]);
+  const twoStatus = await guide.refresh({
+    force: true, sources: [{ url: twoFeed.url, label: 'two' }],
+  });
+  twoFeed.stop();
+  const east = guide.lookup('910');
+  check('the exact match wins outright',
+    east?.length === 1 && east[0].title === 'The Right One', JSON.stringify(east));
+  console.log('       (both matched; pouring both in would interleave two schedules)');
+  check('and it is recorded as an exact name match, not a guess',
+    twoStatus.byGuess === 0 && twoStatus.byName === 1,
+    `byName ${twoStatus.byName} byGuess ${twoStatus.byGuess}`);
+
+  // And the other way round: only the loose one exists, so it is used — and
+  // owned up to.
+  let one = '<?xml version="1.0"?>\n<tv>\n';
+  one += '<channel id="NBC.us"><display-name>NBC</display-name></channel>\n';
+  one += `<programme start="${stamp(0)}" stop="${stamp(60)}" channel="NBC.us">`
+    + '<title>Better Than Nothing</title></programme>\n</tv>\n';
+  const oneFeed = await serve(one);
+  guide.setChannels([{ id: '911', epgId: '', name: 'US| NBC EAST' }]);
+  const oneStatus = await guide.refresh({
+    force: true, sources: [{ url: oneFeed.url, label: 'one' }],
+  });
+  oneFeed.stop();
+  check('where only the loose spelling exists, it is used',
+    guide.lookup('911')?.[0]?.title === 'Better Than Nothing');
+  check('and counted as a guess rather than a match',
+    oneStatus.byGuess === 1 && oneStatus.byName === 0,
+    `byName ${oneStatus.byName} byGuess ${oneStatus.byGuess}`);
+
+  /* ---- and being able to see why ------------------------------------ */
+  //
+  // The thing that turns "it did not work" into something anybody can act on.
+  console.log('\n  explaining a miss');
+  guide.setChannels([
+    { id: '920', epgId: '', name: 'US| NBC EAST' },
+    { id: '921', epgId: '', name: 'US| SOMETHING NOBODY PUBLISHES' },
+  ]);
+  const why = guide.explain('NBC');
+  check('it finds our channel by a partial name',
+    why.channels.some((c) => c.name === 'US| NBC EAST'));
+  check('and shows the keys it reduced to, which is the actual answer',
+    why.channels[0].keys.some((k) => k.key === 'nbceast'),
+    JSON.stringify(why.channels[0]?.keys));
+  check('and what the guides published that is nearly it',
+    why.near.some((n) => n.key === 'nbc'), JSON.stringify(why.near.slice(0, 4)));
+  console.log('       ("yours is nbceast, theirs is nbc" is a complete answer)');
+  const nothing = guide.explain('SOMETHING NOBODY PUBLISHES');
+  check('a channel with nothing near it says so',
+    nothing.channels.length === 1 && !nothing.near.length);
+  check('and asking about nothing at all is not an error',
+    guide.explain('').channels.length === 0);
+
   /* ---- surviving a bad day ------------------------------------------ */
+  //
+  // 911 is whatever the last successful refresh above left in the index; the
+  // point is that a refusal does not disturb it.
   console.log('\n  when a feed is down');
-  const held = guide.lookup('901').length;
+  const held = guide.lookup('911').length;
   await guide.refresh({ force: true, sources: [{ url: 'http://127.0.0.1:1/nope.xml', label: 'down' }] });
   check('a failed fetch does not wipe the listings we already had',
-    guide.lookup('901')?.length === held, String(guide.lookup('901')?.length));
+    guide.lookup('911')?.length === held, String(guide.lookup('911')?.length));
   console.log('       (a feed down for an afternoon should cost nothing at all)');
 
   const st = guide.status();
@@ -219,10 +310,28 @@ function serve(xml) {
   check('the screen reports coverage, not a tick',
     /of \$\{\(this\.known \|\| 0\)\.toLocaleString\(\)\} channels/.test(APP));
   check('and admits when a match was made on the name alone',
-    /a name match is a good guess, not a promise/.test(APP));
+    /good guess, not a promise/.test(APP));
+  check('and flags the ones that needed a guess',
+    /worth spot-checking/.test(APP));
+
+  /* ---- the settings screen must hand back what it was given ---------- */
+  //
+  // This one cost a working setup. The feed list is a FORM FIELD: what comes
+  // out of it goes back in. Sending the redacted spelling meant the catalogue
+  // tick boxes never matched anything so nothing looked chosen, and a second
+  // Save wrote `https://host/…/epg_ripper_US1.xml.gz` in as if it were an
+  // address — after which every feed 404s and the guide quietly empties.
+  console.log('\n  the feed list survives a round trip');
+  check('the settings screen is sent whole URLs, not redacted ones',
+    /sources: guideSources\(cfg\),/.test(SERVER)
+    && !/sources: guideSources\(cfg\)\.map\(redactUrl\)/.test(SERVER));
+  check('and a URL redacted by an older build is dropped, not kept forever',
+    /\.filter\(\(u\) => u && !u\.includes\('…'\)\)/.test(SERVER));
+  console.log('       (a redacted URL can never resolve; it only fails every six hours)');
 
   const INDEX = fs.readFileSync(PATHS.INDEX, 'utf8');
   check('the panel is in the health modal', /id="guidePanel"/.test(INDEX));
+  check('and can be asked why a channel has none', /id="guideWhy"/.test(INDEX));
 
   fs.rmSync(dir, { recursive: true, force: true });
 

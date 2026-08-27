@@ -145,6 +145,17 @@
         </button>
         <span class="gsrc-status" id="guideRunning" hidden></span>
       </div>
+
+      <!-- The question this feature generates. Answering it needs both sides
+           side by side — what we call a channel and what the guides call it —
+           because that is where the mismatch always is. -->
+      <div class="gsrc-why">
+        <label class="field gsrc-field">
+          <span>A channel with no listings? <small>Type its name</small></span>
+          <input type="text" id="guideWhy" spellcheck="false" placeholder="NBC" />
+        </label>
+        <div class="gsrc-why-out" id="guideWhyOut" hidden></div>
+      </div>
     </div>
 
     <!-- What everyone else has sent in. Sits outside #healthBody for the same

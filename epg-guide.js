@@ -50,6 +50,16 @@ const WINDOW_FWD_MS = 36 * 60 * 60 * 1000;
 /** Per channel, in that window. Bounds the index no matter what arrives. */
 const MAX_PER_CHANNEL = 64;
 /**
+ * How many of the guides' own channels to remember the names of.
+ *
+ * Not needed to build the index — needed to explain it. When a channel comes
+ * back with no listings the only useful question is "what DID the guide call
+ * it", and without this the box cannot answer, which leaves the viewer
+ * ticking boxes at random. A national guide declares a few thousand channels,
+ * so this holds all of them with room to spare.
+ */
+const MAX_OFFERED = 40000;
+/**
  * Decompressed bytes one source may spend before we stop reading it.
  *
  * This is a limit on TIME, not on memory — the scan holds one chunk and the
@@ -76,8 +86,10 @@ const store = {
   sources: [],
   /** ourChannelId -> [{ title, start, stop }] */
   byChannel: new Map(),
-  /** ourChannelId -> 'id' | 'name', how the match was made. */
+  /** ourChannelId -> which tier of spelling made the match. */
   matchedBy: new Map(),
+  /** Every channel the guides declared: flattened key -> what they called it. */
+  offered: new Map(),
   channels: [],
   at: 0,
   running: false,
@@ -133,6 +145,57 @@ function chanKey(raw) {
   s = s.replace(/[ᴴᴰⁱ]/g, ' ');
   return s.replace(/[^a-z0-9]+/g, '');
 }
+
+/**
+ * The same key with a regional feed marking taken off the end.
+ *
+ * Providers sell "NBC EAST" and "NBC WEST"; a national guide publishes one
+ * "NBC". Neither side is wrong and the exact keys will never meet, so this is
+ * the second thing tried — and only the second, because it is a genuine
+ * compromise: an east-coast schedule shown against a west-coast feed is three
+ * hours out. A loose match is recorded as loose, counted separately, and said
+ * out loud on the screen.
+ */
+const FEED_TAIL = /(east|west|pacific|atlantic|mountain|central|national|network|usa|us)$/;
+
+function coreKey(key) {
+  let s = String(key || '');
+  for (let i = 0; i < 3; i += 1) {
+    const next = s.replace(FEED_TAIL, '');
+    if (next === s) break;
+    s = next;
+  }
+  // Two letters is not a channel, it is a coincidence waiting to happen.
+  return s.length >= 3 ? s : '';
+}
+
+/**
+ * Call signs hiding inside a channel name.
+ *
+ * Local stations are sold as "NBC (WNBC) NEW YORK" and published as "WNBC",
+ * or the other way about. The call sign is the reliable part of both.
+ */
+function callSigns(name) {
+  const out = [];
+  const re = /\b([KW][A-Z]{2,3})\b/g;
+  let m;
+  while ((m = re.exec(String(name || '')))) {
+    const sign = m[1].toLowerCase();
+    // "NBC WEST" is a feed marking, not a station in Seattle. Real call signs
+    // that read as words — WAVE, WOOD, KING — are all still fine; only the
+    // handful this file already knows to be feed markings are refused.
+    if (FEED_TAIL.test(sign) && sign.replace(FEED_TAIL, '') === '') continue;
+    out.push(sign);
+  }
+  return out;
+}
+
+/** Strongest first — which tier of match beats which. */
+const TIERS = ['id', 'name', 'callsign', 'loose'];
+const rank = (how) => {
+  const at = TIERS.indexOf(how);
+  return at === -1 ? TIERS.length : at;
+};
 
 /* ------------------------------------------------------------------- times */
 
@@ -289,10 +352,11 @@ function scan(stream, want, into, stats) {
       if (resolved.has(guideId)) return resolved.get(guideId);
       // Declared in a <channel> block, or — plenty of feeds skip those — a
       // bare id we can still recognise on its own.
-      const hit = declared.get(guideId)
-        || (want.get(guideId.toLowerCase()) || want.get(chanKey(guideId))
-          ? { ids: want.get(guideId.toLowerCase()) || want.get(chanKey(guideId)), how: 'id' }
-          : null);
+      let hit = declared.get(guideId) || null;
+      if (!hit) {
+        const ids = want.get(guideId.toLowerCase()) || want.get(chanKey(guideId));
+        if (ids) hit = { ids };
+      }
       resolved.set(guideId, hit);
       return hit;
     };
@@ -300,17 +364,37 @@ function scan(stream, want, into, stats) {
     const takeChannel = (attrs, body) => {
       const id = attr(attrs, 'id');
       if (!id) return;
-      // An id match is worth more than a name match, so it is tried first and
-      // wins outright: "ESPN2.us" must not be captured by the channel that
-      // happens to call itself "ESPN".
-      const byId = want.get(id.toLowerCase()) || want.get(chanKey(id));
-      if (byId) return void declared.set(id, { ids: byId, how: 'id' });
+      const names = [];
       const re = /<display-name\b[^>]*>([\s\S]*?)<\/display-name>/gi;
       let m;
-      while ((m = re.exec(body))) {
-        const byName = want.get(chanKey(unescapeXml(m[1])));
-        if (byName) return void declared.set(id, { ids: byName, how: 'name' });
+      while ((m = re.exec(body))) names.push(unescapeXml(m[1]));
+
+      /* Remembered whether we want it or not. This is the only record of what
+       * the guides actually contain, and it is what lets the box answer "you
+       * have NBC EAST, the guide has NBC" instead of shrugging. */
+      if (stats.offered.size < MAX_OFFERED) {
+        const label = names[0] || id;
+        for (const key of new Set([chanKey(id), ...names.map(chanKey)])) {
+          if (key && !stats.offered.has(key)) stats.offered.set(key, label);
+        }
       }
+
+      // Strongest spelling wins outright: "ESPN2.us" must not be captured by
+      // the channel that happens to call itself "ESPN".
+      let best = null;
+      for (const key of [id.toLowerCase(), chanKey(id), ...names.map(chanKey)]) {
+        for (const entry of want.get(key) || []) {
+          if (!best || rank(entry.how) < rank(best.how)) best = entry;
+        }
+      }
+      if (!best) return;
+      const ids = [];
+      for (const key of [id.toLowerCase(), chanKey(id), ...names.map(chanKey)]) {
+        for (const entry of want.get(key) || []) {
+          if (!ids.some((e) => e.id === entry.id)) ids.push(entry);
+        }
+      }
+      declared.set(id, { ids });
     };
 
     const takeProgramme = (attrs, body, hit) => {
@@ -322,15 +406,20 @@ function scan(stream, want, into, stats) {
       const title = unescapeXml(tm ? tm[1] : '');
       if (!title) return;
 
-      for (const ourId of hit.ids) {
-        let list = into.get(ourId);
-        if (!list) into.set(ourId, (list = []));
+      /* Filed under the tier that claimed it, not merged.
+       *
+       * One of our channels can legitimately be matched by two of the guide's
+       * — "NBC EAST" meets both "NBC East" by name and "NBC" once the feed
+       * marking is dropped — and pouring both into one list interleaves two
+       * different schedules into a guide that is wrong in a way nobody can
+       * see. They are kept apart and the best tier is chosen at the end. */
+      for (const entry of hit.ids) {
+        let tiers = into.get(entry.id);
+        if (!tiers) into.set(entry.id, (tiers = new Map()));
+        let list = tiers.get(entry.how);
+        if (!list) tiers.set(entry.how, (list = []));
         if (list.length >= MAX_PER_CHANNEL) continue;
         list.push({ title, start, stop });
-        const held = stats.matchedBy.get(ourId);
-        if (!held || (held === 'name' && hit.how === 'id')) {
-          stats.matchedBy.set(ourId, hit.how);
-        }
       }
       stats.kept += 1;
     };
@@ -405,22 +494,41 @@ function scan(stream, want, into, stats) {
 
 /* --------------------------------------------------------------- the index */
 
-/** Every key our channels answer to, pointing back at their ids. */
+/**
+ * Every spelling one of our channels answers to, in order of how much it is
+ * worth trusting.
+ *
+ * `id` is something the provider asserted about its own channel. `name` is
+ * the two names flattening to the same thing. `callsign` and `loose` are
+ * guesses — good ones, but guesses, and they are labelled so the screen can
+ * pass that on rather than presenting all four as equally true.
+ */
+function channelKeys(ch) {
+  const out = [];
+  const add = (key, how) => {
+    if (key && key.length >= 2 && !out.some((k) => k.key === key)) out.push({ key, how });
+  };
+  if (ch.epgId) {
+    add(String(ch.epgId).toLowerCase(), 'id');
+    add(chanKey(ch.epgId), 'id');
+  }
+  const name = chanKey(ch.name);
+  add(name, 'name');
+  for (const sign of callSigns(ch.name)) add(sign, 'callsign');
+  add(coreKey(name), 'loose');
+  return out;
+}
+
+/** Those keys, inverted: key -> the channels of ours that answer to it. */
 function wantedKeys(channels) {
   const want = new Map();
-  const add = (key, id) => {
-    if (!key) return;
-    let set = want.get(key);
-    if (!set) want.set(key, (set = []));
-    if (!set.includes(id)) set.push(id);
-  };
   for (const ch of channels) {
     const id = String(ch.id);
-    if (ch.epgId) {
-      add(String(ch.epgId).toLowerCase(), id);
-      add(chanKey(ch.epgId), id);
+    for (const { key, how } of channelKeys(ch)) {
+      let set = want.get(key);
+      if (!set) want.set(key, (set = []));
+      if (!set.some((e) => e.id === id)) set.push({ id, how });
     }
-    add(chanKey(ch.name), id);
   }
   return want;
 }
@@ -449,6 +557,7 @@ function save() {
     at: store.at,
     matchedBy: Object.fromEntries(store.matchedBy),
     channels: rows,
+    offered: Object.fromEntries(store.offered),
     lastRun: store.lastRun,
   };
   try {
@@ -465,6 +574,7 @@ function load() {
     store.lastRun = body.lastRun || null;
     store.byChannel = new Map(Object.entries(body.channels || {}));
     store.matchedBy = new Map(Object.entries(body.matchedBy || {}));
+    store.offered = new Map(Object.entries(body.offered || {}));
   } catch {
     /* no index yet, which is the normal state on a new box */
   }
@@ -511,7 +621,7 @@ async function refresh({ force = false, sources = null } = {}) {
   const started = Date.now();
   const want = wantedKeys(store.channels);
   const into = new Map();
-  const stats = { kept: 0, matchedBy: new Map(), truncated: false };
+  const stats = { kept: 0, offered: new Map(), truncated: false };
   const report = [];
 
   for (const source of list) {
@@ -532,16 +642,34 @@ async function refresh({ force = false, sources = null } = {}) {
     }
   }
 
+  /* One tier per channel — the strongest that produced anything.
+   *
+   * A channel matched on the id the provider gave it does not also want the
+   * schedule of whatever happened to share its name with the feed marking
+   * removed. Deciding here rather than during the scan is what makes that
+   * possible: the strongest tier is not knowable until every source has been
+   * read. */
   const tidied = new Map();
-  for (const [id, list2] of into) tidied.set(id, tidy(list2));
+  const matchedBy = new Map();
+  for (const [id, tiers] of into) {
+    const best = TIERS.find((how) => (tiers.get(how) || []).length);
+    if (!best) continue;
+    const listings = tidy(tiers.get(best));
+    if (!listings.length) continue;
+    tidied.set(id, listings);
+    matchedBy.set(id, best);
+  }
 
   // An index that came back empty never replaces one that did not. A feed
   // that is down for an afternoon should cost nothing at all.
   if (tidied.size || !store.byChannel.size) {
     store.byChannel = tidied;
-    store.matchedBy = stats.matchedBy;
+    store.matchedBy = matchedBy;
     store.at = Date.now();
   }
+  // What the guides contain is worth keeping even when nothing matched — that
+  // is exactly the case where somebody needs to see it.
+  if (stats.offered.size) store.offered = stats.offered;
   store.lastRun = {
     at: Date.now(),
     took: Date.now() - started,
@@ -566,9 +694,11 @@ function status() {
   for (const list of store.byChannel.values()) programmes += list.length;
   let byId = 0;
   let byName = 0;
+  let byGuess = 0;
   for (const how of store.matchedBy.values()) {
     if (how === 'id') byId += 1;
-    else byName += 1;
+    else if (how === 'name') byName += 1;
+    else byGuess += 1;
   }
   return {
     at: store.at,
@@ -578,14 +708,66 @@ function status() {
     programmes,
     byId,
     byName,
+    byGuess,
+    offered: store.offered.size,
     sources: store.sources,
     lastRun: store.lastRun,
     stale: due(),
   };
 }
 
+/**
+ * Why a channel has no listings.
+ *
+ * The one question this feature generates, and until now the box could not
+ * answer it — which left ticking guide boxes at random as the only way
+ * forward. It puts the two sides next to each other: what we call the
+ * channel, what it flattens to, and what the guides are offering that is
+ * anywhere near it. Nine times out of ten the answer is visible immediately —
+ * ours says `nbceast`, theirs says `nbc`.
+ */
+function explain(query) {
+  const q = String(query || '').trim();
+  if (!q) return { query: q, channels: [], near: [] };
+  const qk = chanKey(q);
+  const low = q.toLowerCase();
+
+  const channels = store.channels
+    .filter((c) => String(c.name).toLowerCase().includes(low)
+      || (qk && chanKey(c.name).includes(qk))
+      || String(c.epgId || '').toLowerCase().includes(low))
+    .slice(0, 15)
+    .map((c) => {
+      const listings = store.byChannel.get(String(c.id));
+      return {
+        id: c.id,
+        name: c.name,
+        epgId: c.epgId || '',
+        keys: channelKeys(c),
+        covered: Boolean(listings && listings.length),
+        programmes: listings ? listings.length : 0,
+        matchedBy: store.matchedBy.get(String(c.id)) || null,
+      };
+    });
+
+  /* What the guides have that is nearly it. Containment either way, because
+   * the interesting near-misses are exactly the ones where one side carries
+   * something the other does not. */
+  const near = [];
+  for (const [key, label] of store.offered) {
+    if (!qk) break;
+    if (key === qk || key.includes(qk) || qk.includes(key)) {
+      near.push({ key, name: label, exact: key === qk });
+      if (near.length >= 30) break;
+    }
+  }
+  near.sort((a, b) => Number(b.exact) - Number(a.exact) || a.key.length - b.key.length);
+
+  return { query: q, channels, near, offered: store.offered.size };
+}
+
 module.exports = {
-  configure, setSources, setChannels, refresh, lookup, status, save, load,
+  configure, setSources, setChannels, refresh, lookup, status, explain, save, load,
   // Exported for the suites, which check the joining rather than the network.
-  chanKey, parseStamp, wantedKeys, unescapeXml,
+  chanKey, coreKey, callSigns, parseStamp, wantedKeys, channelKeys, unescapeXml,
 };

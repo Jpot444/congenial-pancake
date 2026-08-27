@@ -2073,11 +2073,55 @@ all of that — country prefix, country suffix, `HD`/`FHD`/`4K`/`RAW`, the
 fullwidth `ᴴᴰ`, punctuation — down to `espn`, and channels are matched on the
 id first and the name second.
 
-**An id match and a name match are not the same thing** and the screen says
-which is which. An id is something the provider asserted; a name match is our
-guess that two strings mean the same station. It is deliberately an aggressive
-guess, because matching only what is spelled identically matches almost
-nothing — but it is why the coverage line reports the two separately.
+Four tiers, strongest first, and **the strongest that produced anything wins
+outright**:
+
+| Tier | What it is |
+| --- | --- |
+| `id` | The `epg_channel_id` the provider asserted about its own channel. |
+| `name` | Both names flatten to the same key. |
+| `callsign` | A call sign found inside the name — `NBC (WNBC) NEW YORK` ↔ `WNBC`. |
+| `loose` | The key with a regional feed marking dropped — `NBC EAST` → `NBC`. |
+
+The last one is a real compromise: an east-coast schedule against a west-coast
+feed is three hours out. It exists because providers sell `NBC EAST` and
+`NBC WEST` while a national guide publishes one `NBC`, so the exact keys never
+meet and the alternative is no listings at all. It is recorded as loose,
+counted separately, and said out loud on the screen.
+
+Deciding the tier **after** every source has been read, rather than during the
+scan, is what makes this safe. One of our channels can legitimately be matched
+by two of the guide's — `NBC EAST` meets both `NBC East` by name and `NBC` once
+the feed marking is dropped — and pouring both into one list interleaves two
+different schedules into a guide that is wrong in a way nobody can see. They
+are kept apart per tier and the best one is chosen at the end.
+
+`WEST` is not a call sign. Real call signs that read as words — `WAVE`, `WOOD`,
+`KING` — still work; only the feed markings this file already knows about are
+refused.
+
+### Why has this channel got no listings?
+
+The one question the feature generates, and the box can answer it: type a
+channel name under **Pi health → Listings**. It puts the two sides next to each
+other — what we call the channel, what it flattens to, and what the guides are
+publishing that is anywhere near it. Nine times out of ten the answer is
+visible immediately: *yours is `nbceast`, theirs is `nbc`*.
+
+This is why the scan remembers every channel the guides declared, not just the
+ones it wanted. Building the index does not need that list; explaining it does,
+and without it the only way forward is ticking boxes at random.
+
+### The feed list is a form field
+
+It is sent to the settings screen **whole, never redacted**, and there is a
+test pinning that. Redacting it cost a working setup once: the catalogue tick
+boxes stopped matching so nothing looked chosen, and a second Save wrote
+`https://host/…/epg_ripper_US1.xml.gz` into the config as though it were an
+address, after which every feed 404s and the guide quietly empties. Redaction
+belongs on the labels in `lastRun`, which are for reading rather than for
+round-tripping. A URL redacted by an older build is dropped on read, since it
+can never resolve.
 
 The channel list comes out of the library cache, never from a fresh provider
 pull: building a guide is not a good enough reason to fetch a 141MB catalogue.

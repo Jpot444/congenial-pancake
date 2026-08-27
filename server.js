@@ -574,9 +574,16 @@ function publicConfig(cfg) {
  */
 function guideSources(cfg) {
   const raw = Array.isArray(cfg?.epgUrls) ? cfg.epgUrls : [];
-  const list = raw.map((u) => String(u || '').trim()).filter(Boolean);
+  const list = raw
+    .map((u) => String(u || '').trim())
+    // Self-healing, for a config poisoned before the settings screen stopped
+    // handing back redacted URLs. `https://host/…/epg_ripper_US1.xml.gz` can
+    // never resolve, so keeping it only means a feed that fails every six
+    // hours forever. Dropped rather than repaired: the middle of the path is
+    // genuinely gone, and the tick box puts it back in one click.
+    .filter((u) => u && !u.includes('…'));
   const legacy = String(cfg?.epgUrl || '').trim();
-  if (legacy && !list.includes(legacy)) list.unshift(legacy);
+  if (legacy && !legacy.includes('…') && !list.includes(legacy)) list.unshift(legacy);
   return list.slice(0, 12);
 }
 
@@ -5033,6 +5040,23 @@ async function handleApi(req, res, pathname, query) {
     });
   }
 
+  /* ---- Why a channel has no listings ---- */
+  //
+  // "I saved and fetched the US feeds but I am not getting NBC listings."
+  //
+  // Without this the only way to answer that is to guess, and the answer is
+  // nearly always something you could see in a second if the two sides were
+  // put side by side: we call it NBC EAST, the guide calls it NBC. So the box
+  // shows both rather than being asked to be cleverer.
+  if (pathname === '/api/epg/explain') {
+    // Answered against what the box knows NOW, not against whatever the last
+    // refresh happened to run on — the channel you are asking about may well
+    // be one that has appeared since.
+    const channels = knownLiveChannels();
+    guide.setChannels(channels);
+    return json(res, 200, { ...guide.explain(query.get('q') || ''), known: channels.length });
+  }
+
   /* ---- Where the listings come from ---- */
   //
   // The provider has no listings at all for most of what it sells, and the
@@ -5045,7 +5069,16 @@ async function handleApi(req, res, pathname, query) {
       const known = knownLiveChannels().length;
       return json(res, 200, {
         ...st,
-        sources: guideSources(cfg).map(redactUrl),
+        /* Whole, not redacted.
+         *
+         * This is a form field, and what comes out of it goes back in. Sending
+         * the redacted spelling — host, "…", last segment — meant the
+         * catalogue tick boxes never matched so nothing looked chosen, and a
+         * second Save wrote `https://host/…/epg_ripper_US1.xml.gz` into the
+         * config as if it were an address. The feeds then 404 and the guide
+         * quietly empties. Redaction belongs on the labels in `lastRun`, which
+         * are for reading, not for round-tripping. */
+        sources: guideSources(cfg),
         useProviderGuide: cfg?.useProviderGuide !== false,
         hasProviderGuide: Boolean(providerGuideUrl(cfg)),
         known,
@@ -5090,7 +5123,7 @@ async function handleApi(req, res, pathname, query) {
       if (incoming.refresh !== false && known) refreshGuide({ force: true });
       return json(res, 200, {
         ...guide.status(),
-        sources: guideSources(cfg).map(redactUrl),
+        sources: guideSources(cfg),
         useProviderGuide: cfg.useProviderGuide !== false,
         known,
         blocked: known ? null : 'no-channels',
