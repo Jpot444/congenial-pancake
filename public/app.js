@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '31.4';
+const VERSION = '31.5';
 
 const PAGE_SIZE = 60;
 
@@ -233,6 +233,32 @@ const profiles = {
     const prefix = `${tab}:`;
     const others = (this.data.pinnedCategories || []).filter((key) => !key.startsWith(prefix));
     this.data.pinnedCategories = [...ids.map((id) => this.pinKey(tab, id)), ...others];
+    this.save();
+  },
+
+  /**
+   * The order the channel row was dragged into.
+   *
+   * Favourites are one list holding channels, films and shows, kept newest
+   * first — so this permutes the entries IN PLACE rather than rewriting the
+   * list: the positions the given keys already occupy are filled with those
+   * keys in their new order, and everything else stays exactly where it was.
+   * Dragging a channel must not shuffle the films on the Favorites page.
+   */
+  setFavOrder(keys) {
+    const list = this.data.favorites || [];
+    const rank = new Map(keys.map((key, i) => [key, i]));
+    const slots = [];
+    const moving = [];
+    list.forEach((entry, i) => {
+      if (!rank.has(entry.key)) return;
+      slots.push(i);
+      moving.push(entry);
+    });
+    if (moving.length < 2) return;
+    moving.sort((a, b) => rank.get(a.key) - rank.get(b.key));
+    slots.forEach((at, i) => { list[at] = moving[i]; });
+    this.data.favorites = list;
     this.save();
   },
 

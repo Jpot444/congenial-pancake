@@ -994,6 +994,17 @@
    mouse. */
 .desk .catchip.pinned { color: var(--text); border-color: var(--line-hover); cursor: grab; touch-action: none; }
 .desk .catchip.pinned.ghosting { opacity: .45; cursor: grabbing; }
+
+/* Your channels is the one row the viewer arranges, so its cards say they can
+   be picked up — and the one being carried gets out of the way of the gap it
+   is being dropped into. */
+.desk #dkLive .shelf:first-child .rail-track .cht { cursor: grab; }
+.desk #dkLive .shelf:first-child .rail-track .cht.ghosting {
+  opacity: .4;
+  cursor: grabbing;
+  transform: scale(.97);
+}
+body.is-reordering .cht { transition: none; }
 /* While a chip is being moved, nothing on the page should be selecting text
    under the pointer. */
 .desk body.is-reordering { user-select: none; }
@@ -1240,6 +1251,24 @@
    Covering a billboard with a 400px station logo scales it six-fold and then
    crops it — half a letter, filling the screen. Contained, centred, at its
    own size and quietly enough to be a background rather than the subject. */
+/* The billboard, playing. A channel's slide normally carries its mark at its
+   own size; when the stream is running it is a picture again and covers the
+   band like a backdrop, with the mark fading out from under it rather than
+   sitting on top of the show. */
+.desk #dkHero .slide .live-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity .5s var(--ease);
+  pointer-events: none;
+}
+
+.desk #dkHero .slide.is-playing .live-preview { opacity: 1; }
+.desk #dkHero .slide.is-playing .art img { opacity: 0; transition: opacity .5s var(--ease); }
+
 .desk #dkHero .slide.is-mark .art { inset: 0; transform: none; }
 .desk #dkHero .slide.is-mark.on .art { animation: none; }
 .desk #dkHero .slide.is-mark .art img {
