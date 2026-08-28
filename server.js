@@ -3187,9 +3187,24 @@ function liveDvrArgs(input, dir, resumed = false, low = false) {
       '-maxrate', LOW_MAXRATE, '-bufsize', LOW_BUFSIZE, '-pix_fmt', 'yuv420p',
       '-vf', `scale=-2:'min(${LOW_HEIGHT},ih)'`,
       '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
-      '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-b:a', LOW_AUDIO,
     ]
-    : ['-c', 'copy'];
+    : ['-c:v', 'copy'];
+
+  // Audio is re-encoded here too, and for the same reason it is on a film.
+  //
+  // `codec_name` is `aac` for both AAC-LC and HE-AAC, and an HE-AAC stream
+  // carries only half its sample rate in the core with SBR restoring the top.
+  // A decoder that takes the core alone plays it an octave down and at half
+  // speed — deep, dragging voices over completely normal video. That is the
+  // fault this box has already seen once on films, and a live channel copied
+  // straight through is the same gamble on every channel the provider sends.
+  //
+  // Plain stereo AAC-LC at a fixed rate removes the question. On a Pi it is a
+  // couple of percent of one core beside a video copy that costs nothing.
+  const audioArgs = [
+    '-c:a', 'aac', '-profile:a', 'aac_low',
+    '-ac', '2', '-ar', '48000', '-b:a', low ? LOW_AUDIO : '160k',
+  ];
   return [
     '-v', 'info', '-nostats', '-hide_banner', '-y',
     // The feed drops; these ride out the transport-level ones without ffmpeg
@@ -3206,10 +3221,14 @@ function liveDvrArgs(input, dir, resumed = false, low = false) {
     // paid 15 seconds to end up on the direct path anyway.
     '-live_start_index', '0',
     '-i', input,
-    // First video stream plus every audio stream; data and DVB subtitle
-    // streams are dropped — they are why a bare -map 0 dies on some channels.
-    '-map', '0:v:0', '-map', low ? '0:a:0?' : '0:a?',
+    // First video stream and FIRST audio stream; data and DVB subtitle streams
+    // are dropped — they are why a bare -map 0 dies on some channels. One
+    // audio stream rather than all of them because only the first was ever
+    // reachable: nothing in either player picks between muxed live tracks, so
+    // the rest were being carried, and are now being encoded, for nobody.
+    '-map', '0:v:0', '-map', '0:a:0?',
     ...videoArgs,
+    ...audioArgs,
     '-f', 'hls',
     '-hls_time', String(LIVE_DVR.segmentSeconds),
     '-hls_list_size', String(LIVE_DVR.windowSegments),
@@ -3220,7 +3239,18 @@ function liveDvrArgs(input, dir, resumed = false, low = false) {
     // provider's backlog now begins — unmarked, the player maps them onto the
     // old timeline and the picture jumps.
     '-hls_flags', `delete_segments+append_list+temp_file${resumed ? '+discont_start' : ''}`,
-    '-hls_segment_filename', path.join(dir, 'seg%06d.ts'),
+    // Fragmented MP4 rather than MPEG-TS, which is the OTHER half of the same
+    // fault. A TS segment reaches hls.js as a transport stream it must demux
+    // and rebuild into MP4 itself, reconstructing every AAC frame's timing
+    // from ADTS headers as it goes; get that spacing wrong and the samples are
+    // laid down at the wrong rate — heard as a pitch shift while the video,
+    // whose frames carry their own timestamps, stays perfectly in time. On
+    // films that was the half that actually fixed it: pinning the encoder to
+    // AAC-LC was not enough on its own. fMP4 segments carry explicit sample
+    // counts in their own headers and are handed over essentially untouched.
+    '-hls_segment_type', 'fmp4',
+    '-hls_fmp4_init_filename', 'init.mp4',
+    '-hls_segment_filename', path.join(dir, 'seg%06d.m4s'),
     path.join(dir, 'index.m3u8'),
   ];
 }
@@ -3320,7 +3350,7 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
     session.lastAccess = Date.now(); // warming is not idleness
     if (fs.existsSync(playlist)) {
       const text = fs.readFileSync(playlist, 'utf8');
-      if ((text.match(/\.ts/g) || []).length >= 2) return session;
+      if ((text.match(/\.(m4s|ts)/g) || []).length >= 2) return session;
     }
     if (session.exited && session.exitCode !== 0) {
       const detail = session._stderr.split('\n').filter(Boolean).pop() || `exit ${session.exitCode}`;

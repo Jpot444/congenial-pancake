@@ -94,8 +94,15 @@ function lift(name, extra = '') {
   )(path, { segmentSeconds: 4, windowSegments: 30 });
   const liveNormal = liveDvrArgs('http://p/live.m3u8', '/out', false, false).join(' ');
   const liveSmall = liveDvrArgs('http://p/live.m3u8', '/out', false, true).join(' ');
-  check('normally the channel is copied through untouched',
-    liveNormal.includes('-c copy'), liveNormal.slice(0, 120));
+  /* The picture is copied; the sound never is. An HE-AAC core reaching a
+     decoder on its own plays an octave down and at half speed, and nothing in
+     the provider's metadata distinguishes it from AAC-LC — so the audio is
+     re-encoded on every channel, small link or not. */
+  check('normally the PICTURE is copied through untouched',
+    liveNormal.includes('-c:v copy'), liveNormal.slice(0, 120));
+  check('and the sound is re-encoded either way',
+    liveNormal.includes('-c:a aac -profile:a aac_low')
+      && liveSmall.includes('-c:a aac -profile:a aac_low'), liveNormal.slice(-160));
   check('on a weak link it is encoded small', liveSmall.includes('libx264')
     && /scale=-2:'min\(480,ih\)'/.test(liveSmall), liveSmall.slice(0, 200));
   check('at ultrafast, because a channel that falls behind never catches up',

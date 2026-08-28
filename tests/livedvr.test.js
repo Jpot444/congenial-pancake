@@ -56,8 +56,23 @@ const get = (p) => new Promise((resolve, reject) => {
   // that falls behind its own feed never catches up. If the encode cannot
   // keep up at all, the readiness check below drops the tune-in to the direct
   // proxy, which is the full-size stream: degraded, not broken.
-  check('a channel is copied, never encoded, unless the viewer asked for small',
-    /'-c', 'copy'\]/.test(dvrArgs) && /const videoArgs = low/.test(dvrArgs));
+  check('the PICTURE is copied, never encoded, unless the viewer asked for small',
+    /'-c:v', 'copy'\]/.test(dvrArgs) && /const videoArgs = low/.test(dvrArgs));
+  /* The sound is the exception, and deliberately so. `codec_name` is `aac` for
+     both AAC-LC and HE-AAC, and a decoder that takes an HE-AAC core alone
+     plays it an octave down and at half speed — deep, dragging voices over
+     normal video. Re-encoding to plain stereo AAC-LC at a fixed rate is a
+     couple of percent of one core and removes the question. */
+  check('but the SOUND is always re-encoded, so HE-AAC cannot reach a decoder',
+    /'-c:a', 'aac', '-profile:a', 'aac_low'/.test(dvrArgs)
+      && /'-ar', '48000'/.test(dvrArgs), dvrArgs.slice(0, 200));
+  /* The other half of the same fault: a TS segment reaches hls.js as a stream
+     it must demux and rebuild itself, reconstructing AAC timing from ADTS
+     headers — and wrong spacing is heard as a pitch shift. On films, pinning
+     the encoder was not enough on its own; fMP4 was what fixed it. */
+  check('and segments are fMP4, so nobody has to rebuild the audio timing',
+    /'-hls_segment_type', 'fmp4'/.test(dvrArgs)
+      && /seg%06d\.m4s/.test(dvrArgs), dvrArgs.slice(-400));
   check('and the encoder it reaches for then is the cheapest one there is',
     /'-preset', 'ultrafast'/.test(dvrArgs), dvrArgs.slice(0, 200));
   check('old segments are deleted, so disk use is one window, not a day of TV',
@@ -92,11 +107,11 @@ const get = (p) => new Promise((resolve, reject) => {
   check('and warming up does not count as idleness to the reaper',
     /session\.lastAccess = Date\.now\(\); \/\/ warming is not idleness/.test(SERVER));
   // Never a bare `-map 0`: data and DVB-subtitle streams are what kill the
-  // command on some channels. Every audio track is carried on a copy, where
-  // extra tracks are free; the shrunk feed takes one, because encoding the
-  // rest would be spending a Pi's CPU on audio nobody selected.
+  // command on some channels. One audio track rather than all of them, now
+  // that the audio is encoded rather than copied — nothing in either player
+  // picks between muxed live tracks, so the rest would be encoded for nobody.
   check('data and DVB-subtitle streams are dropped, which is why -map 0 dies',
-    /'-map', '0:v:0', '-map', low \? '0:a:0\?' : '0:a\?'/.test(SERVER), 'the mapping moved');
+    /'-map', '0:v:0', '-map', '0:a:0\?'/.test(SERVER), 'the mapping moved');
 
   const seg = Number((/segmentSeconds: (\d+)/.exec(SERVER) || [])[1]);
   const win = Number((/windowSegments: (\d+)/.exec(SERVER) || [])[1]);
@@ -173,14 +188,16 @@ dir=$(dirname "$playlist")
 echo "spawn $dir" >> "${DIR}/ffmpeg-calls.log"
 n=0
 emit() {
-  printf 'FAKETS%.0s' {1..200} > "$(printf "$seg" "$n")"
+  printf 'FAKESEG%.0s' {1..200} > "$(printf "$seg" "$n")"
   n=$((n+1))
-  { echo '#EXTM3U'; echo '#EXT-X-VERSION:3'; echo '#EXT-X-TARGETDURATION:4';
+  { echo '#EXTM3U'; echo '#EXT-X-VERSION:7'; echo '#EXT-X-TARGETDURATION:4';
     echo "#EXT-X-MEDIA-SEQUENCE:0";
-    for ((k=0;k<n;k++)); do echo '#EXTINF:4.0,'; printf 'seg%06d.ts\\n' "$k"; done;
+    echo '#EXT-X-MAP:URI="init.mp4"';
+    for ((k=0;k<n;k++)); do echo '#EXTINF:4.0,'; printf 'seg%06d.m4s\\n' "$k"; done;
     echo '#EXT-X-ENDLIST';
   } > "$playlist"
 }
+printf 'FAKEINIT%.0s' {1..40} > "$dir/init.mp4"
 emit; emit
 while :; do sleep 2; emit; done
 `, { mode: 0o755 });
@@ -205,7 +222,7 @@ while :; do sleep 2; emit; done
 
     const playlist = await get('/hls/live-7/index.m3u8');
     check('and the playlist is really there, with segments in it',
-      playlist.status === 200 && /seg000000\.ts/.test(playlist.body),
+      playlist.status === 200 && /seg000000\.m4s/.test(playlist.body),
       `${playlist.status}: ${playlist.body.slice(0, 80)}`);
     // The fake writes ENDLIST into the file the way real ffmpeg does when it
     // exits, so this checks the serving path actively REMOVES it — refraining
@@ -215,9 +232,12 @@ while :; do sleep 2; emit; done
     check('ENDLIST is stripped even when ffmpeg itself wrote one',
       !playlist.body.includes('ENDLIST'), playlist.body);
 
-    const segment = await get('/hls/live-7/seg000000.ts');
+    const segment = await get('/hls/live-7/seg000000.m4s');
     check('segments are served from it', segment.status === 200
-      && segment.body.startsWith('FAKETS'), String(segment.status));
+      && segment.body.startsWith('FAKESEG'), String(segment.status));
+    const init = await get('/hls/live-7/init.mp4');
+    check('and so is the init segment every fMP4 window needs',
+      init.status === 200 && init.body.startsWith('FAKEINIT'), String(init.status));
 
     const again = JSON.parse((await get('/api/play?kind=live&id=7')).body);
     const calls = fs.readFileSync(path.join(DIR, 'ffmpeg-calls.log'), 'utf8')

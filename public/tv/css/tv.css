@@ -910,37 +910,6 @@ a { color: var(--text); text-decoration: none; }
   object-fit: contain;
   background: #08080A;
 }
-.scorebug {
-  position: absolute;
-  left: 64px;
-  top: 56px;
-  display: flex;
-  align-items: stretch;
-  height: 76px;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  background: rgba(10, 7, 8, .82);
-  border: 1px solid var(--line);
-  backdrop-filter: var(--blur-badge);
-}
-.scorebug span {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 0 22px;
-  font-family: var(--display);
-  font-size: 34px;
-  letter-spacing: .04em;
-  color: var(--text);
-}
-.scorebug span b { color: #fff; font-weight: 400; }
-.scorebug .rule { width: 1px; padding: 0; background: var(--line); }
-.scorebug .clock {
-  background: var(--brand-red);
-  font-size: 30px;
-  letter-spacing: .08em;
-  color: #fff;
-}
 .player-scrim {
   position: absolute;
   left: 0;

@@ -1,8 +1,9 @@
 /*
  * The player, and the two things that open on top of it.
  *
- * Full-bleed picture, a broadcast score bug in the corner, and one line of
- * chrome across the bottom. From there:
+ * Full-bleed picture and one line of chrome across the bottom — nothing else
+ * over the frame, because the broadcast already has its own score bug and its
+ * own corner logo. From there:
  *   ▼    the guide — the CATEGORY this channel belongs to, channel × time,
  *        the programme on now in brand crimson, scrolling in its own container
  *        so the page never moves under it, and a way into multi-view from
@@ -21,7 +22,6 @@ import { focus } from '../focus.js';
 import { getPlay, postHistory } from '../api.js';
 import { state, loadLibrary, loadEpg, nowOn, nextOn, airProgress, favorites, pinnedIds }
   from '../state.js';
-import { getGames, matchChannel, usingPlaceholders } from '../scores.js';
 
 export const fullbleed = true;
 
@@ -65,7 +65,6 @@ let media = { video: null, hls: null, mpegts: null };
 let channels = [];
 let guideChannels = [];
 let epg = new Map();
-let game = null;
 let historyTimer = null;
 let edgeTimer = null;
 let scrimLive = null;
@@ -93,7 +92,6 @@ export async function render(hostNode, app, params) {
   epg = await loadEpg(
     [...guideChannels, ...channels].map((c) => String(c.epgId || c.id))
   );
-  game = matchGame(channel);
 
   paint();
   await open(app);
@@ -102,8 +100,6 @@ export async function render(hostNode, app, params) {
 function paint() {
   const root = el('div', 'player');
   root.append(videoNode());
-
-  if (game) root.append(scoreBug(game));
 
   if (!overlay) root.append(scrim());
   if (overlay === 'guide') root.append(guide());
@@ -155,32 +151,17 @@ function repaint() {
   focus.apply();
 }
 
-/** The corner bug. Placeholder numbers — see js/scores.js. */
-function scoreBug(g) {
-  const bug = el('div', 'scorebug');
-  if (g.redZone) {
-    const only = el('span');
-    only.append('RED ZONE');
-    bug.append(only, el('span', 'rule'), clockPart(g));
-    return bug;
-  }
-  for (const side of ['away', 'home']) {
-    const team = g[side];
-    if (!team) continue;
-    const part = el('span');
-    part.append(team.abbr, ' ');
-    part.append(el('b', null, team.score === null ? '—' : team.score));
-    bug.append(part, el('span', 'rule'));
-  }
-  bug.append(clockPart(g));
-  return bug;
-}
-
-function clockPart(g) {
-  const part = el('span', 'clock');
-  part.textContent = (g.clock || 'LIVE').replace(' · ', ' ');
-  return part;
-}
+/*
+ * There is no score bug on this screen.
+ *
+ * There was: teams and the inning, over the top-left corner of the picture,
+ * for the whole time the game was on. Every broadcast already carries its own
+ * — networks have put one there for thirty years — so ours sat next to
+ * theirs saying the same thing in a different typeface, on the one part of
+ * the frame a director can be relied on to keep clear. The scores live on the
+ * Live TV row, which is where you are when you are choosing what to watch;
+ * once the game is on, the game is on.
+ */
 
 /** The bottom line: what this is, what is on, and how far through it is. */
 function scrim() {
@@ -786,7 +767,6 @@ export function activate(node, app) {
   }
   channel = next;
   overlay = null;
-  game = matchGame(channel);
   open(app);
 }
 
@@ -808,18 +788,4 @@ export function leave() {
   scrimLive = null;
   teardownMedia();
   overlay = null;
-}
-
-/* --------------------------------------------------------------- scores ── */
-
-let slate = [];
-getGames().then((games) => { slate = games; });
-
-/** Which placeholder game, if any, belongs to the channel now on screen. */
-function matchGame(chan) {
-  if (!usingPlaceholders() && !slate.length) return null;
-  return slate.find((g) => {
-    const matched = matchChannel(g, [chan]);
-    return Boolean(matched);
-  }) || null;
 }
