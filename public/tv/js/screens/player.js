@@ -67,6 +67,8 @@ let guideChannels = [];
 let epg = new Map();
 let game = null;
 let historyTimer = null;
+let edgeTimer = null;
+let scrimLive = null;
 let startedAt = 0;
 let host = null;
 let appRef = null;
@@ -190,6 +192,9 @@ function scrim() {
   const line = el('div', 'now-line');
   const liveTag = el('span', 'now-live');
   liveTag.append(el('span', 'live-dot'), 'LIVE');
+  /* Repainted by the behind-live watch below, which is the only thing on this
+     screen that keeps its own timer while the picture is up. */
+  scrimLive = liveTag;
   line.append(liveTag, el('span', 'now-chan', cleanName(channel.name)));
   line.append(el('span', 'now-tech', techLine()));
   left.append(line);
@@ -214,7 +219,8 @@ function scrim() {
   left.append(times);
 
   const hints = el('span', 'hintpill');
-  for (const [key, label] of [['▼', 'Guide'], ['OK', 'Channels'], ['BACK', backLabel()]]) {
+  for (const [key, label] of [['▲', 'Jump to live'], ['▼', 'Guide'], ['OK', 'Channels'],
+    ['BACK', backLabel()]]) {
     const span = el('span');
     span.append(el('b', null, key), ` ${label}`);
     hints.append(span);
@@ -335,7 +341,17 @@ function guide() {
   quad.dataset.kind = 'guidemulti';
   quad.dataset.lift = 'pill';
   quad.append(icon('multiview', 26), el('span', null, 'MULTI-VIEW'));
-  head.append(quad);
+
+  /* The same thing ▲ does on the bare picture, as a button, because the guide
+     is where you are when you notice the game is behind. */
+  const live = el('button', 'guide-mv ring');
+  live.dataset.r = 9;
+  live.dataset.c = 1;
+  live.dataset.kind = 'guidelive';
+  live.dataset.lift = 'pill';
+  live.append(el('span', 'live-dot'), el('span', null, 'JUMP TO LIVE'));
+
+  head.append(quad, live);
   wrap.append(head);
 
   const start = hourFloor(Date.now());
@@ -487,6 +503,8 @@ async function open(app) {
   repaint();
   startedAt = Date.now();
   beginHistory();
+  clearInterval(edgeTimer);
+  edgeTimer = setInterval(paintLiveTag, 2000);
 }
 
 async function attach(stream) {
@@ -557,6 +575,79 @@ async function attach(stream) {
       );
     });
   }
+}
+
+/* ------------------------------------------------------------- live edge ── */
+
+/*
+ * Getting back to the live edge, and knowing when you are not on it.
+ *
+ * A live channel here is not a stream you join at the end — it is a window.
+ * The Pi republishes about two minutes of it so a stall has somewhere to
+ * recover into, and a player that buffers, or that picks a channel back up
+ * while the box's window is still running, can end up sitting inside that
+ * window rather than at its edge: watching two minutes ago. Nothing looks
+ * wrong when that happens, which is exactly why it needs saying — the tag
+ * reads BEHIND with the delay on it, and ▲ takes you to the edge.
+ */
+const BEHIND_BY_S = 12;
+
+/**
+ * How far behind live the playhead is, in seconds. 0 when unknowable.
+ *
+ * Measured against the SEAT, not against the last byte the box has written.
+ * This player deliberately sits about forty-five seconds back in the Pi's own
+ * window — that is the cushion that stops a fumble becoming a stall — so
+ * measuring from the raw edge would report the design as a fault and leave
+ * the tag reading BEHIND 45s for ever, including immediately after a jump.
+ * What is worth reporting is the delay ON TOP of the seat.
+ */
+function behindBy() {
+  const video = media.video;
+  if (!video) return 0;
+  const ranges = video.seekable && video.seekable.length ? video.seekable : video.buffered;
+  if (!ranges || !ranges.length) return 0;
+  const edge = ranges.end(ranges.length - 1);
+  if (!Number.isFinite(edge)) return 0;
+  const seat = media.hls && Number.isFinite(media.hls.liveSyncPosition)
+    ? Math.max(0, edge - media.hls.liveSyncPosition)
+    : 0;
+  return Math.max(0, edge - video.currentTime - seat);
+}
+
+/** Put the playhead back on the live edge, whichever engine is carrying it. */
+export function jumpToLive() {
+  const video = media.video;
+  if (!video) return;
+  const behind = behindBy();
+
+  if (media.hls && Number.isFinite(media.hls.liveSyncPosition)) {
+    /* hls.js knows where its own seat is — the edge less the distance this
+       player joins at — and going there rather than to the very end keeps the
+       cushion that stops the next fumble becoming a stall. */
+    video.currentTime = media.hls.liveSyncPosition;
+  } else {
+    const ranges = video.seekable && video.seekable.length ? video.seekable : video.buffered;
+    if (ranges && ranges.length) video.currentTime = Math.max(0, ranges.end(ranges.length - 1) - 1);
+  }
+  video.play().catch(() => {});
+  if (appRef) {
+    appRef.toast(behind > BEHIND_BY_S
+      ? `Back to live — you were ${Math.round(behind)}s behind.`
+      : 'Back to live.');
+  }
+  paintLiveTag();
+}
+
+/** LIVE, or BEHIND with the number on it. */
+function paintLiveTag() {
+  if (!scrimLive || !scrimLive.isConnected) return;
+  const behind = behindBy();
+  const late = behind > BEHIND_BY_S;
+  scrimLive.classList.toggle('behind', late);
+  clear(scrimLive);
+  scrimLive.append(el('span', 'live-dot'));
+  scrimLive.append(late ? `BEHIND ${Math.round(behind)}s` : 'LIVE');
 }
 
 /**
@@ -654,6 +745,13 @@ export function onKey(key, { back, ok }) {
     repaint();
     return true;
   }
+  /* Nothing above the bare picture to move to, so ▲ is the one key on this
+     screen with nothing to do — and getting back to the edge is the thing
+     most worth a single press. */
+  if (key === 'ArrowUp' && !overlay) {
+    jumpToLive();
+    return true;
+  }
   if (key === 'ArrowUp' && overlay === 'bar') {
     overlay = null;
     repaint();
@@ -669,6 +767,13 @@ export function activate(node, app) {
   if (node.dataset.kind === 'guidemulti') {
     overlay = null;
     app.go('multi');
+    return;
+  }
+
+  if (node.dataset.kind === 'guidelive') {
+    jumpToLive();
+    overlay = null;
+    repaint();
     return;
   }
 
@@ -698,6 +803,9 @@ export function tuneDismissed() {
 export function leave() {
   clearInterval(historyTimer);
   historyTimer = null;
+  clearInterval(edgeTimer);
+  edgeTimer = null;
+  scrimLive = null;
   teardownMedia();
   overlay = null;
 }

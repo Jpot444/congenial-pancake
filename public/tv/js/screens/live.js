@@ -24,6 +24,11 @@ const CATS_PER_GRID_ROW = 8;
 /* Five 320px cards and four 24px gaps is 1,696 of the 1,792 the stage leaves
    between its margins — the widest a channel grid goes without reflowing. */
 const CHANS_PER_GRID_ROW = 5;
+/* A baseball evening is fifteen games; a football Sunday is thirteen and a
+   whip-around. The row is what is ON, so it runs live first, then what is
+   about to start, and finals bring up the rear. */
+const GAMES_IN_ROW = 16;
+const SLATE_ORDER = { live: 0, upcoming: 1, final: 2 };
 
 let view = { games: [], channels: [], categories: [], epg: new Map(), lib: null };
 /** What row 2 is showing: favourites and pins, or one chosen category. */
@@ -41,7 +46,10 @@ export async function render(host, app) {
   if (channelSource) return renderCategory(host);
 
   const [games] = await Promise.all([getGames()]);
-  view.games = games;
+  view.games = [...games]
+    .sort((a, b) => (SLATE_ORDER[a.status] ?? 3) - (SLATE_ORDER[b.status] ?? 3)
+      || (a.kickoff || 0) - (b.kickoff || 0))
+    .slice(0, GAMES_IN_ROW);
 
   view.categories = pinnedFirst(lib.categories || [], 'live');
   view.channels = channelsForRow(lib);
@@ -159,13 +167,16 @@ function gameCard(game, c) {
 function gameTop(game, channel) {
   const top = el('div', 'game-top');
   const name = el('span', 'game-chan');
-  const label = channel ? channel.name : game.channelName;
-  name.append(label);
+  name.append(cleanName(channel ? channel.name : game.channelName));
   if (channel && channel.uhd) name.append(el('span', 'hd', ' UHD'));
   top.append(name);
 
   if (game.status === 'upcoming') {
     top.append(el('span', 'game-time', game.clock || ''));
+  } else if (game.status === 'final') {
+    /* A game that is over is not live, and a red dot saying it is turns the
+       whole row into a thing you cannot trust. */
+    top.append(el('span', 'game-time', 'FINAL'));
   } else {
     const tag = el('span', 'live-tag');
     tag.append(el('span', 'live-dot'), 'LIVE');
@@ -251,11 +262,14 @@ function gameFoot(game, channel) {
 }
 
 function kickoffNote(game) {
-  if (!game.kickoff) return game.clock ? `Kicks off ${game.clock}` : 'Later today';
+  /* Baseball does not kick off. One word, taken from the sport the game came
+     with rather than from the one this row was first written for. */
+  const start = game.sport === 'mlb' ? 'First pitch' : 'Kicks off';
+  if (!game.kickoff) return game.clock ? `${start} ${game.clock}` : 'Later today';
   const mins = Math.round((game.kickoff - Date.now()) / 60000);
   if (mins <= 0) return 'Starting now';
-  if (mins < 60) return `Kicks off in ${mins} min`;
-  return `Kicks off at ${new Date(game.kickoff).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  if (mins < 60) return `${start} in ${mins} min`;
+  return `${start} at ${new Date(game.kickoff).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
 }
 
 /* ---------------------------------------------------------- the channels ── */

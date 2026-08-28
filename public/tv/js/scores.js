@@ -14,12 +14,17 @@
  *
  * ── The Game shape ───────────────────────────────────────────────────────
  *   id           string   stable per game
+ *   sport        'nfl' | 'mlb'
  *   status       'live' | 'upcoming' | 'final'
  *   channelMatch string   how this game finds its channel in the real live
  *                         library — matched loosely against channel names, so
  *                         'FOX' finds 'US| FOX ᴴᴰ'. This is what makes OK on a
  *                         score card tune the actual broadcast.
  *   channelName  string   what to print when no channel matches
+ *   teamMatch    string[] the two teams' short names ('Rockies', 'Nationals'),
+ *                         which is how a game finds the provider's channel FOR
+ *                         THAT GAME — 'MLB 01 | Rockies x Nationals' — rather
+ *                         than the network carrying it
  *   redZone      boolean  the whip-around card, which gets the brand field
  *   away/home    { abbr, record, score, possession }
  *   clock        string   'Q2 · 4:22'
@@ -40,7 +45,7 @@
  * already emits the Game shape below, so `normalize()` has almost nothing
  * left to do.
  */
-const ENDPOINT = '/api/scores/nfl';
+const ENDPOINT = '/api/scores';
 
 /**
  * Every field a screen may read, with nothing missing.
@@ -53,9 +58,11 @@ const ENDPOINT = '/api/scores/nfl';
 function normalize(row) {
   return {
     id: String(row.id ?? ''),
+    sport: row.sport || 'nfl',
     status: row.status || 'live',
     channelMatch: row.channelMatch || '',
     channelName: row.channelName || '',
+    teamMatch: Array.isArray(row.teamMatch) ? row.teamMatch.filter(Boolean) : [],
     redZone: Boolean(row.redZone),
     away: row.away || null,
     home: row.home || null,
@@ -143,6 +150,21 @@ export const usingPlaceholders = () => !ENDPOINT || !live;
  * is not beaten by 'NFL'.
  */
 export function matchChannel(game, channels) {
+  /* The game's OWN channel first. On a baseball night this provider carries a
+     row per game — 'MLB 01 | Rockies x Nationals' — and that is the broadcast
+     itself rather than the network that happens to be showing it, so a channel
+     naming both teams beats anything the network match could find. */
+  const teams = (game.teamMatch || []).map((t) => String(t).toUpperCase().trim()).filter(Boolean);
+  if (teams.length >= 2) {
+    let byTeams = null;
+    for (const channel of channels) {
+      const name = String(channel.name || '').toUpperCase();
+      if (!teams.every((team) => name.includes(team))) continue;
+      if (!byTeams || name.length < String(byTeams.name).length) byTeams = channel;
+    }
+    if (byTeams) return byTeams;
+  }
+
   const needle = (game.channelMatch || game.channelName || '').toUpperCase().trim();
   if (!needle) return null;
   let best = null;

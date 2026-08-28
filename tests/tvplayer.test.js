@@ -65,12 +65,29 @@ const PLAYLIST = [
      assertions below look at is our code's side of that contract. */
   await page.route('**/cdn.jsdelivr.net/**', (r) => r.abort());
   await page.addInitScript(() => {
-    window.__hls = { config: null, url: '', handlers: [] };
+    window.__hls = { config: null, url: '', handlers: [], seeks: [] };
     class StandInHls {
       static isSupported() { return true; }
-      constructor(config) { window.__hls.config = config; }
+      constructor(config) {
+        window.__hls.config = config;
+        /* Where this player seats itself in the box's window: the edge is at
+           345s, the seat 45s back from it, and the playhead starts three
+           minutes behind even that — a channel picked back up mid-window. */
+        this.liveSyncPosition = 300;
+      }
       loadSource(url) { window.__hls.url = url; }
-      attachMedia(video) { video.src = URL.createObjectURL(new MediaSource()); }
+      attachMedia(video) {
+        video.src = URL.createObjectURL(new MediaSource());
+        Object.defineProperty(video, 'currentTime', {
+          configurable: true,
+          get() { return this._t ?? 100; },
+          set(v) { this._t = v; window.__hls.seeks.push(Math.round(v)); },
+        });
+        Object.defineProperty(video, 'seekable', {
+          configurable: true,
+          get: () => ({ length: 1, start: () => 0, end: () => 345 }),
+        });
+      }
       on(event) { window.__hls.handlers.push(event); }
       startLoad() {}
       recoverMediaError() {}
@@ -147,6 +164,34 @@ const PLAYLIST = [
     cfg.url === '/hls/live-101/index.m3u8', cfg.url);
   check('with somebody listening for its errors', cfg.handlers.includes('hlsError'));
 
+  /* A live channel here is a WINDOW, not a stream you join at the end, so a
+     player can end up sitting inside it — watching two minutes ago with
+     nothing on screen to say so. */
+  console.log('\n  behind live');
+  const late = await page.evaluate(() => ({
+    tag: document.querySelector('.now-live')?.textContent || '',
+    behind: document.querySelector('.now-live')?.classList.contains('behind'),
+    hints: document.querySelector('.player-scrim .hintpill')?.textContent || '',
+  }));
+  console.log('   late  :', JSON.stringify(late));
+  check('the scrim says how far behind live it is', /BEHIND \d+s/.test(late.tag), late.tag);
+  check('and the key that fixes it is on the hint line',
+    late.hints.includes('Jump to live'), late.hints);
+
+  await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(400);
+  const jumped = await page.evaluate(() => ({
+    seeks: window.__hls.seeks,
+    tag: document.querySelector('.now-live')?.textContent || '',
+  }));
+  console.log('   jumped:', JSON.stringify(jumped));
+  check('▲ moves the playhead to the engine\'s live seat',
+    jumped.seeks.includes(300), JSON.stringify(jumped.seeks));
+  /* Measured against the seat, not the last byte written: this player sits 45s
+     back on purpose, and reporting the design as a fault would leave the tag
+     reading BEHIND for ever, including straight after a jump. */
+  check('and the tag reads LIVE once it is there', jumped.tag === 'LIVE', jumped.tag);
+
   console.log('\n  opening and closing the guide');
   await page.keyboard.press('ArrowDown');
   await page.waitForTimeout(300);
@@ -165,6 +210,7 @@ const PLAYLIST = [
     head: document.querySelector('.guide-head h2')?.textContent || '',
     rows: [...document.querySelectorAll('.guide-name')].map((n) => n.textContent),
     multi: Boolean(document.querySelector('.guide-mv')),
+    buttons: [...document.querySelectorAll('.guide-head button')].map((n) => n.textContent),
   }));
   console.log('   sched :', JSON.stringify(schedule));
   check('and it is the category of what is playing, by name',
@@ -173,6 +219,8 @@ const PLAYLIST = [
     schedule.rows.length === 2 && schedule.rows.every((n) => n.startsWith('ABC') || n.startsWith('NBC')),
     schedule.rows.join(' | '));
   check('with a way into multi-view from inside it', schedule.multi);
+  check('and a jump-to-live button beside it',
+    schedule.buttons.includes('JUMP TO LIVE'), schedule.buttons.join(' | '));
   check('over the same video element it was already playing',
     guided.probe === 'tuned' && guided.src === 'blob:', JSON.stringify(guided));
 

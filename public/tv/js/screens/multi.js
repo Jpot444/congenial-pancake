@@ -11,7 +11,7 @@
  * ▲▼◀▶ moves the audio, OK takes that cell full screen, BACK returns.
  */
 
-import { el, clear, plateText } from '../ui.js';
+import { el, clear, plateText, toast } from '../ui.js';
 import { focus } from '../focus.js';
 import { getPlay } from '../api.js';
 import { loadLibrary, loadEpg, nowOn, favorites, pinnedIds } from '../state.js';
@@ -42,13 +42,27 @@ export async function render(host, app) {
   const left = el('div', 'left');
   left.append(el('h2', null, 'MULTI-VIEW'));
   left.append(el('span', 'meta', `${cells.length} games · audio follows focus`));
+
   const hints = el('span', 'hintpill');
   for (const [key, label] of [['▲▼◀▶', 'Audio'], ['OK', 'Full screen'], ['BACK', 'Live TV']]) {
     const span = el('span');
     span.append(el('b', null, key), ` ${label}`);
     hints.append(span);
   }
-  bar.append(left, hints);
+
+  /* Row 22 is under the bottom pair, so ▼ from either of them lands on it.
+     Four cells drift apart on their own — each is a separate stream with its
+     own stalls — and this puts all four back on the edge together. */
+  const live = el('button', 'multi-live ring');
+  live.dataset.r = 22;
+  live.dataset.c = 0;
+  live.dataset.kind = 'multilive';
+  live.dataset.lift = 'pill';
+  live.append(el('span', 'live-dot'), el('span', null, 'JUMP ALL TO LIVE'));
+
+  const right = el('div', 'right');
+  right.append(live, hints);
+  bar.append(left, right);
   root.append(bar);
 
   clear(host).append(root);
@@ -182,6 +196,9 @@ function fault(cell, detail) {
 /** Audio follows focus: exactly one cell is heard, and it says which. */
 export function onFocus(node) {
   const active = node && node._cell;
+  /* The bar's own button is not a cell. Focusing it must not mute the game
+     that is currently being heard. */
+  if (!active) return;
   for (const cell of cells) {
     const on = cell === active;
     if (cell.video) cell.video.muted = !on;
@@ -195,9 +212,40 @@ export function onFocus(node) {
 }
 
 export function activate(node, app) {
+  if (node.dataset.kind === 'multilive') {
+    jumpAllToLive();
+    return;
+  }
   const cell = node._cell;
   if (!cell) return;
   app.go('player', { channel: cell.channel, from: 'multi' });
+}
+
+/**
+ * Every cell back to its own live edge.
+ *
+ * Each one is its own window with its own delay, so this is four independent
+ * seeks rather than one — and the count that comes back is the honest one:
+ * cells that were already live are not claimed as fixed.
+ */
+function jumpAllToLive() {
+  let moved = 0;
+  for (const cell of cells) {
+    const video = cell.video;
+    if (!video) continue;
+    const ranges = video.seekable && video.seekable.length ? video.seekable : video.buffered;
+    if (!ranges || !ranges.length) continue;
+    const edge = ranges.end(ranges.length - 1);
+    if (!Number.isFinite(edge)) continue;
+    if (edge - video.currentTime > 4) moved += 1;
+    video.currentTime = cell.hls && Number.isFinite(cell.hls.liveSyncPosition)
+      ? cell.hls.liveSyncPosition
+      : Math.max(0, edge - 1);
+    video.play().catch(() => {});
+  }
+  toast(moved
+    ? `${moved} of ${cells.length} were behind — all back to live.`
+    : 'All four were already live.');
 }
 
 export function leave() {

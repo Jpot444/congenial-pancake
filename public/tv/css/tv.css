@@ -961,6 +961,11 @@ a { color: var(--text); text-decoration: none; }
   gap: 10px;
 }
 .now-live .live-dot { width: 11px; height: 11px; }
+
+/* Sitting inside the box's window rather than at its edge. Amber rather than
+   red: nothing is broken, you are simply not on the live edge — and ▲ is. */
+.now-live.behind { color: var(--warn-soft); }
+.now-live.behind .live-dot { background: var(--warn-soft); animation: none; }
 .now-chan { font-family: var(--display); font-size: 26px; letter-spacing: .08em; color: var(--muted); }
 .now-tech { font-size: 22px; color: var(--muted-dim); }
 .now-title {
@@ -1239,6 +1244,31 @@ a { color: var(--text); text-decoration: none; }
 }
 .multi-bar .meta { font-size: 22px; color: var(--muted-dim); }
 .multi-bar .hintpill { backdrop-filter: none; }
+.multi-bar .right { display: flex; align-items: center; gap: 20px; }
+
+/* Four cells drift apart on their own — each one is a separate stream with
+   its own stalls — so this puts all four back on the edge at once. */
+.multi-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  padding: 0 24px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  font-family: var(--display);
+  font-size: 24px;
+  letter-spacing: .06em;
+  color: var(--text);
+  cursor: pointer;
+}
+.multi-live.f {
+  background: var(--text);
+  color: var(--on-light);
+  border-color: var(--text);
+}
+.multi-live.f .live-dot { background: var(--on-light); }
 
 /* ─────────────────────────────────────────────── hints and the loader ─── */
 

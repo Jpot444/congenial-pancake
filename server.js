@@ -3999,6 +3999,143 @@ async function nflScores() {
   return nflCache;
 }
 
+/*
+ * The baseball slate, from the same scoreboard.
+ *
+ * Same shape, same reasons, different sport — and in this house the sport that
+ * is actually on for six months of the year. Two things about baseball that
+ * football does not have:
+ *
+ *   - There is no clock. The half-inning IS the clock, and ESPN already writes
+ *     it the way a broadcast does ('Top 5th'), so that is taken rather than
+ *     rebuilt out of a period number.
+ *   - The provider carries a channel PER GAME on nights like this — 'MLB 01 |
+ *     Rockies x Nationals' — which is a better match than the network
+ *     carrying it. So both team names travel with the game and the television
+ *     tries them first; see matchChannel in public/tv/js/scores.js.
+ */
+const MLB_URL = process.env.MLB_URL
+  || 'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard';
+const MLB_TTL_MS = 30000;
+let mlbCache = { at: 0, games: [], error: '' };
+
+/** One ESPN baseball event as the Game shape the television documents. */
+function mlbGame(event) {
+  const comp = (event.competitions || [])[0] || {};
+  const status = comp.status || event.status || {};
+  const type = status.type || {};
+  const state = nflStatus(type.state);
+  const situation = comp.situation || {};
+
+  const side = (which) => {
+    const c = (comp.competitors || []).find((x) => x.homeAway === which) || null;
+    if (!c) return null;
+    return {
+      abbr: c.team?.abbreviation || c.team?.shortDisplayName || '',
+      record: (c.records || [])[0]?.summary || '',
+      score: c.score === undefined || c.score === null || c.score === ''
+        ? null : Number(c.score),
+      /* The dot marks who is at bat, which is what possession means in a game
+         with no ball to hold: the away side bats the top of the inning. */
+      possession: state === 'live' && which === (topOfInning(type) ? 'away' : 'home'),
+    };
+  };
+
+  const first = Date.parse(comp.date || event.date || '') || 0;
+  let clock = '';
+  if (state === 'live') {
+    // 'Top 5th', 'Mid 5th', 'Bot 7th' — ESPN writes the half-inning the way a
+    // broadcast says it, so there is nothing to improve on here.
+    clock = type.shortDetail || type.detail
+      || (Number(status.period) ? `Inning ${status.period}` : 'LIVE');
+  } else if (state === 'final') {
+    clock = type.shortDetail || 'Final';
+  } else if (first) {
+    clock = new Date(first).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+
+  let line = '';
+  if (state === 'live') {
+    /* Named the way a broadcast names them, which is up the diamond: first,
+       second, third — 'runners on first and third', never 'third and first'. */
+    const bases = [
+      situation.onFirst ? '1st' : '',
+      situation.onSecond ? '2nd' : '',
+      situation.onThird ? '3rd' : '',
+    ].filter(Boolean);
+    const outs = Number.isFinite(Number(situation.outs))
+      ? `${Number(situation.outs)} out` : '';
+    const count = Number.isFinite(Number(situation.balls)) && Number.isFinite(Number(situation.strikes))
+      ? `${Number(situation.balls)}-${Number(situation.strikes)}` : '';
+    line = [outs, bases.length ? `${bases.join(' & ')}` : 'bases empty', count]
+      .filter(Boolean).join(' · ');
+  }
+
+  const network = (comp.broadcasts || [])
+    .flatMap((b) => b.names || [])
+    .filter(Boolean)[0] || '';
+
+  /* 'Rockies', 'Nationals' — what an event channel is named after. */
+  const teamMatch = ['away', 'home']
+    .map((which) => (comp.competitors || []).find((x) => x.homeAway === which))
+    .map((c) => c?.team?.shortDisplayName || c?.team?.name || '')
+    .filter(Boolean);
+
+  let note = '';
+  if (state === 'upcoming' && first) {
+    const mins = Math.round((first - Date.now()) / 60000);
+    if (mins > 0 && mins < 240) note = `First pitch in ${mins} min`;
+  }
+
+  return {
+    id: String(event.id || comp.id || ''),
+    sport: 'mlb',
+    status: state,
+    channelMatch: network,
+    channelName: network || teamMatch.join(' at '),
+    teamMatch,
+    redZone: false,
+    away: side('away'),
+    home: side('home'),
+    clock,
+    situation: line,
+    kickoff: first,
+    note,
+    progress: null,
+    placeholder: false,
+  };
+}
+
+/** Whether the away side is batting, read off however ESPN phrased it. */
+function topOfInning(type) {
+  const said = String(type.shortDetail || type.detail || '').toLowerCase();
+  if (said.startsWith('top') || said.startsWith('mid')) return true;
+  if (said.startsWith('bot') || said.startsWith('end')) return false;
+  return true;
+}
+
+async function mlbScores() {
+  if (Date.now() - mlbCache.at < MLB_TTL_MS) return mlbCache;
+  try {
+    const res = await request(MLB_URL, { headers: { accept: 'application/json' } });
+    if ((res.statusCode || 500) >= 400) {
+      res.resume();
+      throw new Error(`HTTP ${res.statusCode}`);
+    }
+    const body = JSON.parse((await readBody(res)).toString('utf8'));
+    const games = (body.events || []).map(mlbGame).filter((g) => g.id);
+    mlbCache = { at: Date.now(), games, error: '' };
+  } catch (err) {
+    const stale = Date.now() - mlbCache.at < 10 * 60 * 1000;
+    mlbCache = {
+      at: stale ? mlbCache.at : Date.now(),
+      games: stale ? mlbCache.games : [],
+      error: err.message,
+    };
+  }
+  return mlbCache;
+}
+
 /** Where the open guides live, and where to go looking for the current names. */
 const GUIDE_CATALOGUE_HOME = 'https://epgshare01.online/epgshare01/';
 
@@ -5284,6 +5421,37 @@ async function handleApi(req, res, pathname, query) {
       games: slate.games,
       at: slate.at,
       error: slate.error || undefined,
+    });
+  }
+
+  /* ---- The baseball slate ---- */
+  if (pathname === '/api/scores/mlb') {
+    const slate = await mlbScores();
+    return json(res, 200, {
+      games: slate.games,
+      at: slate.at,
+      error: slate.error || undefined,
+    });
+  }
+
+  /* ---- Both, in one call ----
+   *
+   * The television asks for the sports it can show rather than for a sport it
+   * has to know about, so a season ending is not a change to the app: in
+   * August this answers baseball and nothing else, in December it answers
+   * both, and the row simply shows what is live. Fetched together and each
+   * cached on its own, so a sport that is out of season — or a feed that is
+   * down — costs an empty list rather than the whole row. */
+  if (pathname === '/api/scores') {
+    const [nfl, mlb] = await Promise.all([nflScores(), mlbScores()]);
+    const games = [
+      ...nfl.games.map((g) => ({ ...g, sport: g.sport || 'nfl' })),
+      ...mlb.games,
+    ];
+    return json(res, 200, {
+      games,
+      at: Math.max(nfl.at, mlb.at),
+      error: [nfl.error, mlb.error].filter(Boolean).join(' · ') || undefined,
     });
   }
 
