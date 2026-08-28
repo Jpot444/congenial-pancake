@@ -4367,6 +4367,35 @@ function topOfInning(type) {
 const MLB_STATS_URL = process.env.MLB_STATS_URL
   || 'https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=team,linescore,broadcasts(all)';
 
+/*
+ * The same schedule, asked for the starting pitchers as well.
+ *
+ * A card for a game that has not started shows the two probables with their
+ * record and ERA, which is the only thing there is to say about a game with no
+ * score yet — and none of it is in the bare schedule. Nested hydration is how
+ * statsapi is asked for a pitcher's season line in the same call rather than
+ * two lookups per game, thirty times a day.
+ *
+ * Asked FIRST and not INSTEAD: a hydration string the API dislikes is a 400
+ * for the whole schedule, which would take the scores down to add a detail to
+ * them. So the plain URL above stays in the list behind it, and a day when
+ * this form stops being accepted costs the pitcher lines and nothing else.
+ */
+const MLB_STATS_FULL_URL = process.env.MLB_STATS_FULL_URL
+  /* A box told where the schedule lives means both forms of it. Reading only
+     the plain override would leave this one still pointed at the league while
+     everything else had been redirected — which is a test, or a mirror, quietly
+     talking to two different servers. */
+  || process.env.MLB_STATS_URL
+  || 'https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=team,linescore,'
+    + 'broadcasts(all),probablePitcher(stats(group=pitching,type=season))';
+
+/* The league's own marks, which is where a logo for an MLB club should come
+   from: one address per team id, served by the league, no scraping and nothing
+   to keep up to date when a club changes its cap. Fetched through the box's
+   image proxy so the living room is not making requests to mlbstatic.com. */
+const mlbLogo = (id) => (id ? `https://www.mlbstatic.com/team-logos/${id}.svg` : '');
+
 /** One statsapi.mlb.com game as the Game shape the television documents. */
 function mlbStatsGame(game) {
   const line = game.linescore || {};
@@ -4377,15 +4406,41 @@ function mlbStatsGame(game) {
   const half = String(line.inningState || '').toLowerCase();
   const top = half.startsWith('top') || half.startsWith('mid');
 
+  /* The starting pitcher and his season line, as the card prints it:
+     "De La Rosa (2-2, 2.84)". Every part of it is optional — the probable is
+     not named until the club says so, and a pitcher making his debut has no
+     record to show — so each piece is carried separately and the card writes
+     whatever arrived. */
+  const probable = (t) => {
+    const p = t && t.probablePitcher;
+    if (!p || !p.fullName) return null;
+    const line = (p.stats || [])
+      .map((s) => s.splits && s.splits[0] && s.splits[0].stat)
+      .find((stat) => stat && (stat.era !== undefined || stat.wins !== undefined)) || {};
+    return {
+      name: p.fullName,
+      /* The surname is what a scoreboard has room for. */
+      last: String(p.lastName || p.fullName).split(' ').slice(-1)[0] || p.fullName,
+      wins: Number.isFinite(Number(line.wins)) ? Number(line.wins) : null,
+      losses: Number.isFinite(Number(line.losses)) ? Number(line.losses) : null,
+      era: line.era !== undefined && line.era !== null && line.era !== '-.--'
+        ? String(line.era) : '',
+    };
+  };
+
   const side = (which) => {
     const t = teams[which];
     if (!t) return null;
     const record = t.leagueRecord;
     return {
       abbr: t.team?.abbreviation || t.team?.teamName || '',
+      /* The club's own id, which is the address of its mark. */
+      teamId: Number(t.team?.id) || null,
+      logo: mlbLogo(t.team?.id),
       record: record && Number.isFinite(record.wins) ? `${record.wins}-${record.losses}` : '',
       score: Number.isFinite(t.score) ? Number(t.score) : null,
       possession: state === 'live' && which === (top ? 'away' : 'home'),
+      pitcher: probable(t),
     };
   };
 
@@ -4432,10 +4487,35 @@ function mlbStatsGame(game) {
     if (mins > 0 && mins < 240) note = `First pitch in ${mins} min`;
   }
 
+  /* The diamond and the count, as numbers rather than as the sentence the
+     television used to print. A scoreboard draws these — three bases lit or
+     unlit, and three rows of dots — and it cannot do that from "1 out · 1st &
+     3rd · 2-1". The sentence stays too: the Shield still reads it. */
+  const offense = line.offense || {};
+  const onBase = {
+    first: Boolean(offense.first),
+    second: Boolean(offense.second),
+    third: Boolean(offense.third),
+  };
+  const count = {
+    balls: Number.isFinite(line.balls) ? line.balls : null,
+    strikes: Number.isFinite(line.strikes) ? line.strikes : null,
+    outs: Number.isFinite(line.outs) ? line.outs : null,
+  };
+
+  /* What the league itself calls this game's state — 'Warmup', 'Pre-Game',
+     'Delayed: Rain', 'Postponed'. Warmup is the one worth drawing: it is the
+     moment the broadcast comes on, which is the moment there is a point in
+     tuning to the channel. */
+  const detailState = String(game.status?.detailedState || '');
+
   return {
     id: String(game.gamePk || ''),
     sport: 'mlb',
     status: state,
+    /* The league's own word for it, beside our three-state summary. */
+    detailedState: detailState,
+    warmup: /warmup/i.test(detailState),
     channelMatch: network,
     channelName: network || teamMatch.join(' at '),
     teamMatch,
@@ -4443,6 +4523,10 @@ function mlbStatsGame(game) {
     away: side('away'),
     home: side('home'),
     clock,
+    inningState: String(line.inningState || ''),
+    inning: line.currentInningOrdinal || '',
+    onBase,
+    count,
     situation,
     kickoff: first,
     note,
@@ -4477,14 +4561,20 @@ async function mlbScores() {
   if (Date.now() - mlbCache.at < MLB_TTL_MS) return mlbCache;
 
   const tried = [];
+  const fromStats = async (url) => {
+    const body = await fetchJson(url, { accept: 'application/json' });
+    return (body.dates || [])
+      .flatMap((d) => d.games || [])
+      .map(mlbStatsGame)
+      .filter((g) => g.id);
+  };
   const sources = [
-    ['statsapi.mlb.com', async () => {
-      const body = await fetchJson(MLB_STATS_URL, { accept: 'application/json' });
-      return (body.dates || [])
-        .flatMap((d) => d.games || [])
-        .map(mlbStatsGame)
-        .filter((g) => g.id);
-    }],
+    /* With the pitchers, then without them. A hydration string the API stops
+       accepting must cost the pitcher lines, not the scores — and when the two
+       forms are the same address there is only one door to knock on. */
+    ['statsapi.mlb.com', () => fromStats(MLB_STATS_FULL_URL)],
+    ...(MLB_STATS_URL === MLB_STATS_FULL_URL ? []
+      : [['statsapi.mlb.com (no pitchers)', () => fromStats(MLB_STATS_URL)]]),
     ['espn', async () => {
       const body = await fetchJson(MLB_URL, SITE_HEADERS);
       return (body.events || []).map(mlbGame).filter((g) => g.id);
@@ -5305,6 +5395,7 @@ async function handleApi(req, res, pathname, query) {
         return json(res, 200, {
           favorites: profile.favorites || [],
           pinnedCategories: profile.pinnedCategories || [],
+          pinnedGames: profile.pinnedGames || [],
           pinOrder: profile.pinOrder || {},
           deletedItems: profile.deletedItems || [],
           deletedCategories: profile.deletedCategories || [],
@@ -5350,6 +5441,16 @@ async function handleApi(req, res, pathname, query) {
         }
         if (Array.isArray(incoming.pinnedCategories)) {
           profile.pinnedCategories = incoming.pinnedCategories.slice(0, 300);
+        }
+        /* The starred games. Ids with the moment they were starred, so the
+           list can be pruned by age — a game id is good for a day, and a
+           profile that collected them for a season would be a list of
+           thousands of games nobody can name. */
+        if (Array.isArray(incoming.pinnedGames)) {
+          profile.pinnedGames = incoming.pinnedGames
+            .filter((p) => p && p.id)
+            .map((p) => ({ id: String(p.id).slice(0, 40), at: Number(p.at) || 0 }))
+            .slice(0, 60);
         }
         // These three were being dropped on the floor. The client has kept
         // them in the same object as favorites for a while, and PUT only ever
@@ -6092,7 +6193,7 @@ async function handleApi(req, res, pathname, query) {
           sport: 'mlb',
           /* Two sources, asked in this order. Which one answered matters when
              one of them is refusing the box. */
-          url: [MLB_STATS_URL, MLB_URL],
+          url: [...new Set([MLB_STATS_FULL_URL, MLB_STATS_URL, MLB_URL])],
           source: mlb.source || undefined,
           games: mlb.games.length,
           at: mlb.at,

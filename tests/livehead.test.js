@@ -59,19 +59,31 @@ const SCORES = {
   games: [
     { id: 'col-was', sport: 'mlb', status: 'live', channelMatch: 'MLB NETWORK',
       channelName: 'MLB Network', teamMatch: ['Rockies', 'Nationals'],
-      away: { abbr: 'COL', record: '60-70', score: 5, possession: true },
-      home: { abbr: 'WSH', record: '58-72', score: 3, possession: false },
-      clock: 'Top 5th', situation: '1 out · 1st & 3rd · 2-1', progress: 40 },
-    { id: 'lad-sfg', sport: 'mlb', status: 'upcoming', channelMatch: 'FOX',
-      channelName: 'FOX', teamMatch: ['Dodgers', 'Giants'],
-      away: { abbr: 'LAD', record: '80-50', score: null },
-      home: { abbr: 'SF', record: '70-60', score: null },
-      clock: '9:45 PM', kickoff: Date.now() + 30 * 60000, note: '' },
+      detailedState: 'In Progress', warmup: false,
+      away: { abbr: 'COL', teamId: 115, logo: 'https://www.mlbstatic.com/team-logos/115.svg',
+        record: '60-70', score: 6, possession: true },
+      home: { abbr: 'WSH', teamId: 120, logo: 'https://www.mlbstatic.com/team-logos/120.svg',
+        record: '58-72', score: 1, possession: false },
+      clock: 'Top 9th', inningState: 'Top', inning: '9th',
+      onBase: { first: true, second: false, third: true },
+      count: { balls: 2, strikes: 1, outs: 1 },
+      situation: '1 out · 1st & 3rd · 2-1', progress: 40 },
+    { id: 'bos-oak', sport: 'mlb', status: 'upcoming', channelMatch: 'FOX',
+      channelName: 'FOX', teamMatch: ['Red Sox', 'Athletics'],
+      detailedState: 'Warmup', warmup: true,
+      away: { abbr: 'BOS', teamId: 111, logo: 'https://www.mlbstatic.com/team-logos/111.svg',
+        record: '70-60', score: null,
+        pitcher: { name: 'Jorge De La Rosa', last: 'De La Rosa', wins: 2, losses: 2, era: '2.84' } },
+      home: { abbr: 'OAK', teamId: 133, logo: 'https://www.mlbstatic.com/team-logos/133.svg',
+        record: '65-65', score: null,
+        pitcher: { name: 'Jesse Chavez', last: 'Chavez', wins: 6, losses: 4, era: '2.93' } },
+      clock: '4:05 PM', kickoff: Date.now() + 20 * 60000 },
     { id: 'nyy-bos', sport: 'mlb', status: 'final', channelMatch: 'YES NETWORK',
       channelName: 'YES Network', teamMatch: ['Yankees', 'Red Sox'],
-      away: { abbr: 'NYY', record: '75-55', score: 2, possession: false },
-      home: { abbr: 'BOS', record: '68-62', score: 7, possession: false },
-      clock: 'Final', situation: '' },
+      detailedState: 'Final', warmup: false,
+      away: { abbr: 'NYY', teamId: 147, logo: '', record: '75-55', score: 2 },
+      home: { abbr: 'BOS2', teamId: 111, logo: '', record: '68-62', score: 7 },
+      clock: 'Final' },
   ],
 };
 
@@ -102,6 +114,16 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
       body: '{"recentlyWatched":[],"categoryAffinity":[],"ratings":{}}' }));
   await page.route('**/api/epg/**', (r) =>
     r.fulfill({ status: 200, contentType: 'application/json', body: '{"channels":[]}' }));
+  /* The league's marks come through the box's image proxy, which cannot reach
+     mlbstatic.com from a test machine — and a mark that does not load is
+     removed on purpose, so without this every card would be exercising the
+     fallback instead of the badge. */
+  await page.route('**/img?u=**', (r) => r.fulfill({
+    status: 200,
+    contentType: 'image/svg+xml',
+    body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect '
+      + 'width="40" height="40" fill="#456"/></svg>',
+  }));
   page.__scoreCalls = 0;
   await page.route('**/api/scores**', (r) => {
     page.__scoreCalls += 1;
@@ -129,11 +151,22 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
     title: document.querySelector('.sc-title')?.textContent,
     meta: document.querySelector('.sc-meta')?.textContent,
     cards: [...document.querySelectorAll('.sc-card')].map((c) => ({
-      chan: c.querySelector('.sc-chan')?.textContent,
       cls: c.className,
-      dead: c.disabled,
-      scores: [...c.querySelectorAll('.sc-score')].map((s) => s.textContent),
-      foot: c.querySelector('.sc-sit')?.textContent,
+      dead: c.querySelector('.sc-tune').disabled,
+      score: c.querySelector('.sc-score')?.textContent ?? null,
+      half: c.querySelector('.sc-half, .sc-final')?.textContent ?? null,
+      time: c.querySelector('.sc-time')?.textContent ?? null,
+      warmup: c.querySelector('.sc-warmup')?.textContent ?? null,
+      marks: [...c.querySelectorAll('.sc-mark img')].map((i) => i.getAttribute('src')),
+      fallbacks: [...c.querySelectorAll('.sc-mark.no-mark .sc-fallback')].map((f) => f.textContent),
+      bases: ['second', 'third', 'first'].map((b) => {
+        const n = c.querySelector(`.sc-diamond .b-${b}`);
+        return n ? `${b}:${n.classList.contains('on') ? 'on' : 'off'}` : '';
+      }).filter(Boolean),
+      count: [...c.querySelectorAll('.sc-countrow')].map((r) =>
+        `${r.querySelector('b').textContent}${[...r.querySelectorAll('i.on')].length}`
+        + `/${r.querySelectorAll('i').length}`).join(','),
+      pitchers: [...c.querySelectorAll('.sc-pitcher')].map((p) => p.textContent.trim()),
     })),
   }));
   console.log('   head:', JSON.stringify(head, null, 1));
@@ -149,20 +182,85 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
      that carries a channel per game gets THAT game's channel, not the
      network's. */
   const [first, soon, over] = head.cards;
-  check('a game the provider carries by name finds its own broadcast',
-    first.chan === 'MLB 01 | ROCKIES X NATIONALS', first.chan);
-  check('with the score on it', first.scores.join('-') === '5-3', JSON.stringify(first.scores));
-  check('and it is pressable, because there is something to press to',
+  check('a live game leads the row', first.cls.includes('is-live'), first.cls);
+  check('with the score between the two marks', first.score === '6 - 1', first.score);
+  check('and the half-inning under it', first.half === 'Top 9th', first.half);
+  check('the clubs are their own marks, not their initials',
+    first.marks.length === 2 && first.marks.every((m) => /team-logos%2F/.test(m)),
+    JSON.stringify(first.marks));
+  check('the diamond is lit where the runners are',
+    first.bases.join(',') === 'second:off,third:on,first:on', JSON.stringify(first.bases));
+  check('and the count is the count', first.count === 'B2/4,S1/3,O1/3', first.count);
+  check('a game with a channel is pressable',
     first.dead === false, String(first.dead));
-  check('one carried by a network matches the network', soon.chan === 'FOX', soon.chan);
+
+  check('a game about to start shows the time, not a score',
+    soon.time === '4:05 PM' && soon.score === null, JSON.stringify([soon.time, soon.score]));
+  /* The club and the pitcher are separate elements set apart by the layout,
+     so textContent runs them together — the words are what is being checked,
+     not the gap between them. */
+  check('the two probables, with their record and ERA',
+    soon.pitchers.join(' | ') === 'BOSDe La Rosa (2-2, 2.84) | OAKChavez (6-4, 2.93)',
+    JSON.stringify(soon.pitchers));
+  /* The moment the broadcast comes up is the moment tuning to it is worth
+     doing, and the league says so in its own status. */
+  check('and WARMUP is drawn the moment the league says the broadcast is on',
+    soon.warmup === 'Warmup' && soon.cls.includes('is-warmup'),
+    JSON.stringify([soon.warmup, soon.cls]));
+
   check('a game that has finished says so rather than showing a live dot',
-    over.cls.includes('is-final'), over.cls);
-  check('and a game no channel on this box carries says that instead of pretending',
-    over.dead === true && /No channel matched/.test(over.foot || ''),
-    JSON.stringify([over.dead, over.foot]));
+    over.cls.includes('is-final') && over.half === 'Final', JSON.stringify([over.cls, over.half]));
+  /* A mark the league did not give us must leave the abbreviation showing
+     rather than a hole where a badge should be. */
+  check('a club with no mark keeps its initials',
+    over.fallbacks.join(',') === 'NYY,BOS2', JSON.stringify(over.fallbacks));
+
+  /* ---- starring a game ------------------------------------------------- */
+  console.log('\n  starring one puts it at the front');
+  const before = await page.evaluate(() =>
+    [...document.querySelectorAll('.sc-card')].map((c) => c.dataset.game));
+  await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.sc-card')]
+      .find((c) => c.dataset.game === 'nyy-bos');
+    card.querySelector('.sc-star').click();
+  });
+  await page.waitForTimeout(700);
+  const after = await page.evaluate(() => ({
+    order: [...document.querySelectorAll('.sc-card')].map((c) => c.dataset.game),
+    lit: [...document.querySelectorAll('.sc-card.is-pinned')].map((c) => c.dataset.game),
+    stored: (profiles.data.pinnedGames || []).map((p) => p.id),
+  }));
+  console.log('   before:', JSON.stringify(before), '\n   after: ', JSON.stringify(after));
+  /* A finished game sat last; starred, it leads — which is the whole point of
+     starring one. */
+  check('the starred game leads the row', after.order[0] === 'nyy-bos',
+    JSON.stringify(after.order));
+  check('and wears the ribbon', after.lit.join(',') === 'nyy-bos', JSON.stringify(after.lit));
+  check('with the star kept on the box, not just on the card',
+    after.stored.join(',') === 'nyy-bos', JSON.stringify(after.stored));
+
+  console.log('\n  and starring it again takes it back out');
+  await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.sc-card')]
+      .find((c) => c.dataset.game === 'nyy-bos');
+    card.querySelector('.sc-star').click();
+  });
+  await page.waitForTimeout(700);
+  const undone = await page.evaluate(() => ({
+    order: [...document.querySelectorAll('.sc-card')].map((c) => c.dataset.game),
+    stored: (profiles.data.pinnedGames || []).map((p) => p.id),
+  }));
+  check('the row goes back to what was on first',
+    undone.order.join(',') === before.join(','), JSON.stringify(undone.order));
+  check('and nothing is left starred', undone.stored.length === 0, JSON.stringify(undone.stored));
+
+  /* The star is a control sitting on top of a card that is itself a button:
+     pressing it must not also tune the game underneath it. */
+  check('and starring never tuned the game underneath',
+    await page.evaluate(() => Boolean(document.querySelector('#playerOverlay')?.hidden)), '');
 
   console.log('\n  pressing one tunes it');
-  await page.evaluate(() => document.querySelector('.sc-card:not(:disabled)').click());
+  await page.evaluate(() => document.querySelector('.sc-tune:not(:disabled)').click());
   await page.waitForTimeout(900);
   const tuned = await page.evaluate(() => ({
     open: !document.querySelector('#playerOverlay')?.hidden,

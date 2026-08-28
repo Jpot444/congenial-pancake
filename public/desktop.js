@@ -1210,6 +1210,15 @@
    *   they were indistinguishable — so it says which, and names the address to
    *   open when the answer is the second one.
    */
+  /* app.js's el() takes a tag and a class and nothing else; a scoreboard is
+     mostly short pieces of text, so this is the same thing with the words. */
+  const bit = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null && text !== '') n.textContent = String(text);
+    return n;
+  };
+
   const SLATE_ORDER = { live: 0, upcoming: 1, final: 2 };
   const GAMES_IN_ROW = 16;
 
@@ -1270,8 +1279,12 @@
   }
 
   function paintScores(band) {
+    /* Starred games lead, whatever they are doing — that is what starring one
+       is for. Everything else falls in behind by state: what is on now, then
+       what is about to start, then what is over. */
     const games = [...slate.games]
-      .sort((a, b) => (SLATE_ORDER[a.status] ?? 3) - (SLATE_ORDER[b.status] ?? 3)
+      .sort((a, b) => (pinnedGame(b) - pinnedGame(a))
+        || (SLATE_ORDER[a.status] ?? 3) - (SLATE_ORDER[b.status] ?? 3)
         || (a.kickoff || 0) - (b.kickoff || 0))
       .slice(0, GAMES_IN_ROW);
 
@@ -1306,51 +1319,219 @@
     for (const game of games) strip.append(scoreCard(game, matchChannel(game, channels)));
   }
 
+  /*
+   * One game, drawn the way a scoreboard draws one.
+   *
+   * Marks rather than initials — the club's own logo either side of the score,
+   * which is how anybody actually reads a slate at a glance. The mark comes
+   * from the league (mlbstatic.com, one address per team id) through the box's
+   * image proxy, and a team the feed did not identify falls back to the
+   * abbreviation it did send, because a card with a hole where a badge should
+   * be is worse than a card with 'COL' on it.
+   *
+   * Three states, three layouts:
+   *
+   *   LIVE      score between the marks, the half-inning under it, and the
+   *             diamond and the count along the bottom — the bases lit as they
+   *             are and the balls, strikes and outs as dots, because that is
+   *             the shape the information has.
+   *   UPCOMING  the start time between the marks, and under the rule the two
+   *             probable pitchers with their record and ERA. WARMUP replaces
+   *             the time's caption the moment the league says the broadcast is
+   *             up, which is the moment tuning to it is worth doing.
+   *   FINAL     the score, greyed, with no dot claiming it is still on.
+   */
   function scoreCard(game, channel) {
-    const card = document.createElement('button');
-    card.type = 'button';
+    const card = document.createElement('div');
     card.className = `sc-card is-${esc(game.status || 'live')}`;
-    if (game.redZone) card.classList.add('is-redzone');
-    card.disabled = !channel;
-    card.title = channel ? `Watch on ${channel.name}` : 'No channel on this box carries it';
+    if (game.warmup) card.classList.add('is-warmup');
+    if (pinnedGame(game)) card.classList.add('is-pinned');
+    card.dataset.game = game.id;
 
-    const top = `<span class="sc-chan">${esc(cleanChannel(channel ? channel.name : game.channelName))}</span>`
-      + (game.status === 'live'
-        ? '<span class="sc-live"><i></i>LIVE</span>'
-        : `<span class="sc-when">${esc(game.status === 'final' ? 'FINAL' : (game.clock || ''))}</span>`);
+    /* The ribbon, in the corner, exactly as a starred game carries one. It is
+       a control as well as a mark: press it and the game leads the row. */
+    const star = document.createElement('button');
+    star.type = 'button';
+    star.className = 'sc-star';
+    star.title = pinnedGame(game) ? 'Unpin this game' : 'Pin this game to the front';
+    star.setAttribute('aria-label', star.title);
+    star.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.7 5.6 '
+      + '6.1.8-4.5 4.2 1.1 6-5.4-3-5.4 3 1.1-6L3.2 9.9l6.1-.8z"/></svg>';
+    star.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePinnedGame(game);
+    });
+    card.append(star);
 
-    let body;
-    if (game.redZone) {
-      body = `<div class="sc-rz">RED ZONE</div><div class="sc-rzsub">${esc(game.note || '')}</div>`;
-    } else if (game.status === 'upcoming') {
-      body = `<div class="sc-soon">${esc(game.away?.abbr || '')} `
-        + `<span>at</span> ${esc(game.home?.abbr || '')}</div>`
-        + `<div class="sc-note">${esc(game.note || firstPitch(game))}</div>`;
+    const tune = document.createElement('button');
+    tune.type = 'button';
+    tune.className = 'sc-tune';
+    tune.disabled = !channel;
+    tune.title = channel ? `Watch on ${channel.name}` : 'No channel on this box carries it';
+
+    tune.append(scoreLine(game));
+    tune.append(game.status === 'upcoming' ? pregameFoot(game) : livingFoot(game, channel));
+    if (channel) tune.addEventListener('click', () => openPlayer(channel));
+    card.append(tune);
+    return card;
+  }
+
+  /** A mark either side, and whatever belongs between them. */
+  function scoreLine(game) {
+    const row = document.createElement('div');
+    row.className = 'sc-line';
+    row.append(teamMark(game.away), middle(game), teamMark(game.home));
+    return row;
+  }
+
+  function teamMark(team) {
+    const box = document.createElement('span');
+    box.className = 'sc-mark';
+    if (team && team.logo) {
+      const badge = document.createElement('img');
+      badge.src = `/img?u=${encodeURIComponent(team.logo)}`;
+      badge.alt = team.abbr || '';
+      badge.loading = 'lazy';
+      /* A mark that will not load leaves the abbreviation showing rather than
+         a broken picture — the box may be offline, and the league's server is
+         not this box's to promise. */
+      badge.addEventListener('error', () => {
+        badge.remove();
+        box.classList.add('no-mark');
+      });
+      box.append(badge);
     } else {
-      body = ['away', 'home'].map((side) => {
-        const team = game[side];
-        if (!team) return '';
-        const other = side === 'away' ? game.home : game.away;
-        const behind = other && Number.isFinite(other.score) && Number.isFinite(team.score)
-          && team.score < other.score;
-        return `<div class="sc-team${behind ? ' behind' : ''}">`
-          + `<i class="sc-poss${team.possession ? ' on' : ''}"></i>`
-          + `<span class="sc-abbr">${esc(team.abbr || '')}</span>`
-          + `<span class="sc-rec">${esc(team.record || '')}</span>`
-          + `<span class="sc-score">${team.score === null || team.score === undefined
-            ? '—' : num(team.score)}</span></div>`;
-      }).join('');
+      box.classList.add('no-mark');
+    }
+    box.append(bit('span', 'sc-fallback', team ? (team.abbr || '') : ''));
+    return box;
+  }
+
+  function middle(game) {
+    const mid = document.createElement('div');
+    mid.className = 'sc-mid';
+
+    if (game.status === 'upcoming') {
+      mid.append(bit('div', 'sc-at', '@'));
+      mid.append(bit('div', 'sc-time', game.clock || ''));
+      /* The one caption worth having under a start time: the league saying the
+         broadcast is on. Anything else it says — Pre-Game, Delayed: Rain — is
+         worth printing too, in the same place, in its own colour. */
+      if (game.warmup) mid.append(bit('div', 'sc-warmup', 'Warmup'));
+      else if (game.detailedState && !/scheduled|pre-game/i.test(game.detailedState)) {
+        mid.append(bit('div', 'sc-state', game.detailedState));
+      }
+      return mid;
     }
 
-    const foot = game.status === 'live' || game.status === 'final'
-      ? `<div class="sc-foot"><span>${esc(game.clock || '')}</span>`
-        + `<span class="sc-sit">${esc(channel ? (game.situation || '') : 'No channel matched')}</span></div>`
-      : `<div class="sc-foot"><span class="sc-sit">${
-        esc(channel ? 'Ready to tune' : 'No channel matched')}</span></div>`;
+    const away = game.away && game.away.score;
+    const home = game.home && game.home.score;
+    mid.append(bit('div', 'sc-score',
+      `${away === null || away === undefined ? '—' : away} - `
+      + `${home === null || home === undefined ? '—' : home}`));
+    mid.append(bit('div', game.status === 'final' ? 'sc-final' : 'sc-half',
+      game.status === 'final' ? 'Final' : (game.clock || '')));
+    return mid;
+  }
 
-    card.innerHTML = `<div class="sc-top">${top}</div><div class="sc-body">${body}</div>${foot}`;
-    if (channel) card.addEventListener('click', () => openPlayer(channel));
-    return card;
+  /** The diamond and the count, under a game that is being played. */
+  function livingFoot(game, channel) {
+    const foot = document.createElement('div');
+    foot.className = 'sc-under';
+    if (game.status !== 'live') {
+      foot.append(bit('span', 'sc-where',
+        channel ? cleanChannel(channel.name) : 'No channel matched'));
+      return foot;
+    }
+
+    const on = game.onBase || {};
+    const diamond = document.createElement('span');
+    diamond.className = 'sc-diamond';
+    /* Second at the top, third to the left, first to the right — the diamond
+       as it is seen from behind the plate, which is how every scoreboard in
+       the sport draws it. */
+    for (const base of ['second', 'third', 'first']) {
+      const b = bit('i', `b-${base}${on[base] ? ' on' : ''}`);
+      diamond.append(b);
+    }
+    foot.append(diamond);
+
+    const count = game.count || {};
+    const dots = document.createElement('span');
+    dots.className = 'sc-count';
+    for (const [label, had, of] of [['B', count.balls, 4], ['S', count.strikes, 3],
+      ['O', count.outs, 3]]) {
+      const line = bit('span', 'sc-countrow');
+      line.append(bit('b', null, label));
+      for (let i = 0; i < of; i += 1) {
+        line.append(bit('i', Number(had) > i ? 'on' : null));
+      }
+      dots.append(line);
+    }
+    foot.append(dots);
+    return foot;
+  }
+
+  /**
+   * The two probables, as a scoreboard lists them: the club, the surname, and
+   * the season line in brackets. A club that has not named its starter yet
+   * gets its own row with nothing after it rather than being left out, so the
+   * card keeps its shape whichever way round it is.
+   */
+  function pregameFoot(game) {
+    const foot = document.createElement('div');
+    foot.className = 'sc-pitchers';
+    for (const side of ['away', 'home']) {
+      const team = game[side];
+      if (!team) continue;
+      const row = bit('div', 'sc-pitcher');
+      row.append(bit('b', null, team.abbr || ''));
+      const p = team.pitcher;
+      if (!p) {
+        row.append(bit('span', 'sc-tba', 'TBA'));
+      } else {
+        const line = [];
+        if (p.wins !== null && p.losses !== null) line.push(`${p.wins}-${p.losses}`);
+        if (p.era) line.push(p.era);
+        row.append(bit('span', null,
+          line.length ? `${p.last} (${line.join(', ')})` : p.last));
+      }
+      foot.append(row);
+    }
+    if (!foot.children.length) foot.append(bit('div', 'sc-tba', 'Starters not announced'));
+    return foot;
+  }
+
+  /* ------------------------------------------------------- starred games ── */
+  /*
+   * The ribbon in the corner, and what it does.
+   *
+   * A slate is a dozen games and two of them are yours. Pinning is per game
+   * rather than per team on purpose: the reason to star a game is usually the
+   * game — a rivalry, a pitcher, the one that decides the division — and a
+   * team rule would either miss those or drag in every other night of a
+   * hundred-and-sixty-two.
+   *
+   * Stored on the box, so a game starred on the desktop leads the row on the
+   * phone. Ids are good for one day, so the list is pruned as it is written:
+   * anything older than three days is somebody else's game by now.
+   */
+  const PIN_KEEP_MS = 3 * 24 * 60 * 60 * 1000;
+
+  const pinnedGames = () => (profiles.data.pinnedGames || [])
+    .filter((p) => p && p.id && Date.now() - (p.at || 0) < PIN_KEEP_MS);
+
+  const pinnedGame = (game) => pinnedGames().some((p) => String(p.id) === String(game.id));
+
+  function togglePinnedGame(game) {
+    const id = String(game.id);
+    const kept = pinnedGames().filter((p) => String(p.id) !== id);
+    profiles.data.pinnedGames = pinnedGame(game)
+      ? kept
+      : [...kept, { id, at: Date.now() }];
+    profiles.save();
+    const band = document.querySelector('#dkScores');
+    if (band) paintScores(band);
   }
 
   function firstPitch(game) {

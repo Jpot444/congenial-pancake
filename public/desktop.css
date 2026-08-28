@@ -288,86 +288,190 @@
 
 .desk .sc-empty { margin: 0; padding: var(--space-5) 0; font-size: var(--text-base); color: var(--muted-dim); }
 
+/* ---- one game ----
+ * A scoreboard card: the club's mark either side, the score between them, and
+ * the state of the at-bat along the bottom. Landscape, and side by side in a
+ * row that scrolls — a slate is read along, not down.
+ */
 .desk .sc-card {
+  position: relative;
   flex: none;
-  width: 208px;
+  width: 268px;
   scroll-snap-align: start;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  padding: 11px 13px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, .03);
-  text-align: left;
-  color: var(--text);
-  cursor: pointer;
-  transition: border-color var(--dur-hover) var(--ease), background var(--dur-hover) var(--ease);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .02));
+  overflow: hidden;
+  transition: border-color var(--dur-hover) var(--ease);
 }
-.desk .sc-card:hover:not(:disabled) { border-color: var(--line-hover); background: rgba(255, 255, 255, .06); }
+.desk .sc-card:hover { border-color: var(--line-hover); }
+.desk .sc-card.is-final { opacity: .74; }
+.desk .sc-card.is-pinned { border-color: rgba(224, 49, 50, .5); }
+
+/* The whole card is the way into the broadcast; the star sits on top of it. */
+.desk .sc-tune {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 14px 12px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
 /* A game this box carries no channel for is not a way in, and a card that
    looks pressable and does nothing is worse than one that says so. */
-.desk .sc-card:disabled { cursor: default; opacity: .62; }
-.desk .sc-card.is-final { opacity: .78; }
-.desk .sc-card.is-redzone { border-color: rgba(224, 49, 50, .5); background: rgba(224, 49, 50, .1); }
+.desk .sc-tune:disabled { cursor: default; }
+.desk .sc-tune:disabled .sc-score { opacity: .8; }
 
-.desk .sc-top { display: flex; align-items: center; gap: var(--space-3); font-size: 11px; }
-.desk .sc-chan {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--muted-dim);
+/* ---- the ribbon ----
+   Folded into the corner, the way a starred game carries one. Faint until the
+   game is starred, so there is something to press without every card wearing
+   a flag. */
+.desk .sc-star {
+  position: absolute;
+  top: 0; left: 0;
+  z-index: 2;
+  width: 42px; height: 42px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+  transition: background var(--dur-hover) var(--ease);
 }
-.desk .sc-when { flex: none; letter-spacing: .06em; color: var(--muted-dim); }
-.desk .sc-live { flex: none; display: flex; align-items: center; gap: 4px; letter-spacing: .06em; color: #ff6b62; }
-.desk .sc-live i {
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: sc-pulse 2s var(--ease) infinite;
+.desk .sc-star::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, .07);
+  transition: background var(--dur-hover) var(--ease);
 }
-@keyframes sc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.desk .sc-star svg {
+  position: relative;
+  width: 13px; height: 13px;
+  margin: 4px 0 0 4px;
+  fill: rgba(255, 255, 255, .35);
+  stroke: none;
+  transition: fill var(--dur-hover) var(--ease);
+}
+.desk .sc-card:hover .sc-star::before { background: rgba(255, 255, 255, .14); }
+.desk .sc-card:hover .sc-star svg { fill: rgba(255, 255, 255, .7); }
+.desk .sc-card.is-pinned .sc-star::before { background: var(--brand-red); }
+.desk .sc-card.is-pinned .sc-star svg { fill: #fff; }
 
-.desk .sc-body { display: flex; flex-direction: column; gap: 4px; }
-.desk .sc-team { display: flex; align-items: center; gap: var(--space-3); font-size: var(--text-base); }
-.desk .sc-team.behind { color: var(--muted); }
-.desk .sc-poss { width: 5px; height: 5px; border-radius: 50%; background: transparent; flex: none; }
-.desk .sc-poss.on { background: #f0b64a; }
-.desk .sc-abbr { font-weight: 600; letter-spacing: .02em; }
-.desk .sc-rec { flex: 1; font-size: 11px; color: var(--muted-dim); }
-.desk .sc-score { font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 600; }
+/* ---- the marks and the middle ---- */
+.desk .sc-line { display: flex; align-items: center; gap: var(--space-3); }
 
-.desk .sc-soon { font-size: var(--text-md); font-weight: 600; }
-.desk .sc-soon span { font-weight: 400; color: var(--muted-dim); }
-.desk .sc-note { font-size: 11.5px; color: var(--muted-dim); }
-.desk .sc-rz { font-family: var(--display); font-size: 19px; letter-spacing: .05em; color: #ff6b62; }
-.desk .sc-rzsub { font-size: 11px; color: var(--muted); }
+.desk .sc-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 54px; height: 54px;
+}
+.desk .sc-mark img { max-width: 100%; max-height: 100%; object-fit: contain; }
+/* The abbreviation is the fallback, not a caption: it shows only when the
+   league's mark did not arrive. */
+.desk .sc-fallback { display: none; font-family: var(--display); font-size: 19px; letter-spacing: .04em; }
+.desk .sc-mark.no-mark .sc-fallback { display: block; }
 
-.desk .sc-foot {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  font-size: 11px;
-  color: var(--muted-dim);
+.desk .sc-mid { flex: 1; min-width: 0; text-align: center; }
+.desk .sc-score {
+  font-family: var(--display);
+  font-size: 34px;
+  line-height: 1;
+  letter-spacing: .02em;
+  color: #fff;
   font-variant-numeric: tabular-nums;
 }
-.desk .sc-sit {
-  flex: 1;
-  min-width: 0;
+/* Gold for the half-inning, which is the scoreboard's own colour for "this is
+   happening now". */
+.desk .sc-half { margin-top: 3px; font-size: 13px; font-weight: 600; color: #f0b64a; }
+.desk .sc-final { margin-top: 3px; font-size: 13px; font-weight: 600; color: var(--muted-dim); }
+
+.desk .sc-at { font-size: 15px; color: var(--muted-dim); line-height: 1; }
+.desk .sc-time { margin-top: 4px; font-size: 19px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
+.desk .sc-warmup { margin-top: 2px; font-size: 13px; font-weight: 600; color: #ff6b62; }
+.desk .sc-state { margin-top: 2px; font-size: 11.5px; color: var(--muted-dim); }
+
+/* ---- the diamond and the count ---- */
+.desk .sc-under {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 44px;
+}
+.desk .sc-where { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-dim); }
+
+/* Second at the top, third to the left, first to the right — the diamond as it
+   is seen from behind the plate. */
+.desk .sc-diamond { position: relative; flex: none; width: 46px; height: 40px; }
+.desk .sc-diamond i {
+  position: absolute;
+  width: 15px; height: 15px;
+  background: rgba(255, 255, 255, .16);
+  transform: rotate(45deg);
+  transition: background var(--dur-hover) var(--ease);
+}
+.desk .sc-diamond i.on { background: #f0b64a; }
+.desk .sc-diamond .b-second { top: 2px; left: 15px; }
+.desk .sc-diamond .b-third { top: 17px; left: 1px; }
+.desk .sc-diamond .b-first { top: 17px; left: 29px; }
+
+.desk .sc-count { display: flex; flex-direction: column; gap: 3px; }
+.desk .sc-countrow { display: flex; align-items: center; gap: 4px; }
+.desk .sc-countrow b {
+  width: 9px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--muted-dim);
+}
+.desk .sc-countrow i {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .14);
+}
+.desk .sc-countrow i.on { background: #fff; }
+/* Balls green, the way a scoreboard lights them. */
+.desk .sc-countrow:first-child i.on { background: #6fd08c; }
+/* Strikes and outs: the ones that end things. */
+.desk .sc-countrow:nth-child(2) i.on { background: #f0b64a; }
+.desk .sc-countrow:nth-child(3) i.on { background: #ff6b62; }
+
+/* ---- the probables ---- */
+.desk .sc-pitchers {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 44px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(255, 255, 255, .1);
+}
+.desk .sc-pitcher {
+  display: flex;
+  gap: var(--space-3);
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: right;
 }
+.desk .sc-pitcher b {
+  flex: none;
+  width: 32px;
+  font-weight: 600;
+  color: var(--muted-dim);
+}
+.desk .sc-tba { color: var(--muted-dim); font-style: italic; }
 
-/* On a phone the band is the same row, narrower — the cards keep their size
-   and the strip is swiped rather than scrolled with a wheel. */
 .desk body.has-tabbar .sc-title { font-size: 20px; }
-.desk body.has-tabbar .sc-card { width: 178px; }
+.desk body.has-tabbar .sc-card { width: 232px; }
+.desk body.has-tabbar .sc-mark { width: 44px; height: 44px; }
+.desk body.has-tabbar .sc-score { font-size: 28px; }
 
 .desk .content-meta {
   margin: var(--space-3) 0 0;
