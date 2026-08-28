@@ -69,6 +69,15 @@ const PNG = Buffer.from(
       body: JSON.stringify({ url: '/api/fake-stream', format: 'file' }) }));
   await page.route('**/progress*', (r) =>
     r.fulfill({ status: 200, contentType: 'application/json', body: '{"found":false}' }));
+  /* A profile that has watched nothing, said so rather than assumed.
+     The sidebar's 'Never opened on this profile' is read off the taste
+     payload, and the test portal is SHARED between suites in one run — a
+     suite that played something earlier would otherwise leave this one
+     asserting against somebody else's history and failing depending on the
+     order it was asked for. */
+  await page.route('**/api/profiles/*/taste', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json',
+      body: '{"continueWatching":[],"recentlyWatched":[],"categoryAffinity":[],"ratings":{}}' }));
   await page.route('**/api/downloads*', (r) =>
     r.fulfill({ status: 200, contentType: 'application/json', body: '{"items":[]}' }));
 

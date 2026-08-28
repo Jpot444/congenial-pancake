@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '31.1';
+const VERSION = '31.2';
 
 const PAGE_SIZE = 60;
 
@@ -54,6 +54,8 @@ const state = {
   /** Film details already fetched. Keyed by id; null means the provider had
       nothing, which is worth remembering so it is not asked twice. */
   vodCache: {},
+  /** The person whose films are being shown, when one is. */
+  person: '',
   /** Per-tab cache: { categories: [], items: [] } */
   library: { live: null, movies: null, series: null },
   /* The same three sections with the English/US filter set aside, fetched
@@ -6717,7 +6719,11 @@ function filmCard(item) {
       row.previousElementSibling.hidden = !people.length;
     };
 
-    fillRow(directorRow, names(info?.director), null);
+    /* The director's name is a way through the library, the same as a genre
+       chip: everything of theirs the box has read the credits for. */
+    fillRow(directorRow, names(info?.director), (name) => {
+      location.hash = `#/movies/by/${encodeURIComponent(name)}`;
+    });
     fillRow(writersRow, names(info?.writer), null);
     fillRow(genresRow, names(info?.genre), (name) => {
       // The genre chips are how you get from one film to the rest of its kind,
@@ -6764,10 +6770,17 @@ function filmCard(item) {
     cast.rail.hidden = everyone.length === 0;
     cast.rail.querySelector('.film-rail-count').textContent = String(everyone.length);
     for (const person of everyone) {
-      const tile = el('div', 'film-person');
+      /* A button, because it goes somewhere: everything else in the library
+         with this person in it. */
+      const tile = el('button', 'film-person');
+      tile.type = 'button';
+      tile.addEventListener('click', () => {
+        location.hash = `#/movies/by/${encodeURIComponent(person.name)}`;
+      });
       const face = el('div', 'film-face');
-      // Initials, not a photograph. The box has no cast art and inventing a
-      // grey silhouette for nine people is nine grey silhouettes.
+      // Initials until a portrait arrives, and for ever if none does. The
+      // provider has no cast art; the box asks IMDb, and somebody without a
+      // page there keeps their initials rather than a grey silhouette.
       face.textContent = person.name.split(/\s+/).slice(0, 2)
         .map((word) => word[0] || '').join('').toUpperCase();
       const name = el('div', 'film-person-name');
@@ -6775,7 +6788,36 @@ function filmCard(item) {
       const role = el('div', 'film-person-role');
       role.textContent = person.role;
       tile.append(face, name, role);
+      tile._face = face;
       cast.track.append(tile);
+    }
+
+    /* The portraits, once the names are on screen. One request for the whole
+       rail, answered from the box's cache after the first time, and a failure
+       anywhere in it leaves the initials exactly as they are. */
+    if (everyone.length) {
+      api('/api/people/portraits', { names: everyone.map((p) => p.name).join('|') })
+        .then((answer) => {
+          if (!cast.track.isConnected) return;
+          const faces = new Map((answer.people || [])
+            .filter((row) => row.image).map((row) => [row.name, row.image]));
+          for (const tile of cast.track.children) {
+            const who = tile.querySelector('.film-person-name')?.textContent || '';
+            const src = faces.get(who);
+            if (!src || !tile._face) continue;
+            const portrait = el('img', 'film-portrait');
+            portrait.alt = '';
+            portrait.loading = 'lazy';
+            // Through the box's own image proxy, like every other outside
+            // picture: a browser on the tailnet cannot always reach Amazon's
+            // CDN, and the Pi can.
+            portrait.src = img(src);
+            portrait.addEventListener('load', () => tile._face.classList.add('has-portrait'));
+            portrait.addEventListener('error', () => portrait.remove());
+            tile._face.append(portrait);
+          }
+        })
+        .catch(() => { /* initials stay, which is the honest fallback */ });
     }
 
     /* ---- what the file is ----
@@ -6846,6 +6888,91 @@ function filmCard(item) {
  * A film's page, fetched and painted. Where a show has its seasons and
  * episodes, a film has one decision and everything the box knows about it.
  */
+/**
+ * Everything in the library with one person in it.
+ *
+ * The provider cannot be asked this — a category listing carries titles and
+ * ids, and the cast lives in a per-film call — so the box builds the answer
+ * up over time and this reads it. Which is why the line under the heading is
+ * not decoration: "78 of 9,412 films looked at so far" is the difference
+ * between a short answer and a wrong one, and somebody looking at three
+ * cards deserves to know which they are seeing.
+ */
+async function renderPersonView() {
+  const person = state.person;
+  $('#grid').hidden = false;
+  $('#rowsView').hidden = true;
+  $('#emptyState').hidden = true;
+  $('#loadMore').hidden = true;
+  $('#contentTitle').textContent = person;
+  $('#contentMeta').textContent = '';
+
+  const grid = $('#grid');
+  grid.className = 'grid';
+  grid.innerHTML = '';
+
+  const back = el('button', 'btn btn-ghost folder-back');
+  back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
+  back.append(document.createTextNode(' All movies'));
+  back.addEventListener('click', () => { location.hash = '#/movies'; });
+  grid.before(back);
+
+  const note = el('p', 'person-note');
+  note.textContent = 'Looking…';
+  grid.before(note);
+
+  let answer;
+  try {
+    answer = await api('/api/people/films', { name: person });
+  } catch (err) {
+    note.textContent = `The box could not answer: ${err.message}`;
+    return;
+  }
+  if (state.person !== person) return; // moved on while that was in flight
+
+  const lib = await loadTab('movies');
+  const byId = new Map((lib.items || []).map((movie) => [String(movie.id), movie]));
+  const found = answer.ids.map((id) => byId.get(String(id))).filter(Boolean)
+    .filter((movie) => !profiles.isDeleted(movie));
+  // One card per film rather than one per copy, the same as the grid.
+  const shown = groupVariants(found);
+  const directed = new Set((answer.directed || []).map(String));
+
+  grid.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  for (const movie of shown) frag.append(cardFor(movie));
+  grid.append(frag);
+  state.filtered = shown;
+
+  const asDirector = shown.filter((movie) => directed.has(String(movie.id))).length;
+  const parts = [];
+  parts.push(`${shown.length.toLocaleString()} film${shown.length === 1 ? '' : 's'}`);
+  if (asDirector) parts.push(`${asDirector} as director`);
+  $('#contentMeta').textContent = parts.join(' · ');
+
+  /* How much of the library this answer actually covers. The box fills its
+     credits index in the background while nothing is playing, so early on
+     this is a small number and the answer is a small answer. */
+  const seen = Number(answer.indexed) || 0;
+  const total = Number(answer.total) || 0;
+  if (total && seen < total) {
+    note.textContent = `From the ${seen.toLocaleString()} of ${total.toLocaleString()} films `
+      + 'the box has read the credits for so far. It reads more whenever nothing is playing, '
+      + 'so this list grows.';
+  } else if (total) {
+    note.textContent = `Every one of the ${total.toLocaleString()} films in the library has been read.`;
+  } else {
+    note.textContent = 'The box has not read any credits yet — it does that while nothing is playing.';
+  }
+
+  if (!shown.length) {
+    $('#emptyState').hidden = false;
+    $('#emptyState').textContent = seen < total
+      ? `Nothing with ${person} among the films read so far.`
+      : `Nothing in the library with ${person}.`;
+  }
+}
+
 async function renderMovieCard() {
   $('#contentTitle').textContent = 'Movies';
   const wanted = state.movieId;
@@ -7224,6 +7351,10 @@ function clearStage() {
   // reason — it is the width of the window — and goes the same way.
   document.querySelectorAll('.folder-back').forEach((b) => b.remove());
   document.querySelectorAll('.film-hero').forEach((b) => b.remove());
+  // The line under a person's name lives outside the grid for the same
+  // reason the back button does, and would otherwise stack up one per visit
+  // — each one still saying what was true two people ago.
+  document.querySelectorAll('.person-note').forEach((b) => b.remove());
 }
 
 function renderSkeletons() {
@@ -7287,6 +7418,7 @@ function render() {
 
   if (state.tab === 'home') return renderHome();
   if (state.tab === 'series' && state.seriesId) return renderShowCard();
+  if (state.tab === 'movies' && state.person) return renderPersonView();
   if (state.tab === 'movies' && state.movieId) return renderMovieCard();
 
   $('#grid').hidden = false;
@@ -9019,15 +9151,27 @@ const TABS = ['home', 'live', 'movies', 'series', 'favorites', 'favlive', 'archi
  * deliberately not a tab — favlive is likewise reachable only from there.
  */
 function routeFromHash() {
-  const raw = (location.hash.replace(/^#\/?/, '') || 'home').toLowerCase();
-  const [tab, param] = raw.split('/');
-  return { tab: TABS.includes(tab) ? tab : 'home', param: param || '' };
+  const raw = location.hash.replace(/^#\/?/, '') || 'home';
+  const parts = raw.split('/');
+  const tab = parts[0].toLowerCase();
+  return {
+    tab: TABS.includes(tab) ? tab : 'home',
+    // Ids are numbers and the one word this takes is 'by', so lowercasing is
+    // safe here — but NOT for what follows it, which is somebody's name.
+    param: (parts[1] || '').toLowerCase(),
+    rest: parts.slice(2).join('/'),
+  };
 }
 
 function applyRoute() {
-  const { tab, param } = routeFromHash();
+  const { tab, param, rest } = routeFromHash();
   state.seriesId = tab === 'series' ? param : '';
-  state.movieId = tab === 'movies' ? param : '';
+  /* #/movies/by/<name> is a person's films; anything else after #/movies is a
+     film's own id. The name keeps its capitals and its accents — it is shown
+     as a heading, and it is what the box is asked about. */
+  const byPerson = tab === 'movies' && param === 'by' && rest;
+  state.person = byPerson ? decodeURIComponent(rest) : '';
+  state.movieId = tab === 'movies' && !byPerson ? param : '';
   return goTo(tab);
 }
 

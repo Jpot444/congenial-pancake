@@ -4,6 +4,7 @@ profiles.json
 reports.json
 library-cache.json
 epg-guide.json
+people.json
 downloads/
 hls/
 .DS_Store

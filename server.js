@@ -53,6 +53,10 @@ const PROFILES_PATH = path.join(ROOT, 'profiles.json');
    other state: a report can carry whatever somebody chose to type into it,
    including how to reach them. */
 const REPORTS_PATH = path.join(ROOT, 'reports.json');
+/* Who is in what, and what they look like. A cache of other people's answers
+   — the provider's credits and IMDb's portraits — so it is disposable, but it
+   takes a long time to build and is worth keeping across restarts. */
+const PEOPLE_PATH = path.join(ROOT, 'people.json');
 const HLS_DIR = path.join(ROOT, 'hls');
 /* A conversion fetched from this recently has somebody watching it, so it is
    never cleared away to make room for a new one. Comfortably longer than a
@@ -73,6 +77,7 @@ const DOWNLOAD_INDEX = path.join(DOWNLOAD_DIR, 'index.json');
  * itself is path-relative and therefore the same file in both places. */
 const archive = require('./local-library');
 const guide = require('./epg-guide');
+const people = require('./people');
 const ARCHIVE_ROOT = process.env.ARCHIVE_ROOT || '/mnt/archive';
 const ARCHIVE_INDEX = path.join(ROOT, 'library-index.ndjson');
 
@@ -4481,6 +4486,46 @@ function rebuildLibrary(cfg, tab, pattern, cacheKey) {
   return job;
 }
 
+/** The movies the box has already listed, without asking the provider again. */
+function cachedMovies() {
+  for (const [key, entry] of libraryCache) {
+    if (!key.startsWith(`v${LIBRARY_SHAPE}:movies:`)) continue;
+    const items = (entry.payload && entry.payload.items) || [];
+    if (items.length) return items;
+  }
+  return [];
+}
+
+/**
+ * The credits crawl: one film's details every few seconds, and only when the
+ * provider is doing nothing else.
+ *
+ * The gate is the box's own single-connection rule — the same one that pauses
+ * a download the moment somebody presses play. A metadata call is small, but
+ * it is a call on the one connection, and nobody watching anything should
+ * ever be queued behind the index being built.
+ */
+const CREDIT_CRAWL_MS = 4000;
+
+function crawlCredits() {
+  const cfg = readConfig();
+  if (cfg.mode !== 'xtream') return Promise.resolve(null);
+  return people.crawl({
+    items: cachedMovies(),
+    busy: () => providerBusy() || Boolean(activeJob && activeJob.status === 'downloading'),
+    fetchInfo: async (id) => {
+      const url = xtreamApiUrl(cfg, { action: 'get_vod_info', vod_id: id });
+      const upstream = await request(url, { timeout: 15000 });
+      if ((upstream.statusCode || 500) >= 400) {
+        upstream.resume();
+        throw new Error(`HTTP ${upstream.statusCode}`);
+      }
+      const body = JSON.parse((await readBody(upstream)).toString('utf8'));
+      return body && body.info ? body.info : {};
+    },
+  });
+}
+
 let cacheWriteTimer = null;
 function persistLibraryCache() {
   clearTimeout(cacheWriteTimer);
@@ -5602,6 +5647,46 @@ async function handleApi(req, res, pathname, query) {
     });
   }
 
+  /* ---- Who is in what ----
+   *
+   * The client holds the library already, so this answers with ids and lets
+   * the page pick its own cards out of what it has — a name in a big library
+   * can be in eighty films, and eighty projected records is a payload for
+   * nothing. `indexed` and `total` travel with it because the honest answer
+   * to "everything with this actor" is "everything the box has looked at so
+   * far", and the page says so. */
+  if (pathname === '/api/people/films') {
+    const name = query.get('name') || '';
+    if (!name) return json(res, 400, { error: 'name is required' });
+    const ids = people.filmsWith(name);
+    const state = people.status();
+    return json(res, 200, {
+      name,
+      ids,
+      directed: ids.filter((id) => people.directed(name, id)),
+      indexed: state.films,
+      total: cachedMovies().length,
+      scanning: Boolean(state.crawl.at) && state.films < cachedMovies().length,
+    });
+  }
+
+  /* ---- What they look like ----
+   *
+   * A page asks about everybody on it at once. Cached answers come back
+   * immediately; the rest are fetched one at a time, because this is somebody
+   * else's server and a dozen parallel requests from a set-top box is how a
+   * polite endpoint stops being available. */
+  if (pathname === '/api/people/portraits') {
+    const names = (query.get('names') || '').split('|').map((n) => n.trim()).filter(Boolean);
+    const out = [];
+    for (const name of names.slice(0, 16)) {
+      // eslint-disable-next-line no-await-in-loop
+      const face = await people.portrait(name, request, readBody).catch(() => null);
+      out.push({ name, image: face ? face.image : '', id: face ? face.id : '' });
+    }
+    return json(res, 200, { people: out });
+  }
+
   /* ---- The baseball slate ---- */
   if (pathname === '/api/scores/mlb') {
     const slate = await mlbScores();
@@ -5819,6 +5904,12 @@ async function handleApi(req, res, pathname, query) {
       }
       if (params.action === 'get_short_epg' && Array.isArray(data.epg_listings)) {
         data.epg_listings = data.epg_listings.map(decodeEpg);
+      }
+      /* Every film anybody opens teaches the credits index for free — the
+         call has already been paid for, and this is the only place the cast
+         and the director ever pass through the box. */
+      if (params.action === 'get_vod_info' && data && data.info) {
+        people.note(params.vod_id, data.info);
       }
       return json(res, 200, data);
     } catch (err) {
@@ -6531,6 +6622,14 @@ reportDiskSpace();
 loadLibraryCache();
 archive.configure({ root: ARCHIVE_ROOT, indexPath: ARCHIVE_INDEX });
 guide.configure({ dir: ROOT, log: (line) => console.log(`  ${line}`) });
+people.load(PEOPLE_PATH, (line) => console.log(`  ${line}`));
+
+/* Filling in who is in what, slowly, while nobody is using the connection.
+   Five minutes after boot so the library is cached first — there is nothing
+   to crawl until the box knows what films exist. */
+setTimeout(() => {
+  setInterval(() => { crawlCredits().catch(() => {}); }, CREDIT_CRAWL_MS).unref?.();
+}, 5 * 60 * 1000).unref?.();
 
 /* The guide, kept current in the background.
  *
