@@ -3306,6 +3306,97 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   color: var(--muted);
 }
 
+/* ---------------------------------------------------- the provider's logins */
+/* One row per login, and the expiry is the line with the colour on it: that
+   is the fact somebody opened this panel to check. */
+
+.prov-card { width: min(500px, 100%); }
+
+.prov-cap {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .1);
+  font-family: var(--sans, inherit);
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.prov-cap:empty { display: none; }
+
+#provLead { margin: -8px 0 16px; line-height: 1.55; }
+
+.prov-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.prov-row {
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-left: 3px solid rgba(255, 255, 255, .25);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .03);
+}
+
+.prov-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+.prov-name { font-weight: 600; font-size: 14px; }
+
+.prov-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .1);
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.prov-tag-bad { background: rgba(255, 75, 62, .18); color: #ff8b82; }
+
+.prov-remove {
+  flex: none;
+  width: 24px; height: 24px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-dim);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.prov-remove:hover { background: rgba(255, 75, 62, .16); color: #ff8b82; }
+
+.prov-expiry { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }
+.prov-ok { color: #7ec98a; }
+.prov-warn { color: #f0b64a; }
+.prov-bad { color: #ff8b82; }
+.prov-unknown { color: var(--muted-dim); font-weight: 400; }
+
+.prov-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted-dim);
+}
+.prov-note + .prov-note { margin-top: 3px; }
+
+.prov-add {
+  padding: 14px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, .2);
+}
+.prov-add-lead { margin: 0 0 12px; font-size: 12.5px; color: var(--muted); }
+.prov-add-lead strong { color: var(--text); font-weight: 600; word-break: break-all; }
+.prov-add .field { margin-bottom: 10px; }
+.prov-add-actions { display: flex; gap: 8px; }
+
 .mv-icon { width: 15px; height: 15px; margin-right: 6px; vertical-align: -2px; }
 
 /* Search past the English/US filter. Ghost while it is an offer, lit while

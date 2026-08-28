@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '31.5';
+const VERSION = '31.6';
 
 const PAGE_SIZE = 60;
 
@@ -3957,12 +3957,275 @@ $('#setupForm').addEventListener('submit', async (event) => {
   }
 });
 
-$('#settingsBtn').addEventListener('click', async () => {
-  if (!confirm('Disconnect this provider and return to setup?')) return;
-  await fetch('/api/config', { method: 'DELETE' });
-  state.library = { live: null, movies: null, series: null };
-  state.config = null;
-  showSetup();
+/* ------------------------------------------------------------- providers */
+/*
+ * The logins this box streams with.
+ *
+ * Everything in this app that feels like a limit comes from one fact: the
+ * provider sells a connection, and one connection plays one thing. A download
+ * pauses when somebody presses play, multi-view says it may not hold four
+ * cells, the credits crawler only runs when the house is quiet. A second login
+ * is a second connection, and this is where they are added — so the panel
+ * leads with the two numbers that follow from it: how many things can play at
+ * once, and when each subscription runs out.
+ *
+ * The expiry is the provider's own `exp_date`, asked of the panel rather than
+ * remembered from the day the login was typed in. A trial that gets extended
+ * says so here without anyone re-entering anything.
+ */
+const providerPanel = {
+  open() {
+    $('#providerModal').hidden = false;
+    $('#provError').hidden = true;
+    this.closeForm();
+    this.load();
+  },
+
+  close() {
+    $('#providerModal').hidden = true;
+  },
+
+  /* `api()` is the query-string helper; these are bodies and methods, so they
+     go through fetch and share one place that turns a refusal into its
+     sentence. */
+  async send(path, method, body) {
+    const res = await fetch(path, {
+      method,
+      headers: body ? { 'content-type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  },
+
+  async load({ refresh = false } = {}) {
+    const lead = $('#provLead');
+    lead.textContent = refresh ? 'Asking the provider…' : 'Reading the box…';
+    try {
+      const data = await api('/api/providers', refresh ? { refresh: 1 } : {});
+      this.paint(data);
+    } catch (err) {
+      lead.textContent = `Could not read the logins: ${err.message}`;
+      $('#provList').innerHTML = '';
+    }
+  },
+
+  paint(data) {
+    const accounts = data.accounts || [];
+    const capacity = Number(data.capacity) || 0;
+
+    /* A playlist box has no logins to manage — a plain M3U has no panel to
+       ask about connections or expiry. It still has the one thing this
+       screen replaced, though, so that is what it gets. */
+    if (!accounts.length) {
+      $('#provCapacity').textContent = '';
+      $('#provLead').textContent = state.config && state.config.mode === 'm3u'
+        ? 'This box plays from a playlist rather than a provider login, so '
+          + 'there is nothing here that expires and no second connection to add.'
+        : 'No provider is connected.';
+      $('#provList').innerHTML = state.config && state.config.mode === 'm3u'
+        ? `<div class="prov-row">
+             <div class="prov-head">
+               <span class="prov-name">Playlist</span>
+               <span class="spacer"></span>
+               <button type="button" class="prov-remove" data-disconnect="1"
+                       title="Disconnect and return to setup"
+                       aria-label="Disconnect and return to setup">×</button>
+             </div>
+             <p class="prov-note">${escapeHtml(state.config.playlistUrl || '')}</p>
+           </div>`
+        : '';
+      $('#provAddBtn').hidden = true;
+      return;
+    }
+
+    // The offer and the form are the same control in two states.
+    $('#provAddBtn').hidden = !$('#provAddForm').hidden;
+    $('#provCapacity').textContent = capacity ? `${capacity} at once` : '';
+    /* The sentence somebody actually came here for, in the case that is
+       almost always true: one login, one stream, and here is why. */
+    $('#provLead').textContent = accounts.length <= 1
+      ? 'One login, so one thing plays at a time — a download pauses while '
+        + 'somebody watches. Add another and that number goes up.'
+      : `${accounts.length} logins, so ${capacity} streams at once. `
+        + `${data.free} free right now.`;
+
+    $('#provList').innerHTML = accounts.map((a) => this.row(a)).join('');
+    /* The provider already connected, taken from the login rather than the
+       config: it is the host these credentials will actually be tried on. */
+    $('#provHost').textContent = accounts[0].host
+      || (state.config && state.config.host) || '';
+  },
+
+  row(a) {
+    const name = a.label || a.username;
+    /* An expiry is a date, and a date on its own makes nobody do anything.
+       The days are what says whether it matters this week. */
+    let expiry = 'Expiry unknown';
+    let expiryClass = 'prov-unknown';
+    if (a.expired) {
+      expiry = `Expired ${new Date(a.expiresAt).toLocaleDateString()}`;
+      expiryClass = 'prov-bad';
+    } else if (a.expiresAt) {
+      const on = new Date(a.expiresAt).toLocaleDateString(undefined,
+        { year: 'numeric', month: 'short', day: 'numeric' });
+      const days = a.daysLeft;
+      expiry = days === 0 ? `Runs out today — ${on}`
+        : days === 1 ? `1 day left — ${on}`
+          : `${days} days left — ${on}`;
+      expiryClass = days <= 3 ? 'prov-bad' : days <= 10 ? 'prov-warn' : 'prov-ok';
+    }
+
+    const tags = [];
+    if (a.trial) tags.push('<span class="prov-tag">Trial</span>');
+    if (a.status && !/^active$/i.test(a.status)) {
+      tags.push(`<span class="prov-tag prov-tag-bad">${escapeHtml(a.status)}</span>`);
+    }
+
+    const inUse = a.streams
+      ? `${a.streams} of ${a.slots} in use by this box`
+      : `${a.slots} connection${a.slots === 1 ? '' : 's'}, idle`;
+
+    /* The provider's own count, shown only when it disagrees with ours —
+       that gap is either somebody else on the login or a connection the
+       panel has not let go of, and both are worth seeing. */
+    const theirs = Number.isFinite(a.activeCons) && a.activeCons > a.streams
+      ? `<p class="prov-note">The provider says ${a.activeCons} connection`
+        + `${a.activeCons === 1 ? ' is' : 's are'} open — more than this box is `
+        + 'using. Something else is on this login.</p>'
+      : '';
+
+    const trouble = a.error
+      ? `<p class="prov-note prov-bad">${escapeHtml(a.error)}</p>`
+      : '';
+
+    return `
+      <div class="prov-row">
+        <div class="prov-head">
+          <span class="prov-name">${escapeHtml(name)}</span>
+          ${tags.join('')}
+          <span class="spacer"></span>
+          <button type="button" class="prov-remove" data-remove="${escapeHtml(a.id)}"
+                  title="Remove this login" aria-label="Remove this login">×</button>
+        </div>
+        <p class="prov-expiry ${expiryClass}">${escapeHtml(expiry)}</p>
+        <p class="prov-note">${escapeHtml(inUse)}${a.label
+          ? ` · ${escapeHtml(a.username)}` : ''}</p>
+        ${theirs}${trouble}
+      </div>`;
+  },
+
+  openForm() {
+    $('#provAddForm').hidden = false;
+    $('#provAddBtn').hidden = true;
+    $('#provError').hidden = true;
+    $('#provUser').focus();
+  },
+
+  closeForm() {
+    const form = $('#provAddForm');
+    form.hidden = true;
+    form.reset();
+    $('#provAddBtn').hidden = false;
+  },
+
+  async add() {
+    const button = $('#provSave');
+    const error = $('#provError');
+    error.hidden = true;
+    button.disabled = true;
+    button.textContent = 'Checking…';
+    try {
+      const data = await this.send('/api/providers', 'POST', {
+        username: $('#provUser').value.trim(),
+        password: $('#provPass').value,
+        label: $('#provLabel').value.trim(),
+      });
+      this.closeForm();
+      /* Re-read rather than paint what the POST answered: the panel's lead
+         line counts free slots, and that is a live figure the write does not
+         carry. The library itself needs nothing — a second login is a second
+         connection to the same catalogue. */
+      await this.load();
+      toast(`Login added. ${data.capacity} things can play at once now.`);
+      await refreshConfig();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Add it';
+    }
+  },
+
+  /**
+   * Removing the last login is the old "disconnect provider": there is no
+   * library without one, so the box goes back to setup rather than sitting
+   * there configured and unable to answer.
+   */
+  /** A playlist box has no login to remove, only the playlist itself. */
+  async disconnect() {
+    if (!confirm('Disconnect and return to setup?')) return;
+    await fetch('/api/config', { method: 'DELETE' });
+    this.close();
+    health.close();
+    state.library = { live: null, movies: null, series: null };
+    state.config = null;
+    showSetup();
+  },
+
+  async remove(id) {
+    const accounts = [...document.querySelectorAll('#provList .prov-row')];
+    const last = accounts.length <= 1;
+    const ask = last
+      ? 'That is the only login. Removing it disconnects the provider and '
+        + 'returns this box to setup. Do it?'
+      : 'Remove this login? The box will have one less connection.';
+    if (!confirm(ask)) return;
+
+    try {
+      const data = await this.send(`/api/providers/${encodeURIComponent(id)}`, 'DELETE');
+      if (data.configured === false) {
+        this.close();
+        health.close();
+        state.library = { live: null, movies: null, series: null };
+        state.config = null;
+        showSetup();
+        return;
+      }
+      await this.load();
+      await refreshConfig();
+    } catch (err) {
+      $('#provError').textContent = err.message;
+      $('#provError').hidden = false;
+    }
+  },
+};
+
+/** Keep the app's own idea of how much room there is in step with the panel. */
+async function refreshConfig() {
+  try {
+    const cfg = await api('/api/config');
+    if (cfg && cfg.mode) state.config = cfg;
+  } catch {
+    /* the panel already said what went wrong */
+  }
+}
+
+$('#settingsBtn').addEventListener('click', () => providerPanel.open());
+$('#provClose').addEventListener('click', () => providerPanel.close());
+$('#provAddBtn').addEventListener('click', () => providerPanel.openForm());
+$('#provCancel').addEventListener('click', () => providerPanel.closeForm());
+$('#provAddForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  providerPanel.add();
+});
+$('#providerModal').addEventListener('click', (e) => {
+  if (e.target.id === 'providerModal') providerPanel.close();
+  const remove = e.target.closest('[data-remove]');
+  if (remove) providerPanel.remove(remove.dataset.remove);
+  if (e.target.closest('[data-disconnect]')) providerPanel.disconnect();
 });
 
 /* ------------------------------------------------------- library loading */
@@ -12891,6 +13154,8 @@ $('#playerOverlay').addEventListener('click', (event) => {
   if (event.target === $('#playerOverlay')) closePlayer();
 });
 document.addEventListener('keydown', (event) => {
+  // Providers sits on top of health, so it is the one Escape closes first.
+  if (event.key === 'Escape' && !$('#providerModal').hidden) return providerPanel.close();
   if (event.key === 'Escape' && !$('#healthModal').hidden) return health.close();
   if (event.key === 'Escape' && !$('#deviceModal').hidden) {
     $('#deviceModal').hidden = true;

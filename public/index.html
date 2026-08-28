@@ -135,8 +135,8 @@
           <strong>The provider's own guide</strong>
           <small>
             One request for the whole account instead of one per channel. Free
-            to use and already paid for — but only read while nothing is
-            playing, since it comes down the same single connection.
+            to use and already paid for — but only read while a connection is
+            free, since it comes down the same ones the streams do.
           </small>
         </span>
       </label>
@@ -203,16 +203,69 @@
       </button>
     </div>
 
-    <!-- Lives here rather than in the header: it is the one destructive thing
-         in the app, and a gear sitting between the controls you use every day
-         is an easy thing to hit by accident on a phone. -->
+    <!-- Lives here rather than in the header: the destructive thing is behind
+         it, and a gear sitting between the controls you use every day is an
+         easy thing to hit by accident on a phone. -->
     <div class="modal-actions">
-      <button type="button" class="btn btn-ghost btn-danger" id="settingsBtn"
-              title="Disconnect this provider and return to setup">
-        Disconnect provider
+      <button type="button" class="btn btn-ghost" id="settingsBtn"
+              title="The logins this box streams with, and when each one runs out">
+        Manage providers
       </button>
       <span class="spacer"></span>
       <button type="button" class="btn btn-ghost" id="healthClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────────────────────────────────────── the provider's logins ─── -->
+<!-- One login is one stream: that is the rule the whole box was built around,
+     and a second login is the only thing that changes it. So this panel is
+     about two numbers — when each subscription runs out, and how many things
+     the house can watch at once because of them.
+
+     No password appears here, ever. They are typed in and never read back:
+     the box holds them 0600 and answers about the accounts without them. -->
+<div class="modal" id="providerModal" hidden>
+  <div class="modal-card prov-card">
+    <h2>
+      Providers
+      <span class="prov-cap" id="provCapacity"></span>
+    </h2>
+    <p class="health-note" id="provLead">Asking the provider…</p>
+
+    <div class="prov-list" id="provList"></div>
+
+    <!-- Same provider, always. The library is one catalogue keyed by that
+         provider's own stream ids, so a login from anywhere else would open
+         the wrong film or nothing at all. The host is shown, not asked for. -->
+    <form class="prov-add" id="provAddForm" autocomplete="off" hidden>
+      <p class="prov-add-lead">
+        Another login on <strong id="provHost"></strong>.
+      </p>
+      <label class="field">
+        <span>Username</span>
+        <input name="username" id="provUser" spellcheck="false" autocapitalize="off" />
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input name="password" id="provPass" type="password" />
+      </label>
+      <label class="field">
+        <span>Name it <small class="hint-inline">— optional</small></span>
+        <input name="label" id="provLabel" maxlength="40" placeholder="Trial" />
+      </label>
+      <div class="prov-add-actions">
+        <button type="submit" class="btn btn-primary btn-sm" id="provSave">Add it</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="provCancel">Cancel</button>
+      </div>
+    </form>
+
+    <p class="form-error" id="provError" hidden></p>
+
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost btn-sm" id="provAddBtn">Add a login</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-ghost" id="provClose">Close</button>
     </div>
   </div>
 </div>

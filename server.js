@@ -78,6 +78,7 @@ const DOWNLOAD_INDEX = path.join(DOWNLOAD_DIR, 'index.json');
 const archive = require('./local-library');
 const guide = require('./epg-guide');
 const people = require('./people');
+const providers = require('./providers');
 const ARCHIVE_ROOT = process.env.ARCHIVE_ROOT || '/mnt/archive';
 const ARCHIVE_INDEX = path.join(ROOT, 'library-index.ndjson');
 
@@ -586,6 +587,10 @@ function publicConfig(cfg) {
     epgUrls: guideSources(cfg),
     useProviderGuide: cfg.useProviderGuide !== false,
     preferredFormat: cfg.preferredFormat || 'm3u8',
+    /* How many streams the house can run at once, which is a fact the screen
+       needs and a password is not. */
+    logins: providers.accounts(cfg).length,
+    capacity: providers.capacity(cfg),
   };
 }
 
@@ -722,6 +727,9 @@ const downloads = new Map();
 const queue = [];
 let activeJob = null;
 let activeRequest = null;
+/* The pool slot the running download is holding, if it is a provider one. An
+   archive conversion reads the drive and holds nothing. */
+let releaseJobSlot = null;
 
 function ensureDownloadDir() {
   fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
@@ -1277,7 +1285,12 @@ function jobSourceUrl(job) {
   if (job.sourceUrl) return job.sourceUrl;
   const cfg = readConfig();
   if (!cfg || cfg.mode !== 'xtream') throw new Error('Provider is not configured');
-  return buildStreamUrl(cfg, job.kind === 'series' ? 'series' : 'movie', job.streamId, job.ext);
+  /* Whichever login has room. A download is the lowest-priority thing that
+     touches the provider — it yields to anybody pressing play — so it takes
+     the account nobody else is on, and only starts at all when the queue
+     below has found a free slot for it. */
+  const account = providers.pick(cfg) || cfg;
+  return buildStreamUrl(account, job.kind === 'series' ? 'series' : 'movie', job.streamId, job.ext);
 }
 
 /**
@@ -1470,7 +1483,15 @@ async function runJob(job) {
   const headers = {};
   if (start > 0) headers.range = `bytes=${start}-`;
 
-  const upstream = await request(jobSourceUrl(job), { headers, timeout: 60000 });
+  /* The URL carries the login the pool chose; the slot is taken here, where
+     the socket actually opens, and given back in the queue's finally block
+     however the job ends. Without this a download would be invisible to the
+     pool and a second stream could be started on a login already carrying
+     one. */
+  const source = jobSourceUrl(job);
+  const holding = providers.forUrl(readConfig(), source);
+  releaseJobSlot = holding ? providers.take(holding.id) : null;
+  const upstream = await request(source, { headers, timeout: 60000 });
   activeRequest = upstream;
 
   const code = upstream.statusCode || 0;
@@ -1633,16 +1654,38 @@ function currentThroughput() {
   return meter.rate;
 }
 
+/**
+ * Is there any room left on the provider?
+ *
+ * This used to be "is anything streaming", because one account meant one
+ * stream and the two questions had one answer. With a pool it is a question
+ * about SLOTS: a box with two logins and one film playing is busy in the old
+ * sense and not busy in the sense that matters, which is whether the next
+ * thing can start.
+ *
+ * The timestamp is still stamped whenever anything is streaming, because that
+ * is what the download queue's grace period and the auto-updater read.
+ */
 function providerBusy() {
   // A finished remux (ffmpeg exited) plays from disk and holds nothing.
   const remuxing = [...remuxSessions.values()].some((s) => s.fromProvider && !s.exited);
-  const busy = providerStreams > 0 || remuxing;
-  if (busy) lastProviderActiveAt = Date.now();
-  return busy;
+  if (providerStreams > 0 || remuxing) lastProviderActiveAt = Date.now();
+  const cfg = readConfig();
+  const accounts = providers.accounts(cfg);
+  // No pool to ask (M3U mode, or a box configured before this existed with a
+  // single loose account): the old question, unchanged.
+  if (!accounts.length) return providerStreams > 0 || remuxing;
+  return providers.busy(cfg);
 }
 
-/** Called the moment a stream starts; puts the running download on ice. */
+/**
+ * Called the moment a stream starts; puts the running download on ice — but
+ * only when that stream took the last slot. Two logins means a download and a
+ * film can run side by side, and pausing one for the other out of habit would
+ * throw away the connection that was paid for.
+ */
 function autoPauseActiveDownload() {
+  if (!providerBusy()) return;
   const job = activeJob;
   if (!job || job.status !== 'downloading') return;
   // This exists to hand the provider's one connection back to playback. A
@@ -1716,6 +1759,12 @@ async function processQueue() {
       // wait for and no sign of progress. Those are pulled out of the queue
       // and run regardless; everything else still waits its turn.
       let id;
+      /* The rule that used to be "wait until nothing is streaming" is now
+         "wait until a login has room". With one account those are the same
+         sentence; with two, a download runs happily beside somebody watching
+         a film, which is the whole point of the second login. The grace
+         period stays: a slot released a moment ago is often about to be
+         taken again by the same viewer changing their mind. */
       if (providerBusy() || Date.now() - lastProviderActiveAt < RESUME_GRACE_MS) {
         const at = queue.findIndex((qid) => downloads.get(qid)?.archivePath);
         if (at < 0) {
@@ -1759,6 +1808,10 @@ async function processQueue() {
       } finally {
         activeJob = null;
         activeRequest = null;
+        if (releaseJobSlot) {
+          releaseJobSlot();
+          releaseJobSlot = null;
+        }
       }
     }
   } finally {
@@ -2286,6 +2339,11 @@ function probeOutput(session) {
 function killSession(id) {
   const session = remuxSessions.get(id);
   if (!session) return;
+  // The login this session was holding goes back in the pool with it.
+  if (session.releaseSlot) {
+    session.releaseSlot();
+    session.releaseSlot = null;
+  }
   try {
     session.proc.kill('SIGKILL');
   } catch {
@@ -3398,7 +3456,13 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
 
   // Ingest reads the provider's HLS, not its TS push feed — see the
   // live_start_index note in liveDvrArgs for why that decides startup time.
-  const input = buildStreamUrl(cfg, 'live', channelId, 'm3u8');
+  //
+  // One login for the life of the session, chosen now: a respawn after a
+  // dropped feed reuses the same URL, so the same account carries the channel
+  // from the first segment to the last rather than hopping between logins
+  // every time the provider hiccups.
+  const account = providers.pick(cfg);
+  const input = buildStreamUrl(account || cfg, 'live', channelId, 'm3u8');
   fs.mkdirSync(HLS_DIR, { recursive: true });
   const dir = path.join(HLS_DIR, id);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -3422,6 +3486,11 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
     stderrHead() { return this._stderrHead; },
     args: '',
   };
+  /* The ingest holds its slot for as long as ffmpeg is running, which is what
+     makes a live channel cost one connection however many people are watching
+     it — they all read the Pi's window rather than the provider. */
+  session.account = account ? account.id : '';
+  session.releaseSlot = account ? providers.take(account.id) : null;
   remuxSessions.set(id, session);
   lastProviderActiveAt = Date.now();
   autoPauseActiveDownload();
@@ -3791,8 +3860,12 @@ async function handleStream(req, res, query) {
     return send(res, 502, `Upstream error: ${err.message}`);
   }
 
-  // This connection is now occupying the provider slot — yield the download
-  // queue to it, and release the slot whichever way the response ends.
+  /* This connection is now occupying a slot on whichever login its
+     credentials belong to. The slot is taken here rather than where the URL
+     was built because here is where the pipe actually opens — and released
+     whichever way the response ends. */
+  const account = providers.forUrl(readConfig(), target);
+  const giveBack = account ? providers.take(account.id) : null;
   providerStreams += 1;
   lastProviderActiveAt = Date.now();
   autoPauseActiveDownload();
@@ -3800,6 +3873,7 @@ async function handleStream(req, res, query) {
   const release = () => {
     if (released) return;
     released = true;
+    if (giveBack) giveBack();
     providerStreams = Math.max(0, providerStreams - 1);
     lastProviderActiveAt = Date.now();
   };
@@ -4600,7 +4674,7 @@ function crawlCredits() {
     items: cachedMovies(),
     busy: () => providerBusy() || Boolean(activeJob && activeJob.status === 'downloading'),
     fetchInfo: async (id) => {
-      const url = xtreamApiUrl(cfg, { action: 'get_vod_info', vod_id: id });
+      const url = xtreamApiUrl(providers.forMeta(cfg) || cfg, { action: 'get_vod_info', vod_id: id });
       const upstream = await request(url, { timeout: 15000 });
       if ((upstream.statusCode || 500) >= 400) {
         upstream.resume();
@@ -4793,7 +4867,7 @@ function projectItem(row, kind) {
 }
 
 async function fetchXtreamJson(cfg, action) {
-  const upstream = await request(xtreamApiUrl(cfg, { action }), { timeout: 120000 });
+  const upstream = await request(xtreamApiUrl(providers.forMeta(cfg) || cfg, { action }), { timeout: 120000 });
   const body = (await readBody(upstream)).toString('utf8');
   try {
     return JSON.parse(body);
@@ -4905,6 +4979,13 @@ async function handleApi(req, res, pathname, query) {
         next.host = normalizeHost(incoming.host);
         next.username = String(incoming.username).trim();
         next.password = String(incoming.password);
+        /* The first login is also the first entry in the pool. The three loose
+           fields stay beside it: everything that reads a config still finds
+           what it always found, and a box that rolls back to an older build
+           keeps working. */
+        next.accounts = [{
+          id: 'p1', host: next.host, username: next.username, password: next.password, label: '',
+        }];
 
         // Verify before saving — better to fail here than on the first click.
         try {
@@ -4915,6 +4996,7 @@ async function handleApi(req, res, pathname, query) {
             return json(res, 401, { error: 'Provider rejected those credentials.' });
           }
           writeConfig(next);
+          providers.note('p1', info.user_info);
           return json(res, 200, { ...publicConfig(next), userInfo: info.user_info });
         } catch (err) {
           return json(res, 502, {
@@ -4952,6 +5034,139 @@ async function handleApi(req, res, pathname, query) {
     }
 
     return json(res, 405, { error: 'Method not allowed' });
+  }
+
+  /* ---- The logins, and what the provider says about each ----
+   *
+   * The panel behind "Manage providers". Everything here is the provider's own
+   * answer about an account — when it expires, how many connections it allows,
+   * how many it thinks are open — beside the box's own count of what it is
+   * using. Passwords never leave the box: they are what this file is 0600 for.
+   */
+  if (pathname === '/api/providers') {
+    if (req.method === 'GET') {
+      const list = providers.accounts(cfg);
+      /* Asked of the provider rather than remembered, but not on every open:
+         an expiry date does not move, and a panel asked once a minute by a
+         page somebody left open is a panel that starts refusing. */
+      for (const account of list) {
+        if (!providers.stale(account.id) && !query.get('refresh')) continue;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const probe = await request(xtreamApiUrl(account, {}), { timeout: 15000 });
+          // eslint-disable-next-line no-await-in-loop
+          const body = JSON.parse((await readBody(probe)).toString('utf8'));
+          if (body && body.user_info && body.user_info.auth !== 0) {
+            providers.note(account.id, body.user_info);
+          } else {
+            providers.note(account.id, null, 'The provider rejected this login.');
+          }
+        } catch (err) {
+          providers.note(account.id, null, err.message);
+        }
+      }
+      return json(res, 200, {
+        accounts: providers.report(cfg),
+        free: providers.free(cfg),
+        capacity: providers.capacity(cfg),
+        inUse: providers.inUse(cfg),
+      });
+    }
+
+    /* ---- another login on the same provider ---- */
+    if (req.method === 'POST') {
+      if (!cfg || cfg.mode !== 'xtream') {
+        return json(res, 400, { error: 'Not in Xtream mode' });
+      }
+      let incoming;
+      try {
+        incoming = JSON.parse(await collectRequestBody(req));
+      } catch {
+        return json(res, 400, { error: 'Invalid JSON' });
+      }
+      const username = String(incoming.username || '').trim();
+      const password = String(incoming.password ?? '');
+      if (!username || !password) {
+        return json(res, 400, { error: 'A username and password are required.' });
+      }
+
+      /* The same provider, always. The library is one catalogue keyed by the
+         provider's own stream ids — point a second panel at it and half the
+         ids would open the wrong thing, or nothing at all. */
+      const host = normalizeHost(incoming.host || cfg.host);
+      if (host !== normalizeHost(cfg.host)) {
+        return json(res, 400, {
+          error: 'Extra logins have to be on the same provider — the library is '
+            + "keyed by that provider's own ids.",
+        });
+      }
+
+      const existing = providers.accounts(cfg);
+      if (existing.some((a) => a.username === username)) {
+        return json(res, 409, { error: 'That login is already on the box.' });
+      }
+
+      const candidate = { host, username, password };
+      let info;
+      try {
+        const probe = await request(xtreamApiUrl(candidate, {}), { timeout: 15000 });
+        info = JSON.parse((await readBody(probe)).toString('utf8'));
+      } catch (err) {
+        return json(res, 502, { error: `Could not reach the provider: ${err.message}` });
+      }
+      if (!info || !info.user_info || info.user_info.auth === 0) {
+        return json(res, 401, { error: 'The provider rejected those credentials.' });
+      }
+
+      const id = `p${Date.now().toString(36)}`;
+      const next = readConfig() || cfg;
+      next.accounts = [...existing.map((a) => ({ ...a })), {
+        id, host, username, password, label: String(incoming.label || '').trim(),
+      }];
+      writeConfig(next);
+      providers.note(id, info.user_info);
+      return json(res, 200, {
+        accounts: providers.report(next),
+        capacity: providers.capacity(next),
+      });
+    }
+
+    return json(res, 405, { error: 'Method not allowed' });
+  }
+
+  /* ---- removing one ----
+   *
+   * Removing the last login is the old "disconnect provider": there is no
+   * library without one, so the box goes back to setup rather than sitting
+   * there configured and unable to answer.
+   */
+  if (/^\/api\/providers\/[\w-]+$/.test(pathname)) {
+    if (req.method !== 'DELETE') return json(res, 405, { error: 'Method not allowed' });
+    const id = pathname.split('/').pop();
+    const list = providers.accounts(cfg);
+    if (!list.some((a) => a.id === id)) return json(res, 404, { error: 'No such login' });
+
+    if (list.length <= 1) {
+      try {
+        fs.unlinkSync(CONFIG_PATH);
+      } catch {
+        /* already gone */
+      }
+      providers.forget(id);
+      return json(res, 200, { configured: false });
+    }
+
+    const next = readConfig() || cfg;
+    next.accounts = list.filter((a) => a.id !== id).map((a) => ({ ...a }));
+    /* The loose fields follow the list: they are what an older build and a
+       few call sites still read, and leaving them pointed at a login that has
+       been removed is how a box ends up authenticating as nobody. */
+    next.host = next.accounts[0].host;
+    next.username = next.accounts[0].username;
+    next.password = next.accounts[0].password;
+    writeConfig(next);
+    providers.forget(id);
+    return json(res, 200, { accounts: providers.report(next), capacity: providers.capacity(next) });
   }
 
   /* ---- Profiles ---- */
@@ -5682,7 +5897,7 @@ async function handleApi(req, res, pathname, query) {
       for (const id of stale.slice(0, EPG_PER_REQUEST)) {
         try {
           // eslint-disable-next-line no-await-in-loop
-          const upstream = await request(xtreamApiUrl(cfg, {
+          const upstream = await request(xtreamApiUrl(providers.forMeta(cfg) || cfg, {
             action: 'get_short_epg', stream_id: id, limit: 10,
           }));
           // eslint-disable-next-line no-await-in-loop
@@ -6005,7 +6220,7 @@ async function handleApi(req, res, pathname, query) {
       if (k !== 'username' && k !== 'password') params[k] = v;
     }
     try {
-      const upstream = await request(xtreamApiUrl(cfg, params));
+      const upstream = await request(xtreamApiUrl(providers.forMeta(cfg) || cfg, params));
       const body = (await readBody(upstream)).toString('utf8');
       let data;
       try {
@@ -6506,7 +6721,12 @@ async function handleApi(req, res, pathname, query) {
     if (!kind || !id) return json(res, 400, { error: 'kind and id are required' });
     if (cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
     try {
-      const direct = buildStreamUrl(cfg, kind, id, ext);
+      /* Which login opens this. The choice is reserved for a few seconds
+         because the URL is built here and the pipe opens in the NEXT request:
+         without it, two things started together would both be told to use the
+         same free account and one of them would be refused. */
+      const chosen = providers.pick(cfg, { reserve: true }) || cfg;
+      const direct = buildStreamUrl(chosen, kind, id, ext);
       let url = proxyPath(direct);
 
       // How an MPEG-TS channel is opened. One setting, not a choice.

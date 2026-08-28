@@ -39,7 +39,7 @@ fi
 rm -rf "$DIR"
 mkdir -p "$DIR/downloads"
 cp -R "$ROOT/public" "$DIR/public"
-cp "$ROOT/server.js" "$ROOT/local-library.js" "$ROOT/epg-guide.js" "$ROOT/people.js" "$DIR/"
+cp "$ROOT/server.js" "$ROOT/local-library.js" "$ROOT/epg-guide.js" "$ROOT/people.js" "$ROOT/providers.js" "$DIR/"
 [ -f "$ROOT/library-index.ndjson" ] && cp "$ROOT/library-index.ndjson" "$DIR/"
 
 # An m3u pointed at nothing: every suite stubs the library calls it needs, and
