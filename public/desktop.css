@@ -53,9 +53,15 @@
     box-shadow .3s var(--ease);
 }
 
-/* Once the page has moved, the bar stops being a red plate and becomes glass
-   over whatever is under it — so the picture, not the chrome, is the thing
-   holding the top of the screen. */
+/* The bar, in the one state it has: glass over whatever is under it, so the
+   picture rather than the chrome holds the top of the screen.
+ *
+ * `lifted` is a class rather than part of the rule above because the phone
+ * shell turns it back into a solid field — glass wants something behind it,
+ * and down there the bar is a row in a column with nothing under it. It used
+ * to be set by scroll position, which meant a red plate at the top of every
+ * page that changed colour, height and wordmark the instant anybody moved.
+ * desktop.js sets it once now. */
 .desk .site-header.lifted {
   height: 58px;
   background: rgba(17, 11, 10, .74);
@@ -2684,8 +2690,10 @@
   padding-top: env(safe-area-inset-top);
 }
 
-/* Never becomes glass. The lifted state is for a bar with a picture running
-   underneath it; here there is nothing behind the bar to show through. */
+/* Never glass. That state is for a bar with a picture running underneath it;
+   here the bar is a row in a column and there is nothing behind it to show
+   through. Since `lifted` is now permanent rather than a scroll state, this
+   is what the phone's bar IS, not what it becomes. */
 .desk body.has-tabbar .site-header.lifted {
   height: auto;
   background: var(--header-field);

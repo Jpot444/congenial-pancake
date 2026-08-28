@@ -93,17 +93,25 @@
 
 
   /* =============================================================== header */
-  /* The bar turns from a crimson plate into dark glass as soon as the page
-     has moved at all — 6px, not a screenful, because the point is that the
-     picture is now behind it. */
+  /* Dark glass, always.
+   *
+   * This used to be two bars: a crimson plate at the top of the page that
+   * turned to glass as soon as anything scrolled. Two bars is one too many —
+   * the wordmark changed colour and size, the selected tab changed fill, and
+   * the whole thing moved every time somebody nudged the page. The glass one
+   * is the one worth keeping, so it is simply the bar now, and `lifted` is
+   * set once when the layer comes up rather than being toggled by a scroll
+   * position. The phone shell overrides it back to a solid field — see the
+   * has-tabbar block in desktop.css — because glass is for a bar with a
+   * picture running underneath it, and there it is a row in a column with
+   * nothing behind it. */
   function liftHeader() {
     const hdr = document.querySelector('.site-header');
-    if (hdr) hdr.classList.toggle('lifted', on && window.scrollY > 6);
+    if (hdr) hdr.classList.toggle('lifted', on);
   }
 
   addEventListener('scroll', () => {
     if (!on) return;
-    liftHeader();
     spyCategories();
   }, { passive: true });
 
