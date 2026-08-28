@@ -3977,7 +3977,7 @@ function nflGame(event) {
 async function nflScores() {
   if (Date.now() - nflCache.at < NFL_TTL_MS) return nflCache;
   try {
-    const res = await request(NFL_URL, { headers: { accept: 'application/json' } });
+    const res = await request(NFL_URL, { headers: SITE_HEADERS });
     if ((res.statusCode || 500) >= 400) {
       res.resume();
       throw new Error(`HTTP ${res.statusCode}`);
@@ -4017,7 +4017,7 @@ async function nflScores() {
 const MLB_URL = process.env.MLB_URL
   || 'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard';
 const MLB_TTL_MS = 30000;
-let mlbCache = { at: 0, games: [], error: '' };
+let mlbCache = { at: 0, games: [], error: '', source: '' };
 
 /** One ESPN baseball event as the Game shape the television documents. */
 function mlbGame(event) {
@@ -4114,25 +4114,173 @@ function topOfInning(type) {
   return true;
 }
 
+/*
+ * Baseball comes from baseball, first.
+ *
+ * ESPN's scoreboard answered this box with 403 — not a mistake in the request
+ * but their edge declining to serve something that is not a browser sitting on
+ * espn.com, which is not a thing a Raspberry Pi in Montana can argue with. So
+ * the first source asked is MLB's own: statsapi.mlb.com is the public API the
+ * league publishes, wants no key, and has nothing between it and the caller.
+ * ESPN stays as the second attempt, because a source that is refused today may
+ * not be tomorrow and two of them agreeing costs nothing.
+ *
+ * `hydrate` is not optional here: the bare schedule carries the score and
+ * little else, and the inning, the runners, the count and who is carrying the
+ * broadcast all arrive only because they are asked for by name.
+ */
+const MLB_STATS_URL = process.env.MLB_STATS_URL
+  || 'https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=team,linescore,broadcasts(all)';
+
+/** One statsapi.mlb.com game as the Game shape the television documents. */
+function mlbStatsGame(game) {
+  const line = game.linescore || {};
+  const teams = game.teams || {};
+  const abstract = String(game.status?.abstractGameState || '').toLowerCase();
+  const state = abstract === 'live' ? 'live' : (abstract === 'final' ? 'final' : 'upcoming');
+  /* 'Top', 'Middle', 'Bottom', 'End' — the away side bats until the middle. */
+  const half = String(line.inningState || '').toLowerCase();
+  const top = half.startsWith('top') || half.startsWith('mid');
+
+  const side = (which) => {
+    const t = teams[which];
+    if (!t) return null;
+    const record = t.leagueRecord;
+    return {
+      abbr: t.team?.abbreviation || t.team?.teamName || '',
+      record: record && Number.isFinite(record.wins) ? `${record.wins}-${record.losses}` : '',
+      score: Number.isFinite(t.score) ? Number(t.score) : null,
+      possession: state === 'live' && which === (top ? 'away' : 'home'),
+    };
+  };
+
+  const first = Date.parse(game.gameDate || '') || 0;
+  let clock = '';
+  if (state === 'live') {
+    clock = [line.inningState, line.currentInningOrdinal].filter(Boolean).join(' ')
+      || game.status?.detailedState || 'LIVE';
+  } else if (state === 'final') {
+    clock = 'Final';
+  } else if (first) {
+    clock = new Date(first).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+
+  let situation = '';
+  if (state === 'live') {
+    const offense = line.offense || {};
+    const bases = [
+      offense.first ? '1st' : '',
+      offense.second ? '2nd' : '',
+      offense.third ? '3rd' : '',
+    ].filter(Boolean);
+    const outs = Number.isFinite(line.outs) ? `${line.outs} out` : '';
+    const count = Number.isFinite(line.balls) && Number.isFinite(line.strikes)
+      ? `${line.balls}-${line.strikes}` : '';
+    situation = [outs, bases.length ? bases.join(' & ') : 'bases empty', count]
+      .filter(Boolean).join(' · ');
+  }
+
+  /* A national broadcast if there is one, because that is the channel this
+     house is most likely to carry; otherwise whatever television is listed. */
+  const casts = (game.broadcasts || []).filter((b) => /tv/i.test(b.type || 'TV'));
+  const network = (casts.find((b) => b.isNational) || casts[0] || {}).name || '';
+
+  const teamMatch = ['away', 'home']
+    .map((which) => teams[which]?.team?.teamName || teams[which]?.team?.shortName || '')
+    .filter(Boolean);
+
+  let note = '';
+  const detail = game.status?.detailedState || '';
+  if (state === 'upcoming' && /postpon|delay|suspend/i.test(detail)) note = detail;
+  else if (state === 'upcoming' && first) {
+    const mins = Math.round((first - Date.now()) / 60000);
+    if (mins > 0 && mins < 240) note = `First pitch in ${mins} min`;
+  }
+
+  return {
+    id: String(game.gamePk || ''),
+    sport: 'mlb',
+    status: state,
+    channelMatch: network,
+    channelName: network || teamMatch.join(' at '),
+    teamMatch,
+    redZone: false,
+    away: side('away'),
+    home: side('home'),
+    clock,
+    situation,
+    kickoff: first,
+    note,
+    progress: null,
+    placeholder: false,
+  };
+}
+
+async function fetchJson(url, headers) {
+  const res = await request(url, { headers });
+  if ((res.statusCode || 500) >= 400) {
+    res.resume();
+    throw new Error(`HTTP ${res.statusCode}`);
+  }
+  return JSON.parse((await readBody(res)).toString('utf8'));
+}
+
+/*
+ * Headers a browser would send. ESPN's edge is what refuses this box, and a
+ * request that looks like the page's own is the only lever there is from
+ * here — it costs nothing and it is the difference between 403 and 200 on
+ * plenty of Akamai front ends.
+ */
+const SITE_HEADERS = {
+  accept: 'application/json, text/plain, */*',
+  'accept-language': 'en-US,en;q=0.9',
+  referer: 'https://www.espn.com/',
+  origin: 'https://www.espn.com',
+};
+
 async function mlbScores() {
   if (Date.now() - mlbCache.at < MLB_TTL_MS) return mlbCache;
-  try {
-    const res = await request(MLB_URL, { headers: { accept: 'application/json' } });
-    if ((res.statusCode || 500) >= 400) {
-      res.resume();
-      throw new Error(`HTTP ${res.statusCode}`);
+
+  const tried = [];
+  const sources = [
+    ['statsapi.mlb.com', async () => {
+      const body = await fetchJson(MLB_STATS_URL, { accept: 'application/json' });
+      return (body.dates || [])
+        .flatMap((d) => d.games || [])
+        .map(mlbStatsGame)
+        .filter((g) => g.id);
+    }],
+    ['espn', async () => {
+      const body = await fetchJson(MLB_URL, SITE_HEADERS);
+      return (body.events || []).map(mlbGame).filter((g) => g.id);
+    }],
+  ];
+
+  for (const [name, read] of sources) {
+    try {
+      const games = await read();
+      if (games.length) {
+        mlbCache = { at: Date.now(), games, error: '', source: name };
+        return mlbCache;
+      }
+      /* An empty answer is an answer — an off day — but keep asking the next
+         source before believing it, since a refusal can also look empty. */
+      tried.push(`${name}: no games`);
+    } catch (err) {
+      tried.push(`${name}: ${err.message}`);
     }
-    const body = JSON.parse((await readBody(res)).toString('utf8'));
-    const games = (body.events || []).map(mlbGame).filter((g) => g.id);
-    mlbCache = { at: Date.now(), games, error: '' };
-  } catch (err) {
-    const stale = Date.now() - mlbCache.at < 10 * 60 * 1000;
-    mlbCache = {
-      at: stale ? mlbCache.at : Date.now(),
-      games: stale ? mlbCache.games : [],
-      error: err.message,
-    };
   }
+
+  /* Nobody had any. That is either a quiet day, which is not an error, or
+     every source refused, which is — and the attempts say which. */
+  const refused = tried.some((line) => !line.endsWith('no games'));
+  const stale = refused && Date.now() - mlbCache.at < 10 * 60 * 1000;
+  mlbCache = {
+    at: stale ? mlbCache.at : Date.now(),
+    games: stale ? mlbCache.games : [],
+    error: refused ? tried.join(' · ') : '',
+    source: stale ? mlbCache.source : '',
+  };
   return mlbCache;
 }
 
@@ -5459,7 +5607,16 @@ async function handleApi(req, res, pathname, query) {
        * carry no credentials, so they can be shown. */
       feeds: [
         { sport: 'nfl', url: NFL_URL, games: nfl.games.length, at: nfl.at, error: nfl.error || undefined },
-        { sport: 'mlb', url: MLB_URL, games: mlb.games.length, at: mlb.at, error: mlb.error || undefined },
+        {
+          sport: 'mlb',
+          /* Two sources, asked in this order. Which one answered matters when
+             one of them is refusing the box. */
+          url: [MLB_STATS_URL, MLB_URL],
+          source: mlb.source || undefined,
+          games: mlb.games.length,
+          at: mlb.at,
+          error: mlb.error || undefined,
+        },
       ],
     });
   }

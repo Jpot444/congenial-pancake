@@ -14,9 +14,15 @@
  *     showing it. A game therefore travels with both team names, and the
  *     television tries those before the network.
  *
- * ESPN is not called: the suite serves its own scoreboard on a socket and
- * points the box at it with MLB_URL, so what is under test is our mapping of
- * that shape rather than what happens to be on today.
+ * And baseball is asked of baseball first. ESPN's edge answers this box with
+ * 403 — a Raspberry Pi is not a browser sitting on espn.com — so the league's
+ * own statsapi.mlb.com is the first door knocked on and ESPN is the second.
+ * Both shapes are mapped, and the fallback is exercised rather than assumed:
+ * the second box below is pointed at a source that refuses.
+ *
+ * Neither real feed is called. The suite serves both shapes on a socket and
+ * points the box at them, so what is under test is our mapping rather than
+ * whatever happens to be on today.
  */
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -28,6 +34,9 @@ const ROOT = PATHS.ROOT;
 const DIR = '/tmp/portal-scores';
 const PORT = 8484;
 const FEED_PORT = 8485;
+/* Not FEED_PORT + something by accident: the fallback box needs a port of its
+   own, and the feed already holds the one next door. */
+const SECOND_PORT = 8486;
 
 const fails = [];
 const check = (name, ok, detail) => {
@@ -88,11 +97,69 @@ const SCOREBOARD = {
   ],
 };
 
+/*
+ * The same three games as statsapi.mlb.com hands them over. Different shape
+ * entirely — the league nests its games under dates, writes the half-inning
+ * and the ordinal as separate fields, and only carries the runners, the count
+ * and the broadcast because they were asked for by name in `hydrate`.
+ */
+const SCHEDULE = {
+  dates: [{
+    date: '2026-08-28',
+    games: [
+      {
+        gamePk: 776543,
+        gameDate: '2026-08-28T23:05:00Z',
+        status: { abstractGameState: 'Live', detailedState: 'In Progress' },
+        teams: {
+          away: { leagueRecord: { wins: 55, losses: 77 }, score: 5, team: { teamName: 'Rockies', abbreviation: 'COL' } },
+          home: { leagueRecord: { wins: 60, losses: 72 }, score: 3, team: { teamName: 'Nationals', abbreviation: 'WSH' } },
+        },
+        linescore: {
+          currentInning: 5, currentInningOrdinal: '5th', inningState: 'Top',
+          balls: 2, strikes: 1, outs: 1, offense: { first: { id: 1 }, third: { id: 2 } },
+        },
+        // The local network is listed first on purpose: the national one is
+        // the channel this house is likelier to carry, and it must win.
+        broadcasts: [{ name: 'MASN', type: 'TV' }, { name: 'MLB Network', type: 'TV', isNational: true }],
+      },
+      {
+        gamePk: 776544,
+        gameDate: '2036-08-29T23:10:00Z',
+        status: { abstractGameState: 'Preview', detailedState: 'Scheduled' },
+        teams: {
+          away: { score: 0, team: { teamName: 'Yankees', abbreviation: 'NYY' } },
+          home: { score: 0, team: { teamName: 'Red Sox', abbreviation: 'BOS' } },
+        },
+        broadcasts: [{ name: 'ESPN', type: 'TV', isNational: true }],
+      },
+      {
+        gamePk: 776545,
+        gameDate: '2026-08-28T19:45:00Z',
+        status: { abstractGameState: 'Final', detailedState: 'Final' },
+        teams: {
+          away: { score: 7, team: { teamName: 'Dodgers', abbreviation: 'LAD' } },
+          home: { score: 2, team: { teamName: 'Giants', abbreviation: 'SF' } },
+        },
+        linescore: { currentInning: 9, currentInningOrdinal: '9th', inningState: 'End' },
+        broadcasts: [{ name: 'SNLA', type: 'TV' }],
+      },
+    ],
+  }],
+};
+
 (async () => {
   /* ---- a scoreboard of our own ------------------------------------------ */
   const feed = http.createServer((req, res) => {
+    /* Three doors: the league's own schedule, ESPN's scoreboard, and one that
+       refuses — which is what ESPN actually does to this box. */
+    if (req.url.includes('refused')) {
+      res.writeHead(403, { 'content-type': 'text/plain' });
+      return res.end('no');
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(req.url.includes('empty') ? { events: [] } : SCOREBOARD));
+    if (req.url.includes('stats')) return res.end(JSON.stringify(SCHEDULE));
+    return res.end(JSON.stringify(req.url.includes('empty') ? { events: [] } : SCOREBOARD));
   });
   await new Promise((r) => feed.listen(FEED_PORT, '127.0.0.1', r));
 
@@ -112,6 +179,7 @@ const SCOREBOARD = {
       ...process.env,
       PORT: String(PORT),
       HOST: '127.0.0.1',
+      MLB_STATS_URL: `http://127.0.0.1:${FEED_PORT}/stats`,
       MLB_URL: `http://127.0.0.1:${FEED_PORT}/mlb`,
       NFL_URL: `http://127.0.0.1:${FEED_PORT}/empty`,
     },
@@ -157,6 +225,19 @@ const SCOREBOARD = {
     check('both teams travel with the game',
       live && live.teamMatch.join(',') === 'Rockies,Nationals', JSON.stringify(live && live.teamMatch));
 
+    console.log('\n  where it came from');
+    const report = JSON.parse((await get('/api/scores')).body);
+    const mlbFeed = (report.feeds || []).find((f) => f.sport === 'mlb') || {};
+    check('the league is the source that answered',
+      mlbFeed.source === 'statsapi.mlb.com', JSON.stringify(mlbFeed));
+    check('and the report names both doors it can knock on',
+      Array.isArray(mlbFeed.url) && mlbFeed.url.length === 2, JSON.stringify(mlbFeed.url));
+
+    /* A national broadcast beats the local one: it is the channel this house
+       is likelier to carry. */
+    check('the national broadcast is the one offered',
+      live && live.channelMatch === 'MLB Network', live && live.channelMatch);
+
     console.log('\n  both sports in one call');
     const both = JSON.parse((await get('/api/scores')).body);
     check('answers with the sports that have games',
@@ -175,6 +256,43 @@ const SCOREBOARD = {
       'public/tv/js/scores.js');
     check('and the television asks for every sport rather than for football',
       /const ENDPOINT = '\/api\/scores'/.test(scores));
+    /* ---- and when the league is the one that will not answer ----------- */
+    console.log('\n  the fallback');
+    const second = spawn('node', [path.join(DIR, 'server.js')], {
+      env: {
+        ...process.env,
+        PORT: String(SECOND_PORT),
+        HOST: '127.0.0.1',
+        MLB_STATS_URL: `http://127.0.0.1:${FEED_PORT}/refused`,
+        MLB_URL: `http://127.0.0.1:${FEED_PORT}/mlb`,
+        NFL_URL: `http://127.0.0.1:${FEED_PORT}/empty`,
+      },
+      stdio: 'ignore',
+    });
+    try {
+      let body = '';
+      for (let i = 0; i < 40; i += 1) {
+        try {
+          body = await new Promise((resolve, reject) => {
+            http.get(`http://127.0.0.1:${SECOND_PORT}/api/scores/mlb`, (r) => {
+              let out = '';
+              r.on('data', (d) => { out += d; });
+              r.on('end', () => resolve(out));
+            }).on('error', reject);
+          });
+          break;
+        } catch {
+          await wait(250);
+        }
+      }
+      const fell = JSON.parse(body || '{}');
+      check('a refused first source does not end the row — the second answers',
+        (fell.games || []).length === 3, `${(fell.games || []).length} games`);
+      check('and nothing is reported as broken, because nothing was',
+        !fell.error, fell.error);
+    } finally {
+      second.kill();
+    }
   } finally {
     server.kill();
     feed.close();

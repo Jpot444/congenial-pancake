@@ -143,9 +143,13 @@ function gameRow(app) {
      from". */
   if (!view.games.length) {
     const why = slateTrouble();
+    /* The whole address, not the path. A line that says to open '/api/scores'
+       is asking somebody standing in their living room to work out what to put
+       in front of it. */
+    const where = `${location.origin}${slateSource()}`;
     return rowBlock(head, el('div', 'empty', why
-      ? `The scores feed did not answer: ${why}. The box asks ${slateSource()} — open that on this box to see what it says.`
-      : `No games on the slate right now. The box asked ${slateSource()} and it came back empty.`));
+      ? `No scores: ${why}. Type ${where} into a browser for the full report.`
+      : `No games on the slate right now — the feed answered, with nothing on it. ${where} shows what it was asked.`));
   }
 
   const cards = view.games.map((game, i) => gameCard(game, i));
