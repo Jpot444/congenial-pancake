@@ -2117,6 +2117,19 @@
 
 
 /* ---- the decision ---- */
+/* The copies of this film the provider sells, under the decision they change.
+   Quieter than the buttons above them: this is a refinement of a choice that
+   has already been made, not a second choice competing with it. */
+.desk .film-variants {
+  margin: 18px 0 0;
+  gap: 8px;
+}
+
+.desk .film-variants .variant-chip {
+  background: rgba(12, 10, 12, .55);
+  backdrop-filter: blur(6px);
+}
+
 .desk .film-actions {
   display: flex;
   align-items: center;
@@ -2320,11 +2333,6 @@
 
 /* Billing rather than a character name, because there is no character name to
    have. Dotted, so it is visibly a stand-in rather than a fact. */
-.desk .film-person-role.is-guessed {
-  border-bottom: 1px dotted var(--line);
-  display: inline-block;
-  cursor: help;
-}
 
 .desk .film-more-track { gap: var(--space-6); }
 .desk .film-more-track > .card { flex: 0 0 154px; width: 154px; }

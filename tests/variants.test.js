@@ -105,7 +105,10 @@ const CATS = ITEMS.map((it, i) => ({ id: `c${i}`, name: `Category ${i}` }));
   await page.waitForFunction(() => document.querySelector('.variant-pick .variant-chip'),
     null, { timeout: 8000 });
   const chips = await page.evaluate(() => ({
-    title: document.querySelector('.show-title')?.textContent,
+    // A film has its own page now; the name is its heading rather than a
+    // card's. The year rides inside it, so this reads the first text node.
+    title: document.querySelector('.film-title')?.firstChild?.textContent
+      || document.querySelector('.show-title')?.textContent,
     chips: [...document.querySelectorAll('.variant-chip')].map((c) => ({
       label: c.textContent, on: c.classList.contains('is-active') })),
   }));
@@ -127,7 +130,7 @@ const CATS = ITEMS.map((it, i) => ({ id: `c${i}`, name: `Category ${i}` }));
   await wait(900);
   const after = await page.evaluate(() => ({
     hash: location.hash,
-    title: document.querySelector('.show-title')?.textContent,
+    title: document.querySelector('.film-title')?.firstChild?.textContent,
     on: [...document.querySelectorAll('.variant-chip')]
       .filter((c) => c.classList.contains('is-active')).map((c) => c.textContent),
   }));
@@ -142,7 +145,7 @@ const CATS = ITEMS.map((it, i) => ({ id: `c${i}`, name: `Category ${i}` }));
   await page.evaluate(() => { location.hash = '#/movies/203'; });
   await wait(900);
   const lone = await page.evaluate(() => ({
-    title: document.querySelector('.show-title')?.textContent,
+    title: document.querySelector('.film-title')?.firstChild?.textContent,
     chips: document.querySelectorAll('.variant-chip').length,
   }));
   console.log('   ', JSON.stringify(lone));

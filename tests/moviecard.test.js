@@ -168,6 +168,10 @@ const PNG = Buffer.from(
     seen: document.querySelector('.film-seen-line')?.textContent,
     panels: [...document.querySelectorAll('.film-panel-head')].map((n) => n.textContent),
     more: [...document.querySelectorAll('.film-more-track .card-title')].map((n) => n.textContent),
+    meta: document.querySelector('.film-meta')?.textContent || '',
+    cert: document.querySelector('.film-cert')?.textContent || '',
+    badge: document.querySelector('.film-poster-badge')?.textContent || '',
+    badgeShown: !document.querySelector('.film-poster-badge')?.hidden,
   }));
   console.log('   ', JSON.stringify(facts));
   check('the director is credited', /Christopher Nolan/.test(facts.director), facts.director);
@@ -196,6 +200,26 @@ const PNG = Buffer.from(
   check('the rest of the category is offered, minus this film',
     facts.more.length === 1 && /Another Film/.test(facts.more[0]),
     JSON.stringify(facts.more));
+
+  /* ---- nothing on this page is made up ----
+   *
+   * Three facts were briefly filled in from a table of likely answers when
+   * the provider was silent, which is a worse failure than a gap: a page that
+   * prints "R" over a film nobody rated, or "Lead" beside the first name in a
+   * comma-separated string, is stating something it invented. This panel
+   * carries no certificate and its film is 1080p, so all three have to be
+   * either absent or the truth. */
+  console.log('\n  and none of it is invented');
+  check('no certificate is shown, because this panel carries none',
+    facts.cert === '' && !/\b(PG-13|R|NC-17|TV-MA)\b/.test(facts.meta),
+    `${facts.cert} | ${facts.meta}`);
+  check('no billing is claimed against a cast member',
+    !facts.roles.slice(0, 3).some((r) => /Lead|Featured|Supporting/.test(r)),
+    JSON.stringify(facts.roles));
+  check('an actor is labelled as what the provider said they are: cast',
+    facts.roles[0] === 'Cast', facts.roles[0]);
+  check('the quality badge is the height the file really is, not a guess',
+    facts.badgeShown && facts.badge === '1080P', `${facts.badge} shown=${facts.badgeShown}`);
 
   // --- play ---------------------------------------------------------------
   console.log('\n  pressing play');

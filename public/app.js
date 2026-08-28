@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '31.0';
+const VERSION = '31.1';
 
 const PAGE_SIZE = 60;
 
@@ -5978,11 +5978,11 @@ async function renderShowCard() {
  * different shape with a different question at the top of it, and pretending
  * the two were one card is most of why this one was thin.
  *
- * Two facts on it have no source and are marked FILM_UNKNOWN where they are
- * used: a character name against a cast member, and a certificate. Neither is
- * in an Xtream payload. They are drawn from the placeholder table rather than
- * left as holes, so the page lays out at full height while a real source —
- * TMDB, most likely — is still missing.
+ * Everything on it is the provider's own answer. Two things a film page
+ * usually carries are missing because an Xtream panel does not know them — a
+ * character name beside a cast member, and a certificate — and they are left
+ * out rather than filled in with something likely. get_vod_info does carry
+ * `tmdb_id`, so both are one API key away the day they are wanted.
  */
 
 /* The line glyphs this page draws, on the same 24-box terms as every other
@@ -6009,23 +6009,30 @@ function filmIcon(name) {
   return box.firstElementChild;
 }
 
-/* FILM_UNKNOWN — the two facts the provider does not carry.
+/* Two things this page does not say, because nobody has told the box.
  *
- * Xtream's get_vod_info gives a flat comma-separated `cast` string and nothing
- * about who anybody played, and no certificate at all. Both are TMDB's to
- * answer, and the box does not talk to TMDB yet.
+ * A CERTIFICATE and a CHARACTER NAME are both TMDB's to answer. Xtream's
+ * get_vod_info gives a flat comma-separated `cast` string with nothing about
+ * who anybody played, and most panels carry no certificate at all. Both were
+ * briefly filled from a table of likely answers — a cast member's second line
+ * from their position in the list, a certificate from the genre — and both
+ * are gone: a page that says "R" over a film nobody has rated is not laying
+ * out around a hole, it is stating something it made up.
  *
- * Rather than leave two holes in the layout, the page fills them from here: a
- * cast member's second line falls back to their billing, and the certificate
- * to the one the library's own naming implies. When a real source arrives,
- * delete this and read it instead — nothing else on the page depends on it. */
-const FILM_UNKNOWN = {
-  /** Billing, which is at least true of the order the provider lists them in. */
-  billing: (index) => (index === 0 ? 'Lead' : index < 4 ? 'Featured' : 'Supporting'),
-  /** The certificate a film of this genre and vintage almost certainly carries.
-      A guess, and drawn quietly enough to read as one. */
-  certificate: (info) => (/horror|crime|thriller/i.test(info?.genre || '') ? 'R' : 'PG-13'),
-};
+ * Where a panel DOES carry a certificate it is shown; see filmCertificate.
+ * get_vod_info also carries `tmdb_id`, so the real source is one API key
+ * away whenever it is wanted. */
+
+/** A certificate, only when the provider actually carries one. Panels differ
+    on the field, and every one of these is the provider's own answer. */
+function filmCertificate(info) {
+  const said = info?.mpaa_rating ?? info?.certification ?? info?.age ?? '';
+  const text = String(said).trim();
+  // '0' and 'N/A' are how panels write "we do not know" — which is not a
+  // certificate, and must not be drawn as one.
+  if (!text || /^(0|n\/?a|none|null|unknown)$/i.test(text)) return '';
+  return text.toUpperCase();
+}
 
 /** This profile's history row for a film. The resume point, the play count and
     the date in the sidebar all come from it. */
@@ -6215,8 +6222,19 @@ function filmCard(item) {
     posterWrap.append(fb);
   }
 
+  /* The badge says what the file IS, not what a film of this sort usually is.
+     It read '4K' off the provider's tag and '1080P' off nothing at all, over a
+     library that carries plenty of 720p and worse. The real answer is in the
+     ffprobe block get_vod_info returns, so the badge starts empty and is
+     filled by describe() below once that has arrived. */
   const quality = el('span', 'film-poster-badge');
-  quality.textContent = item.uhd ? '4K' : '1080P';
+  quality.hidden = true;
+  if (item.uhd) {
+    // The one thing knowable before the details land: the provider's own 4K
+    // tag, which is what the grid badges the card with too.
+    quality.textContent = '4K';
+    quality.hidden = false;
+  }
   posterWrap.append(quality);
 
   if (at > 0) {
@@ -6341,7 +6359,34 @@ function filmCard(item) {
   const left = el('span', 'film-left');
   actions.append(left);
 
-  copy.append(eyebrowRow, heading, meta, tagline, plot, actions);
+  /* The switcher, when the provider sells this title more than once.
+   *
+   * Under the decision rather than beside the name: three rows of the same
+   * film become one card in the grid, so this is the only way to reach the
+   * 4K copy, or the one with the language you want. It came off the page
+   * with the card it used to live on — which quietly made the deduplication
+   * a way of hiding copies rather than tidying them. One copy gets no
+   * switcher: a row of tabs with one tab on it is furniture pretending to be
+   * a decision. */
+  const copies = variantsOf('movies', item);
+  const picker = el('div', 'variant-pick film-variants');
+  if (copies.length > 1) {
+    for (const other of copies) {
+      const chip = el('button', 'variant-chip');
+      chip.textContent = variantLabel('movies', other);
+      if (other.uhd && !/4K/i.test(chip.textContent)) {
+        chip.append(Object.assign(el('span', 'variant-4k'), { textContent: '4K' }));
+      }
+      if (String(other.id) === String(item.id)) chip.classList.add('is-active');
+      chip.addEventListener('click', () => {
+        if (String(other.id) === String(item.id)) return;
+        location.hash = `#/movies/${other.id}`;
+      });
+      picker.append(chip);
+    }
+  }
+
+  copy.append(eyebrowRow, heading, meta, tagline, plot, actions, picker);
   stage.append(posterWrap, copy);
   heroInner.append(stage);
   hero.append(heroInner);
@@ -6604,12 +6649,12 @@ function filmCard(item) {
       }
       meta.append(typeof bit === 'string' ? document.createTextNode(bit) : bit);
     });
-    // FILM_UNKNOWN — a guess, drawn as the quietest thing on the line so it
-    // reads as one, and not drawn at all until there is a genre to guess from.
-    if (info) {
+    // Only when the panel carries one. Most do not, and a line that is quiet
+    // about it is right where a line that guesses is wrong.
+    const certificate = filmCertificate(info);
+    if (certificate) {
       const cert = el('span', 'film-cert');
-      cert.textContent = FILM_UNKNOWN.certificate(info);
-      cert.title = 'Not from the provider — the box has no certificate for this';
+      cert.textContent = certificate;
       meta.append(cert);
     }
 
@@ -6706,9 +6751,14 @@ function filmCard(item) {
     /* ---- cast ---- */
     const people = String(info?.cast || '').split(',').map((s) => s.trim()).filter(Boolean);
     const crew = String(info?.director || '').split(',').map((s) => s.trim()).filter(Boolean);
+    /* Cast, then crew, in the order the provider lists them — and labelled
+       with what it actually said they are. The second line used to read
+       'Lead', 'Featured' or 'Supporting' off the position in the list, which
+       is a claim about a film nobody made: an Xtream cast string is a list of
+       names and nothing else. */
     const everyone = [
-      ...people.map((name, i) => ({ name, role: FILM_UNKNOWN.billing(i), guessed: true })),
-      ...crew.map((name) => ({ name, role: 'Director', guessed: false })),
+      ...people.map((name) => ({ name, role: 'Cast' })),
+      ...crew.map((name) => ({ name, role: 'Director' })),
     ];
     cast.track.innerHTML = '';
     cast.rail.hidden = everyone.length === 0;
@@ -6722,9 +6772,8 @@ function filmCard(item) {
         .map((word) => word[0] || '').join('').toUpperCase();
       const name = el('div', 'film-person-name');
       name.textContent = person.name;
-      const role = el('div', `film-person-role${person.guessed ? ' is-guessed' : ''}`);
+      const role = el('div', 'film-person-role');
       role.textContent = person.role;
-      if (person.guessed) role.title = 'Billing order — the box has no character names';
       tile.append(face, name, role);
       cast.track.append(tile);
     }
@@ -6738,6 +6787,13 @@ function filmCard(item) {
     const audio = info?.audio || {};
     const height = Number(video.height) || 0;
     const unknown = '—';
+
+    /* 2160 is 4K however the provider tagged it; below that, say the height
+       the file actually has. Unknown stays hidden rather than guessing. */
+    if (height) {
+      quality.textContent = height >= 2000 ? '4K' : `${height}P`;
+      quality.hidden = false;
+    }
 
     specCells.Video.value.textContent = [
       height ? `${height}p` : '',

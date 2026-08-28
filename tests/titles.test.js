@@ -145,22 +145,30 @@ const MOVIES = [
   check('with the title itself untouched by the mark',
     badges[0]?.title === 'Trading Places (1983)', badges[0]?.title);
 
+  /* A film has its own page now rather than the card a show gets, so these
+     facts have moved: the meta line under the title carries the runtime, the
+     year, the genre and the size, and what the file IS has a strip of its
+     own. The claims are the same claims. */
   console.log('\n  how big the film is, on its own page');
   await page.evaluate(() => { location.hash = '#/movies/11'; });
   await page.waitForFunction(
-    () => /GB|MB/.test(document.querySelector('.show-meta')?.textContent || ''),
+    () => /GB|MB/.test(document.querySelector('.film-meta')?.textContent || ''),
     null, { timeout: 8000 }).catch(() => {});
   const card = await page.evaluate(() => ({
-    meta: document.querySelector('.show-meta')?.textContent || '',
-    runtime: document.querySelector('.title-runtime')?.textContent || '',
+    meta: document.querySelector('.film-meta')?.textContent || '',
+    badge: document.querySelector('.film-poster-badge')?.textContent || '',
+    specs: [...document.querySelectorAll('.film-spec')].map((c) => c.textContent).join(' | '),
   }));
   console.log('   ', JSON.stringify(card));
   // 24000 kbps over 6960s is 20.9 GB — an estimate, and the right order.
-  check('the size is on the card', /\d+(\.\d+)? GB/.test(card.meta), card.meta);
+  check('the size is on the meta line', /\d+(\.\d+)? GB/.test(card.meta), card.meta);
   check('beside the year and genre it already had',
     /1983/.test(card.meta) && /Comedy/.test(card.meta), card.meta);
-  check('and 4K is said there too', /4K/.test(card.meta), card.meta);
-  check('with the runtime still where it was', /1:56/.test(card.runtime), card.runtime);
+  check('and again in the file strip, with the bitrate it was estimated from',
+    /\d+(\.\d+)? GB/.test(card.specs) && /Mbps/.test(card.specs), card.specs);
+  check('4K is said on the poster, where the quality badge lives',
+    /4K/.test(card.badge), card.badge);
+  check('with the runtime on the meta line', /1:56/.test(card.meta), card.meta);
 
   console.log('\n  and how big an episode is, beside its download button');
   const eps = await page.evaluate(() => {
