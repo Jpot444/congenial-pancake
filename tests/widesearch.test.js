@@ -251,7 +251,10 @@ const WIDE = {
   await wait(1200);
   const opened = await page.evaluate(() => ({
     hash: location.hash,
-    title: document.querySelector('#seriesView .title-name')?.textContent
+    /* The film's name is set in the hero, which spans the page above the
+       details rather than sitting inside them — so it hangs off #appView,
+       not #seriesView. */
+    title: document.querySelector('.film-hero .film-title')?.textContent
       || document.querySelector('#seriesView')?.textContent.slice(0, 120) || '',
     gone: /no longer in the library/.test(document.querySelector('#seriesView')?.textContent || ''),
   }));

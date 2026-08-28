@@ -97,9 +97,12 @@ const get = (p) => new Promise((resolve, reject) => {
   // measured v22.7 session spent 15 silent seconds proving. The provider's own
   // playlist has ~50s of already-published video in it; ingesting THAT from
   // its oldest segment banks the whole window at link speed.
+  // Written against the ext rather than the login the URL is built from: with
+  // a pool of accounts that argument is whichever one had a free slot, and
+  // the claim here is about which FEED is ingested, not whose it is.
   check('the ingest reads the provider playlist, not the realtime push feed',
-    /buildStreamUrl\(cfg, 'live', channelId, 'm3u8'\)/.test(SERVER)
-    && !/buildStreamUrl\(cfg, 'live', channelId, 'ts'\)/.test(SERVER));
+    /buildStreamUrl\([^)]+, 'live', channelId, 'm3u8'\)/.test(SERVER)
+    && !/buildStreamUrl\([^)]+, 'live', channelId, 'ts'\)/.test(SERVER));
   check('and banks the published backlog rather than joining at the edge',
     /'-live_start_index', resumed \? '-1' : '0',\s*'-i', input/.test(SERVER));
   // Readiness doubles as a speed test: a healthy feed banks the backlog at
