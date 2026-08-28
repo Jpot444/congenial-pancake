@@ -3215,16 +3215,31 @@ function liveDvrArgs(input, dir, resumed = false, low = false) {
     // The feed drops; these ride out the transport-level ones without ffmpeg
     // exiting at all. A full exit is handled by the respawn in spawnLiveDvr.
     '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-    // The input is the provider's own HLS playlist, from its OLDEST segment.
-    // This is the whole reason startup is fast: the provider has ~50 seconds
-    // of already-published video sitting in that playlist, and starting from
-    // index 0 pulls all of it at link speed instead of waiting for a push
-    // feed to trickle in at 1x. The Pi's window opens ~50 seconds deep in the
-    // first moments rather than growing from nothing — which also means a
-    // v22.7 mistake cannot recur, where a keyframe-bound first cut on a
-    // realtime feed took longer than the readiness timeout and every tune-in
-    // paid 15 seconds to end up on the direct path anyway.
-    '-live_start_index', '0',
+    /* Where in the provider's playlist to start reading — and it is NOT the
+     * same answer on a cold start as on a respawn.
+     *
+     * COLD (0, the oldest segment they publish): this is the whole reason
+     * startup is fast. The provider has ~50 seconds of already-published
+     * video sitting there, and taking all of it pulls at link speed instead
+     * of waiting for a push feed to trickle in at 1x. The Pi's window opens
+     * ~50 seconds deep in the first moments rather than growing from nothing
+     * — which also means a v22.7 mistake cannot recur, where a keyframe-bound
+     * first cut on a realtime feed took longer than the readiness timeout and
+     * every tune-in paid 15 seconds to end up on the direct path anyway.
+     *
+     * RESPAWN (-1, their newest segment): the same trick is a bug here, and
+     * this is the "it jumped back to where I started watching" report. A feed
+     * drop respawns ffmpeg into the same window, and pulling the backlog again
+     * republishes the last fifty seconds the viewer has ALREADY WATCHED as
+     * brand-new segments on the end of the playlist. From the sofa the picture
+     * simply snaps back about a minute, to roughly wherever they were when the
+     * session started — after leaving and coming back, or after catching up to
+     * the edge and sitting there for a couple of minutes, which is exactly
+     * when a respawn is most likely to have happened. A resume carries on from
+     * the provider's live edge; the previous two minutes are still on disk
+     * behind it, so nobody loses their cushion, and `discont_start` below tells
+     * the player the timeline it is joining is a new one. */
+    '-live_start_index', resumed ? '-1' : '0',
     '-i', input,
     // First video stream and FIRST audio stream; data and DVB subtitle streams
     // are dropped — they are why a bare -map 0 dies on some channels. One
@@ -3260,12 +3275,79 @@ function liveDvrArgs(input, dir, resumed = false, low = false) {
   ];
 }
 
+/*
+ * A live channel's own black box.
+ *
+ * "It jumped back to where I started watching" is a report about a moment
+ * that has already passed, on a stream nobody was recording, and the two
+ * things that would settle it — what the playlist said before and after, and
+ * whether ffmpeg restarted underneath it — are both gone by the time anybody
+ * describes it. So each session keeps its last few dozen notable moments: a
+ * spawn, an exit, and every time the published window moved in a way a player
+ * would notice. Cheap enough to leave on (nothing is written unless something
+ * changed) and readable at /api/live/report.
+ */
+const LIVE_NOTES = 60;
+
+function liveNote(session, event, detail = {}) {
+  if (!session.notes) session.notes = [];
+  session.notes.push({ at: Date.now(), event, ...detail });
+  if (session.notes.length > LIVE_NOTES) session.notes.splice(0, session.notes.length - LIVE_NOTES);
+}
+
+/** The number in seg000123.m4s, which is what says whether a window rolled
+    forward normally or was started over underneath somebody. */
+function segNumber(name) {
+  const hit = /(\d+)\.(m4s|ts)$/.exec(String(name || ''));
+  return hit ? Number(hit[1]) : null;
+}
+
+/**
+ * Watch one served playlist go past, and write down anything a player would
+ * react to: the window rolling on, and — the fault this exists for — the
+ * media sequence or the first segment going BACKWARDS, which is a player's
+ * cue to treat the whole thing as a new stream and join it at the beginning.
+ */
+function watchLivePlaylist(session, text) {
+  const segments = [...text.matchAll(/^([^#\s].*\.(?:m4s|ts))\s*$/gm)].map((m) => m[1]);
+  if (!segments.length) return;
+  const sequence = Number((/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(text) || [])[1] ?? -1);
+  const first = segNumber(segments[0]);
+  const last = segNumber(segments[segments.length - 1]);
+  const seen = session.window || {};
+
+  const moved = seen.first !== first || seen.last !== last || seen.sequence !== sequence;
+  if (!moved) return;
+
+  const wentBack = (Number.isFinite(seen.first) && Number.isFinite(first) && first < seen.first)
+    || (seen.sequence >= 0 && sequence >= 0 && sequence < seen.sequence);
+  session.window = { first, last, sequence, count: segments.length };
+  if (wentBack) {
+    liveNote(session, 'window-restarted', {
+      was: { first: seen.first, last: seen.last, sequence: seen.sequence },
+      now: { first, last, sequence },
+    });
+  } else if (!Number.isFinite(seen.first)) {
+    liveNote(session, 'window-open', { first, last, sequence, count: segments.length });
+  } else if (seen.first !== first) {
+    // The window rolling is ordinary; noted sparsely so the log covers
+    // minutes rather than the last twenty seconds.
+    liveNote(session, 'window-rolled', { first, last, sequence, count: segments.length });
+  }
+}
+
 /** Start (or restart) the ingest for a live session. */
 function spawnLiveDvr(session, input, resumed = false) {
   // The session remembers whether it is the small one, so a respawn after a
   // dropped feed comes back the same size it went away.
   const args = liveDvrArgs(input, session.dir, resumed, Boolean(session.low));
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  liveNote(session, resumed ? 'ingest-resumed' : 'ingest-started', {
+    // The one argument this report is really about: a resume that went back
+    // for the provider's backlog is what replays a minute somebody watched.
+    from: resumed ? 'provider live edge' : "provider's oldest segment",
+    restarts: session.restarts || 0,
+  });
   session.proc = proc;
   session.exited = false;
   session.exitCode = undefined;
@@ -3278,6 +3360,10 @@ function spawnLiveDvr(session, input, resumed = false) {
   proc.on('exit', (code) => {
     session.exited = true;
     session.exitCode = code;
+    liveNote(session, 'ingest-exited', {
+      code,
+      last: (session._stderr || '').split('\n').filter(Boolean).pop() || '',
+    });
     if (remuxSessions.get(session.id) !== session) return; // killed on purpose
     // The feed dropped out from under an audience: reconnect. append_list
     // makes the new run continue the same playlist, so from the player's side
@@ -5647,6 +5733,31 @@ async function handleApi(req, res, pathname, query) {
     });
   }
 
+  /* ---- What a live channel's window has been doing ----
+   *
+   * The answer to "it jumped back to where I started watching", which is a
+   * question about a moment that has already gone. Each live session keeps
+   * its last few dozen notable moments — ingest started, ingest exited,
+   * ingest resumed, and any time the published window moved in a way a player
+   * would react to. `window-restarted` is the one that matters: a media
+   * sequence or a first segment going backwards is a player's cue to treat
+   * the stream as a new one and join it at the beginning. */
+  if (pathname === '/api/live/report') {
+    const wanted = query.get('id') || '';
+    const sessions = [...remuxSessions.values()]
+      .filter((s) => s.live && (!wanted || s.id === wanted || s.id.endsWith(`-${wanted}`)))
+      .map((s) => ({
+        id: s.id,
+        low: Boolean(s.low),
+        alive: !s.exited,
+        restarts: s.restarts || 0,
+        idleSeconds: Math.round((Date.now() - s.lastAccess) / 1000),
+        window: s.window || null,
+        notes: (s.notes || []).map((note) => ({ ...note, ago: `${Math.round((Date.now() - note.at) / 1000)}s` })),
+      }));
+    return json(res, 200, { sessions, now: Date.now() });
+  }
+
   /* ---- Who is in what ----
    *
    * The client holds the library already, so this answers with ids and lets
@@ -6499,6 +6610,9 @@ function serveRemux(req, res, pathname) {
       // session sat frozen at the 90-second mark of a live game. Strip it.
       if (session.live) {
         text = text.replace(/#EXT-X-ENDLIST\s*/g, '');
+        // Every live playlist that goes out is watched on the way past, so
+        // "it jumped backwards" has a record of the moment it did.
+        watchLivePlaylist(session, text);
       }
       if (session.exited && !session.live) {
         if (!text.includes('#EXT-X-ENDLIST')) text = `${text.trimEnd()}\n#EXT-X-ENDLIST\n`;

@@ -79,6 +79,14 @@ const get = (p) => new Promise((resolve, reject) => {
     /delete_segments/.test(SERVER));
   check('a respawn continues the playlist rather than starting a new one',
     /append_list/.test(SERVER));
+  /* A COLD start takes the provider's backlog, which is what opens the window
+     fifty seconds deep instead of growing it from nothing. A RESPAWN must not:
+     the backlog is content the viewer has already watched, and republishing it
+     on the end of the window is what makes the picture snap back about a
+     minute — to roughly wherever they were when the session started. That is
+     the "it restarted from where I began watching" report. */
+  check('a cold start takes the provider\'s backlog, and a respawn does not',
+    /'-live_start_index', resumed \? '-1' : '0'/.test(dvrArgs), dvrArgs.slice(0, 400));
   check('half-written segments are never served as though they were whole',
     /temp_file/.test(SERVER));
   check('transport drops are ridden out without the process exiting',
@@ -93,7 +101,7 @@ const get = (p) => new Promise((resolve, reject) => {
     /buildStreamUrl\(cfg, 'live', channelId, 'm3u8'\)/.test(SERVER)
     && !/buildStreamUrl\(cfg, 'live', channelId, 'ts'\)/.test(SERVER));
   check('and banks the published backlog rather than joining at the edge',
-    /'-live_start_index', '0',\s*'-i', input/.test(SERVER));
+    /'-live_start_index', resumed \? '-1' : '0',\s*'-i', input/.test(SERVER));
   // Readiness doubles as a speed test: a healthy feed banks the backlog at
   // several times realtime and shows two segments in seconds; a throttled one
   // cannot, and a viewer seated in ITS shallow window rides the ingest
@@ -112,6 +120,50 @@ const get = (p) => new Promise((resolve, reject) => {
   // picks between muxed live tracks, so the rest would be encoded for nobody.
   check('data and DVB-subtitle streams are dropped, which is why -map 0 dies',
     /'-map', '0:v:0', '-map', '0:a:0\?'/.test(SERVER), 'the mapping moved');
+
+  /* The detector itself, on two playlists: one rolling forward the way a
+     healthy window does, and one that starts over — which is a player's cue
+     to treat the stream as new and join it at the beginning, and is exactly
+     what the viewer sees as "it went back to where I was". */
+  console.log('\n  noticing a window that started over');
+  const lift = (name) => {
+    const start = SERVER.indexOf(`function ${name}(`);
+    let depth = 0;
+    /* From the BODY's brace, not the first one after the name: a default
+       parameter value like `detail = {}` is a brace inside the signature, and
+       counting from there closes the function before it has begun. */
+    let i = SERVER.indexOf('{', SERVER.indexOf(')', start));
+    for (; i < SERVER.length; i += 1) {
+      if (SERVER[i] === '{') depth += 1;
+      else if (SERVER[i] === '}' && --depth === 0) break;
+    }
+    return SERVER.slice(start, i + 1);
+  };
+  // eslint-disable-next-line no-new-func
+  const watch = new Function(
+    `${lift('liveNote')}\n${lift('segNumber')}\n${lift('watchLivePlaylist')}\n`
+    + 'const LIVE_NOTES = 60; return watchLivePlaylist;'
+  )();
+  const playlist = (sequence, from, count) => ['#EXTM3U', '#EXT-X-VERSION:7',
+    '#EXT-X-TARGETDURATION:4', `#EXT-X-MEDIA-SEQUENCE:${sequence}`,
+    '#EXT-X-MAP:URI="init.mp4"',
+    ...Array.from({ length: count }, (_, k) => `#EXTINF:4.0,\nseg${String(from + k).padStart(6, '0')}.m4s`),
+  ].join('\n');
+
+  const box = {};
+  watch(box, playlist(0, 0, 3));
+  watch(box, playlist(1, 1, 3));
+  check('an ordinary roll is recorded as one',
+    box.notes.map((n) => n.event).join(',') === 'window-open,window-rolled',
+    JSON.stringify(box.notes.map((n) => n.event)));
+  watch(box, playlist(0, 0, 3));
+  check('and a window that starts over is called what it is',
+    box.notes[box.notes.length - 1].event === 'window-restarted',
+    JSON.stringify(box.notes.map((n) => n.event)));
+  check('with what it was and what it became, so the jump is measurable',
+    box.notes[box.notes.length - 1].was.first === 1
+      && box.notes[box.notes.length - 1].now.first === 0,
+    JSON.stringify(box.notes[box.notes.length - 1]));
 
   const seg = Number((/segmentSeconds: (\d+)/.exec(SERVER) || [])[1]);
   const win = Number((/windowSegments: (\d+)/.exec(SERVER) || [])[1]);
@@ -238,6 +290,19 @@ while :; do sleep 2; emit; done
     const init = await get('/hls/live-7/init.mp4');
     check('and so is the init segment every fMP4 window needs',
       init.status === 200 && init.body.startsWith('FAKEINIT'), String(init.status));
+
+    /* The black box. "It jumped back to where I started watching" is a report
+       about a moment that has already gone, so each live session keeps its
+       last few dozen notable moments and the box will say what they were. */
+    const report = JSON.parse((await get('/api/live/report')).body);
+    const mine = (report.sessions || []).find((row) => row.id === 'live-7') || {};
+    const events = (mine.notes || []).map((n) => n.event);
+    console.log('   notes:', JSON.stringify(events));
+    check('the channel keeps a record of what its window has done',
+      events.includes('ingest-started') && events.includes('window-open'),
+      JSON.stringify(events));
+    check('with the window it is currently publishing',
+      mine.window && Number.isFinite(mine.window.first), JSON.stringify(mine.window));
 
     const again = JSON.parse((await get('/api/play?kind=live&id=7')).body);
     const calls = fs.readFileSync(path.join(DIR, 'ffmpeg-calls.log'), 'utf8')
