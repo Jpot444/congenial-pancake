@@ -111,36 +111,58 @@ const PLACEHOLDER = [
 
 /**
  * The slate. Never throws and never leaves the row empty: a scores feed that
- * is down must not take the football row down with it.
+ * is down must not take the games row down with it.
+ *
+ * An empty row has two completely different meanings — there are no games on,
+ * or nobody could be asked — and for as long as this said nothing they looked
+ * identical from the sofa. Whatever went wrong is kept here so the row can
+ * say which it was: a box that cannot reach the feed, a feed that answered
+ * with an error, or a quiet Tuesday.
  */
 let live = false;
+let trouble = '';
+let asked = 0;
 
 export async function getGames() {
   if (!ENDPOINT) {
     live = false;
+    trouble = '';
     return PLACEHOLDER.map(normalize);
   }
   try {
     const res = await fetch(ENDPOINT, { headers: { accept: 'application/json' } });
-    if (!res.ok) throw new Error(String(res.status));
+    if (!res.ok) throw new Error(`the box answered ${res.status}`);
     const data = await res.json();
     const rows = Array.isArray(data) ? data : (data.games || data.events || []);
     const games = rows.map(normalize).filter((g) => g.id);
     /* An empty slate is an ANSWER, not a failure — it is Tuesday. Falling
      * back to the placeholder here would put invented scores on the screen
-     * every day of the week football is not played, which is worse than an
-     * empty row by a distance. */
+     * every day of the week nothing is played, which is worse than an empty
+     * row by a distance. But an empty slate the BOX is unhappy about is a
+     * different thing, and it travels back in `error`. */
     live = true;
+    asked = Date.now();
+    trouble = games.length ? '' : String((data && data.error) || '');
     return games;
-  } catch {
-    // The feed is unreachable. Say nothing rather than say something wrong.
+  } catch (err) {
     live = true;
+    asked = Date.now();
+    trouble = err.message || 'the box could not be reached';
     return [];
   }
 }
 
 /** Whether anything on screen is invented, so the row can say so. */
 export const usingPlaceholders = () => !ENDPOINT || !live;
+
+/** What went wrong the last time the slate was asked for, if anything. */
+export const slateTrouble = () => trouble;
+
+/** When the slate was last asked for, so an empty row can prove it tried. */
+export const slateAsked = () => asked;
+
+/** Where the slate comes from, for a row that has to explain itself. */
+export const slateSource = () => ENDPOINT;
 
 /**
  * Tie a game to a channel in the real live library.

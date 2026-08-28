@@ -5452,6 +5452,15 @@ async function handleApi(req, res, pathname, query) {
       games,
       at: Math.max(nfl.at, mlb.at),
       error: [nfl.error, mlb.error].filter(Boolean).join(' · ') || undefined,
+      /* A per-feed report, for the same reason the guide has one: an empty row
+       * has several possible causes and they are indistinguishable from the
+       * sofa. Opening this URL on the box answers "did it ask, who did it ask,
+       * and what came back" in one line each. The addresses are public and
+       * carry no credentials, so they can be shown. */
+      feeds: [
+        { sport: 'nfl', url: NFL_URL, games: nfl.games.length, at: nfl.at, error: nfl.error || undefined },
+        { sport: 'mlb', url: MLB_URL, games: mlb.games.length, at: mlb.at, error: mlb.error || undefined },
+      ],
     });
   }
 

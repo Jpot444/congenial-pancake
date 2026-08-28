@@ -16,7 +16,8 @@
 import { el, clear, cleanName } from '../ui.js';
 import { loadLibrary, loadEpg, nowOn, airProgress, favorites, pinnedIds, pinnedFirst, state }
   from '../state.js';
-import { getGames, usingPlaceholders, matchChannel } from '../scores.js';
+import { getGames, usingPlaceholders, matchChannel, slateTrouble, slateSource }
+  from '../scores.js';
 import { channelCard, categoryCard, allCategoriesCard, rowHead, strip, rowBlock } from './cards.js';
 
 const CHANNELS_IN_ROW = 14;
@@ -134,6 +135,18 @@ function gameRow(app) {
     meta,
     size: 'big',
   });
+
+  /* An empty row means one of two entirely different things — nothing is on,
+     or nobody could be asked — and from ten feet away they look identical.
+     Say which, and name the door that was knocked on, because the next
+     question after "why is it empty" is always "where does it even come
+     from". */
+  if (!view.games.length) {
+    const why = slateTrouble();
+    return rowBlock(head, el('div', 'empty', why
+      ? `The scores feed did not answer: ${why}. The box asks ${slateSource()} — open that on this box to see what it says.`
+      : `No games on the slate right now. The box asked ${slateSource()} and it came back empty.`));
+  }
 
   const cards = view.games.map((game, i) => gameCard(game, i));
   return rowBlock(head, strip(cards, { wide: true }));
