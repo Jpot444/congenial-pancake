@@ -1609,7 +1609,8 @@ async function runJob(job) {
  */
 
 let providerStreams = 0;          // live /stream connections currently piping
-let lastProviderActiveAt = 0;
+let lastProviderActiveAt = 0;     // last moment anything at all was streaming
+let lastSlotsFullAt = 0;          // last moment there was no room to start one
 const RESUME_GRACE_MS = 8000;     // idle time required before downloads resume
 
 /**
@@ -1663,8 +1664,20 @@ function currentThroughput() {
  * sense and not busy in the sense that matters, which is whether the next
  * thing can start.
  *
- * The timestamp is still stamped whenever anything is streaming, because that
- * is what the download queue's grace period and the auto-updater read.
+ * TWO timestamps come out of this, and the difference between them is the
+ * whole reason a second login was worth buying.
+ *
+ * `lastProviderActiveAt` marks the last moment ANYTHING was streaming. The
+ * auto-updater reads it, and rightly: restarting the box under somebody
+ * watching a film is rude however many logins paid for it.
+ *
+ * `lastSlotsFullAt` marks the last moment there was NO ROOM. That is the one
+ * the download queue waits on. Stamping the queue's grace period off "anything
+ * streaming" is what made a second login do nothing: the timestamp is
+ * refreshed on every check while a film plays, so the window never opens and
+ * the download sits at "Waiting for the connection" for the length of the
+ * film — with a whole free login next to it. On a single-account box the two
+ * timestamps move together and nothing changes.
  */
 function providerBusy() {
   // A finished remux (ffmpeg exited) plays from disk and holds nothing.
@@ -1674,8 +1687,11 @@ function providerBusy() {
   const accounts = providers.accounts(cfg);
   // No pool to ask (M3U mode, or a box configured before this existed with a
   // single loose account): the old question, unchanged.
-  if (!accounts.length) return providerStreams > 0 || remuxing;
-  return providers.busy(cfg);
+  const busy = accounts.length
+    ? providers.busy(cfg)
+    : (providerStreams > 0 || remuxing);
+  if (busy) lastSlotsFullAt = Date.now();
+  return busy;
 }
 
 /**
@@ -1704,10 +1720,11 @@ function autoPauseActiveDownload() {
   persistDownloads();
 }
 
-/** Bring auto-paused work back once the connection has stayed quiet. */
+/** Bring auto-paused work back once a login has stayed free. */
 setInterval(() => {
+  // providerBusy() stamps lastSlotsFullAt, so it has to run first.
   if (providerBusy()) return;
-  if (Date.now() - lastProviderActiveAt < RESUME_GRACE_MS) return;
+  if (Date.now() - lastSlotsFullAt < RESUME_GRACE_MS) return;
   let resumed = false;
   for (const job of downloads.values()) {
     if (job.autoPaused && job.status === 'paused') {
@@ -1764,8 +1781,11 @@ async function processQueue() {
          sentence; with two, a download runs happily beside somebody watching
          a film, which is the whole point of the second login. The grace
          period stays: a slot released a moment ago is often about to be
-         taken again by the same viewer changing their mind. */
-      if (providerBusy() || Date.now() - lastProviderActiveAt < RESUME_GRACE_MS) {
+         taken again by the same viewer changing their mind — which is why it
+         waits on the last moment the box was FULL, not on the last moment
+         anything was playing. Those are the same instant on one account and
+         very different ones on two. */
+      if (providerBusy() || Date.now() - lastSlotsFullAt < RESUME_GRACE_MS) {
         const at = queue.findIndex((qid) => downloads.get(qid)?.archivePath);
         if (at < 0) {
           await new Promise((r) => setTimeout(r, 3000));
@@ -2957,9 +2977,8 @@ async function startRemux(input, opts) {
   }
 
   if (fromProvider) {
-    // The remux is about to occupy the provider slot; playback wins.
+    // The remux is about to occupy a provider slot; playback wins.
     lastProviderActiveAt = Date.now();
-    autoPauseActiveDownload();
   }
 
   // The container choice depends on the video codec, so we must know it before
@@ -2988,6 +3007,17 @@ async function startRemux(input, opts) {
   const args = ['-v', 'info', '-nostats', '-hide_banner', '-y',
     ...ffmpegArgs(input, dir, codec, startSeconds, audioDelayMs, audioPadSeconds, wanted,
       audioTempo, seekMode, low)];
+
+  /* The connection this conversion is about to pull down, taken from the pool
+     rather than assumed. Everything between here and the session below is
+     synchronous, so the lease and the session that owns it cannot be
+     separated by a failure — and the pause decision is made with the slot
+     already counted, which is what makes it "did this take the LAST one"
+     rather than "is anything playing". */
+  const account = fromProvider ? providers.forUrl(readConfig(), input) : null;
+  const releaseSlot = account ? providers.take(account.id) : null;
+  if (fromProvider) autoPauseActiveDownload();
+
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
   let stderr = '';
@@ -3012,6 +3042,8 @@ async function startRemux(input, opts) {
     // "the box cannot make it".
     startedAt: Date.now(),
     fromProvider,
+    // Handed back by killSession, and by ffmpeg's own exit below.
+    releaseSlot,
     // Where this session sits in the film. The client adds it back so the
     // scrubber reads in real running time rather than session time.
     offset: startSeconds,
@@ -3042,6 +3074,14 @@ async function startRemux(input, opts) {
   proc.on('exit', (code) => {
     session.exited = true;
     session.exitCode = code;
+    /* The provider connection ends with ffmpeg, not with the session. What
+       outlives it is a directory being served off this box's own disk, and
+       holding a login open for that would keep a slot spoken for through a
+       whole film that has already finished converting. */
+    if (session.releaseSlot) {
+      session.releaseSlot();
+      session.releaseSlot = null;
+    }
   });
 
   const playlist = path.join(dir, 'index.m3u8');
@@ -6331,7 +6371,13 @@ async function handleApi(req, res, pathname, query) {
       const ext = query.get('ext') || 'mkv';
       if (!kind || !id) return json(res, 400, { error: 'kind and id are required' });
       if (cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
-      input = buildStreamUrl(cfg, kind === 'series' ? 'series' : 'movie', id, ext);
+      /* Whichever login has room, not always the first one. A converted film
+         holds a connection for as long as ffmpeg is pulling it, so sending
+         every one of them down account #1 is how two logins still behave like
+         one. startRemux reads the choice back out of the URL and holds the
+         slot for the life of the conversion. */
+      const chosen = providers.pick(cfg, { reserve: true }) || cfg;
+      input = buildStreamUrl(chosen, kind === 'series' ? 'series' : 'movie', id, ext);
       // Keyed on what identifies the title, never on the URL that carries the
       // account password.
       subKey = `${kind}:${id}:${ext}`;
