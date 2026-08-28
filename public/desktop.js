@@ -1154,11 +1154,7 @@
         blurb: 'One of your channels, straight from the provider — no transcode '
           + 'and nothing to wait for.',
         cta: 'Watch live',
-        /* The same channel, full screen, with the sound on — and out of the
-           billboard first, so one window is being read rather than two. The
-           player joins the DVR session the preview already started, so this
-           is the same ingest rather than a second one. */
-        go: () => { stopPreview(); openPlayer(channel); },
+        go: () => openPlayer(channel),
       });
     }
 
@@ -1285,146 +1281,20 @@
     return hero;
   }
 
-  /* ------------------------------------------------ the billboard, playing */
-  /*
-   * When the billboard is on a channel, it IS the channel: the stream runs in
-   * the slide, muted, behind the words. Not a trailer and not a loop — the
-   * thing that is actually on right now, which is the only reason a live
-   * billboard is worth having.
+  /* --------------------------------------------- the billboard, and why
+   * it is a picture rather than the stream
    *
-   * Two rules keep it from costing anything. It plays ONLY through the Pi's
-   * own DVR window (`ext=m3u8`, and the answer has to come back `dvr: true`
-   * or the preview does not start at all) — that window is shared, so the
-   * billboard and somebody watching the same channel for real are one ingest
-   * on the provider's one connection, and pressing Watch live joins the
-   * session already running rather than opening a second one. And it stops
-   * the moment it is not being looked at: another feature picked, the page
-   * left, the player opened, the tab hidden. A billboard that keeps pulling
-   * video while nobody is on the page is a bug with a picture on it.
+   * This used to play the channel in the slide, muted, behind the words. It
+   * looked wonderful and it cost a provider connection for as long as the
+   * home page was open — the ingest it started is kept alive by its own
+   * fetching, so it never went idle and never gave the slot back. On a
+   * one-account box that is the whole subscription spent on a page nobody is
+   * watching yet; on a two-account box it quietly ate the second login, which
+   * is the opposite of what the second login was bought for.
+   *
+   * The billboard is a still now. Watch live opens the channel properly, with
+   * sound, and that is the only thing on this page that touches the provider.
    */
-  const preview = { video: null, engine: null, id: '', want: 0 };
-
-  function stopPreview() {
-    preview.want += 1;      // anything still in flight is now stale
-    preview.id = '';
-    if (preview.engine) {
-      try { preview.engine.destroy(); } catch { /* already gone */ }
-      preview.engine = null;
-    }
-    if (preview.video) {
-      try {
-        preview.video.pause();
-        preview.video.removeAttribute('src');
-        preview.video.load();
-      } catch { /* already gone */ }
-      preview.video.remove();
-      preview.video = null;
-    }
-  }
-
-  async function startPreview(feature, slide) {
-    const channel = feature.item;
-    const art = slide?.querySelector('.art');
-    if (!channel || !art) return;
-
-    /* Home is redrawn often — a heart pressed, a shelf arriving — and the
-       billboard is rebuilt with it. Carrying the same channel's video across
-       into the new slide keeps the picture running and, more to the point,
-       stops asking the box to open the channel again every time anything on
-       the page changes. Moving a media element between parents inside one
-       task does not pause it. */
-    if (preview.id === String(channel.id)) {
-      // Already playing this channel: carry the element across.
-      if (preview.video) {
-        if (preview.video.parentElement !== art) art.append(preview.video);
-        slide.classList.add('is-playing');
-        preview.video.play().catch(() => {});
-      }
-      // Or already on its way. Either way there is nothing to ask for twice.
-      return;
-    }
-    stopPreview();
-
-    /* Somebody who has told the box their link cannot carry the stream did not
-       mean "except on the home page". lowMode is a top-level const in app.js —
-       a global binding rather than a property of window, which is how every
-       other name this layer borrows works too. */
-    if (lowMode() || navigator.connection?.saveData) return;
-
-    /* The channel is claimed BEFORE the round trip, not after it. Home is
-       redrawn several times while it settles, and an id set only once the
-       answer came back meant every one of those redraws asked the box to open
-       the channel again — eight calls, measured, for one billboard. */
-    const ticket = preview.want;
-    preview.id = String(channel.id);
-    let stream;
-    try {
-      stream = await api('/api/play', { kind: 'live', id: channel.id, ext: 'm3u8' });
-    } catch {
-      if (ticket === preview.want) preview.id = '';
-      return;                       // no preview is a fine answer
-    }
-    if (ticket !== preview.want) return;      // moved on while that was in flight
-    // Not through the Pi's window: that is the provider's own connection, and
-    // the billboard does not get to spend it.
-    if (!stream || !stream.dvr || !stream.url) {
-      preview.id = '';
-      return;
-    }
-
-    const video = document.createElement('video');
-    video.muted = true;
-    video.defaultMuted = true;
-    video.autoplay = true;
-    video.playsInline = true;
-    video.setAttribute('playsinline', '');
-    video.setAttribute('muted', '');
-    video.className = 'live-preview';
-    /* The billboard may have been rebuilt while that was in flight, which
-       would leave this playing into a node nobody can see. */
-    const home = art.isConnected ? art : document.querySelector('#dkHero .slide.on .art');
-    if (!home) {
-      preview.id = '';
-      return;
-    }
-    home.append(video);
-    preview.video = video;
-
-    if (window.Hls && window.Hls.isSupported()) {
-      const engine = new window.Hls({
-        lowLatencyMode: false,
-        // Seated where the player seats itself in the same window, so the
-        // billboard and the full screen are showing the same moment.
-        liveSyncDuration: 45,
-        liveMaxLatencyDuration: 600,
-        backBufferLength: 15,
-        maxBufferLength: 20,
-      });
-      preview.engine = engine;
-      engine.loadSource(stream.url);
-      engine.attachMedia(video);
-      engine.on(window.Hls.Events.ERROR, (_, data) => {
-        if (!data.fatal) return;
-        if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) engine.startLoad();
-        else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) engine.recoverMediaError();
-        else stopPreview();
-      });
-    } else {
-      video.src = stream.url;       // Safari plays HLS itself
-    }
-    video.play().catch(() => { /* a browser that will not start it keeps the mark */ });
-    video.addEventListener('playing',
-      () => home.closest('.slide')?.classList.add('is-playing'), { once: true });
-  }
-
-  /* Nobody is looking at it, so it is not fetching. */
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stopPreview();
-    else {
-      const hero = document.getElementById('dkHero');
-      if (hero) showFeature(hero, heroAt, hero.querySelectorAll('.slide').length);
-    }
-  });
 
   /* The billboard never rotates on its own. Three features are offered and
      the choice is the viewer's — a page that changes under you while you are
@@ -1433,20 +1303,6 @@
     heroAt = ((i % count) + count) % count;
     for (const el of hero.querySelectorAll('.slide, .copy, .picker button')) {
       el.classList.toggle('on', Number(el.dataset.i) === heroAt);
-    }
-
-    const feature = heroShowing[heroAt];
-    if (feature && feature.kind === 'live' && !document.hidden) {
-      /* Not stopped first: this is called on every redraw of home as well as
-         on a picker press, and tearing the stream down only to ask for the
-         same channel again is what turned one billboard into eight calls at
-         the box. startPreview carries a running channel across and ignores a
-         request for one it is already fetching. */
-      startPreview(feature, hero.querySelector(`.slide[data-i="${heroAt}"]`));
-    } else {
-      // Whatever was playing belongs to a slide nobody is looking at now.
-      stopPreview();
-      hero.querySelectorAll('.slide.is-playing').forEach((s) => s.classList.remove('is-playing'));
     }
   }
 
@@ -1749,11 +1605,6 @@
   const appRender = window.render;
   window.render = function () {
     const out = appRender.apply(this, arguments);
-    /* A stream still being fetched into a billboard that has left the page is
-       the whole reason this needs a hand rather than a garbage collector. On
-       home it is not left behind — buildHome carries it into the new slide —
-       so this is the door being closed on the way out. */
-    if (state.tab !== 'home') stopPreview();
     decorate();
     return out;
   };

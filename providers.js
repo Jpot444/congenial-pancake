@@ -39,7 +39,12 @@ const MAX_SLOTS = 8;
    than on every request: expiry is a date, not a live figure. */
 const REFRESH_MS = 10 * 60 * 1000;
 
-/** id → { streams, reserved, until } — the box's own count of what is in use. */
+/** id → { streams, reserved } — the box's own count of what is in use.
+    `reserved` is a list of expiry times, one per reservation, NOT a count with
+    a shared deadline: with a shared one, a second reservation pushes the
+    deadline out and the first outlives the moment it should have died, so a
+    page that asks a few times in a row can leave an account reading as full
+    with nothing playing on it. */
 const usage = new Map();
 /** id → { at, expiresAt, status, trial, maxConnections, activeCons, error } */
 const facts = new Map();
@@ -51,9 +56,13 @@ const facts = new Map();
 const RESERVE_MS = 20000;
 
 function slot(id) {
-  if (!usage.has(id)) usage.set(id, { streams: 0, reserved: 0, until: 0 });
+  if (!usage.has(id)) usage.set(id, { streams: 0, reserved: [] });
   const held = usage.get(id);
-  if (held.reserved && Date.now() > held.until) held.reserved = 0;
+  // Each reservation dies on its own schedule.
+  if (held.reserved.length) {
+    const now = Date.now();
+    held.reserved = held.reserved.filter((until) => until > now);
+  }
   return held;
 }
 
@@ -94,7 +103,7 @@ function slotsFor(id) {
 function free(cfg) {
   return accounts(cfg).reduce((sum, account) => {
     const held = slot(account.id);
-    return sum + Math.max(0, slotsFor(account.id) - held.streams - held.reserved);
+    return sum + Math.max(0, slotsFor(account.id) - held.streams - held.reserved.length);
   }, 0);
 }
 
@@ -123,18 +132,14 @@ function pick(cfg, { reserve = false } = {}) {
   let bestRoom = 0;
   for (const account of accounts(cfg)) {
     const held = slot(account.id);
-    const room = slotsFor(account.id) - held.streams - held.reserved;
+    const room = slotsFor(account.id) - held.streams - held.reserved.length;
     if (room > bestRoom) {
       best = account;
       bestRoom = room;
     }
   }
   if (!best) return null;
-  if (reserve) {
-    const held = slot(best.id);
-    held.reserved += 1;
-    held.until = Date.now() + RESERVE_MS;
-  }
+  if (reserve) slot(best.id).reserved.push(Date.now() + RESERVE_MS);
   return best;
 }
 
@@ -173,7 +178,7 @@ function forUrl(cfg, url) {
 function take(id) {
   const held = slot(id);
   held.streams += 1;
-  if (held.reserved > 0) held.reserved -= 1;   // this is what the reservation was for
+  held.reserved.shift();        // this is what the reservation was for
   let done = false;
   return () => {
     if (done) return;
@@ -184,8 +189,7 @@ function take(id) {
 
 /** Give up a reservation nobody is going to claim. */
 function unreserve(id) {
-  const held = slot(id);
-  if (held.reserved > 0) held.reserved -= 1;
+  slot(id).reserved.shift();
 }
 
 /* ------------------------------------------------------------ what they are ── */

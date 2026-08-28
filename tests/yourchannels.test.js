@@ -10,13 +10,17 @@
  * to be surgical, because favourites hold films and shows too and dragging a
  * channel must not shuffle the Favorites page.
  *
- * THE BILLBOARD, when it is on a channel, is that channel: the stream runs in
- * the slide, muted, behind the words. The rule that keeps it from costing
- * anything is that it plays only through the Pi's own DVR window — shared, so
- * the billboard and somebody watching for real are one ingest on the
- * provider's one connection — and never through the direct proxy, which is
- * that connection itself. A box that answers without the window gets no
- * preview at all, which is tested here as its own claim.
+ * THE BILLBOARD, when it is on a channel, is a picture of that channel and
+ * nothing more. It briefly played the stream itself, muted, through the box's
+ * own DVR window, on the reasoning that a shared window costs nothing extra.
+ * That reasoning was wrong in the way that matters: the ingest is kept alive
+ * by its own fetching, so it never went idle and never handed the slot back —
+ * home sitting open meant a provider connection sitting spoken for, which on
+ * a two-account box ate the login the second subscription was bought for.
+ *
+ * So the claim tested here is the negative one: opening home asks the box to
+ * open nothing at all, and pressing Watch live is the only thing on the page
+ * that spends a connection.
  */
 const { chromium } = require('./playwright.js');
 const BASE = 'http://127.0.0.1:8481';
@@ -105,67 +109,53 @@ async function open(browser, { dvr = true } = {}) {
 (async () => {
   const browser = await chromium.launch();
 
-  /* ---- the billboard, playing ------------------------------------------ */
-  console.log('\n  the billboard is the channel');
+  /* ---- the billboard costs nothing ------------------------------------- */
+  console.log('\n  the billboard is a picture, not a stream');
   const page = await open(browser);
 
-  const hero = await page.evaluate(() => {
-    const video = document.querySelector('#dkHero .live-preview');
-    return {
-      video: Boolean(video),
-      muted: video?.muted,
-      inline: video?.hasAttribute('playsinline'),
-      playing: Boolean(document.querySelector('#dkHero .slide.is-playing')),
-      source: window.__hls.url,
-      seat: window.__hls.config?.liveSyncDuration,
-      cta: document.querySelector('#dkHero .copy.on .dk-btn-p')?.textContent?.trim(),
-    };
-  });
+  const hero = await page.evaluate(() => ({
+    video: document.querySelectorAll('#dkHero video').length,
+    engine: window.__hls.url,
+    slide: Boolean(document.querySelector('#dkHero .slide')),
+    cta: document.querySelector('#dkHero .copy.on .dk-btn-p')?.textContent?.trim(),
+  }));
   console.log('   hero:', JSON.stringify(hero));
-  check('the channel is running in the slide', hero.video && hero.playing, JSON.stringify(hero));
-  check('with no sound, which is what makes it a billboard and not a player',
-    hero.muted === true, String(hero.muted));
-  check('and inline, so a phone does not throw it into its own full screen',
-    hero.inline === true, String(hero.inline));
-  check('through the box\'s own window, not the provider\'s connection',
-    hero.source === '/hls/live-700/index.m3u8', hero.source);
-  check('seated where the player seats itself in the same window',
-    hero.seat === 45, String(hero.seat));
-  check('and the button still offers the full thing', hero.cta === 'Watch live', hero.cta);
+  check('the channel is a mark on the billboard, as it always was',
+    hero.slide, JSON.stringify(hero));
+  check('nothing is playing in it', hero.video === 0, String(hero.video));
+  check('and no player engine was started for it', !hero.engine, hero.engine);
+  check('the button offers the real thing', hero.cta === 'Watch live', hero.cta);
 
-  /* Home is redrawn several times while it settles. Asking the box to open
-     the channel once per redraw is eight calls for one billboard, which on a
-     single-connection box is not a small thing. */
-  const asked = page.__plays.filter((u) => u.includes('kind=live')).length;
-  console.log('   /api/play calls:', asked);
-  check('the box is asked for the channel once, however often home redraws',
-    asked === 1, String(asked));
-  check('and asked for the DVR window by name',
-    page.__plays[0]?.includes('ext=m3u8'), page.__plays[0]);
+  /* The claim this suite exists for now.
+   *
+   * The billboard used to play the channel, muted, through the box's own DVR
+   * window — which reads as free and is not: the ingest is kept alive by its
+   * own fetching, so it never goes idle and never gives the slot back. Home
+   * sat open and a provider connection sat spoken for, which on a two-account
+   * box quietly ate the login the second subscription was bought for. Opening
+   * home must not touch the provider at all. */
+  const asked = page.__plays.length;
+  console.log('   /api/play calls from home:', asked, page.__plays);
+  check('opening home asks the box to open nothing, so no login is spent on it',
+    asked === 0, JSON.stringify(page.__plays));
 
-  console.log('\n  and it stops when nobody is looking at it');
-  await page.evaluate(() => { location.hash = '#/movies'; });
+  console.log('\n  and Watch live still opens the channel properly');
+  await page.evaluate(() => {
+    document.querySelector('#dkHero .copy.on .dk-btn-p')?.click();
+  });
   await page.waitForTimeout(1200);
-  const gone = await page.evaluate(() => ({
-    video: document.querySelectorAll('.live-preview').length,
-    destroyed: window.__hls.destroyed,
+  const opened = await page.evaluate(() => ({
+    player: !document.querySelector('#playerOverlay')?.hidden,
+    asked: null,
   }));
-  check('leaving home takes the stream down with it',
-    gone.video === 0 && gone.destroyed >= 1, JSON.stringify(gone));
+  opened.asked = page.__plays.length;
+  console.log('   watch live:', JSON.stringify(opened));
+  check('pressing it is what spends the connection, and only then',
+    opened.player === true && opened.asked >= 1, JSON.stringify(opened));
 
-  /* ---- a box with no window to play through ---------------------------- */
-  console.log('\n  a box that cannot offer its own window');
-  const plain = await open(browser, { dvr: false });
-  const noPreview = await plain.evaluate(() => ({
-    video: document.querySelectorAll('#dkHero .live-preview').length,
-    mark: Boolean(document.querySelector('#dkHero .slide')),
-  }));
-  console.log('   plain:', JSON.stringify(noPreview));
-  check('nothing plays, because that answer IS the provider\'s one connection',
-    noPreview.video === 0, JSON.stringify(noPreview));
-  check('and the billboard is still there, as the mark it always was',
-    noPreview.mark, JSON.stringify(noPreview));
-  await plain.close();
+  // Put the page back the way the rest of this suite expects to find it.
+  await page.evaluate(() => closePlayer());
+  await page.waitForTimeout(600);
 
   /* ---- dragging the row ------------------------------------------------ */
   console.log('\n  your channels, rearranged');

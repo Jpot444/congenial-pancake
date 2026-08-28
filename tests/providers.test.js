@@ -133,6 +133,43 @@ const LOGINS = {
   check('a reservation nobody claims is given up',
     providers.free(TWO) === 2, String(providers.free(TWO)));
 
+  /* Each reservation has to die on its own schedule — and the case that
+     proves it is TWO reservations on the SAME login, which is what a panel
+     that allows two connections gives you. Held as a count with one shared
+     deadline, the second reservation pushes the deadline out and keeps the
+     first alive past its time; ask a few times in a row and the account reads
+     as full with nothing playing on it, which is the "0 free and nothing on"
+     the panel would then report. */
+  console.log('\n  reservations expire one at a time');
+  const RESERVE_MS = 20000;
+  const ROOMY = {
+    mode: 'xtream', host: 'http://box', username: 'r', password: 'p',
+    accounts: [{ id: 'pR', host: 'http://box', username: 'r', password: 'p' }],
+  };
+  providers.note('pR', { max_connections: '2', status: 'Active' });
+  check('one login the panel says carries two connections',
+    providers.capacity(ROOMY) === 2, String(providers.capacity(ROOMY)));
+
+  const realNow = Date.now;
+  let clock = realNow();
+  Date.now = () => clock;
+  try {
+    providers.pick(ROOMY, { reserve: true });
+    clock += 15000;                              // 5s of the first one left
+    providers.pick(ROOMY, { reserve: true });    // a second, on the SAME login
+    check('two reservations fifteen seconds apart are both standing',
+      providers.free(ROOMY) === 0, String(providers.free(ROOMY)));
+    clock += 6000;                               // the first one's time is up
+    check('and the older one expires on its own time, not the newer one\'s',
+      providers.free(ROOMY) === 1, String(providers.free(ROOMY)));
+    clock += RESERVE_MS;
+    check('with nothing left holding anything once both have run out',
+      providers.free(ROOMY) === 2, String(providers.free(ROOMY)));
+  } finally {
+    Date.now = realNow;
+  }
+  providers.forget('pR');
+
   console.log('\n  whose stream is whose');
   const urlFor = (user) => `http://box/live/${user}/pw/123.m3u8`;
   check('a URL is traced back to the login written into it',
