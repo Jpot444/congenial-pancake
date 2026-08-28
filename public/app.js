@@ -72,6 +72,11 @@ const state = {
   /** The archive drive: current folder, what's in it, and how much is shown. */
   archive: { dir: '', data: null, status: null, visible: PAGE_SIZE, searching: false },
   recentlyWatched: [],
+  /** This profile's explicit thumbs, keyed the way history is. A film's page
+      shows which way one went and changes it. Kept here rather than fetched
+      per page: it arrives with the rest of the taste payload, and the box has
+      one provider connection to spend on things that are not this. */
+  ratings: {},
   /** An episode Continue watching asked for, waiting on the list that can
       turn its number into an index. `{ seriesId, season, episode }`. */
   resumeEpisode: null,
@@ -174,6 +179,7 @@ const profiles = {
         new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 8000)),
       ]);
       state.recentlyWatched = taste.recentlyWatched || [];
+      state.ratings = taste.ratings || {};
     } catch {
       // Keep whatever was already loaded. Emptying it here blanked Continue
       // watching every time the call was merely slow.
@@ -5950,9 +5956,839 @@ async function renderShowCard() {
     describe({ year: info.releaseDate, genre: info.genre, plot: info.plot }));
 }
 
+/* ------------------------------------------------------------- a film ---
+ *
+ * A film's page, which stopped being a show's page.
+ *
+ * Both used to be detailCard(): a poster, a name, one line of facts and a
+ * button. That card also had to hold a season of episodes, so everything a
+ * film knows about itself — who made it, who is in it, what the file actually
+ * is, where this profile stopped — either had nowhere to go or went onto the
+ * end of the meta line. What reached the screen was a fraction of what the box
+ * already had in hand.
+ *
+ * So: the backdrop is the page, the decision sits on top of it, and the rest
+ * is laid out underneath in the order somebody reads it — the credits, the
+ * cast, what the file actually is, and what else in the same category is worth
+ * the next two hours. The column on the right is the three things that are
+ * about YOU rather than about the film: whether it is on the box, what you
+ * have done with it, and where to go and read more.
+ *
+ * A show keeps detailCard(). Its page is a season and a list, which is a
+ * different shape with a different question at the top of it, and pretending
+ * the two were one card is most of why this one was thin.
+ *
+ * Two facts on it have no source and are marked FILM_UNKNOWN where they are
+ * used: a character name against a cast member, and a certificate. Neither is
+ * in an Xtream payload. They are drawn from the placeholder table rather than
+ * left as holes, so the page lays out at full height while a real source —
+ * TMDB, most likely — is still missing.
+ */
+
+/* The line glyphs this page draws, on the same 24-box terms as every other
+   icon in the product — the same paths as the standalone files in /icons,
+   inlined because the page draws a dozen of them and twelve paths is not
+   worth twelve requests to the Pi. */
+const FILM_ICON = {
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  next: '<path d="M9 5l7 7-7 7"/>',
+  play: '<path d="M7 5l12 7-12 7z" fill="currentColor" stroke="none"/>',
+  reload: '<path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 3v5h-5"/>',
+  heart: '<path d="M12 21s-7.5-4.9-9.3-9.2C1.3 8.4 3.2 5 6.6 5c2 0 3.5 1.2 4.4 2.4l1 '
+    + '1.3 1-1.3C13.9 6.2 15.4 5 17.4 5c3.4 0 5.3 3.4 3.9 6.8C19.5 16.1 12 21 12 21z"/>',
+  download: '<path d="M12 3v12M7 11l5 5 5-5M4 20h16"/>',
+  trash: '<path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/>',
+  check: '<path d="M5 13l4 4 10-10"/>',
+  globe: '<circle cx="12" cy="12" r="9"/>'
+    + '<path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18"/>',
+};
+
+function filmIcon(name) {
+  const box = el('span');
+  box.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${FILM_ICON[name]}</svg>`;
+  return box.firstElementChild;
+}
+
+/* FILM_UNKNOWN — the two facts the provider does not carry.
+ *
+ * Xtream's get_vod_info gives a flat comma-separated `cast` string and nothing
+ * about who anybody played, and no certificate at all. Both are TMDB's to
+ * answer, and the box does not talk to TMDB yet.
+ *
+ * Rather than leave two holes in the layout, the page fills them from here: a
+ * cast member's second line falls back to their billing, and the certificate
+ * to the one the library's own naming implies. When a real source arrives,
+ * delete this and read it instead — nothing else on the page depends on it. */
+const FILM_UNKNOWN = {
+  /** Billing, which is at least true of the order the provider lists them in. */
+  billing: (index) => (index === 0 ? 'Lead' : index < 4 ? 'Featured' : 'Supporting'),
+  /** The certificate a film of this genre and vintage almost certainly carries.
+      A guess, and drawn quietly enough to read as one. */
+  certificate: (info) => (/horror|crime|thriller/i.test(info?.genre || '') ? 'R' : 'PG-13'),
+};
+
+/** This profile's history row for a film. The resume point, the play count and
+    the date in the sidebar all come from it. */
+function filmHistory(item) {
+  const key = resumeKeyFor(item);
+  return (state.recentlyWatched || []).find(
+    (row) => row.kind === 'movie' && row.key === key) || null;
+}
+
+/** A rail with a heading, a count and the two arrows that scroll it. Used for
+    the cast and for the rest of the category, which are the same furniture
+    with different cards in them. */
+function filmRail(title, count) {
+  const rail = el('section', 'film-rail');
+
+  const head = el('div', 'film-rail-head');
+  const heading = el('h2');
+  heading.textContent = title;
+  const tally = el('span', 'film-rail-count');
+  tally.textContent = count;
+  head.append(heading, tally);
+
+  const track = el('div', 'film-rail-track');
+  const arrows = el('div', 'film-rail-arrows');
+  for (const [way, icon] of [[-1, 'back'], [1, 'next']]) {
+    const arrow = el('button', 'film-rail-arrow');
+    arrow.type = 'button';
+    arrow.setAttribute('aria-label', way < 0 ? 'Scroll back' : 'Scroll on');
+    arrow.append(filmIcon(icon));
+    // A card and a half, so the row lands somewhere a card starts rather than
+    // halfway through one.
+    arrow.addEventListener('click', () => {
+      track.scrollBy({ left: way * Math.round(track.clientWidth * 0.8), behavior: 'smooth' });
+    });
+    arrows.append(arrow);
+  }
+  head.append(arrows);
+
+  rail.append(head, track);
+  return { rail, track };
+}
+
+/** One of the sidebar's three cards: a caps heading over a body. */
+function filmPanel(heading) {
+  const panel = el('section', 'film-panel');
+  const head = el('div', 'film-panel-head');
+  head.textContent = heading;
+  const body = el('div', 'film-panel-body');
+  panel.append(head, body);
+  return { panel, body, head };
+}
+
+/** A labelled row in the credits block — Director, Writers, Genres. */
+function filmCreditRow(grid, label) {
+  const name = el('span', 'film-credit-label');
+  name.textContent = label;
+  const value = el('div', 'film-credit-value');
+  grid.append(name, value);
+  return value;
+}
+
+/** A credit drawn as a chip that goes somewhere. */
+function filmCreditChip(text, onClick) {
+  const chip = el(onClick ? 'button' : 'span', 'film-chip');
+  if (onClick) {
+    chip.type = 'button';
+    chip.addEventListener('click', onClick);
+  }
+  chip.textContent = text;
+  return chip;
+}
+
 /**
- * A film's page. Where a show has its seasons and episodes, a film has one
- * button and how long it runs — which is the whole of what there is to decide.
+ * How much of the card is spoken for, and by whom.
+ *
+ * The numbers are the ones the Downloads page and the server both work from:
+ * the profile's own allowance out of prefs, what its jobs weigh out of the
+ * queue, and the free space the box reports. The 2 GB floor is SPACE_RESERVE
+ * in server.js — the point below which a download refuses to start rather
+ * than filling the card and taking the portal down with it.
+ */
+function filmBoxNumbers() {
+  const limit = profiles.data?.downloadLimit;
+  const capped = Number.isFinite(limit) && limit > 0;
+  const mine = profiles.current?.id || '';
+  const used = (state.downloads.items || [])
+    .filter((job) => job.profileId === mine)
+    .reduce((n, job) => n + Math.max(Number(job.bytes) || 0, Number(job.total) || 0), 0);
+
+  return {
+    capped,
+    used,
+    limit,
+    label: capped
+      ? `${formatBytes(used)} of ${(limit / 1073741824).toFixed(0)} GB`
+      : `No limit (${(profiles.current?.name || 'you').toLowerCase()})`,
+    percent: capped ? Math.min(100, (used / limit) * 100) : 100,
+    tone: capped && used / limit > 0.8 ? 'warn' : 'ok',
+    free: Number.isFinite(state.downloads.freeBytes) ? state.downloads.freeBytes : null,
+  };
+}
+
+/**
+ * A film's page.
+ *
+ * Painted in two passes, because the second one costs a round trip through a
+ * box with one provider connection. Everything the library already holds — the
+ * poster, the name, the rating, where this profile stopped, whether it is on
+ * the box — goes up straight away; describe() fills in what the provider says
+ * when it says it. Filling in rather than redrawing, so nothing you had
+ * started reading moves under you when the answer lands.
+ */
+function filmCard(item) {
+  $('#grid').hidden = true;
+  $('#rowsView').hidden = true;
+  $('#downloadList').hidden = true;
+  $('#emptyState').hidden = true;
+  $('#loadMore').hidden = true;
+  $('#homeView').hidden = true;
+  $('#archiveView').hidden = true;
+  document.querySelectorAll('.folder-back').forEach((b) => b.remove());
+
+  const view = $('#seriesView');
+  view.hidden = false;
+  view.innerHTML = '';
+  view.classList.add('film-page');
+  $('#contentMeta').textContent = '';
+  // The page head is the film's own title at 76px; "MOVIES" set over the top
+  // of that says nothing the backdrop has not already said. Same treatment as
+  // Home, and taken off again by render() on the way out.
+  document.querySelector('.app-shell').classList.add('is-film', 'no-sidebar');
+  document.querySelectorAll('.film-hero').forEach((old) => old.remove());
+
+  const history = filmHistory(item);
+  const at = watchedProgress(item);
+  const runtimeSeconds = history?.duration || 0;
+
+  /* ------------------------------------------------------------ the hero */
+  const hero = el('header', 'film-hero');
+
+  // The backdrop is the whole hero, with the scrims over it — so the picture
+  // keeps going under the words rather than stopping at a box. Nothing is
+  // known to put in it until the provider answers, and an empty one is the
+  // fallback tile rather than a hole.
+  const art = el('div', 'film-art');
+  const scrims = el('div', 'film-scrims');
+  hero.append(art, scrims);
+
+  const heroInner = el('div', 'film-hero-inner');
+
+  const category = (state.library.movies?.categories || [])
+    .find((c) => String(c.id) === String(item.categoryId));
+  const inCategory = (state.library.movies?.items || [])
+    .filter((other) => String(other.categoryId) === String(item.categoryId)
+      && !profiles.isDeleted(other));
+
+  const back = el('button', 'film-back show-back');
+  back.type = 'button';
+  back.append(filmIcon('back'));
+  back.append(document.createTextNode(category
+    ? `${category.name} · ${inCategory.length.toLocaleString()}`
+    : 'All movies'));
+  back.addEventListener('click', () => { location.hash = '#/movies'; });
+  heroInner.append(back);
+
+  const stage = el('div', 'film-stage');
+
+  /* ---- the poster, which is also the progress bar ---- */
+  const posterWrap = el('div', 'film-poster');
+  if (item.logo) {
+    const image = el('img');
+    image.alt = '';
+    // Straight through: loadTab has already run every library logo through
+    // img(), so these arrive as `/img?u=…`. Wrapping a proxied path again
+    // points the proxy at itself, which fails and prints the title instead.
+    image.src = item.logo;
+    image.addEventListener('error', () => {
+      image.remove();
+      const fb = el('div', 'fallback');
+      fb.textContent = item.name;
+      posterWrap.append(fb);
+    });
+    posterWrap.append(image);
+  } else {
+    const fb = el('div', 'fallback');
+    fb.textContent = item.name;
+    posterWrap.append(fb);
+  }
+
+  const quality = el('span', 'film-poster-badge');
+  quality.textContent = item.uhd ? '4K' : '1080P';
+  posterWrap.append(quality);
+
+  if (at > 0) {
+    const bar = el('div', 'film-poster-progress');
+    const fill = el('i');
+    fill.style.width = `${Math.min(100, at * 100)}%`;
+    bar.append(fill);
+    posterWrap.append(bar);
+  }
+
+  /* ---- the copy beside it ---- */
+  const copy = el('div', 'film-copy');
+
+  // Where you are, above the name: the section, then what kind of film it is
+  // once the provider has said. The back pill says where you came FROM, which
+  // is a different question and can be a different answer — a category and a
+  // genre are not the same thing on this provider.
+  const eyebrowRow = el('div', 'film-eyebrow-row');
+  const eyebrow = el('span', 'film-eyebrow');
+  eyebrow.textContent = 'Movies';
+  eyebrowRow.append(eyebrow);
+
+  // What this copy is doing, as against what it is. Only ever one of them, and
+  // only when it is true — a row of greyed-out states nobody is in is furniture.
+  const job = downloadJobFor('movie', item.id);
+  if (job && job.status === 'done') {
+    const pill = el('span', 'film-state is-saved');
+    pill.textContent = 'ON THE BOX';
+    eyebrowRow.append(pill);
+  } else if (job) {
+    const pill = el('span', 'film-state is-downloading');
+    pill.textContent = 'DOWNLOADING';
+    eyebrowRow.append(pill);
+  }
+
+  const heading = el('h1', 'film-title');
+  heading.textContent = item.name;
+  const year = el('span', 'film-year');
+  heading.append(year);
+
+  const meta = el('div', 'film-meta');
+  const tagline = el('p', 'film-tagline');
+  tagline.hidden = true;
+  const plot = el('p', 'film-plot');
+  plot.hidden = true;
+
+  /* ---- the decision ---- */
+  const actions = el('div', 'film-actions');
+
+  const play = el('button', 'btn btn-primary play-title');
+  play.append(filmIcon('play'));
+  const playLabel = document.createTextNode(
+    at > 0 && history?.position ? ` Resume ${hms(history.position)}` : ' Play');
+  play.append(playLabel);
+  // The page has already made the resume choice — that is what the two buttons
+  // ARE — so the player is told rather than asked. Putting its modal up on top
+  // of them would be the same question twice.
+  play.addEventListener('click', () => openPlayer(item, { resume: at > 0 ? 'resume' : 'ask' }));
+  actions.append(play);
+
+  const restart = el('button', 'btn btn-ghost film-restart');
+  restart.append(filmIcon('reload'));
+  restart.append(document.createTextNode(' Start over'));
+  restart.addEventListener('click', () => openPlayer(item, { resume: 'restart' }));
+  actions.append(restart);
+
+  actions.append(el('span', 'film-action-rule'));
+
+  const fav = el('button', 'icon-btn film-icon-btn show-fav');
+  const paintFav = () => {
+    const on = profiles.hasFav(item);
+    fav.classList.toggle('is-on', on);
+    fav.title = on ? 'In favorites' : 'Add to favorites';
+    fav.setAttribute('aria-label', fav.title);
+    fav.setAttribute('aria-pressed', String(on));
+  };
+  fav.append(filmIcon('heart'));
+  paintFav();
+  fav.addEventListener('click', () => {
+    const added = profiles.toggleFav(item);
+    paintFav();
+    toast(added ? 'Added to favorites.' : 'Removed from favorites.');
+  });
+  actions.append(fav);
+
+  // Films get a download of their own. Shows manage theirs per episode down in
+  // the list, and a file already on the archive drive is on the box by
+  // definition — asking the provider for a second copy of it is nothing.
+  let download = null;
+  if (!item.archivePath && !item.localOnly) {
+    download = el('button', 'icon-btn film-icon-btn show-dl');
+    download.append(filmIcon('download'));
+    const paintDownload = () => {
+      const have = downloadJobFor('movie', item.id);
+      download.classList.toggle('is-saved', have?.status === 'done');
+      download.title = have
+        ? have.status === 'done' ? 'Downloaded' : 'In the queue'
+        : 'Download to the box';
+      download.setAttribute('aria-label', download.title);
+    };
+    paintDownload();
+    download.addEventListener('click', async () => {
+      await requestDownload(item);
+      paintDownload();
+    });
+    actions.append(download);
+  }
+
+  const hide = el('button', 'icon-btn film-icon-btn film-hide');
+  hide.append(filmIcon('trash'));
+  hide.title = 'Hide this — it stops showing in lists and search';
+  hide.setAttribute('aria-label', hide.title);
+  hide.addEventListener('click', () => {
+    profiles.toggleDeleted(item);
+    toast(`Hid “${item.name}”. It's in Deleted.`);
+    // Back to the grid, because staying would leave you on the page of
+    // something that is no longer in any list you can reach it from.
+    location.hash = '#/movies';
+  });
+  actions.append(hide);
+
+  const left = el('span', 'film-left');
+  actions.append(left);
+
+  copy.append(eyebrowRow, heading, meta, tagline, plot, actions);
+  stage.append(posterWrap, copy);
+  heroInner.append(stage);
+  hero.append(heroInner);
+
+  /* --------------------------------------------------------- underneath */
+  const below = el('div', 'film-below');
+  const main = el('div', 'film-main');
+  const side = el('aside', 'film-side');
+
+  /* ---- credits ---- */
+  const credits = el('div', 'film-credits');
+  const directorRow = filmCreditRow(credits, 'Director');
+  const writersRow = filmCreditRow(credits, 'Writers');
+  const genresRow = filmCreditRow(credits, 'Genres');
+  const providerRow = filmCreditRow(credits, 'Provider');
+  providerRow.classList.add('film-provider');
+  main.append(credits);
+
+  /* ---- cast ---- */
+  const cast = filmRail('Cast & Crew', '');
+  cast.rail.hidden = true;
+  main.append(cast.rail);
+
+  /* ---- what the file is ---- */
+  const specs = el('div', 'film-specs');
+  const specCells = {};
+  for (const key of ['Video', 'Audio', 'Container', 'Size']) {
+    const cell = el('div', 'film-spec');
+    const label = el('span', 'film-spec-label');
+    label.textContent = key;
+    const value = el('span', 'film-spec-value');
+    const note = el('span', 'film-spec-note');
+    cell.append(label, value, note);
+    specs.append(cell);
+    specCells[key] = { value, note };
+  }
+  main.append(specs);
+
+  /* ---- the rest of the category ---- */
+  const others = inCategory.filter((other) => String(other.id) !== String(item.id));
+  if (others.length) {
+    const more = filmRail(
+      category ? `More in ${category.name}` : 'More movies',
+      others.length.toLocaleString()
+    );
+    more.track.classList.add('film-more-track');
+    // Capped: the row scrolls, and building a thousand posters to sit off the
+    // right-hand side of it costs the Pi the same as showing them.
+    for (const other of others.slice(0, 24)) more.track.append(cardFor(other));
+    main.append(more.rail);
+  }
+
+  /* ---- on the box ---- */
+  const box = filmPanel('On the box');
+  const boxState = el('div', 'film-box-state');
+  box.body.append(boxState);
+
+  const paintBox = () => {
+    boxState.innerHTML = '';
+    const have = downloadJobFor('movie', item.id);
+
+    if (have && have.status === 'done') {
+      const line = el('div', 'film-box-line is-ok');
+      line.append(filmIcon('check'));
+      line.append(document.createTextNode(
+        ` Downloaded${have.total ? ` · ${formatBytes(have.total)}` : ''} · MP4`));
+      const note = el('p', 'film-box-note');
+      note.textContent = 'The box copy costs no provider connection. Save to device is '
+        + 'the step that survives airplane mode.';
+      const row = el('div', 'film-box-buttons');
+      const disk = el('button', 'btn btn-ghost btn-sm');
+      disk.textContent = 'Play from disk';
+      disk.addEventListener('click', () => openPlayer(item, { resume: at > 0 ? 'resume' : 'ask' }));
+      const device = el('button', 'btn btn-ghost btn-sm');
+      device.textContent = 'Save to device';
+      device.addEventListener('click', () => saveToDevice(have));
+      row.append(disk, device);
+      boxState.append(line, note, row);
+    } else if (have) {
+      const line = el('div', 'film-box-line is-busy');
+      const what = el('span');
+      what.textContent = have.status === 'paused' ? 'Paused' : 'Downloading';
+      const much = el('span', 'film-box-pct');
+      const done = Number(have.bytes) || 0;
+      const total = Number(have.total) || 0;
+      much.textContent = total
+        ? `${Math.floor((done / total) * 100)}% · ${formatBytes(done)} of ${formatBytes(total)}`
+        : formatBytes(done);
+      line.append(what, much);
+      const bar = el('div', 'film-bar');
+      const fill = el('i');
+      fill.style.width = total ? `${Math.min(100, (done / total) * 100)}%` : '0%';
+      bar.append(fill);
+      const note = el('p', 'film-box-note');
+      note.textContent = 'Pauses itself the moment anybody starts watching.';
+      boxState.append(line, bar, note);
+    } else {
+      const line = el('div', 'film-box-line');
+      line.textContent = 'Not downloaded — streams from the provider.';
+      const note = el('p', 'film-box-note');
+      note.textContent = 'A box copy starts immediately instead of waiting on the '
+        + "provider's pacing and a prebuffer.";
+      boxState.append(line, note);
+      if (!item.archivePath && !item.localOnly) {
+        const go = el('button', 'btn btn-ghost btn-sm');
+        go.textContent = 'Download to the box';
+        go.addEventListener('click', async () => { await requestDownload(item); paintBox(); });
+        boxState.append(go);
+      }
+    }
+  };
+  paintBox();
+
+  box.body.append(el('div', 'film-rule'));
+
+  const numbers = filmBoxNumbers();
+  const figures = el('div', 'film-figures');
+  const figure = (label, value) => {
+    const row = el('div', 'film-figure');
+    const name = el('span');
+    name.textContent = label;
+    const said = el('b');
+    said.textContent = value;
+    row.append(name, said);
+    figures.append(row);
+    return row;
+  };
+  // One connection is the rule the whole box is built around: a download
+  // pauses itself when somebody presses play, and this is where you find out
+  // whether that is about to happen to you.
+  figure('Provider connection', state.downloads.active ? '0 of 1 free' : '1 of 1 free');
+  figure('Your allowance', numbers.label);
+  const allowanceBar = el('div', `film-bar is-${numbers.tone}`);
+  const allowanceFill = el('i');
+  allowanceFill.style.width = `${numbers.percent}%`;
+  allowanceBar.append(allowanceFill);
+  figures.append(allowanceBar);
+  if (numbers.free !== null) {
+    figure('Card free', `${formatBytes(numbers.free)} · 2 GB floor`);
+  }
+  box.body.append(figures);
+  side.append(box.panel);
+
+  /* ---- what this profile has done with it ---- */
+  const seen = filmPanel(`Watched by ${profiles.current?.name || 'you'}`);
+  const seenLine = el('div', 'film-seen-line');
+  if (history) {
+    const when = new Date(history.at || Date.now())
+      .toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const plays = Number(history.plays) || 1;
+    seenLine.textContent = history.completed
+      ? `Finished on ${when} · ${plays} play${plays === 1 ? '' : 's'}`
+      : `Stopped at ${hms(history.position || 0)} on ${when} · `
+        + `${plays} play${plays === 1 ? '' : 's'}`;
+  } else {
+    seenLine.textContent = 'Never opened on this profile';
+  }
+  const seenNote = el('p', 'film-box-note');
+  seenNote.textContent = category
+    ? `Counts toward ${category.name} affinity — completion weighs far above `
+      + 'opening something.'
+    : 'Completion weighs far above opening something.';
+
+  const thumbs = el('div', 'film-thumbs');
+  const key = resumeKeyFor(item);
+  const up = el('button', 'film-thumb is-up');
+  up.type = 'button';
+  up.textContent = 'Good';
+  const down = el('button', 'film-thumb is-down');
+  down.type = 'button';
+  down.textContent = 'Not for me';
+  const paintThumbs = () => {
+    const value = state.ratings[key] || 0;
+    up.classList.toggle('on', value > 0);
+    down.classList.toggle('on', value < 0);
+  };
+  const rate = async (wanted) => {
+    const value = state.ratings[key] === wanted ? 0 : wanted;
+    // Painted first. The box is on the other side of a Tailscale link and the
+    // press has to land now, not when the round trip does.
+    if (value) state.ratings[key] = value; else delete state.ratings[key];
+    paintThumbs();
+    await saveRating(key, value);
+    toast(value > 0 ? 'Thumbs up — weighs double in For You.'
+      : value < 0 ? 'Thumbs down noted.' : 'Rating cleared.');
+  };
+  up.addEventListener('click', () => rate(1));
+  down.addEventListener('click', () => rate(-1));
+  paintThumbs();
+  thumbs.append(up, down);
+
+  seen.body.append(seenLine, seenNote, thumbs);
+  side.append(seen.panel);
+
+  /* ---- somewhere else to read about it ---- */
+  const lookup = filmPanel('Look it up');
+  lookup.body.classList.add('film-links');
+  const query = encodeURIComponent(item.name);
+  for (const [name, href] of [
+    ['IMDb', `https://www.imdb.com/find/?q=${query}`],
+    ['TheMovieDb', `https://www.themoviedb.org/search?query=${query}`],
+    ['Trakt', `https://trakt.tv/search?query=${query}`],
+  ]) {
+    const link = el('a', 'film-link');
+    link.href = href;
+    link.target = '_blank';
+    link.rel = 'noreferrer noopener';
+    link.append(filmIcon('globe'));
+    link.append(document.createTextNode(name));
+    lookup.body.append(link);
+  }
+  side.append(lookup.panel);
+
+  below.append(main, side);
+  view.append(below);
+  /* The backdrop is the width of the window, and .wrap is 1440 with a gutter
+     either side of it. So the hero goes where the home billboard goes —
+     straight into #appView, above the wrap rather than inside it — and the
+     band down its middle carries the wrap's own measure so the poster and the
+     title line up with everything underneath them. clearStage() sweeps it,
+     the same way it sweeps the folder back button. */
+  $('#appView').prepend(hero);
+
+  /**
+   * The second pass: everything only the provider knows.
+   *
+   * Called once the get_vod_info round trip lands, and written to fill the
+   * nodes already on screen rather than to rebuild the page — the first pass
+   * is what somebody is reading while this is in flight.
+   */
+  const describe = (info) => {
+    const bits = [];
+    if (item.rating) {
+      const star = el('span', 'film-star');
+      star.textContent = '★';
+      const score = el('span', 'film-score');
+      score.append(star, document.createTextNode(` ${item.rating}`));
+      bits.push(score);
+    }
+
+    const seconds = parseRuntime(info) || runtimeSeconds;
+    if (seconds) bits.push(hms(seconds));
+    if (info?.releasedate) bits.push(info.releasedate);
+    if (info?.genre) bits.push(info.genre);
+
+    const bytes = mediaBytes(info);
+    const container = (info?.movie_data?.container_extension || item.ext || '').toUpperCase();
+    if (bytes || container) {
+      const file = el('span', 'film-file');
+      file.textContent = [bytes ? formatBytes(bytes) : '', container].filter(Boolean).join(' · ');
+      bits.push(file);
+    }
+
+    meta.innerHTML = '';
+    bits.forEach((bit, i) => {
+      if (i) {
+        const dot = el('span', 'film-dot');
+        dot.textContent = '·';
+        meta.append(dot);
+      }
+      meta.append(typeof bit === 'string' ? document.createTextNode(bit) : bit);
+    });
+    // FILM_UNKNOWN — a guess, drawn as the quietest thing on the line so it
+    // reads as one, and not drawn at all until there is a genre to guess from.
+    if (info) {
+      const cert = el('span', 'film-cert');
+      cert.textContent = FILM_UNKNOWN.certificate(info);
+      cert.title = 'Not from the provider — the box has no certificate for this';
+      meta.append(cert);
+    }
+
+    // The year sits inside the title, at half its size, the way a poster
+    // credits one. Only once it is known: a bracket with nothing in it is
+    // worse than no bracket.
+    const released = String(info?.releasedate || '').slice(0, 4);
+    year.textContent = /^\d{4}$/.test(released) ? ` ${released}` : '';
+
+    eyebrow.textContent = info?.genre
+      ? `Movies · ${String(info.genre).split(',').slice(0, 2).map((s) => s.trim()).join(', ')}`
+      : 'Movies';
+
+    // Some panels pass TMDB's one-line tagline through and most do not. It is
+    // the loudest line on the page after the title, so it is drawn only when
+    // there is a real one: a sentence lifted off the front of the synopsis to
+    // fill the slot would read as the film's own line and not be it.
+    if (info?.tagline) {
+      tagline.textContent = info.tagline;
+      tagline.hidden = false;
+    }
+
+    if (info?.plot) {
+      plot.textContent = info.plot;
+      plot.hidden = false;
+    }
+
+    // The backdrop, which is the point of the hero. Xtream gives an array and
+    // the first is the widest; the poster is a 2:3 and stretching it across a
+    // 600px band is worse than the fallback tile, so it is not a substitute.
+    const backdrop = (info?.backdrop_path || [])[0];
+    art.innerHTML = '';
+    if (backdrop) {
+      const image = el('img');
+      image.alt = '';
+      image.src = img(backdrop);
+      image.addEventListener('error', () => image.remove());
+      art.append(image);
+    }
+
+    // How much is left, beside the buttons, which is the number that decides
+    // whether tonight is the night.
+    const total = seconds || history?.duration || 0;
+    left.textContent = total
+      ? at > 0 && history?.position
+        ? `${hms(Math.max(0, total - history.position))} left of ${hms(total)}`
+        : hms(total)
+      : '';
+
+    /* ---- credits ---- */
+    /* A label with nothing under it is not information, so a row the provider
+       said nothing about takes itself and its label off the grid rather than
+       standing there empty. Xtream has no writer field at all on most panels,
+       which is the row this happens to most. */
+    const names = (text) => String(text || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const fillRow = (row, people, onClick) => {
+      row.innerHTML = '';
+      for (const name of people) row.append(filmCreditChip(name, onClick && (() => onClick(name))));
+      row.hidden = !people.length;
+      row.previousElementSibling.hidden = !people.length;
+    };
+
+    fillRow(directorRow, names(info?.director), null);
+    fillRow(writersRow, names(info?.writer), null);
+    fillRow(genresRow, names(info?.genre), (name) => {
+      // The genre chips are how you get from one film to the rest of its kind,
+      // which is the same move the category bar makes and lands in the same
+      // place: the movies grid, filtered.
+      state.query = name;
+      location.hash = '#/movies';
+    });
+
+    providerRow.innerHTML = '';
+    const source = el('span', 'film-mono');
+    source.textContent = item.archivePath ? 'ARCHIVE DRIVE'
+      : (category?.name || 'VOD').toUpperCase();
+    providerRow.append(source);
+    const dot = () => {
+      const mark = el('span', 'film-dot');
+      mark.textContent = '·';
+      return mark;
+    };
+    if (item.added) {
+      const days = Math.max(0, Math.round((Date.now() - item.added * 1000) / 86400000));
+      const added = el('span');
+      added.textContent = days === 0 ? 'Added today'
+        : `Added ${days} day${days === 1 ? '' : 's'} ago`;
+      providerRow.append(dot(), added);
+    }
+    const through = el('span');
+    through.textContent = item.archivePath ? 'Read from the drive' : 'Proxied through the Pi';
+    providerRow.append(dot(), through);
+
+    /* ---- cast ---- */
+    const people = String(info?.cast || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const crew = String(info?.director || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const everyone = [
+      ...people.map((name, i) => ({ name, role: FILM_UNKNOWN.billing(i), guessed: true })),
+      ...crew.map((name) => ({ name, role: 'Director', guessed: false })),
+    ];
+    cast.track.innerHTML = '';
+    cast.rail.hidden = everyone.length === 0;
+    cast.rail.querySelector('.film-rail-count').textContent = String(everyone.length);
+    for (const person of everyone) {
+      const tile = el('div', 'film-person');
+      const face = el('div', 'film-face');
+      // Initials, not a photograph. The box has no cast art and inventing a
+      // grey silhouette for nine people is nine grey silhouettes.
+      face.textContent = person.name.split(/\s+/).slice(0, 2)
+        .map((word) => word[0] || '').join('').toUpperCase();
+      const name = el('div', 'film-person-name');
+      name.textContent = person.name;
+      const role = el('div', `film-person-role${person.guessed ? ' is-guessed' : ''}`);
+      role.textContent = person.role;
+      if (person.guessed) role.title = 'Billing order — the box has no character names';
+      tile.append(face, name, role);
+      cast.track.append(tile);
+    }
+
+    /* ---- what the file is ----
+     * Real, where the provider bothers: get_vod_info carries the ffprobe
+     * blocks for both streams, which is where the codec, the frame rate and
+     * the channel count come from. A title it says nothing about says so
+     * rather than making something up. */
+    const video = info?.video || {};
+    const audio = info?.audio || {};
+    const height = Number(video.height) || 0;
+    const unknown = '—';
+
+    specCells.Video.value.textContent = [
+      height ? `${height}p` : '',
+      String(video.codec_name || '').toUpperCase(),
+    ].filter(Boolean).join(' · ') || unknown;
+    const fps = String(video.r_frame_rate || '').split('/');
+    const rate = fps.length === 2 && Number(fps[1])
+      ? (Number(fps[0]) / Number(fps[1])).toFixed(3).replace(/\.?0+$/, '')
+      : '';
+    specCells.Video.note.textContent = [
+      rate ? `${rate} fps` : '',
+      video.display_aspect_ratio || '',
+    ].filter(Boolean).join(' · ');
+
+    specCells.Audio.value.textContent = [
+      String(audio.codec_name || '').toUpperCase(),
+      audio.channel_layout || (audio.channels ? `${audio.channels}ch` : ''),
+    ].filter(Boolean).join(' · ') || unknown;
+    specCells.Audio.note.textContent = audio.tags?.language
+      ? `Language: ${audio.tags.language}` : '';
+
+    const ext = (info?.movie_data?.container_extension || item.ext || '').toLowerCase();
+    specCells.Container.value.textContent = ext
+      ? needsRemux(ext) ? `${ext.toUpperCase()} → MP4 on save` : ext.toUpperCase()
+      : unknown;
+    specCells.Container.note.textContent = ext
+      ? needsRemux(ext)
+        ? 'Converted on the way out — the browser will not open it as it is'
+        : 'Plays straight through'
+      : '';
+
+    const kbps = Number(info?.bitrate) || 0;
+    specCells.Size.value.textContent = [
+      bytes ? formatBytes(bytes) : '',
+      kbps ? `~${(kbps / 1000).toFixed(1)} Mbps` : '',
+    ].filter(Boolean).join(' · ') || unknown;
+    specCells.Size.note.textContent = item.archivePath
+      ? item.archivePath : `movie:${item.id}`;
+    specCells.Size.note.classList.add('film-mono');
+  };
+
+  // Nothing is known yet, but the shape is: run it once so every node on the
+  // page has its "not answered" state rather than being empty until it is.
+  describe(state.vodCache[item.id] || null);
+
+  return { describe };
+}
+
+/**
+ * A film's page, fetched and painted. Where a show has its seasons and
+ * episodes, a film has one decision and everything the box knows about it.
  */
 async function renderMovieCard() {
   $('#contentTitle').textContent = 'Movies';
@@ -5967,43 +6803,19 @@ async function renderMovieCard() {
   if (state.movieId !== wanted) return;
   if (!item) return missingTitle('That film is no longer in the library.');
 
-  const { mount, describe } = detailCard(item, '#/movies', 'All movies');
-  describe({ year: '', genre: '' });
-
-  const play = el('button', 'btn btn-primary play-title');
-  play.innerHTML = '<svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>';
-  play.append(document.createTextNode(' Play'));
-  play.addEventListener('click', () => openPlayer(item));
-
-  const runtime = el('span', 'title-runtime');
-  const row = el('div', 'title-actions');
-  row.append(play, runtime);
-  mount.append(row);
+  const { describe } = filmCard(item);
 
   // Asked for here rather than at playback: the provider answers a metadata
   // call while its one connection is free, and returns nothing once ffmpeg is
   // streaming through it. Cached so pressing play does not ask again.
   let info = state.vodCache[item.id];
   if (info === undefined) {
-    runtime.textContent = 'Checking runtime…';
     info = await fetchVodInfo(item);
     state.vodCache[item.id] = info;
     // Left the page while that was in flight.
     if (state.tab !== 'movies' || String(state.movieId) !== String(item.id)) return;
   }
-
-  const seconds = parseRuntime(info);
-  runtime.textContent = seconds ? hms(seconds) : '';
-  // How big it is, on the line that already carries the year and the genre.
-  // Worth knowing before pressing anything on this box: it decides whether
-  // the film is worth downloading, and whether it will stream at all.
-  const bytes = mediaBytes(info);
-  describe({
-    year: info?.releasedate || '',
-    genre: info?.genre || '',
-    plot: info?.plot || '',
-    extra: [item.uhd ? '4K' : '', bytes ? formatBytes(bytes) : ''].filter(Boolean).join(' · '),
-  });
+  describe(info);
 }
 
 /** Shared miss: the library moved on, or the link is old. */
@@ -6342,6 +7154,9 @@ function clearStage() {
   if (grid.querySelector('.search-section')) grid.innerHTML = '';
   $('#homeView').hidden = true;
   $('#seriesView').hidden = true;
+  // A show and a film share the view and not the layout. Left on, the film
+  // page's rules would lay out a show's card, which is a different shape.
+  $('#seriesView').classList.remove('film-page');
   $('#downloadList').hidden = true;
   $('#archiveView').hidden = true;
   $('#rowsView').hidden = true;
@@ -6349,8 +7164,10 @@ function clearStage() {
   $('#emptyState').hidden = true;
   $('#loadMore').hidden = true;
   // The back button lives outside #grid, so clearing the grid alone leaves
-  // it behind.
+  // it behind. A film's backdrop lives outside the wrap for the same kind of
+  // reason — it is the width of the window — and goes the same way.
   document.querySelectorAll('.folder-back').forEach((b) => b.remove());
+  document.querySelectorAll('.film-hero').forEach((b) => b.remove());
 }
 
 function renderSkeletons() {
@@ -6382,7 +7199,7 @@ function render() {
   // Cleared here and set again by renderHome alone. render() returns early for
   // several tabs, so a removal per branch would be a branch waiting to be
   // forgotten.
-  document.querySelector('.app-shell').classList.remove('is-home');
+  document.querySelector('.app-shell').classList.remove('is-home', 'is-film');
 
   syncTabs();
   // The multi-view button belongs to Live TV, so it is settled per render
@@ -10992,6 +11809,29 @@ async function fetchProgress(key) {
 }
 
 /**
+ * An explicit thumb, which is the strongest signal For You has: the server
+ * weighs it at double a completed watch. Zero clears it.
+ *
+ * Fire and forget on purpose. The caller has already redrawn — the press has
+ * to land now rather than when a round trip over Tailscale does — and a rating
+ * that fails to save is worth a line in the console and nothing louder.
+ */
+async function saveRating(key, value) {
+  if (!profiles.current || !key) return;
+  try {
+    const res = await fetch(`/api/profiles/${profiles.current.id}/rating`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key, value }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ratings) state.ratings = data.ratings;
+  } catch (err) {
+    console.warn('rating not saved', err);
+  }
+}
+
+/**
  * Show the resume choice and settle on a start position. Resolves to the saved
  * seconds, or 0 to start from the top.
  */
@@ -11287,7 +12127,17 @@ function preparePlayer(item) {
   return myToken;
 }
 
-async function openPlayer(item) {
+/**
+ * Open something.
+ *
+ * `resume` is how the start position gets settled: 'ask' puts the resume
+ * choice up, which is right when the press carried no opinion — a poster, a
+ * search hit, a history row. A film's own page has already asked, out loud,
+ * with two buttons on it; 'resume' and 'restart' are those two buttons saying
+ * so, and putting the modal up on top of them would be the same question
+ * twice. Anything that does not pass one gets the modal, as before.
+ */
+async function openPlayer(item, { resume = 'ask' } = {}) {
   // A show is browsed on its own card now, not inside the player. Anything
   // still asking the player to open one — an old bookmark, a stale history
   // row — is sent there rather than left looking at an empty picture.
@@ -11306,11 +12156,11 @@ async function openPlayer(item) {
   // fetched so a resume starts the conversion at the right point rather than
   // converting from zero and then jumping.
   let startAt = 0;
-  if (item.kind === 'movie' && (!item.localOnly || item.resumeKey)) {
+  if (item.kind === 'movie' && (!item.localOnly || item.resumeKey) && resume !== 'restart') {
     const saved = await fetchProgress(resumeKeyFor(item));
     if (saved) {
       if (myToken !== playToken) return;
-      startAt = await askResume(item.name, saved);
+      startAt = resume === 'resume' ? saved.position : await askResume(item.name, saved);
       if (myToken !== playToken) return;
     }
   }

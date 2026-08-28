@@ -1,6 +1,13 @@
 /**
- * A film's own page: the same card as a show, with one button and a runtime
- * where the seasons and episodes would be.
+ * A film's own page.
+ *
+ * It used to be a show's card with the seasons taken out — a poster, a name,
+ * one line of facts and a button — and the claims here were about those four
+ * things. The page is now the backdrop, the decision on top of it, and what
+ * the box knows laid out underneath, so the claims are about that: the same
+ * behaviours still hold (play, resume, favorite, download, back) and the new
+ * facts the page puts on screen have to be the provider's own rather than
+ * anything invented on the way.
  */
 const { chromium } = require('./playwright.js');
 const fs = require('fs');
@@ -32,6 +39,10 @@ const PNG = Buffer.from(
     return r.fulfill({ status: 200, contentType: 'image/png', body: PNG });
   });
 
+  /* What a panel that answers properly sends back. The two ffprobe blocks are
+     the point of the specs strip and the `cast` string is the point of the
+     rail, so both are here — a suite stubbing only the four fields the old
+     card read would pass while the new page showed four dashes. */
   let vodCalls = 0;
   await page.route('**/api/xtream*', (r) => {
     const action = new URL(r.request().url()).searchParams.get('action');
@@ -41,7 +52,15 @@ const PNG = Buffer.from(
         body: JSON.stringify({ info: {
           releasedate: '2014', genre: 'Sci-Fi',
           plot: 'A farmer goes to space about it.',
-          duration: '02:49:00', duration_secs: 10140 } }) });
+          duration: '02:49:00', duration_secs: 10140,
+          cast: 'Matthew McConaughey, Anne Hathaway, Jessica Chastain',
+          director: 'Christopher Nolan',
+          bitrate: 1800,
+          backdrop_path: ['http://provider/backdrop.jpg'],
+          video: { codec_name: 'h264', width: 1920, height: 1080,
+            r_frame_rate: '24000/1001', display_aspect_ratio: '16:9' },
+          audio: { codec_name: 'aac', channels: 6, channel_layout: '5.1' },
+        } }) });
     }
     return r.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
   });
@@ -64,62 +83,119 @@ const PNG = Buffer.from(
     state.library.movies = {
       categories: [{ id: 'c1', name: 'Sci-Fi' }],
       // mp4 so playback resolves through /api/play rather than the remuxer:
-      // this suite is about the card, and the conversion path has suites of
+      // this suite is about the page, and the conversion path has suites of
       // its own. A .mkv here would need the whole remux pipeline stubbed to
-      // answer one question the card does not ask.
-      items: [{ kind: 'movie', id: 55, name: 'A Film', categoryId: 'c1', rating: '8.6',
-        ext: 'mp4', logo: `/img?u=${encodeURIComponent('http://provider/film.jpg')}` }],
+      // answer one question the page does not ask.
+      items: [
+        { kind: 'movie', id: 55, name: 'A Film', categoryId: 'c1', rating: '8.6',
+          ext: 'mp4', logo: `/img?u=${encodeURIComponent('http://provider/film.jpg')}` },
+        { kind: 'movie', id: 56, name: 'Another Film', categoryId: 'c1', ext: 'mp4', logo: '' },
+      ],
     };
   });
 
-  // --- the card ----------------------------------------------------------
+  // --- the page ------------------------------------------------------------
   console.log('\n  opening a film');
   await page.evaluate(() => { location.hash = '#/movies/55'; });
   await page.waitForSelector('.play-title', { timeout: 10000 });
-  await wait(800);
+  await wait(1200);
 
   const card = await page.evaluate(() => {
-    const poster = document.querySelector('.show-poster img');
+    const poster = document.querySelector('.film-poster img');
     const play = document.querySelector('.play-title').getBoundingClientRect();
-    const list = document.querySelector('.show-card .ep-list');
+    const hero = document.querySelector('.film-hero');
     return {
-      title: document.querySelector('.show-title').textContent,
-      meta: document.querySelector('.show-meta').textContent,
-      plot: document.querySelector('.show-plot').textContent,
-      plotShown: !document.querySelector('.show-plot').hidden,
-      runtime: document.querySelector('.title-runtime').textContent,
+      title: document.querySelector('.film-title').textContent,
+      meta: document.querySelector('.film-meta').textContent,
+      plot: document.querySelector('.film-plot').textContent,
+      plotShown: !document.querySelector('.film-plot').hidden,
+      left: document.querySelector('.film-left').textContent,
       posterLoaded: Boolean(poster) && poster.naturalWidth > 0,
       posterRight: poster ? poster.getBoundingClientRect().right : 0,
       playLeft: play.left,
-      hasEpisodes: Boolean(list),
-      hasSeasons: Boolean(document.querySelector('.show-card .season-picker')),
-      fav: document.querySelector('.show-fav').textContent,
-      heading: document.querySelector('#contentTitle').textContent,
+      hasEpisodes: Boolean(document.querySelector('.film-page .ep-list')),
+      hasSeasons: Boolean(document.querySelector('.film-page .season-picker')),
+      fav: document.querySelector('.show-fav')?.title,
+      headShown: getComputedStyle(document.querySelector('.content-head')).display !== 'none',
+      heroWidth: hero ? Math.round(hero.getBoundingClientRect().width) : 0,
+      heroTop: hero ? Math.round(hero.getBoundingClientRect().top) : 0,
+      backdrop: Boolean(document.querySelector('.film-art img')),
+      // A bar that was never built is not a bar on the page: `?.hidden` on a
+      // missing node is undefined, which negates to "showing".
+      catbar: Boolean(document.querySelector('#dkCatbar:not([hidden])')),
       docW: document.documentElement.scrollWidth,
       winW: window.innerWidth,
     };
   });
   console.log('   ', JSON.stringify(card));
-  check('the film is named', card.title === 'A Film', card.title);
+  check('the film is named', card.title.startsWith('A Film'), card.title);
+  check('and carries its year beside the name', /2014/.test(card.title), card.title);
   check('the poster loaded rather than falling back to the name',
     card.posterLoaded, JSON.stringify(card));
   check('and sits left of the play button', card.posterRight <= card.playLeft + 1,
     JSON.stringify(card));
-  check('the year, genre and rating are there',
-    /2014.*Sci-Fi.*8\.6/.test(card.meta), card.meta);
+  check('the rating, runtime, date and genre are all on the meta line',
+    /8\.6/.test(card.meta) && /2:49:00/.test(card.meta)
+      && /2014/.test(card.meta) && /Sci-Fi/.test(card.meta), card.meta);
   check('the description is there', /farmer goes to space/.test(card.plot) && card.plotShown,
     card.plot);
-  check('the runtime is shown, formatted', card.runtime === '2:49:00', card.runtime);
+  check('the runtime is shown, formatted', card.left === '2:49:00', card.left);
   check('there are no seasons on a film', !card.hasSeasons);
   check('and no episode list', !card.hasEpisodes);
-  check('favorites works the same as on a show', /favorites/i.test(card.fav), card.fav);
-  check('the heading is the section, not the title twice', card.heading === 'Movies',
-    card.heading);
+  check('favorites works the same as on a show', /favorites/i.test(card.fav || ''), card.fav);
+  check('the section head is off — the film\'s own title is the head of the page',
+    !card.headShown, String(card.headShown));
+  check('the backdrop is behind the whole page rather than inside the column',
+    card.backdrop && card.heroWidth >= card.winW - 1, JSON.stringify(card));
+  check('and starts directly under the header', card.heroTop <= 70, String(card.heroTop));
+  check('the category bar is not over the picture', !card.catbar, String(card.catbar));
   check('nothing overflows sideways', card.docW <= card.winW + 1,
     `${card.docW} vs ${card.winW}`);
   check('the player is not open', await page.locator('#playerOverlay').isHidden());
   check('the details were asked for once', vodCalls === 1, String(vodCalls));
-  await page.screenshot({ path: SHOTS + '/moviecard.png' });
+  await page.screenshot({ path: SHOTS + '/moviecard.png', fullPage: true });
+
+  // --- what the provider said, said back -----------------------------------
+  console.log('\n  the facts underneath');
+  const facts = await page.evaluate(() => ({
+    director: [...document.querySelectorAll('.film-credit-value')]
+      .map((v) => v.textContent).join(' | '),
+    cast: [...document.querySelectorAll('.film-person-name')].map((n) => n.textContent),
+    roles: [...document.querySelectorAll('.film-person-role')].map((n) => n.textContent),
+    specs: [...document.querySelectorAll('.film-spec-value')].map((n) => n.textContent),
+    notes: [...document.querySelectorAll('.film-spec-note')].map((n) => n.textContent),
+    boxLine: document.querySelector('.film-box-line')?.textContent,
+    seen: document.querySelector('.film-seen-line')?.textContent,
+    panels: [...document.querySelectorAll('.film-panel-head')].map((n) => n.textContent),
+    more: [...document.querySelectorAll('.film-more-track .card-title')].map((n) => n.textContent),
+  }));
+  console.log('   ', JSON.stringify(facts));
+  check('the director is credited', /Christopher Nolan/.test(facts.director), facts.director);
+  check('the genre is a chip you can follow', /Sci-Fi/.test(facts.director), facts.director);
+  check('the cast is the provider\'s, in its order',
+    facts.cast[0] === 'Matthew McConaughey' && facts.cast[2] === 'Jessica Chastain',
+    JSON.stringify(facts.cast));
+  check('the director is on the end of the cast rail, named as one',
+    facts.cast[3] === 'Christopher Nolan' && facts.roles[3] === 'Director',
+    JSON.stringify(facts.roles));
+  check('the video specs come off the provider\'s own probe',
+    /1080p/.test(facts.specs[0]) && /H264/.test(facts.specs[0]), facts.specs[0]);
+  check('with the frame rate worked out of the fraction',
+    /23\.976/.test(facts.notes[0]), facts.notes[0]);
+  check('the audio specs too', /AAC/.test(facts.specs[1]) && /5\.1/.test(facts.specs[1]),
+    facts.specs[1]);
+  check('the size is the bitrate times the runtime, as the rest of the app has it',
+    /GB/.test(facts.specs[3]) && /Mbps/.test(facts.specs[3]), facts.specs[3]);
+  check('the sidebar is honest that it is not on the box',
+    /streams from the provider/i.test(facts.boxLine || ''), facts.boxLine);
+  check('and that this profile has never opened it',
+    /never opened/i.test(facts.seen || ''), facts.seen);
+  check('the three sidebar panels are there',
+    facts.panels.length === 3 && /Watched by Hunter/.test(facts.panels[1]),
+    JSON.stringify(facts.panels));
+  check('the rest of the category is offered, minus this film',
+    facts.more.length === 1 && /Another Film/.test(facts.more[0]),
+    JSON.stringify(facts.more));
 
   // --- play ---------------------------------------------------------------
   console.log('\n  pressing play');
@@ -144,44 +220,132 @@ const PNG = Buffer.from(
     hash: location.hash,
     cardShown: !document.querySelector('#seriesView').hidden,
     playShown: Boolean(document.querySelector('.play-title')),
+    heroShown: Boolean(document.querySelector('.film-hero')),
     playerShut: document.querySelector('#playerOverlay').hidden,
   }));
   console.log('   ', JSON.stringify(back));
   check('back from the player lands on the film', back.hash === '#/movies/55', back.hash);
-  check('with its card showing', back.cardShown && back.playShown, JSON.stringify(back));
+  check('with its page showing, backdrop and all',
+    back.cardShown && back.playShown && back.heroShown, JSON.stringify(back));
   check('and the player shut', back.playerShut);
 
+  // --- where you got to ----------------------------------------------------
+  //
+  // The page makes the resume choice out loud, with two buttons on it, so the
+  // player's modal must not come up on top of them. That is the whole reason
+  // openPlayer takes a resume mode.
+  console.log('\n  a film half watched');
+  await page.route('**/progress*', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json',
+      body: '{"found":true,"position":3600,"duration":10140,"completed":false}' }));
+  const resumed = await page.evaluate(async () => {
+    state.recentlyWatched = [{
+      key: 'movie:55', kind: 'movie', id: 55, name: 'A Film',
+      position: 3600, duration: 10140, completed: false, plays: 3,
+      at: Date.UTC(2026, 7, 12),
+    }];
+    render();
+    await new Promise((r) => setTimeout(r, 900));
+    const bar = document.querySelector('.film-poster-progress i');
+    return {
+      play: document.querySelector('.play-title').textContent.trim(),
+      restart: document.querySelector('.film-restart').textContent.trim(),
+      left: document.querySelector('.film-left').textContent,
+      barWidth: bar ? bar.style.width : '',
+      seen: document.querySelector('.film-seen-line').textContent,
+    };
+  });
+  console.log('   ', JSON.stringify(resumed));
+  check('the button says where it will pick up', resumed.play === 'Resume 1:00:00', resumed.play);
+  check('with Start over beside it', resumed.restart === 'Start over', resumed.restart);
+  check('and how much is left, against the runtime',
+    resumed.left === '1:49:00 left of 2:49:00', resumed.left);
+  check('the poster carries the stripe', resumed.barWidth.startsWith('35.5'), resumed.barWidth);
+  check('the sidebar says when, and how many times',
+    /1:00:00/.test(resumed.seen) && /3 plays/.test(resumed.seen), resumed.seen);
+
+  console.log('\n  Start over does not ask again');
+  await page.locator('.film-restart').click();
+  await wait(2500);
+  const over = await page.evaluate(() => ({
+    asked: !document.querySelector('#resumeAsk').hidden,
+    open: !document.querySelector('#playerOverlay').hidden,
+    at: Math.round(document.querySelector('#video').currentTime),
+  }));
+  console.log('   ', JSON.stringify(over));
+  check('the resume modal stays down — the page already asked', !over.asked, JSON.stringify(over));
+  check('and it starts from the top', over.open && over.at < 30, JSON.stringify(over));
+  await page.evaluate(() => closePlayer());
+  await wait(600);
+
+  // --- the back pill -------------------------------------------------------
+  await page.evaluate(() => { location.hash = '#/movies/55'; });
+  await wait(900);
+  const pill = await page.evaluate(() => document.querySelector('.show-back').textContent.trim());
+  check('the way back names the category and its size', /Sci-Fi/.test(pill) && /2/.test(pill), pill);
   await page.evaluate(() => document.querySelector('.show-back').click());
   await wait(1000);
-  check('the back link leaves the film',
-    (await page.evaluate(() => location.hash)) === '#/movies');
+  const gone = await page.evaluate(() => ({
+    hash: location.hash,
+    hero: Boolean(document.querySelector('.film-hero')),
+  }));
+  check('the back link leaves the film', gone.hash === '#/movies', gone.hash);
+  check('and takes the backdrop with it — it lives outside the page column',
+    !gone.hero, JSON.stringify(gone));
 
-  // --- the download button beside favorites --------------------------------
-  console.log('\n  the download button on the card');
+  // --- the download button -------------------------------------------------
+  console.log('\n  the download button');
   const dlBtn = await page.evaluate(async () => {
     location.hash = '#/movies/55';
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, 900));
     state.downloads = { items: [], active: null, queued: 0 };
     render();
-    await new Promise((r) => setTimeout(r, 400));
-    const fresh = document.querySelector('.show-dl')?.textContent;
+    await new Promise((r) => setTimeout(r, 600));
+    const fresh = document.querySelector('.show-dl')?.title;
+    const freshBox = document.querySelector('.film-box-line')?.textContent;
     state.downloads = { items: [
-      { id: 'x', kind: 'movie', streamId: '55', status: 'done', name: 'film' },
+      { id: 'x', kind: 'movie', streamId: '55', status: 'done', name: 'film', total: 1546188226 },
     ], active: null, queued: 0 };
     render();
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 600));
     return {
       fresh,
-      saved: document.querySelector('.show-dl')?.textContent,
-      besideFav: Boolean(document.querySelector('.show-actions .show-fav')
-        && document.querySelector('.show-actions .show-dl')),
+      freshBox,
+      saved: document.querySelector('.show-dl')?.title,
+      state: document.querySelector('.film-state')?.textContent,
+      box: document.querySelector('.film-box-line')?.textContent,
+      besideFav: Boolean(document.querySelector('.film-actions .show-fav')
+        && document.querySelector('.film-actions .show-dl')),
     };
   });
   console.log('   ', JSON.stringify(dlBtn));
-  check('a film card offers a download beside favorites',
-    dlBtn.besideFav && dlBtn.fresh === 'Download', JSON.stringify(dlBtn));
+  check('a film offers a download beside favorites',
+    dlBtn.besideFav && /Download to the box/.test(dlBtn.fresh || ''), JSON.stringify(dlBtn));
   check('and says so when the film is already on the box',
     dlBtn.saved === 'Downloaded', JSON.stringify(dlBtn));
+  check('the eyebrow says it too', dlBtn.state === 'ON THE BOX', dlBtn.state);
+  check('and the sidebar turns into what to do with the copy',
+    /Downloaded/.test(dlBtn.box || '') && /1\.44 GB/.test(dlBtn.box || ''), dlBtn.box);
+
+  // --- a thumb is a real rating -------------------------------------------
+  console.log('\n  rating it');
+  let rated = null;
+  await page.route('**/api/profiles/*/rating', (r) => {
+    rated = JSON.parse(r.request().postData() || '{}');
+    return r.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ ratings: { [rated.key]: rated.value } }) });
+  });
+  await page.locator('.film-thumb.is-up').click();
+  await wait(600);
+  const thumb = await page.evaluate(() => ({
+    on: document.querySelector('.film-thumb.is-up').classList.contains('on'),
+    held: state.ratings['movie:55'],
+  }));
+  console.log('   ', JSON.stringify({ rated, thumb }));
+  check('the thumb posts against the same key history uses',
+    rated && rated.key === 'movie:55' && rated.value === 1, JSON.stringify(rated));
+  check('and lights up without waiting for the box', thumb.on && thumb.held === 1,
+    JSON.stringify(thumb));
 
   // --- a channel still tunes straight in ----------------------------------
   console.log('\n  live is untouched');

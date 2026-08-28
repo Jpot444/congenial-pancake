@@ -1814,6 +1814,790 @@
 .desk .catchip .chip-pin.on { opacity: 1; }
 .desk .catchip .chip-pin.on svg { fill: currentColor; stroke: none; }
 
+/* ========================================================== a film === */
+/* A film's own page.
+ *
+ * The shape is the backdrop, the decision on top of it, and everything the box
+ * knows laid out underneath in two columns: the film on the left, and on the
+ * right the three things that are about you rather than about the film.
+ *
+ * Two of the numbers here are not the kit's and are worth saying why. The
+ * title is 76px, above --display-page's 34, because on this page the title IS
+ * the page head — #contentTitle is taken off, and 34px over a 600px photograph
+ * reads as a caption. The poster is 244px rather than a rail card's 176 for
+ * the same reason: at 176 it stops being the subject of the hero and becomes a
+ * thumbnail beside the words.
+ *
+ * A show's page is untouched — .show-card in styles.css — and both still live
+ * in #seriesView, which is why the film's own markup carries .film-page and
+ * every rule here goes through one of its classes. */
+
+/* The page head goes: the film's own title is the head of this page, and
+   "MOVIES" set over the top of the backdrop says nothing it has not. Same
+   treatment as Home, and taken off again by render() on the way out. */
+.desk .app-shell.is-film .content-head { display: none; }
+.desk .app-shell.is-film { padding-top: var(--space-11); }
+
+
+/* ---------------------------------------------------------- the hero --- */
+/* Outside .wrap, in #appView, where the billboard goes: the picture is the
+   width of the window and the wrap is 1440 with a gutter either side. The band
+   down the middle carries the wrap's own measure back, so the poster and the
+   title line up with the columns underneath them. */
+.desk .film-hero {
+  position: relative;
+  min-height: 600px;
+  display: flex;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.desk .film-art {
+  position: absolute;
+  inset: 0;
+  background: var(--fallback-tile);
+}
+
+.desk .film-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 22%;
+  display: block;
+}
+
+/* Protection is a gradient, never a plate — so the picture keeps going under
+   the words rather than stopping at a box. Four of them, and each has a job:
+   the crimson wash keeps the top right on the brand's family, the horizontal
+   ramp buys the title its contrast, the vertical one hands the page's own
+   background back at the foot so the hero ends without an edge, and the last
+   is the header's shadow falling into the picture. */
+.desk .film-scrims {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(21, 16, 15, .9) 0%, rgba(21, 16, 15, .7) 38%,
+      rgba(21, 16, 15, .3) 72%, rgba(21, 16, 15, .5) 100%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(21, 16, 15, .72) 26%, rgba(21, 16, 15, 0) 62%),
+    linear-gradient(180deg, rgba(58, 10, 13, .34), rgba(21, 16, 15, 0) 34%);
+}
+
+.desk .film-scrims::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 62%;
+  height: 100%;
+  opacity: .5;
+  background: radial-gradient(120% 90% at 100% 20%, rgba(162, 31, 36, .34),
+    rgba(21, 16, 15, 0) 62%);
+}
+
+.desk .film-hero-inner {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: var(--wrap-max);
+  margin: 0 auto;
+  padding: var(--space-9) var(--gutter) 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The way off the page, and the only one: it names the category rather than
+   saying "back", because what you want to know before pressing it is where it
+   lands. Glass over the picture, on the same terms as the header. */
+.desk .film-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 36px;
+  padding: 0 var(--space-7) 0 var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, .34);
+  backdrop-filter: var(--blur-badge);
+  font-size: var(--text-base);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--dur-hover) var(--ease), border-color var(--dur-hover) var(--ease);
+}
+
+.desk .film-back:hover { color: #fff; border-color: var(--line-hover-warm); }
+.desk .film-back svg { width: 16px; height: 16px; }
+
+/* Bottom-aligned, so the hero grows upward with a long synopsis and the poster
+   and the buttons stay where the eye left them. */
+.desk .film-stage {
+  margin-top: auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 38px;
+  padding: var(--space-12) 0 38px;
+}
+
+
+/* ---- the poster, which is also where you are up to ---- */
+.desk .film-poster {
+  position: relative;
+  flex: 0 0 244px;
+  width: 244px;
+  aspect-ratio: var(--aspect-poster);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--fallback-tile);
+  overflow: hidden;
+  /* Deeper than --shadow-card, because this one is cast onto a photograph
+     rather than onto the page, and the page's shadow disappears against it. */
+  box-shadow: 0 26px 64px rgba(0, 0, 0, .62);
+}
+
+.desk .film-poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.desk .film-poster .fallback {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--space-7);
+  text-align: center;
+  font-family: var(--display);
+  font-size: 26px;
+  line-height: 1.12;
+  letter-spacing: .03em;
+  color: rgba(246, 241, 238, .7);
+}
+
+/* What this copy IS, as against what it is doing — which is the pill up in the
+   eyebrow. Both are worth seeing at once, so they do not share a corner. */
+.desk .film-poster-badge {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, .56);
+  backdrop-filter: var(--blur-badge);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: var(--text);
+}
+
+.desk .film-poster-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: rgba(0, 0, 0, .62);
+}
+
+/* Red is chrome, and a progress fill is one of the three places it is used. */
+.desk .film-poster-progress i { display: block; height: 100%; background: var(--brand-red); }
+
+
+/* ---- the words ---- */
+.desk .film-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.desk .film-eyebrow-row { display: flex; align-items: center; gap: var(--space-5); }
+
+.desk .film-eyebrow {
+  font-family: var(--display);
+  font-size: var(--display-caps);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+
+/* Where this copy is, said in the colour the rest of the product says it in:
+   green for on the box, amber for still coming. */
+.desk .film-state {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .1em;
+}
+
+.desk .film-state.is-saved {
+  background: rgba(87, 200, 139, .14);
+  border: 1px solid rgba(87, 200, 139, .4);
+  color: var(--ok-soft);
+}
+
+.desk .film-state.is-downloading {
+  background: rgba(233, 161, 59, .14);
+  border: 1px solid rgba(233, 161, 59, .42);
+  color: var(--warn-soft);
+}
+
+/* 76px, and it is the head of the page rather than a heading on it —
+   #contentTitle is taken off above. Bebas, on the same terms as every other
+   title in the portal: .show-title has always set them in it, and the kit's
+   own rule against it is about body copy, not about a name set once and
+   large. */
+.desk .film-title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 76px;
+  line-height: .9;
+  letter-spacing: var(--track-display);
+  font-weight: 400;
+  text-wrap: balance;
+  color: #fff;
+}
+
+.desk .film-year {
+  font-size: 40px;
+  letter-spacing: .04em;
+  color: var(--muted-dim);
+}
+
+.desk .film-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-6);
+  font-size: var(--text-md);
+  color: var(--muted);
+}
+
+.desk .film-score { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text); }
+.desk .film-star { color: var(--uhd); }
+.desk .film-dot { color: var(--muted-dim); }
+.desk .film-mono,
+.desk .film-file { font-family: var(--mono); font-size: var(--text-sm-plus); }
+
+/* A guess, and drawn as the quietest thing on the line so it reads as one. */
+.desk .film-cert {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  margin-left: var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: var(--muted);
+}
+
+.desk .film-tagline {
+  margin: 0;
+  max-width: 760px;
+  font-size: var(--text-xl);
+  line-height: 1.45;
+  color: rgba(246, 241, 238, .92);
+}
+
+.desk .film-plot {
+  margin: 0;
+  max-width: 790px;
+  font-size: var(--text-lg);
+  line-height: var(--leading-prose);
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+
+/* ---- the decision ---- */
+.desk .film-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  margin-top: var(--space-2);
+}
+
+.desk .film-hero .play-title { min-width: 196px; height: var(--control-h-lg); }
+.desk .film-hero .play-title svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
+.desk .film-hero .film-restart svg { width: 17px; height: 17px; }
+
+/* Ghost over a photograph, not over the page: the page's transparent ghost
+   disappears into a bright backdrop. Same glass as the back pill. */
+.desk .film-hero .btn-ghost {
+  background: rgba(0, 0, 0, .3);
+  backdrop-filter: var(--blur-badge);
+  color: var(--text);
+}
+
+.desk .film-hero .btn-ghost:hover { border-color: var(--line-hover-warm); color: #fff; }
+
+.desk .film-action-rule {
+  width: 1px;
+  height: 34px;
+  background: var(--line);
+  margin: 0 var(--space-1);
+}
+
+.desk .film-icon-btn {
+  width: var(--control-h-lg);
+  height: var(--control-h-lg);
+  background: rgba(0, 0, 0, .3);
+  backdrop-filter: var(--blur-badge);
+}
+
+.desk .film-icon-btn:hover { color: var(--text); border-color: var(--line-hover-warm); }
+.desk .film-icon-btn svg { width: 20px; height: 20px; }
+
+/* Filled only for the heart and the pin, and only to mean "on". */
+.desk .film-icon-btn.show-fav.is-on { color: var(--live); border-color: rgba(255, 107, 94, .45); }
+.desk .film-icon-btn.show-fav.is-on svg { fill: currentColor; }
+.desk .film-icon-btn.show-dl.is-saved { color: var(--ok-soft); border-color: rgba(87, 200, 139, .45); }
+.desk .film-hide:hover { color: var(--live); border-color: rgba(255, 107, 94, .45); }
+
+/* How much is left, which is the number that decides whether tonight is the
+   night. Tabular so it does not shuffle as the seconds change. */
+.desk .film-left {
+  margin-left: var(--space-2);
+  font-size: var(--text-base);
+  color: var(--muted-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* --------------------------------------------------------- underneath --- */
+.desk .film-below {
+  display: grid;
+  /* The sidebar is fixed at 336px and the film takes what is left: the panels
+     in it are lists of short facts, and a column that grows with the window
+     would set "1 of 1 free" a foot from its own label. */
+  grid-template-columns: minmax(0, 1fr) 336px;
+  gap: 44px;
+  align-items: start;
+}
+
+.desk .film-main { min-width: 0; display: flex; flex-direction: column; gap: 38px; }
+.desk .film-side { display: flex; flex-direction: column; gap: var(--space-7); }
+
+
+/* ---- who made it ---- */
+.desk .film-credits {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: var(--space-6) var(--space-8);
+  font-size: var(--text-md);
+}
+
+.desk .film-credit-label {
+  font-family: var(--display);
+  font-size: var(--display-caps);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--muted-dim);
+  padding-top: 5px;
+}
+
+.desk .film-credit-value { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+
+/* A row the provider said nothing about takes its whole line off the grid.
+   Spelled out, because the `display: flex` above outranks the browser's own
+   [hidden] rule: without it the label goes and an empty flex box holds the
+   row open, which is a gap in the credits where a fact used to be. */
+.desk .film-credit-value[hidden] { display: none; }
+
+.desk .film-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--bg-raised);
+  font-size: var(--text-base);
+  color: var(--muted);
+  transition: color var(--dur-hover) var(--ease), border-color var(--dur-hover) var(--ease);
+}
+
+.desk button.film-chip { cursor: pointer; }
+.desk button.film-chip:hover { color: #fff; border-color: var(--line-hover-warm); }
+
+.desk .film-provider {
+  align-items: center;
+  gap: var(--space-4);
+  padding-top: 4px;
+  font-size: var(--text-base);
+  color: var(--muted);
+}
+
+.desk .film-provider .film-mono { color: var(--text); }
+
+
+/* ---- the two rails ---- */
+.desk .film-rail-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-5);
+  margin-bottom: var(--space-6);
+}
+
+.desk .film-rail-head h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: var(--display-shelf);
+  letter-spacing: .04em;
+  font-weight: 400;
+}
+
+.desk .film-rail-count { font-size: var(--text-sm); color: var(--muted-dim); }
+.desk .film-rail-arrows { margin-left: auto; display: flex; gap: var(--space-3); }
+
+/* Always there, unlike the rails on a browse page, whose arrows appear on
+   hover over a gradient of the page's own background. These sit above the row
+   rather than on it, so there is nothing for them to cover up. */
+.desk .film-rail-arrow {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--bg-raised);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--dur-hover) var(--ease), border-color var(--dur-hover) var(--ease);
+}
+
+.desk .film-rail-arrow:hover { color: #fff; border-color: var(--line-hover-warm); }
+.desk .film-rail-arrow svg { width: 17px; height: 17px; }
+
+.desk .film-rail-track {
+  display: flex;
+  gap: var(--space-6);
+  overflow-x: auto;
+  padding: 2px 2px var(--space-4);
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+
+.desk .film-rail-track::-webkit-scrollbar { display: none; }
+
+.desk .film-person { flex: 0 0 138px; width: 138px; }
+
+/* Initials, not a photograph: the box has no cast art, and nine grey
+   silhouettes is nine grey silhouettes. */
+.desk .film-face {
+  display: grid;
+  place-items: center;
+  aspect-ratio: var(--aspect-poster);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--fallback-tile);
+  overflow: hidden;
+  font-family: var(--display);
+  font-size: 38px;
+  letter-spacing: .04em;
+  color: rgba(246, 241, 238, .34);
+}
+
+.desk .film-person-name {
+  margin-top: var(--space-4);
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.desk .film-person-role {
+  margin-top: 3px;
+  font-size: var(--text-sm);
+  color: var(--muted-dim);
+}
+
+/* Billing rather than a character name, because there is no character name to
+   have. Dotted, so it is visibly a stand-in rather than a fact. */
+.desk .film-person-role.is-guessed {
+  border-bottom: 1px dotted var(--line);
+  display: inline-block;
+  cursor: help;
+}
+
+.desk .film-more-track { gap: var(--space-6); }
+.desk .film-more-track > .card { flex: 0 0 154px; width: 154px; }
+
+
+/* ---- what the file actually is ---- */
+/* Hairlines drawn as the grid's own gap over the border colour, so the four
+   cells meet without any of them owning an edge. */
+.desk .film-specs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.desk .film-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: var(--space-7) var(--space-8);
+  background: var(--bg-raised);
+}
+
+.desk .film-spec-label {
+  font-family: var(--display);
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+
+.desk .film-spec-value { font-size: var(--text-md); }
+
+.desk .film-spec-note {
+  font-size: var(--text-sm-plus);
+  line-height: var(--leading-tight);
+  color: var(--muted-dim);
+  overflow-wrap: anywhere;
+}
+
+.desk .film-spec-note.film-mono { font-size: var(--text-sm); }
+
+
+/* ------------------------------------------------------- the sidebar --- */
+.desk .film-panel {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.desk .film-panel-head {
+  padding: var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--display);
+  font-size: var(--display-caps);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+
+.desk .film-panel-body {
+  padding: var(--space-7) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.desk .film-box-state { display: flex; flex-direction: column; gap: var(--space-5); }
+
+.desk .film-box-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--text-md);
+  color: var(--muted);
+}
+
+.desk .film-box-line.is-ok { color: var(--ok-soft); }
+.desk .film-box-line.is-busy { align-items: baseline; justify-content: space-between; color: var(--warn-soft); }
+.desk .film-box-line svg { width: 17px; height: 17px; flex: none; }
+.desk .film-box-pct { font-variant-numeric: tabular-nums; color: var(--muted); }
+
+.desk .film-box-note {
+  margin: 0;
+  font-size: var(--text-sm-plus);
+  line-height: var(--leading-body);
+  color: var(--muted-dim);
+}
+
+.desk .film-box-buttons { display: flex; gap: var(--space-3); }
+.desk .film-box-buttons .btn { flex: 1; padding: 0 var(--space-5); }
+.desk .film-box-state > .btn { align-self: flex-start; }
+
+.desk .film-rule { height: 1px; background: var(--line-soft); }
+
+.desk .film-bar {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, .4);
+  overflow: hidden;
+}
+
+.desk .film-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--warn);
+  transition: width var(--dur-bar) var(--ease);
+}
+
+.desk .film-figures .film-bar { height: 5px; }
+.desk .film-bar.is-ok i { background: var(--ok); }
+.desk .film-bar.is-warn i { background: var(--warn); }
+
+.desk .film-figures { display: flex; flex-direction: column; gap: 9px; }
+
+.desk .film-figure {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-5);
+  font-size: var(--text-base);
+  color: var(--muted);
+}
+
+.desk .film-figure b { font-weight: 400; color: var(--text); text-align: right; }
+.desk .film-figures .film-bar + .film-figure { margin-top: 4px; }
+
+.desk .film-seen-line { font-size: var(--text-md); color: var(--text); }
+
+.desk .film-thumbs { display: flex; gap: var(--space-3); }
+
+.desk .film-thumb {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--control-h-sm);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  font-size: var(--text-base);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--dur-hover) var(--ease), border-color var(--dur-hover) var(--ease),
+    background var(--dur-hover) var(--ease);
+}
+
+.desk .film-thumb:hover { color: var(--text); border-color: var(--line-hover-warm); }
+
+.desk .film-thumb.is-up.on {
+  color: var(--ok-soft);
+  background: rgba(87, 200, 139, .12);
+  border-color: rgba(87, 200, 139, .45);
+}
+
+.desk .film-thumb.is-down.on {
+  color: var(--live-soft);
+  background: rgba(255, 107, 94, .12);
+  border-color: rgba(255, 107, 94, .45);
+}
+
+/* Rows rather than a list of links: the whole row is the target, which is what
+   a sidebar item is everywhere else in the product. */
+.desk .film-links { padding: var(--space-5); gap: 0; }
+
+.desk .film-link {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-md);
+  color: var(--muted);
+  transition: color var(--dur-hover) var(--ease), background var(--dur-hover) var(--ease);
+}
+
+.desk .film-link:hover { background: var(--bg-card); color: #fff; }
+.desk .film-link svg { width: 17px; height: 17px; flex: none; }
+
+
+/* ------------------------------------------------- narrower than that --- */
+/* The sidebar goes under the film rather than getting thinner. Its panels are
+   short facts in two columns and the first thing a squeeze takes is the gap
+   between a label and its number, which is the only thing holding them apart.
+   1180 because that is where the header starts shedding too. */
+@media (max-width: 1180px) {
+  .desk .film-below { grid-template-columns: minmax(0, 1fr); gap: var(--space-11); }
+
+  /* Side by side once they are under the film rather than beside it. Stacked
+     full-width they were three bands the width of the page, each setting a
+     label at one edge and its number at the other — "Provider connection" and
+     "1 of 1 free" a foot apart, which is the reading the fixed 336px column
+     exists to stop in the first place. */
+  .desk .film-side { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
+  .desk .film-panel { flex: 1 1 300px; min-width: 0; }
+  .desk .film-hero { min-height: 520px; }
+  .desk .film-title { font-size: 60px; }
+  .desk .film-year { font-size: 32px; }
+  .desk .film-poster { flex-basis: 200px; width: 200px; }
+  .desk .film-stage { gap: var(--space-10); }
+}
+
+/* Four spec cells side by side stop being readable before they stop fitting:
+   "MKV → MP4 on save" breaks across three lines at about a quarter of 900px. */
+@media (max-width: 900px) {
+  .desk .film-specs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Narrow. The poster comes out of the row and sits above the title: side by
+   side, a 2:3 poster and a 76px name are two columns of about 150px each and
+   both of them lose — the title stops fitting at all and runs off the side of
+   the window.
+ *
+ * A width query rather than body.has-tabbar, which is the rest of this file's
+ * test for a phone. has-tabbar means a FINGER on a phone-shaped screen, and a
+ * desktop window dragged narrow is neither — it would have kept the wide hero
+ * and overflowed. Width is the question being asked here, so width is what it
+ * asks. 720 is where styles.css stacks a show's card for the same reason. */
+@media (max-width: 720px) {
+  .desk .film-hero { min-height: 0; }
+  .desk .film-hero-inner { padding: var(--space-7) var(--space-8) 0; }
+
+  .desk .film-stage {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-8);
+    padding: var(--space-8) 0 var(--space-9);
+  }
+
+  .desk .film-poster { flex: none; width: 148px; }
+  .desk .film-title { font-size: 40px; }
+  .desk .film-year { font-size: 24px; }
+  .desk .film-tagline { font-size: var(--text-lg); }
+  .desk .film-plot { font-size: var(--text-md); }
+
+  /* The one that matters takes the width; the rest keep their own size and
+     sit under it rather than wrapping one at a time. */
+  .desk .film-actions { gap: var(--space-4); }
+  .desk .film-hero .play-title { flex: 1 1 100%; min-width: 0; }
+  .desk .film-action-rule { display: none; }
+
+  .desk .film-below { gap: var(--space-10); }
+  .desk .film-main { gap: var(--space-11); }
+  .desk .film-side { flex-direction: column; }
+  .desk .film-specs { grid-template-columns: minmax(0, 1fr); }
+  .desk .film-credits { grid-template-columns: minmax(0, 1fr); gap: var(--space-2) 0; }
+  .desk .film-credit-label { padding-top: var(--space-5); }
+
+  /* A rail this narrow is scrolled with a thumb or a trackpad, so the arrows
+     are a control for a gesture that is already easier — the same call the
+     browse rails make below 860. */
+  .desk .film-rail-arrows { display: none; }
+  .desk .film-more-track > .card { flex-basis: 132px; width: 132px; }
+}
+
+/* The gutter, and only the gutter. Phone layout takes .wrap down to 14px and
+   the hero is not in .wrap — it is the width of the window — so it would have
+   kept a 22px gutter while everything under it moved to 14 and the poster
+   stopped lining up with the cast rail below it. */
+.desk body.has-tabbar .film-hero-inner { padding-left: 14px; padding-right: 14px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .desk .film-rail-track { scroll-behavior: auto; }
+  .desk .film-bar i { transition: none; }
+}
+
+
+
 /* ══════════════════════════════════════════════════════ the phone ═════
  *
  * The portal design, on a screen 393pt wide.

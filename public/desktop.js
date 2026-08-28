@@ -1424,8 +1424,15 @@
     const home = $('#homeView');
     if (home && home.querySelector('#dkLane')) home.innerHTML = '';
 
+    /* A film's own page is not a browse page, and the bar is browse chrome.
+       The way off it is the back pill on the backdrop, which names the
+       category it came from; leaving the bar up put a second and louder way
+       back directly over the picture the page is built on. A show's page
+       keeps its bar — that layout has not been redrawn and the bar is still
+       the only way out of it. */
     const catalogue = (tab === 'movies' || tab === 'series')
-      && !state.query && state.category === null && state.library[tab];
+      && !state.query && state.category === null && state.library[tab]
+      && !(tab === 'movies' && state.movieId);
     if (catalogue) return buildCatalogueChrome(tab);
 
     /* Live keeps its bar whether it is showing rows or one category as a
