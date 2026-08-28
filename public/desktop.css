@@ -250,6 +250,125 @@
    set over the top of it says nothing the bison has not already said. */
 .desk .app-shell.is-home .content-head { display: none; }
 
+/* ------------------------------------------------------- the scores band ---
+ * Live TV's head. It stands where "LIVE TV" and its count of categories used
+ * to, which is the most valuable band on the page and was spending it on the
+ * name of the page you had just pressed to get to.
+ *
+ * A full row of its own rather than a column beside the head's other controls:
+ * the strip scrolls horizontally and needs the whole width to do it in.
+ */
+.desk .content-head.has-scores { flex-wrap: wrap; padding-top: var(--space-7); }
+.desk #dkScores { flex: 1 0 100%; min-width: 0; }
+
+.desk .sc-head { display: flex; align-items: baseline; gap: var(--space-4); margin-bottom: var(--space-4); }
+.desk .sc-title {
+  font-family: var(--display);
+  font-size: 26px;
+  line-height: 1;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #fff;
+}
+.desk .sc-meta { font-size: var(--text-sm-plus); color: var(--muted-dim); }
+
+/* Scrolls sideways rather than wrapping: a slate is a row you run your eye
+   along, and a Sunday that wrapped to four lines would push the channels off
+   the screen entirely. */
+.desk .sc-strip {
+  display: flex;
+  gap: var(--space-4);
+  overflow-x: auto;
+  padding-bottom: var(--space-3);
+  scrollbar-width: thin;
+  scroll-snap-type: x proximity;
+}
+.desk .sc-strip::-webkit-scrollbar { height: 6px; }
+.desk .sc-strip::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+.desk .sc-empty { margin: 0; padding: var(--space-5) 0; font-size: var(--text-base); color: var(--muted-dim); }
+
+.desk .sc-card {
+  flex: none;
+  width: 208px;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, .03);
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color var(--dur-hover) var(--ease), background var(--dur-hover) var(--ease);
+}
+.desk .sc-card:hover:not(:disabled) { border-color: var(--line-hover); background: rgba(255, 255, 255, .06); }
+/* A game this box carries no channel for is not a way in, and a card that
+   looks pressable and does nothing is worse than one that says so. */
+.desk .sc-card:disabled { cursor: default; opacity: .62; }
+.desk .sc-card.is-final { opacity: .78; }
+.desk .sc-card.is-redzone { border-color: rgba(224, 49, 50, .5); background: rgba(224, 49, 50, .1); }
+
+.desk .sc-top { display: flex; align-items: center; gap: var(--space-3); font-size: 11px; }
+.desk .sc-chan {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+.desk .sc-when { flex: none; letter-spacing: .06em; color: var(--muted-dim); }
+.desk .sc-live { flex: none; display: flex; align-items: center; gap: 4px; letter-spacing: .06em; color: #ff6b62; }
+.desk .sc-live i {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: sc-pulse 2s var(--ease) infinite;
+}
+@keyframes sc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+.desk .sc-body { display: flex; flex-direction: column; gap: 4px; }
+.desk .sc-team { display: flex; align-items: center; gap: var(--space-3); font-size: var(--text-base); }
+.desk .sc-team.behind { color: var(--muted); }
+.desk .sc-poss { width: 5px; height: 5px; border-radius: 50%; background: transparent; flex: none; }
+.desk .sc-poss.on { background: #f0b64a; }
+.desk .sc-abbr { font-weight: 600; letter-spacing: .02em; }
+.desk .sc-rec { flex: 1; font-size: 11px; color: var(--muted-dim); }
+.desk .sc-score { font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 600; }
+
+.desk .sc-soon { font-size: var(--text-md); font-weight: 600; }
+.desk .sc-soon span { font-weight: 400; color: var(--muted-dim); }
+.desk .sc-note { font-size: 11.5px; color: var(--muted-dim); }
+.desk .sc-rz { font-family: var(--display); font-size: 19px; letter-spacing: .05em; color: #ff6b62; }
+.desk .sc-rzsub { font-size: 11px; color: var(--muted); }
+
+.desk .sc-foot {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  font-size: 11px;
+  color: var(--muted-dim);
+  font-variant-numeric: tabular-nums;
+}
+.desk .sc-sit {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* On a phone the band is the same row, narrower — the cards keep their size
+   and the strip is swiped rather than scrolled with a wheel. */
+.desk body.has-tabbar .sc-title { font-size: 20px; }
+.desk body.has-tabbar .sc-card { width: 178px; }
+
 .desk .content-meta {
   margin: var(--space-3) 0 0;
   font-size: var(--text-base);
@@ -842,6 +961,38 @@
 .desk .dk-allbtn:hover { color: var(--text); border-color: var(--line-hover); }
 .desk .dk-allbtn svg { width: 15px; height: 15px; }
 
+/* Live TV's two, in the places the sort and the view toggle hold elsewhere.
+   Same shape as All categories so the row reads as one set of controls. */
+.desk .dk-ctrl {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--control-h-sm);
+  padding: 0 var(--space-6);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, .28);
+  color: var(--muted);
+  font-family: var(--display);
+  font-size: var(--text-md);
+  letter-spacing: var(--track-nav);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--dur-hover) var(--ease), color var(--dur-hover) var(--ease);
+}
+.desk .dk-ctrl:hover { color: var(--text); border-color: var(--line-hover); }
+.desk .dk-ctrl svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.desk .dk-ctrl.on {
+  color: var(--text);
+  border-color: rgba(224, 49, 50, .55);
+  background: rgba(224, 49, 50, .16);
+}
+
+/* The originals stay in the markup — they are what these press — but two of
+   the same button on one page is one too many. */
+.desk .app-shell.has-catbar #listingsBtn,
+.desk .app-shell.has-catbar #multiviewBtn { display: none; }
+
 
 /* ------------------------------------------------ all-categories sheet --- */
 .desk #dkSheet {
@@ -931,6 +1082,44 @@
   font-size: 11.5px;
   color: var(--muted-dim);
   font-variant-numeric: tabular-nums;
+}
+
+/* ---- pinning and arranging, in the sheet ---- */
+.desk #dkSheet .list .cat-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Every row carries a pin, not only the pinned ones: a mark that appears
+   once a category IS pinned leaves no way to pin one from here, which was
+   the whole reason this list was hard to arrange. */
+.desk #dkSheet .list .row-pin {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 2px;
+  border-radius: 5px;
+  color: var(--muted-dim);
+  opacity: .35;
+  transition: opacity var(--dur-hover) var(--ease), color var(--dur-hover) var(--ease);
+}
+.desk #dkSheet .list .row-pin svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.desk #dkSheet .list button:hover .row-pin { opacity: .8; }
+.desk #dkSheet .list .row-pin:hover { opacity: 1; color: var(--text); background: rgba(255, 255, 255, .1); }
+.desk #dkSheet .list .row-pin.on { opacity: 1; color: var(--brand-red); }
+
+.desk #dkSheet .list .cat-row.pinned { background: rgba(255, 255, 255, .04); color: var(--text); }
+.desk #dkSheet .list.pinnable .cat-row { cursor: grab; }
+.desk #dkSheet .list .cat-row.ghosting {
+  opacity: .55;
+  cursor: grabbing;
+  background: var(--bg-raised);
+  outline: 1px dashed var(--line-hover);
 }
 
 .desk #dkSheet .none { padding: var(--space-9) 0; font-size: var(--text-md); color: var(--muted-dim); text-align: center; }
@@ -2798,6 +2987,11 @@ body.is-reordering .cht { transition: none; }
 .desk body.has-tabbar #dkCatbar .dk-sel select { min-width: 0; }
 .desk body.has-tabbar #dkCatbar .dk-seg { flex: none; margin-left: auto; }
 .desk body.has-tabbar #dkCatbar .dk-allbtn { flex: none; }
+/* Live TV's pair, on a narrow bar: the labels go and the marks stay, because
+   three full-width pills do not fit across a phone. */
+.desk body.has-tabbar #dkCatbar .dk-ctrl { flex: none; padding: 0 var(--space-4); }
+.desk body.has-tabbar #dkCatbar #dkMvBtn { font-size: 0; }
+.desk body.has-tabbar #dkCatbar #dkListingsBtn span { display: none; }
 
 /* ---- the billboard ----
  *

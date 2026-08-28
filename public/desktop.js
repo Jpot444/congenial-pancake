@@ -60,6 +60,10 @@
     heartF: '<svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.9-9.3-9.2C1.3 8.4 3.2 5 6.6 5c2 0 3.5 1.2 4.4 2.4l1 1.3 1-1.3C13.9 6.2 15.4 5 17.4 5c3.4 0 5.3 3.4 3.9 6.8C19.5 16.1 12 21 12 21z" fill="currentColor" stroke="none"/></svg>',
     info: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.6v.1"/></svg>',
     bin: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>',
+    /* The two live-only controls, drawn the same as their originals in the
+       content header so moving them into the bar does not also restyle them. */
+    listings: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1.5"/>'
+      + '<path d="M3 9h18M9 9v11M14 9v11"/></svg>',
   };
 
 
@@ -333,6 +337,15 @@
           <button type="button" class="on" data-v="rows">Rows</button>
           <button type="button" data-v="grid">Grid</button>
         </div>
+        <!-- Live TV's two controls, standing where the sort and the view
+             toggle stand on the catalogue pages. Neither is a new feature:
+             both are the buttons app.js already draws in the content header,
+             pressed from here instead, because the header is where the scores
+             row lives now. The originals stay in the markup and keep their
+             handlers — this bar borrows them rather than reimplementing
+             them. -->
+        <button type="button" class="dk-ctrl" id="dkMvBtn" hidden>${ICON.grid}Multi-view</button>
+        <button type="button" class="dk-ctrl" id="dkListingsBtn" hidden>${ICON.listings}<span>Listings</span></button>
       </div>
     </div>`;
     document.querySelector('.site-header').after(catbar);
@@ -460,18 +473,43 @@
        them. */
     shell?.classList.add('no-sidebar');
 
-    const sel = bar.querySelector('#dkSortSel');
-    const wantSorts = cfg.sorts.join('|');
-    if (sel.dataset.dkSorts !== wantSorts) {
-      sel.dataset.dkSorts = wantSorts;
-      sel.innerHTML = cfg.sorts.map((s) => `<option>${esc(s)}</option>`).join('');
+    /* Two sets of controls in one bar, and a page gets one of them.
+     *
+     * The catalogue pages sort and switch between rows and a grid. Live TV
+     * does neither — a channel has no year, no rating and no date it was
+     * added, so its "sort" was two options one of which was the provider's
+     * own order, and its view toggle duplicated what opening a category
+     * already does. Both are gone from that page, and the space they held is
+     * where multi-view and the listings live now. */
+    const live = Boolean(cfg.live);
+    bar.querySelector('.dk-sel').hidden = live;
+    bar.querySelector('#dkViewSeg').hidden = live;
+    bar.querySelector('#dkMvBtn').hidden = !live;
+    const listings = bar.querySelector('#dkListingsBtn');
+    listings.hidden = !live;
+
+    if (!live) {
+      const sel = bar.querySelector('#dkSortSel');
+      const wantSorts = cfg.sorts.join('|');
+      if (sel.dataset.dkSorts !== wantSorts) {
+        sel.dataset.dkSorts = wantSorts;
+        sel.innerHTML = cfg.sorts.map((s) => `<option>${esc(s)}</option>`).join('');
+      }
+      sel.value = cfg.sortValue;
+      for (const b of bar.querySelectorAll('#dkViewSeg button')) {
+        b.classList.toggle('on', b.dataset.v === cfg.view);
+      }
+    } else {
+      /* The listings button says whether they are on, and the original is
+         the thing that knows. Read rather than tracked, so this cannot drift
+         out of step with the button it presses. */
+      const source = document.querySelector('#listingsLabel');
+      listings.querySelector('span').textContent = source ? source.textContent : 'Listings';
+      listings.classList.toggle('on',
+        document.querySelector('#listingsBtn')?.classList.contains('is-on') || false);
     }
-    sel.value = cfg.sortValue;
 
     bar.querySelector('#dkAllBtn').lastChild.textContent = cfg.allLabel;
-    for (const b of bar.querySelectorAll('#dkViewSeg button')) {
-      b.classList.toggle('on', b.dataset.v === cfg.view);
-    }
 
     drawChips();
   }
@@ -506,16 +544,150 @@
     closeSheet();
   }
 
+  /*
+   * Every category, with a pin on it and a place in the order.
+   *
+   * The sheet used to be a way to JUMP to a category and nothing else: the
+   * only place a category could be pinned was a chip in the bar, which shows
+   * the pinned ones and whichever few fit after them, or a shelf heading you
+   * had to scroll to. With ninety categories that means the pinning happens
+   * where the categories aren't.
+   *
+   * Dragging writes the pin order, which is the order the bar and the rows are
+   * drawn in — and dragging a category that is not pinned PINS it where it was
+   * dropped, because dragging something into your arrangement is the same
+   * sentence as wanting it there. Unpinned categories keep the provider's own
+   * order behind the pinned run; there is nothing else to sort a channel
+   * category by that the provider gives us.
+   */
   function fillSheet() {
     if (!barConfig || !sheet) return;
     const q = sheet.querySelector('#dkCatQ').value.trim().toLowerCase();
     const hits = barConfig.cats.filter((c) => c.name.toLowerCase().includes(q));
     sheet.querySelector('#dkSheetLead').textContent = barConfig.lead;
-    sheet.querySelector('#dkCatList').innerHTML = hits.length
-      ? hits.map((c) => `<button type="button" data-c="${esc(c.name)}">`
-        + `<span>${esc(catName(c.name))}</span><b>${num(c.count)}</b></button>`).join('')
-      : '<p class="none">No category matches that.</p>';
+
+    const list = sheet.querySelector('#dkCatList');
+    list.classList.toggle('pinnable', Boolean(barConfig.pinnable));
+    if (!hits.length) {
+      list.innerHTML = '<p class="none">No category matches that.</p>';
+      return;
+    }
+    list.innerHTML = hits.map((c) => {
+      const can = barConfig.pinnable && c.catId != null;
+      const mark = can
+        ? `<span class="row-pin${c.pinned ? ' on' : ''}" role="button" tabindex="-1"
+            title="${c.pinned ? 'Unpin' : 'Pin to the front'}"
+            aria-label="${c.pinned ? 'Unpin' : 'Pin to the front'}"
+            >${c.pinned ? ICON.pinF : ICON.pin}</span>`
+        : '';
+      return `<button type="button" class="cat-row${c.pinned ? ' pinned' : ''}"`
+        + ` data-c="${esc(c.name)}"${can ? ` data-cat-id="${esc(c.catId)}"` : ''}>`
+        + `${mark}<span class="cat-row-name">${esc(catName(c.name))}</span>`
+        + `<b>${num(c.count)}</b></button>`;
+    }).join('');
   }
+
+  /* ------------------------------------------- dragging the sheet's grid */
+  /*
+   * The same gesture as the chips, in two dimensions: the sheet lays its rows
+   * out as a wrapping grid, so the neighbour a row belongs before is decided
+   * by the pointer's position against each box's CENTRE — both axes, not just
+   * the horizontal one the bar can get away with.
+   *
+   * Pointer events rather than HTML5 drag-and-drop, for the reason the chips
+   * give: iOS Safari does not implement drag-and-drop, and this layer runs the
+   * phone shell too.
+   */
+  let sheetDrag = null;
+  let sheetPointer = null;
+  let sheetFrom = { x: 0, y: 0 };
+  let sheetMoved = false;
+
+  const sheetRows = () => $$('#dkCatList .cat-row');
+
+  const onSheetMove = guard('sheetdrag', (e) => {
+    if (sheetPointer !== e.pointerId || !sheetDrag) return;
+    if (!sheetMoved) {
+      if (Math.hypot(e.clientX - sheetFrom.x, e.clientY - sheetFrom.y) < 6) return;
+      sheetMoved = true;
+      sheetDrag.classList.add('ghosting');
+      document.body.classList.add('is-reordering');
+    }
+
+    const others = sheetRows().filter((r) => r !== sheetDrag);
+    if (!others.length) return;
+
+    /* The row whose centre the pointer has passed, reading the grid the way
+       it is laid out — down the rows, then across each one. */
+    let at = others.findIndex((other) => {
+      const box = other.getBoundingClientRect();
+      if (e.clientY < box.top) return true;
+      if (e.clientY > box.bottom) return false;
+      return e.clientX < box.left + box.width / 2;
+    });
+    if (at === -1) at = others.length;
+
+    const before = others[at] || null;
+    if (before) {
+      if (sheetDrag.nextElementSibling !== before) before.before(sheetDrag);
+    } else {
+      const last = others[others.length - 1];
+      if (last.nextElementSibling !== sheetDrag) last.after(sheetDrag);
+    }
+  });
+
+  const endSheetDrag = guard('sheetdrag', (e) => {
+    if (sheetPointer !== e.pointerId) return;
+    sheetPointer = null;
+    window.removeEventListener('pointermove', onSheetMove);
+    window.removeEventListener('pointerup', endSheetDrag);
+    window.removeEventListener('pointercancel', endSheetDrag);
+
+    const row = sheetDrag;
+    sheetDrag = null;
+    if (!sheetMoved || !row) return;         // a tap: the click handler has it
+    sheetMoved = false;
+    row.classList.remove('ghosting');
+    document.body.classList.remove('is-reordering');
+    draggedAt = Date.now();
+
+    /* Everything above the last pinned row is now pinned, in this order.
+       Dropping an unpinned category into the arrangement is what pins it —
+       and a pinned one dragged below the run is what takes it out. */
+    const rows = sheetRows();
+    const lastPinned = rows.reduce(
+      (at, r, i) => (r.classList.contains('pinned') ? i : at), -1
+    );
+    const order = rows.slice(0, lastPinned + 1)
+      .map((r) => r.dataset.catId).filter(Boolean);
+
+    const tab = state.tab;
+    const wanted = new Set(order);
+    for (const id of order) if (!profiles.isPinned(tab, id)) profiles.togglePin(tab, id);
+    for (const id of profiles.pinOrder(tab)) {
+      if (!wanted.has(String(id))) profiles.togglePin(tab, id);
+    }
+    if (order.length) profiles.setPinOrder(tab, order);
+    render();
+    fillSheet();
+  });
+
+  document.addEventListener('pointerdown', guard('sheetdrag', (e) => {
+    if (!on || !barConfig?.pinnable || e.button > 0) return;
+    const row = e.target.closest?.('#dkCatList .cat-row');
+    if (!row) return;
+    // The pin is a control, not a handle: pressing it must toggle, not drag.
+    if (e.target.closest('.row-pin')) return;
+    sheetDrag = row;
+    sheetPointer = e.pointerId;
+    sheetFrom = { x: e.clientX, y: e.clientY };
+    sheetMoved = false;
+    try { row.setPointerCapture(e.pointerId); } catch { /* the window
+      listeners below are a working drag without it */ }
+    window.addEventListener('pointermove', onSheetMove);
+    window.addEventListener('pointerup', endSheetDrag);
+    window.addEventListener('pointercancel', endSheetDrag);
+  }));
 
   /* One delegated handler for the bar and the sheet alike. */
   document.addEventListener('click', guard('bar-click', (e) => {
@@ -529,7 +701,19 @@
     }
 
     const seg = e.target.closest('#dkViewSeg button');
-    if (seg) return barConfig.onView(seg.dataset.v);
+    if (seg && barConfig.onView) return barConfig.onView(seg.dataset.v);
+
+    /* The two borrowed buttons. Pressed here, handled there — app.js owns
+       what multi-view and the listings actually do, and a second copy of
+       either would be a second thing to keep in step. */
+    if (e.target.closest('#dkMvBtn')) {
+      document.querySelector('#multiviewBtn')?.click();
+      return undefined;
+    }
+    if (e.target.closest('#dkListingsBtn')) {
+      document.querySelector('#listingsBtn')?.click();
+      return undefined;
+    }
 
     const chip = e.target.closest('.catchip');
     if (chip) {
@@ -547,6 +731,16 @@
 
     const row = e.target.closest('#dkCatList button[data-c]');
     if (row) {
+      // The pin sits inside the row, so it has to claim the click before the
+      // row reads it as "open this category".
+      if (e.target.closest('.row-pin') && row.dataset.catId != null) {
+        e.stopPropagation();
+        e.preventDefault();
+        profiles.togglePin(state.tab, row.dataset.catId);
+        render();
+        fillSheet();
+        return undefined;
+      }
       closeSheet();
       return pickCategory(row.dataset.c, true);
     }
@@ -669,7 +863,7 @@
     // A chip would scroll to a category nobody asked for; a channel card
     // would open the channel that happened to be under the finger when it
     // was let go, which is worse.
-    if (!e.target.closest?.('.catchip, .cht')) return;
+    if (!e.target.closest?.('.catchip, .cht, .cat-row')) return;
     e.preventDefault();
     e.stopPropagation();
   }, true);
@@ -896,11 +1090,12 @@
        away the thing being used. */
     const open = ordered.find((c) => String(c.id) === String(state.category));
     buildCatbar({
+      live: true,
       view: rows ? 'rows' : 'grid',
-      sorts: Object.keys(LIVE_SORTS),
-      sortValue: liveSort,
+      sorts: [],
       allLabel: `All ${ordered.length}`,
-      lead: `${ordered.length} categories. Pin the ones you use — they lead the bar above, in your order.`,
+      lead: `${ordered.length} categories. Pin the ones you use and drag them into `
+        + 'the order you want — that is the order they lead the bar above in.',
       pinnable: true,
       cats: ordered.map((c) => ({
         name: c.name,
@@ -909,13 +1104,6 @@
         pinned: profiles.isPinned('live', c.id),
         onOpen: () => { state.category = String(c.id); render(); scrollTo({ top: 0, behavior: 'smooth' }); },
       })),
-      onSort: (value) => { liveSort = value; render(); },
-      onView: (v) => {
-        if (v === 'rows') state.category = null;
-        else state.category = String((open || ordered[0] || {}).id ?? '');
-        render();
-        scrollTo({ top: 0, behavior: 'smooth' });
-      },
     });
 
     /* In grid mode app.js draws the channels itself, into the grid the
@@ -930,23 +1118,29 @@
     const grid = $('#grid');
     $('#emptyState').hidden = ordered.length > 0;
     $('#loadMore').hidden = true;
-    $('#contentMeta').textContent =
-      `${num(pinned.length)} pinned · ${num(ordered.length)} categories · ${num(source.items.length)} channels`;
+
+    /* The page's own head is the scores row now.
+     *
+     * "Live TV", set at 34px, over "24 pinned · 92 categories · 11,764
+     * channels" — a title naming the page you just pressed to get to, and a
+     * count of things nobody is going to act on. The band across the top of a
+     * television page is worth more than that, and what it is worth is what
+     * is on right now. */
+    scoreboard();
 
     const host = document.createElement('div');
     host.id = 'dkLive';
     host.dataset.dkOwned = '1';
     grid.after(host);
 
-    const sorter = LIVE_SORTS[liveSort];
-    const arrange = (list) => (sorter ? [...list].sort(sorter) : list);
+    /* The provider's own order. There is nothing else to offer: a channel has
+       no year, no rating and no date it was added, so the sort this page used
+       to carry was a choice between the order the numbers came in and the
+       alphabet — and the alphabet is what the bar and the sheet are for. */
     const favourites = profiles.favItems().filter((i) => i.kind === 'live');
 
     if (favourites.length) {
-      /* Not `arrange`d. The sort above belongs to the provider's categories —
-         this row is the one the viewer built, in the order they put it in,
-         and re-sorting somebody's own arrangement alphabetically is taking it
-         away from them. */
+      /* The one the viewer built, in the order they put it in. */
       const mine = liveRail('Your channels',
         `${favourites.length} favorites · drag to reorder`, favourites, null);
       makeReorderable(mine.querySelector('.rail-track'));
@@ -956,7 +1150,7 @@
     /* Nine rows, because past that the page is a scroll rather than a way in
        — the bar and the sheet are how you reach the rest. */
     for (const cat of ordered.slice(0, 9)) {
-      const items = arrange(byCat.get(String(cat.id)) || []);
+      const items = byCat.get(String(cat.id)) || [];
       if (!items.length) continue;
       host.append(liveRail(catName(cat.name), num(counts.get(String(cat.id)) || 0),
         items.slice(0, 14), cat));
@@ -969,16 +1163,224 @@
     maybeExplainLivePins();
   }
 
-  /* The catalogue's sorts do not transfer: a channel has no release year, no
-     rating and no date it was added — the provider sends a name, a category
-     and sometimes a logo. Sorting it by anything else would mean inventing
-     the field to sort on, so these two are what there is. Provider order is
-     first because it is the order the numbers would have been in. */
-  let liveSort = 'Provider order';
-  const LIVE_SORTS = {
-    'Provider order': null,
-    'Name, A to Z': (a, b) => String(a.name).localeCompare(String(b.name)),
-  };
+  /* ============================================== what is on right now ===
+   *
+   * The same slate the television draws, in the band the page title used to
+   * hold. The Pi reads the leagues and hands back one shape for both sports
+   * (see /api/scores), so nothing here knows anything about ESPN or the MLB
+   * stats API — it asks the box and lays out what comes back.
+   *
+   * Two things carry over from the Shield, because they are what make the row
+   * worth having rather than decoration:
+   *
+   *   A card is a way IN. Every game is matched against the live library by
+   *   the two teams first and the network second, so on a night when the
+   *   provider carries a channel per game — 'MLB 01 | Rockies x Nationals' —
+   *   pressing the card opens THAT broadcast rather than the network showing
+   *   it. A game with no channel says so instead of pretending.
+   *
+   *   An empty row explains itself. Nothing on and nobody-could-be-asked look
+   *   identical from across the room, and for as long as the row said nothing
+   *   they were indistinguishable — so it says which, and names the address to
+   *   open when the answer is the second one.
+   */
+  const SLATE_ORDER = { live: 0, upcoming: 1, final: 2 };
+  const GAMES_IN_ROW = 16;
+
+  /* Held across renders so the row does not blink out and back on every
+     repaint of the page while the box is being asked again. */
+  let slate = { games: [], at: 0, trouble: '', asked: false };
+  let slateInFlight = null;
+
+  function scoreboard() {
+    const head = document.querySelector('.content-head');
+    if (!head) return;
+
+    /* The words this replaces. The pair is hidden by its own wrapper rather
+       than emptied: app.js writes into both of them on every render and would
+       find nothing to write into, and hiding them one at a time leaves the
+       gap they stood in. */
+    const title = document.querySelector('#contentTitle');
+    if (title?.parentElement) title.parentElement.hidden = true;
+    head.classList.add('has-scores');
+
+    let band = document.querySelector('#dkScores');
+    if (!band) {
+      band = document.createElement('div');
+      band.id = 'dkScores';
+      band.dataset.dkOwned = '1';
+      head.append(band);
+    }
+    paintScores(band);
+
+    /* Asked once a minute at most. A score changes, but not on the timescale
+       a page redraw happens on — and every ask is a call the box has to make
+       out to a league. */
+    if (!slateInFlight && Date.now() - slate.at > 60000) {
+      slateInFlight = fetch('/api/scores', { headers: { accept: 'application/json' } })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`the box answered ${r.status}`))))
+        .then((data) => {
+          const rows = Array.isArray(data) ? data : (data.games || []);
+          slate = {
+            games: rows.filter((g) => g && g.id),
+            at: Date.now(),
+            asked: true,
+            /* An empty slate is an ANSWER, not a failure — it is Tuesday.
+               An empty slate the BOX is unhappy about is a different thing,
+               and it travels back in `error`. */
+            trouble: rows.length ? '' : String((data && data.error) || ''),
+          };
+        })
+        .catch((err) => {
+          slate = { games: [], at: Date.now(), asked: true,
+            trouble: err.message || 'the box could not be reached' };
+        })
+        .finally(() => {
+          slateInFlight = null;
+          const still = document.querySelector('#dkScores');
+          if (still) paintScores(still);
+        });
+    }
+  }
+
+  function paintScores(band) {
+    const games = [...slate.games]
+      .sort((a, b) => (SLATE_ORDER[a.status] ?? 3) - (SLATE_ORDER[b.status] ?? 3)
+        || (a.kickoff || 0) - (b.kickoff || 0))
+      .slice(0, GAMES_IN_ROW);
+
+    const playing = games.filter((g) => g.status === 'live').length;
+    band.innerHTML = `
+      <div class="sc-head">
+        <span class="sc-title">Live now</span>
+        <span class="sc-meta"></span>
+      </div>
+      <div class="sc-strip"></div>`;
+
+    band.querySelector('.sc-meta').textContent = !slate.asked ? 'Asking…'
+      : games.length ? `${playing} game${playing === 1 ? '' : 's'} on now`
+        : '';
+
+    const strip = band.querySelector('.sc-strip');
+    if (!games.length) {
+      const note = document.createElement('p');
+      note.className = 'sc-empty';
+      if (!slate.asked) note.textContent = 'Reading the slate…';
+      else if (slate.trouble) {
+        note.textContent = `No scores: ${slate.trouble}. `
+          + `${location.origin}/api/scores shows what was asked.`;
+      } else {
+        note.textContent = 'Nothing on right now — the feed answered, with an empty slate.';
+      }
+      strip.append(note);
+      return;
+    }
+
+    const channels = (state.library.live?.items || []).filter((c) => !profiles.isDeleted(c));
+    for (const game of games) strip.append(scoreCard(game, matchChannel(game, channels)));
+  }
+
+  function scoreCard(game, channel) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = `sc-card is-${esc(game.status || 'live')}`;
+    if (game.redZone) card.classList.add('is-redzone');
+    card.disabled = !channel;
+    card.title = channel ? `Watch on ${channel.name}` : 'No channel on this box carries it';
+
+    const top = `<span class="sc-chan">${esc(cleanChannel(channel ? channel.name : game.channelName))}</span>`
+      + (game.status === 'live'
+        ? '<span class="sc-live"><i></i>LIVE</span>'
+        : `<span class="sc-when">${esc(game.status === 'final' ? 'FINAL' : (game.clock || ''))}</span>`);
+
+    let body;
+    if (game.redZone) {
+      body = `<div class="sc-rz">RED ZONE</div><div class="sc-rzsub">${esc(game.note || '')}</div>`;
+    } else if (game.status === 'upcoming') {
+      body = `<div class="sc-soon">${esc(game.away?.abbr || '')} `
+        + `<span>at</span> ${esc(game.home?.abbr || '')}</div>`
+        + `<div class="sc-note">${esc(game.note || firstPitch(game))}</div>`;
+    } else {
+      body = ['away', 'home'].map((side) => {
+        const team = game[side];
+        if (!team) return '';
+        const other = side === 'away' ? game.home : game.away;
+        const behind = other && Number.isFinite(other.score) && Number.isFinite(team.score)
+          && team.score < other.score;
+        return `<div class="sc-team${behind ? ' behind' : ''}">`
+          + `<i class="sc-poss${team.possession ? ' on' : ''}"></i>`
+          + `<span class="sc-abbr">${esc(team.abbr || '')}</span>`
+          + `<span class="sc-rec">${esc(team.record || '')}</span>`
+          + `<span class="sc-score">${team.score === null || team.score === undefined
+            ? '—' : num(team.score)}</span></div>`;
+      }).join('');
+    }
+
+    const foot = game.status === 'live' || game.status === 'final'
+      ? `<div class="sc-foot"><span>${esc(game.clock || '')}</span>`
+        + `<span class="sc-sit">${esc(channel ? (game.situation || '') : 'No channel matched')}</span></div>`
+      : `<div class="sc-foot"><span class="sc-sit">${
+        esc(channel ? 'Ready to tune' : 'No channel matched')}</span></div>`;
+
+    card.innerHTML = `<div class="sc-top">${top}</div><div class="sc-body">${body}</div>${foot}`;
+    if (channel) card.addEventListener('click', () => openPlayer(channel));
+    return card;
+  }
+
+  function firstPitch(game) {
+    const start = game.sport === 'mlb' ? 'First pitch' : 'Kicks off';
+    if (!game.kickoff) return game.clock ? `${start} ${game.clock}` : 'Later today';
+    const mins = Math.round((game.kickoff - Date.now()) / 60000);
+    if (mins <= 0) return 'Starting now';
+    if (mins < 60) return `${start} in ${mins} min`;
+    return `${start} at ${new Date(game.kickoff)
+      .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  }
+
+  /* The provider writes 'US| FOX ᴴᴰ'; a card has room for 'FOX'. */
+  function cleanChannel(name) {
+    return String(name || '')
+      .replace(/^[A-Z]{2,3}\s*\|\s*/i, '')
+      .replace(/[ᴴᴰᵁᴴᴰᴿᴬᵂᶠᴾˢ⁴ᴷ⁶⁰]+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * Tie a game to a channel in the real live library.
+   *
+   * The game's OWN channel first: on a baseball night this provider carries a
+   * row per game — 'MLB 01 | Rockies x Nationals' — and that is the broadcast
+   * itself rather than the network that happens to be showing it, so a channel
+   * naming both teams beats anything the network match could find. Then the
+   * network, loosely, because a feed says 'FOX' and the provider says
+   * 'US| FOX ᴴᴰ'. Shortest match wins so 'NFL' does not answer for
+   * 'NFL NETWORK'.
+   */
+  function matchChannel(game, channels) {
+    const teams = (game.teamMatch || [])
+      .map((t) => String(t).toUpperCase().trim()).filter(Boolean);
+    if (teams.length >= 2) {
+      let byTeams = null;
+      for (const channel of channels) {
+        const name = String(channel.name || '').toUpperCase();
+        if (!teams.every((team) => name.includes(team))) continue;
+        if (!byTeams || name.length < String(byTeams.name).length) byTeams = channel;
+      }
+      if (byTeams) return byTeams;
+    }
+
+    const needle = String(game.channelMatch || game.channelName || '').toUpperCase().trim();
+    if (!needle) return null;
+    let best = null;
+    for (const channel of channels) {
+      const name = String(channel.name || '').toUpperCase();
+      if (!name.includes(needle)) continue;
+      if (!best || name.length < String(best.name).length) best = channel;
+    }
+    return best;
+  }
+
 
   function liveRail(title, count, items, cat) {
     const section = document.createElement('section');
@@ -1528,7 +1930,15 @@
 
   /* =========================================================== dispatch */
   function buildBrowseChrome() {
-    for (const node of $$('#dkLive, #dkHero, #dkFoot')) node.remove();
+    for (const node of $$('#dkLive, #dkHero, #dkFoot, #dkScores')) node.remove();
+
+    /* The page title, back. Live TV puts the scores where it stands and takes
+       it down again; every other page wants it, and a page that inherits the
+       last one's missing heading is the kind of bug that only shows up in the
+       order somebody happens to browse in. */
+    const title = document.querySelector('#contentTitle');
+    if (title?.parentElement) title.parentElement.hidden = false;
+    document.querySelector('.content-head')?.classList.remove('has-scores');
 
     const tab = state.tab;
 
