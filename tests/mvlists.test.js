@@ -17,6 +17,7 @@
  * saying — which cell holds a connection open — now lives on that cell.
  */
 const { chromium } = require('./playwright.js');
+const { openMultiview, multiviewOffered } = require('./mv.js');
 const fs = require('fs');
 const BASE = 'http://127.0.0.1:8481';
 const CLIP = fs.readFileSync(__dirname + '/clip.wav');
@@ -140,7 +141,7 @@ const HISTORY = [
   }, { chans: CHANNELS, favs: FAVORITES, hist: HISTORY, movies: MOVIES, series: SERIES });
   await wait(600);
 
-  await page.locator('#multiviewBtn').click();
+  await openMultiview(page);
   await wait(500);
 
   // --- the header is not a readout any more --------------------------------

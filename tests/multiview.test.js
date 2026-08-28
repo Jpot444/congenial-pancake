@@ -10,6 +10,7 @@
  * handed over, the rest are refused while it is running.
  */
 const { chromium } = require('./playwright.js');
+const { openMultiview, multiviewOffered } = require('./mv.js');
 const fs = require('fs');
 const BASE = 'http://127.0.0.1:8481';
 const SHOTS = __dirname + '/shots';
@@ -141,8 +142,12 @@ const EPISODES = {
   // was still open. It answered it, so the switch went — and a feature that is
   // shipped has to be reachable without one.
   console.log('\n  on for everyone');
+  /* Asked of whichever control the page is showing. On Live TV the desktop
+     layer draws it in the category bar and hides the original, so a check
+     pinned to one of the two is testing where the button lives rather than
+     whether the feature is offered. */
   check('Live TV has a multi-view button, with nothing to turn on first',
-    await page.locator('#multiviewBtn').isVisible());
+    await multiviewOffered(page));
   check('and no beta switch left anywhere',
     (await page.locator('.health-beta').count()) === 0);
   check('nor a beta object for anything to hang off',
@@ -151,7 +156,7 @@ const EPISODES = {
   await page.evaluate(() => { location.hash = '#/movies'; render(); });
   await wait(400);
   check('the button does not follow you to Movies, where it would mean nothing',
-    await page.locator('#multiviewBtn').isHidden());
+    (await multiviewOffered(page)) === false);
   await page.evaluate(() => { location.hash = '#/live'; render(); });
   await wait(800);
   // Leaving Live TV and coming back reloads the tab from the server, which
@@ -160,7 +165,7 @@ const EPISODES = {
 
   // --- the grid ------------------------------------------------------------
   console.log('\n  four cells');
-  await page.locator('#multiviewBtn').click();
+  await openMultiview(page);
   await wait(500);
   check('the grid opens', await page.locator('#multiview').isVisible());
   const cells = await page.locator('#mvGrid .mv-cell').count();
@@ -1075,13 +1080,12 @@ const EPISODES = {
   const shut = await page.evaluate(() => ({
     up: !document.querySelector('#multiview').hidden,
     running: multiview.cells.filter((c) => c.item).length,
-    btn: document.querySelector('#multiviewBtn').hidden,
   }));
   console.log('  ', JSON.stringify(shut));
   check('the grid goes away', !shut.up, JSON.stringify(shut));
   check('and does not leave a stream running behind it',
     shut.running === 0, JSON.stringify(shut));
-  check('while the way back in stays on Live TV', shut.btn === false, JSON.stringify(shut));
+  check('while the way back in stays on Live TV', await multiviewOffered(page));
 
   // And it is still there after a reload, because it is not a preference.
   await page.reload({ waitUntil: 'networkidle' });
@@ -1092,7 +1096,7 @@ const EPISODES = {
   await page.evaluate(() => { location.hash = '#/live'; render(); });
   await wait(800);
   check('and after a reload, with nothing stored to remember',
-    await page.locator('#multiviewBtn').isVisible());
+    await multiviewOffered(page));
 
   await browser.close();
   console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(', ')}` : '\nall passed');

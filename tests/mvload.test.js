@@ -14,6 +14,7 @@
  * reaches 100% would hide the bug that only shows *at* 100%.
  */
 const { chromium } = require('./playwright.js');
+const { openMultiview, multiviewOffered } = require('./mv.js');
 const BASE = 'http://127.0.0.1:8481';
 
 const fails = [];
@@ -107,7 +108,7 @@ const LIB = {
   check('Movies and Series really are unloaded to begin with',
     untouched.movies === null && untouched.series === null, JSON.stringify(untouched));
 
-  await page.locator('#multiviewBtn').click();
+  await openMultiview(page);
   await wait(500);
   await page.locator('.mv-empty:visible').first().click();
   await wait(400);

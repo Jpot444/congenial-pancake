@@ -14,6 +14,7 @@
  * pressable is a lie.
  */
 const { chromium } = require('./playwright.js');
+const { openMultiview, multiviewOffered } = require('./mv.js');
 const fs = require('fs');
 const BASE = 'http://127.0.0.1:8481';
 const CLIP = fs.readFileSync(__dirname + '/clip.wav');
@@ -97,7 +98,7 @@ const EPISODES = {
   await wait(600);
 
   // Two channels and an episode running side by side — the state this is about.
-  await page.locator('#multiviewBtn').click();
+  await openMultiview(page);
   await wait(500);
   await page.evaluate(([chans, show]) => {
     multiview.start(0, chans[0]);

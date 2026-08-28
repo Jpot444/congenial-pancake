@@ -461,6 +461,7 @@
 
   function buildCatbar(cfg) {
     barConfig = cfg;
+    barTab = state.tab;
     const bar = ensureCatbar();
     ensureSheet();
     bar.hidden = false;
@@ -543,6 +544,31 @@
     document.querySelector('.app-shell')?.classList.remove('has-catbar');
     closeSheet();
   }
+
+  /*
+   * The bar belongs to the page it was built for.
+   *
+   * It is rebuilt on every render, which is almost always immediate — but a
+   * tab whose library has to be fetched first renders late, and until it does
+   * the previous page's bar is still standing. That was survivable while every
+   * page's bar held the same three controls: a sort and a view toggle on a
+   * page that had not drawn yet is furniture. It stopped being survivable when
+   * Live TV's bar started carrying multi-view and the listings, because those
+   * two mean nothing on Movies and offering them there is a button that lies.
+   *
+   * So the bar is taken down the moment the page changes, and the render that
+   * follows puts up the right one. Cheaper than making it correct, and there
+   * is nothing on the bar worth looking at for a page that is not there yet.
+   */
+  let barTab = '';
+  /* Read off the hash rather than off state.tab: both app.js and this file
+     listen for the same event, and which of them runs first is a question
+     about script order that this does not need to have an opinion about. */
+  const tabFromHash = () => (location.hash.replace(/^#\/?/, '').split('/')[0] || 'home');
+  addEventListener('hashchange', () => {
+    if (!on || !catbar || catbar.hidden) return;
+    if (tabFromHash() !== barTab) hideCatbar();
+  });
 
   /*
    * Every category, with a pin on it and a place in the order.

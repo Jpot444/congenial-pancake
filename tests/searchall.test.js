@@ -16,6 +16,7 @@
  */
 const fs = require('fs');
 const { chromium } = require('./playwright.js');
+const { openMultiview, multiviewOffered } = require('./mv.js');
 const PATHS = require('./paths.js');
 
 const BASE = 'http://127.0.0.1:8481';
@@ -253,7 +254,7 @@ const SERIES = {
   await page.evaluate(() => { location.hash = '#/live'; });
   await wait(600);
   await page.evaluate(() => { $('#searchInput').value = ''; state.query = ''; render(); });
-  await page.locator('#multiviewBtn').click();
+  await openMultiview(page);
   await wait(600);
 
   const sources = await page.evaluate(() =>

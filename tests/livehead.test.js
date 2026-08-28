@@ -176,9 +176,11 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
   /* ---- the controls ---------------------------------------------------- */
   console.log('\n  the bar carries Live TV\'s own two controls');
   const bar = await page.evaluate(() => {
+    /* Occupying space on the page, which is the question — a control inside
+       a hidden bar still computes its own display. */
     const seen = (sel) => {
       const n = document.querySelector(sel);
-      return Boolean(n) && !n.hidden && getComputedStyle(n).display !== 'none';
+      return Boolean(n) && n.getClientRects().length > 0;
     };
     return {
       all: seen('#dkAllBtn'),
@@ -300,9 +302,11 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
   await page.evaluate(() => { location.hash = '#/movies'; });
   await page.waitForTimeout(2000);
   const movies = await page.evaluate(() => {
+    /* Occupying space on the page, which is the question — a control inside
+       a hidden bar still computes its own display. */
     const seen = (sel) => {
       const n = document.querySelector(sel);
-      return Boolean(n) && !n.hidden && getComputedStyle(n).display !== 'none';
+      return Boolean(n) && n.getClientRects().length > 0;
     };
     return {
       sort: seen('#dkCatbar .dk-sel'),

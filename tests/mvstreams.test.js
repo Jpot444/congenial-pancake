@@ -23,6 +23,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { chromium } = require('./playwright.js');
+const { openMultiview, multiviewOffered } = require('./mv.js');
 const PATHS = require('./paths.js');
 
 const ROOT = PATHS.ROOT;
@@ -220,7 +221,7 @@ exit 0
     render();
   });
   await wait(500);
-  await page.locator('#multiviewBtn').click();
+  await openMultiview(page);
   await wait(600);
   check('the grid opens, so there are cells to test',
     (await page.evaluate(() => multiview.cells.length)) > 0);
