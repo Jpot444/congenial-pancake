@@ -79,14 +79,24 @@ const get = (p) => new Promise((resolve, reject) => {
     /delete_segments/.test(SERVER));
   check('a respawn continues the playlist rather than starting a new one',
     /append_list/.test(SERVER));
-  /* A COLD start takes the provider's backlog, which is what opens the window
-     fifty seconds deep instead of growing it from nothing. A RESPAWN must not:
-     the backlog is content the viewer has already watched, and republishing it
-     on the end of the window is what makes the picture snap back about a
-     minute — to roughly wherever they were when the session started. That is
-     the "it restarted from where I began watching" report. */
-  check('a cold start takes the provider\'s backlog, and a respawn does not',
-    /'-live_start_index', resumed \? '-1' : '0'/.test(dvrArgs), dvrArgs.slice(0, 400));
+  /* Both ends of this are the same report, six weeks apart.
+   *
+   * A RESPAWN must take the live edge: the backlog is content the viewer has
+   * already watched, and republishing it on the end of the window snaps the
+   * picture back about a minute.
+   *
+   * A COLD start must be BOUNDED. It used to be '0' — the oldest segment the
+   * provider publishes — on the belief that they keep about fifty seconds. A
+   * news channel on the same account keeps ten minutes, and '0' on that
+   * playlist opens the tune-in ten minutes in the past. The index has to be
+   * counted back from their edge, so the depth is ours whatever they keep. */
+  check('a respawn joins at the live edge, taking no backlog at all',
+    /'-live_start_index', resumed \? '-1' :/.test(dvrArgs), dvrArgs.slice(0, 400));
+  check('and a cold start is bounded, counted back from their edge not forward from the start',
+    /'-live_start_index', resumed \? '-1' : `-\$\{COLD_START_SEGMENTS\}`/.test(dvrArgs)
+    && /const COLD_START_SEGMENTS = (\d+);/.test(SERVER)
+    && Number(/const COLD_START_SEGMENTS = (\d+);/.exec(SERVER)[1]) <= 20,
+    dvrArgs.slice(0, 400));
   check('half-written segments are never served as though they were whole',
     /temp_file/.test(SERVER));
   check('transport drops are ridden out without the process exiting',
@@ -95,16 +105,17 @@ const get = (p) => new Promise((resolve, reject) => {
   // copy can only cut on keyframes, so the first segments took longer than the
   // readiness timeout and every tune-in fell back to the direct path — which a
   // measured v22.7 session spent 15 silent seconds proving. The provider's own
-  // playlist has ~50s of already-published video in it; ingesting THAT from
-  // its oldest segment banks the whole window at link speed.
+  // playlist is already published, so reading a bounded run of it banks the
+  // window at link speed rather than trickling in at 1x.
   // Written against the ext rather than the login the URL is built from: with
   // a pool of accounts that argument is whichever one had a free slot, and
   // the claim here is about which FEED is ingested, not whose it is.
   check('the ingest reads the provider playlist, not the realtime push feed',
     /buildStreamUrl\([^)]+, 'live', channelId, 'm3u8'\)/.test(SERVER)
     && !/buildStreamUrl\([^)]+, 'live', channelId, 'ts'\)/.test(SERVER));
-  check('and banks the published backlog rather than joining at the edge',
-    /'-live_start_index', resumed \? '-1' : '0',\s*'-i', input/.test(SERVER));
+  check('and banks a published run of it rather than trickling in from the edge',
+    /'-live_start_index', resumed \? '-1' : `-\$\{COLD_START_SEGMENTS\}`,\s*'-i', input/
+      .test(SERVER));
   // Readiness doubles as a speed test: a healthy feed banks the backlog at
   // several times realtime and shows two segments in seconds; a throttled one
   // cannot, and a viewer seated in ITS shallow window rides the ingest

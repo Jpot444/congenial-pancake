@@ -3254,6 +3254,20 @@ for (const signal of ['exit', 'SIGINT', 'SIGTERM']) {
  * the same directory with `append_list`, so the playlist carries straight on
  * and the viewer sees a hiccup, not an ending.
  */
+/*
+ * How far behind the provider's live edge a cold start begins, in THEIR
+ * segments.
+ *
+ * Counted back from the edge rather than forward from the start of their
+ * playlist, because the length of that playlist is theirs to decide and
+ * varies by channel on one account — fifty seconds on some, ten minutes on a
+ * news channel. Ten of their segments is roughly 40-100 seconds depending on
+ * how they cut, which covers the player's 45-second seat with something in
+ * hand, and cannot put the picture minutes into the past however much they
+ * keep.
+ */
+const COLD_START_SEGMENTS = 10;
+
 const LIVE_DVR = {
   // Requested cut length. Stream copy can only cut on keyframes, so real
   // segments land on the channel's GOP length — usually 2-6s on this provider.
@@ -3313,31 +3327,36 @@ function liveDvrArgs(input, dir, resumed = false, low = false) {
     // The feed drops; these ride out the transport-level ones without ffmpeg
     // exiting at all. A full exit is handled by the respawn in spawnLiveDvr.
     '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-    /* Where in the provider's playlist to start reading — and it is NOT the
-     * same answer on a cold start as on a respawn.
+    /* Where in the provider's playlist to start reading — counted BACK from
+     * their live edge, never forward from the start of it.
      *
-     * COLD (0, the oldest segment they publish): this is the whole reason
-     * startup is fast. The provider has ~50 seconds of already-published
-     * video sitting there, and taking all of it pulls at link speed instead
-     * of waiting for a push feed to trickle in at 1x. The Pi's window opens
-     * ~50 seconds deep in the first moments rather than growing from nothing
-     * — which also means a v22.7 mistake cannot recur, where a keyframe-bound
-     * first cut on a realtime feed took longer than the readiness timeout and
-     * every tune-in paid 15 seconds to end up on the direct path anyway.
+     * This was `0` on a cold start: the oldest segment they publish. The
+     * reasoning was that the provider keeps about fifty seconds of already-
+     * published video, so taking all of it opens the Pi's window deep and at
+     * link speed rather than growing it from nothing at 1x.
      *
-     * RESPAWN (-1, their newest segment): the same trick is a bug here, and
-     * this is the "it jumped back to where I started watching" report. A feed
-     * drop respawns ffmpeg into the same window, and pulling the backlog again
-     * republishes the last fifty seconds the viewer has ALREADY WATCHED as
-     * brand-new segments on the end of the playlist. From the sofa the picture
-     * simply snaps back about a minute, to roughly wherever they were when the
-     * session started — after leaving and coming back, or after catching up to
-     * the edge and sitting there for a couple of minutes, which is exactly
-     * when a respawn is most likely to have happened. A resume carries on from
-     * the provider's live edge; the previous two minutes are still on disk
-     * behind it, so nobody loses their cushion, and `discont_start` below tells
-     * the player the timeline it is joining is a new one. */
-    '-live_start_index', resumed ? '-1' : '0',
+     * Fifty seconds was a measurement of two or three channels, and it was
+     * read as a fact about the provider. It is not. A news channel on this
+     * same account publishes something closer to TEN MINUTES, and `0` on that
+     * playlist starts the ingest ten minutes in the past — so a tune-in opens
+     * on content from ten minutes ago, and ffmpeg then races forward through
+     * the backlog while the viewer sits watching an hour-old bulletin in a
+     * window sliding out from under them. That is the "it is replaying what I
+     * already watched" report, and it is not the respawn: the black box shows
+     * restarts 0 and a single ingest-started note.
+     *
+     * A NEGATIVE index is counted from the end, so the depth is OURS rather
+     * than whatever the provider happens to keep. Deep enough that the player
+     * can take its 45-second seat the moment the window opens, and bounded, so
+     * a provider with a long DVR cannot start us in the past.
+     *
+     * RESPAWN (-1, their newest segment): a feed drop respawns ffmpeg into the
+     * same window, and pulling ANY backlog again republishes video the viewer
+     * has already watched as brand-new segments on the end of the playlist —
+     * so a resume takes the edge and nothing behind it. The previous two
+     * minutes are still on disk, so nobody loses their cushion, and
+     * `discont_start` below tells the player the timeline is a new one. */
+    '-live_start_index', resumed ? '-1' : `-${COLD_START_SEGMENTS}`,
     '-i', input,
     // First video stream and FIRST audio stream; data and DVB subtitle streams
     // are dropped — they are why a bare -map 0 dies on some channels. One
@@ -3443,7 +3462,11 @@ function spawnLiveDvr(session, input, resumed = false) {
   liveNote(session, resumed ? 'ingest-resumed' : 'ingest-started', {
     // The one argument this report is really about: a resume that went back
     // for the provider's backlog is what replays a minute somebody watched.
-    from: resumed ? 'provider live edge' : "provider's oldest segment",
+    /* Names the depth, not just the end it counted from: "ten segments back"
+       is the line that would have settled the ten-minute replay in one look,
+       where "the provider's oldest segment" read as harmless. */
+    from: resumed ? 'provider live edge'
+      : `${COLD_START_SEGMENTS} segments back from the provider's live edge`,
     restarts: session.restarts || 0,
   });
   session.proc = proc;
