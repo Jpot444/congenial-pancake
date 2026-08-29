@@ -6576,6 +6576,34 @@ async function handleApi(req, res, pathname, query) {
    * using. Passwords never leave the box: they are what this file is 0600 for.
    */
   /*
+   * Films like this one, for the page about it.
+   *
+   * The same reckoning the For You row uses, pointed at one film instead of
+   * at a profile — what an audience reached for next, then the people who
+   * made it, then the shelf. The shelf last rather than not at all, so a film
+   * nobody has indexed still has a row under it.
+   */
+  if (pathname === '/api/similar') {
+    const id = String(query.get('id') || '').trim();
+    if (!id) return json(res, 400, { error: 'Which film?' });
+    const movies = knownMovies();
+    const film = movies.find((m) => String(m.id) === id)
+      /* A film opened straight from a link may not be in any page the box has
+         cached, and the name is the only thing the co-taste layer needs. */
+      || { id, name: String(query.get('name') || ''), categoryId: '' };
+    const answer = await recommend.similarTo({
+      film,
+      movies: movies.filter((m) => !m.adult),
+      people,
+      cache: similarCache,
+      fetchJson: (url, headers) => fetchJson(url, { ...SITE_HEADERS, ...(headers || {}) }),
+      log: (line) => console.log(line),
+      tmdbKey: String(readConfig().tmdbKey || '').trim(),
+    });
+    return json(res, 200, answer);
+  }
+
+  /*
    * The key for the one recommendation service properly built for the
    * question.
    *

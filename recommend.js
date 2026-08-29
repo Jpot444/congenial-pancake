@@ -501,6 +501,100 @@ async function forYou({ profile, movies, categoryAffinity, people, seeds, cache,
 }
 
 /**
+ * Films like this one, for the page about it.
+ *
+ * The card used to end with "More in Action", which is a shelf rather than a
+ * recommendation: it answers "what else did the provider file here", and the
+ * provider files by whatever its categories happen to be. Somebody who has
+ * just read about a film is asking a better question than that.
+ *
+ * Same three signals as the row, in the same order and for the same reasons —
+ * what an audience reached for next, then the people who made it, then the
+ * shelf. The shelf stays as the last of them rather than being thrown away:
+ * it is a weak answer and it is never nothing, so a film nobody has indexed
+ * and nobody has heard of still ends up with a row under it.
+ *
+ * Nothing is excluded for having been watched. This is not "what to watch
+ * next", it is "what is this like" — and a film you have seen is a perfectly
+ * good answer to that, often the most useful one on the row.
+ */
+async function similarTo({ film, movies, people, cache, fetchJson, tmdbKey, log, want = 24 }) {
+  const self = String(film?.id ?? '');
+  const report = { asked: 0, answered: 0, source: '', error: '' };
+  if (!film) return { items: [], similar: report };
+
+  const wanted = new Map();
+  if (fetchJson && film.name) {
+    report.asked = 1;
+    const answer = await alsoEnjoyed(film.name, cache, fetchJson, log, tmdbKey);
+    if (answer.source) {
+      report.answered = 1;
+      report.source = answer.source;
+    } else {
+      report.error = answer.error;
+    }
+    /* In the order the service gave them: a recommendation list is ranked,
+       and throwing that away to re-sort by a local score would be discarding
+       the one thing the service knows better than this box does. */
+    answer.titles.forEach((title, at) => {
+      const key = foldTitle(title);
+      if (key && !wanted.has(key)) wanted.set(key, at);
+    });
+  }
+
+  const credits = people.creditsFor ? people.creditsFor(self) : null;
+  const directors = new Set(credits?.directors || []);
+  const cast = new Set(credits?.cast || []);
+
+  const scored = [];
+  for (const other of movies || []) {
+    const id = String(other.id);
+    if (id === self) continue;
+
+    let score = 0;
+    const why = [];
+
+    const at = wanted.get(foldTitle(other.name));
+    if (at !== undefined) {
+      // Ranked: first on the service's list is worth more than twentieth.
+      score += WEIGHT.coTaste * 2 + Math.max(0, 20 - at) / 10;
+      why.push('People who liked this also liked it');
+    }
+
+    const theirs = people.creditsFor ? people.creditsFor(id) : null;
+    if (theirs) {
+      const sharedDirector = (theirs.directors || []).find((name) => directors.has(name));
+      if (sharedDirector) {
+        score += WEIGHT.director;
+        why.push(`Also by ${sharedDirector}`);
+      }
+      const shared = (theirs.cast || []).filter((name) => cast.has(name)).slice(0, 2);
+      if (shared.length) {
+        score += WEIGHT.actor * shared.length;
+        why.push(`With ${shared.join(' and ')}`);
+      }
+    }
+
+    if (String(other.categoryId) === String(film.categoryId)) {
+      score += 0.5;
+      if (!why.length) why.push('On the same shelf');
+    }
+
+    if (score <= 0) continue;
+    score += WEIGHT.rating * ((Number(other.rating) || 0) / 10);
+    scored.push({ film: other, score, why: why.slice(0, 1) });
+  }
+
+  scored.sort((a, b) => b.score - a.score
+    || (Number(b.film.rating) || 0) - (Number(a.film.rating) || 0));
+
+  return {
+    items: scored.slice(0, want).map((row) => ({ ...row.film, why: row.why })),
+    similar: report,
+  };
+}
+
+/**
  * Films worth putting in a picker.
  *
  * Asked when there is nothing to go on, so it cannot be personal — it has to
@@ -532,5 +626,6 @@ function worthAsking(movies, taste, want = 40) {
 }
 
 module.exports = {
-  forYou, foldTitle, yearOf, worthAsking, tasteOf, similarTitles, tmdbAuth, SOURCES,
+  forYou, similarTo, foldTitle, yearOf, worthAsking, tasteOf, similarTitles,
+  tmdbAuth, SOURCES,
 };

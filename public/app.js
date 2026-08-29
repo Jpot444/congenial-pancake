@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '34.8';
+const VERSION = '34.9';
 
 const PAGE_SIZE = 60;
 
@@ -7303,19 +7303,50 @@ function filmCard(item) {
   }
   main.append(specs);
 
-  /* ---- the rest of the category ---- */
+  /* ---- what people who enjoyed this one went on to enjoy ----
+   *
+   * This was "More in Action", which is a shelf rather than a recommendation:
+   * it answers what else the provider filed in the same place, and the
+   * provider files by whatever its categories happen to be. Somebody who has
+   * just read about a film is asking a better question than that.
+   *
+   * Drawn from the category first so the row is never empty while the box is
+   * thinking, then replaced by the real answer when it lands. The rail is
+   * built either way, because a row that appears a second late is a page that
+   * jumps under somebody's hand. */
   const others = inCategory.filter((other) => String(other.id) !== String(item.id));
-  if (others.length) {
-    const more = filmRail(
-      category ? `More in ${category.name}` : 'More movies',
-      others.length.toLocaleString()
-    );
-    more.track.classList.add('film-more-track');
-    // Capped: the row scrolls, and building a thousand posters to sit off the
-    // right-hand side of it costs the Pi the same as showing them.
-    for (const other of others.slice(0, 24)) more.track.append(cardFor(other));
-    main.append(more.rail);
-  }
+  const more = filmRail('Others enjoyed', '');
+  more.track.classList.add('film-more-track');
+  const fillMore = (list, note) => {
+    more.track.innerHTML = '';
+    for (const other of list.slice(0, 24)) {
+      const card = cardFor(other);
+      if (other.why && other.why.length) {
+        const why = el('p', 'card-why');
+        why.textContent = other.why[0];
+        card.append(why);
+      }
+      more.track.append(card);
+    }
+    const count = more.rail.querySelector('.film-rail-count');
+    if (count) count.textContent = note;
+  };
+  // Capped: the row scrolls, and building a thousand posters to sit off the
+  // right-hand side of it costs the Pi the same as showing them.
+  fillMore(others, category ? `from ${cleanCatName(category.name)}` : '');
+  if (others.length || item.id) main.append(more.rail);
+
+  api('/api/similar', { id: item.id, name: item.name || '' })
+    .then((data) => {
+      // The page may have moved on while the box was being asked.
+      if (!more.rail.isConnected) return;
+      if (data.items && data.items.length) fillMore(data.items, '');
+    })
+    .catch(() => {
+      /* No answer is the category row that is already there. This section is
+         a suggestion, and a suggestion that cannot be made is not an error
+         worth a message on somebody's film page. */
+    });
 
   /* ---- on the box ---- */
   const box = filmPanel('On the box');

@@ -369,6 +369,61 @@ const watchedHeat = (extra = {}) => ({
   check('but a remake is still a different film',
     recommend.foldTitle('Dune') !== recommend.foldTitle('Dune Part Two'));
 
+  /* ---- and the page about one film ------------------------------------- */
+  /*
+   * "Inside of the movie cards, instead of 'more from X category' make it an
+   *  others enjoyed section that suggests similar movies."
+   *
+   * A category rail answers what else the provider filed in the same place,
+   * and the provider files by whatever its categories happen to be. Somebody
+   * who has just read about a film is asking a better question. Same three
+   * signals as the row, in the same order — an audience, then the people who
+   * made it, then the shelf.
+   */
+  console.log('\n  and the page about one film');
+  const near = await recommend.similarTo({
+    film: MOVIES[0],
+    movies: MOVIES,
+    people,
+    cache: new Map(),
+    fetchJson: async () => ({ Similar: { Results: [{ Name: 'Nobody Knows This' }] } }),
+  });
+  const nearIds = near.items.map((i) => i.id);
+  console.log('   like Heat:', JSON.stringify(near.items.map((i) => [i.name, i.why[0]])));
+  check('the film itself is not in its own row',
+    !nearIds.includes('1'), JSON.stringify(nearIds));
+  check('what an audience reached for leads it',
+    nearIds[0] === '8' && /also liked/i.test(near.items[0].why[0]),
+    JSON.stringify([nearIds[0], near.items[0] && near.items[0].why]));
+  const byMann = near.items.find((i) => i.id === '2');
+  check('then the people who made it, named',
+    byMann && /Michael Mann/.test(byMann.why[0]), JSON.stringify(byMann && byMann.why));
+  /* Nothing is excluded for having been watched. This is not "what to watch
+     next", it is "what is this like" — and a film you have seen is a
+     perfectly good answer to that, often the most useful one on the row. */
+  check('and a film already watched is still a good answer to what this is like',
+    nearIds.includes('3'), JSON.stringify(nearIds));
+
+  console.log('\n  and the shelf is the last answer rather than no answer');
+  const bare = await recommend.similarTo({
+    /* A film nobody has indexed and no service has heard of. The row still
+       has to have something under it. */
+    film: { id: '99', name: 'Unheard Of', categoryId: 'crime' },
+    movies: MOVIES,
+    people: { creditsFor: () => null },
+    cache: new Map(),
+    fetchJson: async () => { throw new Error('HTTP 403'); },
+  });
+  console.log('   bare:', JSON.stringify(bare.items.map((i) => [i.name, i.why[0]])));
+  check('a film nothing knows about still gets a row',
+    bare.items.length > 0, String(bare.items.length));
+  check('off the shelf it sits on, and it says so',
+    bare.items.every((i) => i.categoryId === 'crime')
+    && /same shelf/i.test(bare.items[0].why[0]),
+    JSON.stringify(bare.items.map((i) => [i.categoryId, i.why[0]])));
+  check('and the answer says the asking did not work',
+    /403/.test(bare.similar.error || ''), JSON.stringify(bare.similar));
+
   console.log(`\n  ${fails.length ? `FAILED: ${fails.join(', ')}` : 'all good'}`);
   process.exit(fails.length ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

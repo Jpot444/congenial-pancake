@@ -78,6 +78,22 @@ const PNG = Buffer.from(
   await page.route('**/api/profiles/*/taste', (r) =>
     r.fulfill({ status: 200, contentType: 'application/json',
       body: '{"continueWatching":[],"recentlyWatched":[],"categoryAffinity":[],"ratings":{}}' }));
+  /* What people who enjoyed this one went on to enjoy. The film page asks
+     the box; the box asks a recommendation service and matches what comes
+     back against the library. Stubbed here at the box's own answer, since
+     what the box does with a service is recommend.js's business and has its
+     own suite. */
+  page.__similarAsked = [];
+  await page.route('**/api/similar*', (r) => {
+    page.__similarAsked.push(r.request().url());
+    return r.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        items: [{ kind: 'movie', id: 6001, name: 'What They Watched Next',
+          categoryId: 'sci', logo: '', ext: 'mp4',
+          why: ['People who liked this also liked it'] }],
+        similar: { asked: 1, answered: 1, source: 'themoviedb' },
+      }) });
+  });
   await page.route('**/api/downloads*', (r) =>
     r.fulfill({ status: 200, contentType: 'application/json', body: '{"items":[]}' }));
 
@@ -183,6 +199,33 @@ const PNG = Buffer.from(
     badgeShown: !document.querySelector('.film-poster-badge')?.hidden,
   }));
   console.log('   ', JSON.stringify(facts));
+
+  /* ---- others enjoyed, not "more in this category" -------------------- */
+  /*
+   * The rail under a film used to be the rest of whatever shelf the provider
+   * filed it on, which answers "what else is in Action" — a question nobody
+   * standing on a film's page is asking. It is a recommendation now, and it
+   * says why each one is there.
+   */
+  const rail = await page.evaluate(() => ({
+    /* By the rail that holds it: the cast rail has a head of its own and
+       comes first in the page. */
+    head: document.querySelector('.film-rail:has(.film-more-track) .film-rail-head h2')
+      ?.textContent || '',
+    titles: [...document.querySelectorAll('.film-more-track .card-title')]
+      .map((n) => n.textContent),
+    why: [...document.querySelectorAll('.film-more-track .card-why')]
+      .map((n) => n.textContent),
+  }));
+  console.log('   rail:', JSON.stringify(rail));
+  check('the rail under a film is what others enjoyed',
+    rail.head === 'Others enjoyed', rail.head);
+  check('and the box\'s answer replaces the shelf it started with',
+    rail.titles.includes('What They Watched Next'), JSON.stringify(rail.titles));
+  check('each one saying why it is there',
+    /also liked/i.test(rail.why[0] || ''), JSON.stringify(rail.why));
+  check('asked about the film that is open',
+    page.__similarAsked.some((u) => /[?&]id=/.test(u)), JSON.stringify(page.__similarAsked));
   check('the director is credited', /Christopher Nolan/.test(facts.director), facts.director);
   check('the genre is a chip you can follow', /Sci-Fi/.test(facts.director), facts.director);
   check('the cast is the provider\'s, in its order',
@@ -206,9 +249,11 @@ const PNG = Buffer.from(
   check('the three sidebar panels are there',
     facts.panels.length === 3 && /Watched by Hunter/.test(facts.panels[1]),
     JSON.stringify(facts.panels));
-  check('the rest of the category is offered, minus this film',
-    facts.more.length === 1 && /Another Film/.test(facts.more[0]),
-    JSON.stringify(facts.more));
+  /* This used to check that the rail was the rest of the category. It is a
+     recommendation now — see 'others enjoyed' below — and the only thing
+     still owed here is that the film is never in its own rail. */
+  check('and a film is never offered alongside itself',
+    !facts.more.some((title) => /Interstellar/.test(title)), JSON.stringify(facts.more));
 
   /* ---- nothing on this page is made up ----
    *
