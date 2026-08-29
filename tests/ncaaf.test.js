@@ -136,6 +136,37 @@ const NCAA = {
       home: { score: '', description: '(3-2)',
         names: { char6: 'CINCY', short: 'Cincinnati', seo: 'cincinnati' } },
     } },
+    /* Two clubs the newspaper way — 'South Ala.' and 'N.C. State' — which is
+       how ncaa.com writes them and nothing like how the logo table does. */
+    { game: {
+      gameID: '6301237',
+      gameState: 'live',
+      currentPeriod: '1st',
+      contestClock: '9:00',
+      startTime: '3:30PM ET',
+      startTimeEpoch: String(Math.floor(Date.now() / 1000) - 900),
+      network: 'ESPN2',
+      away: { score: '3', description: '(1-4)',
+        names: { char6: 'S ALA', short: 'South Ala.', seo: 'south-alabama' } },
+      home: { score: '7', description: '(4-1)',
+        names: { char6: 'NC ST', short: 'N.C. State', seo: 'nc-state' } },
+    } },
+    /* And one whose name IS an abbreviation. Spelled out, 'ARK' is Arkansas
+       — a different club, a wrong badge, and a wrong badge is worse than
+       none because it is a claim about which game you are looking at. */
+    { game: {
+      gameID: '6301238',
+      gameState: 'pre',
+      currentPeriod: '',
+      contestClock: '',
+      startTime: '8:00PM ET',
+      startTimeEpoch: String(Math.floor(Date.now() / 1000) + 7200),
+      network: 'CBS',
+      away: { score: '', description: '(0-0)',
+        names: { char6: 'NOBODY', short: 'Nowhere Poly', seo: 'nowhere-poly' } },
+      home: { score: '', description: '(0-0)',
+        names: { char6: 'ARK', short: 'ARK', seo: 'ark' } },
+    } },
     { game: {
       gameID: '6301235',
       gameState: 'pre',
@@ -211,7 +242,7 @@ const SPORTSDB = {
   fs.rmSync(DIR, { recursive: true, force: true });
   fs.mkdirSync(DIR, { recursive: true });
   for (const file of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js',
-    'providers.js', 'recordings.js']) {
+    'providers.js', 'recordings.js', 'college-teams.json']) {
     fs.copyFileSync(path.join(ROOT, file), path.join(DIR, file));
   }
   fs.cpSync(path.join(ROOT, 'public'), path.join(DIR, 'public'), { recursive: true });
@@ -343,12 +374,13 @@ const SPORTSDB = {
       try { body = await ask(); break; } catch { await wait(250); }
     }
     const answer = JSON.parse(body || '{}');
+    const report2 = answer;
     const dead = (answer.feeds || []).find((f) => f.sport === 'nfl') || {};
     const fallen = (answer.feeds || []).find((f) => f.sport === 'ncaaf') || {};
 
     console.log('   college feed:', JSON.stringify(fallen));
     check('college falls past the addresses before it onto the NCAA\'s scoreboard',
-      fallen.games === 3 && String(fallen.source).includes('/ncaa'),
+      fallen.games === 5 && String(fallen.source).includes('/ncaa'),
       JSON.stringify([fallen.games, fallen.source]));
     check('having tried the two before it first',
       (fallen.tried || []).length === 2, JSON.stringify(fallen.tried));
@@ -373,6 +405,47 @@ const SPORTSDB = {
       JSON.stringify(on && [on.teamMatch, on.teamShort]));
     check('the network comes with it too, which is the last pass the matcher has',
       on && on.channelMatch === 'FOX', on && on.channelMatch);
+    /* ---- the club marks ---------------------------------------------- */
+    /*
+     * ncaa.com ships no logo address at all, so the cards printed
+     * six-character codes where the badges go. The names and ESPN team ids
+     * in college-teams.json close that, and the whole difficulty is that the
+     * two lists do not agree on what a school is called.
+     */
+    console.log('   marks:', JSON.stringify(college2.map((g) => [g.away.abbr, g.away.logo])));
+    check('a club the scoreboard names plainly gets its mark',
+      on && /ncaa\/500\/130\.png$/.test(on.away.logo), on && on.away.logo);
+    check('and so does the one on the other side of it',
+      on && /ncaa\/500\/194\.png$/.test(on.home.logo), on && on.home.logo);
+    const marks = (report2.feeds || []).find((f) => f.sport === 'ncaaf')?.marks;
+    console.log('   coverage:', JSON.stringify(marks));
+    check('and the box says how many names it knows and which it could not place',
+      marks && marks.known > 800 && Array.isArray(marks.missing),
+      JSON.stringify(marks));
+
+    /* The newspaper spellings, which is what ncaa.com actually writes and
+       nothing like what the logo table does. Both sides are reduced to the
+       same shape — that is what makes 'South Ala.' and 'South Alabama' the
+       same school, and 'N.C. State' and 'North Carolina St.' another one. */
+    const paper = college2.find((g) => g.away.abbr === 'S ALA');
+    console.log('   newspaper:', JSON.stringify(paper && [paper.away.logo, paper.home.logo]));
+    check('a club written the newspaper way still finds its mark',
+      paper && /ncaa\/500\/6\.png$/.test(paper.away.logo), paper && paper.away.logo);
+    check('and so does one written with initials and a full stop',
+      paper && /ncaa\/500\/152\.png$/.test(paper.home.logo), paper && paper.home.logo);
+
+    /* The rule that keeps the whole thing honest. Expanding a lone word
+       turns an abbreviation into a claim on somebody else's name. */
+    const initials = college2.find((g) => g.home.abbr === 'ARK');
+    console.log('   initials:', JSON.stringify(initials && initials.home.logo));
+    check('a name that is only an abbreviation never claims another club\'s badge',
+      initials && !/ncaa\/500\/8\.png$/.test(initials.home.logo || ''),
+      initials && initials.home.logo);
+    check('and a club nothing recognises keeps its initials rather than a wrong badge',
+      initials && initials.away.logo === '' && initials.away.abbr === 'NOBODY',
+      JSON.stringify(initials && [initials.away.abbr, initials.away.logo]));
+    check('which is the name the box reports as one it could not place',
+      marks && marks.missing.includes('NOBODY'), JSON.stringify(marks && marks.missing));
     /* Only ESPN publishes the down and the spot. A field with no ball on it
        is honest; a field with a guessed one is not. */
     check('and no drive is invented, because this source does not publish one',
@@ -498,8 +571,8 @@ const SPORTSDB = {
       console.log('   probe:', JSON.stringify(rows.map((r) => [r.status, r.games, r.bytes])));
       check('it asks all of them, including the ones a poll never reaches',
         rows.length === 3, String(rows.length));
-      check('and reads three games out of the one that answers',
-        rows[2].games === 3, JSON.stringify(rows[2].games));
+      check('and reads every game out of the one that answers',
+        rows[2].games === 5, JSON.stringify(rows[2].games));
       check('and says what each one actually answered',
         rows[0].status === 403 && rows[1].status === 400 && rows[2].status === 200,
         JSON.stringify(rows.map((r) => r.status)));
@@ -507,7 +580,7 @@ const SPORTSDB = {
          with perfectly good JSON in a shape nothing here understands, and
          from the sofa that is indistinguishable from a refusal. */
       check('and how many games this box could read out of it',
-        rows[2].games === 3, JSON.stringify(rows[2]));
+        rows[2].games === 5, JSON.stringify(rows[2]));
       check('with the start of the body, so a login wall says so',
         typeof rows[0].head === 'string', JSON.stringify(rows[0]).slice(0, 120));
       check('asked for one sport only when one is named',

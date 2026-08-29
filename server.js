@@ -4466,8 +4466,14 @@ function nflGame(event, sport = 'nfl') {
     return {
       abbr: c.team?.abbreviation || c.team?.shortDisplayName || '',
       /* ESPN ships the club's mark with the scoreboard, so unlike baseball
-         there is nothing to construct — the address is in the payload. */
-      logo: c.team?.logo || '',
+         there is nothing to construct — the address is in the payload. Where
+         it is missing on a college row the same table the NCAA scoreboard
+         uses answers, so the coverage report means the same thing whichever
+         address the slate came from. */
+      logo: c.team?.logo
+        || (sport === 'ncaaf'
+          ? collegeMarks.logo(c.team?.location, c.team?.displayName, c.team?.shortDisplayName)
+          : ''),
       record: (c.records || [])[0]?.summary || '',
       score: c.score === undefined || c.score === null || c.score === ''
         ? null : Number(c.score),
@@ -4628,6 +4634,155 @@ function espnEvents(body) {
  * already prefers an abbreviation to a hole where a badge should be.
  */
 
+/*
+ * The club marks.
+ *
+ * Baseball's come with the scoreboard — one mlbstatic.com address per team id
+ * — and the ones on this list do not: ncaa.com ships no logo address at all,
+ * so the cards have been printing six-character codes where the badges go.
+ *
+ * The names and ESPN team ids in college-teams.json are the CSV out of
+ * saiemgilani's gist, kept as ids rather than addresses because every one of
+ * the 757 rows was the same address with a different number in it. The
+ * addresses are ESPN's image CDN, which is not the host that refuses this box
+ * — that is site.api.espn.com, an entirely different service — but if it
+ * turns out to refuse us too, a card with 'MICH' on it is exactly what is
+ * there now, so nothing is lost by trying.
+ *
+ * MATCHING is the whole difficulty, because the two lists do not agree on
+ * what a school is called: ncaa.com writes 'Kennesaw St.' and 'Middle Tenn.'
+ * where the gist has 'Kennesaw State' and 'Middle Tennessee', and their
+ * six-character codes (KENSAW, MIDTEN) are nothing like the gist's
+ * abbreviations (KENN, MTSU). So both sides are reduced to the same shape:
+ * upper case, the punctuation gone, and the ST/STATE argument settled by
+ * spelling it out on both sides. Every name a team is known by goes into the
+ * index — school, and the three alternates the gist carries — and an
+ * abbreviation only when it belongs to exactly one club, because 79 of them
+ * do not.
+ */
+const COLLEGE_LOGO = 'https://a.espncdn.com/i/teamlogos/ncaa/500/{id}.png';
+
+/* The words a scoreboard shortens, spelled back out.
+ *
+ * ncaa.com writes in newspaper style — 'South Ala.', 'Middle Tenn.', 'Miami
+ * (Fla.)', 'N.C. State' — and the gist writes schools out, or nearly: its
+ * alternates include 'Miami (FL)', 'North Carolina St.' and 'LA Tech'. The
+ * two meet if both are expanded, and expanding BOTH is what makes this safe:
+ * the same function runs over the index and over the lookup, so a rule that
+ * is wrong is wrong symmetrically and simply fails to match rather than
+ * matching the wrong club.
+ *
+ * 'LA' is deliberately absent. It is Louisiana in 'LA Tech' and a surname in
+ * 'La Salle', and the gist already carries 'LA Tech' as an alternate, so
+ * there is nothing to gain and a real school to get wrong. */
+const SAID_SHORT = {
+  ALA: 'ALABAMA', ARIZ: 'ARIZONA', ARK: 'ARKANSAS', CALIF: 'CALIFORNIA',
+  COLO: 'COLORADO', CONN: 'CONNECTICUT', DEL: 'DELAWARE', FLA: 'FLORIDA',
+  FL: 'FLORIDA', GA: 'GEORGIA', ILL: 'ILLINOIS', IND: 'INDIANA', KAN: 'KANSAS',
+  KY: 'KENTUCKY', MD: 'MARYLAND', MASS: 'MASSACHUSETTS', MICH: 'MICHIGAN',
+  MINN: 'MINNESOTA', MISS: 'MISSISSIPPI', MO: 'MISSOURI', MONT: 'MONTANA',
+  NEB: 'NEBRASKA', NEV: 'NEVADA', OKLA: 'OKLAHOMA', ORE: 'OREGON',
+  TENN: 'TENNESSEE', TEX: 'TEXAS', VA: 'VIRGINIA', VT: 'VERMONT',
+  WASH: 'WASHINGTON', WIS: 'WISCONSIN', WYO: 'WYOMING',
+  NC: 'NORTH CAROLINA', SC: 'SOUTH CAROLINA', ND: 'NORTH DAKOTA',
+  SD: 'SOUTH DAKOTA', NM: 'NEW MEXICO', NJ: 'NEW JERSEY', NH: 'NEW HAMPSHIRE',
+  WVA: 'WEST VIRGINIA',
+  // 'St' and 'State' are the same word; which gets written depends only on
+  // how much room the writer had. So are the compass points.
+  ST: 'STATE', N: 'NORTH', S: 'SOUTH', E: 'EAST', W: 'WEST',
+  // And three the sport shortens rather than the country: 'App State',
+  // 'Coastal Caro.', 'Cent. Michigan'.
+  APP: 'APPALACHIAN', CARO: 'CAROLINA', CENT: 'CENTRAL',
+};
+
+/** One shape for a school's name, whoever wrote it. */
+function schoolKey(name) {
+  const flat = String(name || '')
+    .toUpperCase()
+    .replace(/&/g, ' AND ')
+    /* Dropped rather than turned into a space, so 'N.C. State' stays two
+       words and not three — otherwise NC is never seen as a unit and North
+       Carolina is out of reach for ever. The ʻokina belongs here for the
+       same reason: Hawai'i is one word however it is typed. */
+    .replace(/[.'’`ʻ]/g, '')
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim();
+  if (!flat) return '';
+  const words = flat.split(' ');
+  /* A single word is left exactly as it is, and this is the rule that keeps
+     the whole thing honest. Expanding one turns an ABBREVIATION into a claim
+     on somebody else's name: the gist carries 'ARK' as an alternate for
+     Arkansas State, and spelled out that is Arkansas — a different club, a
+     wrong badge, and a wrong badge is worse than none because it is a claim
+     about which game you are looking at. Expansion earns its keep on names
+     of two words or more, where the short word is a qualifier and the rest
+     says which school. */
+  if (words.length === 1) return words[0];
+  /* Nothing is thrown away. Dropping 'College' as a filler word looked
+     tidy and quietly merged Colorado College into Colorado, Cornell College
+     into Cornell and Louisiana College into Louisiana — fifteen clubs, each
+     one a wrong badge waiting to happen. Both sides go through this same
+     function, so a word kept on both sides costs nothing. */
+  return words.map((word) => SAID_SHORT[word] || word).join(' ');
+}
+
+const collegeMarks = (() => {
+  const byName = new Map();
+  const byAbbr = new Map();
+  let table;
+  try {
+    // eslint-disable-next-line global-require
+    table = require('./college-teams.json');
+  } catch {
+    // A box without the file is a box with the cards it had before.
+    return { logo: () => '', size: 0 };
+  }
+  const address = (id) => (table.logo || COLLEGE_LOGO).replace('{id}', id);
+  /* Every club's own name first, and the alternates only afterwards.
+     Four names are claimed by two clubs each — 'Louisiana' is the school in
+     Lafayette and also something Louisiana College is known as, and there is
+     'Union' and 'Benedict' and 'Cumberland' — and a club's OWN name has the
+     better claim to it than another club's nickname. Ordered rather than
+     refused, because refusing both would cost Louisiana its badge to settle
+     an argument with a school that does not play this sport. */
+  for (const team of table.teams || []) {
+    const key = schoolKey(team.name);
+    if (key && !byName.has(key)) byName.set(key, address(team.id));
+  }
+  for (const team of table.teams || []) {
+    const url = address(team.id);
+    const abbr = String(team.abbr || '').toUpperCase().trim();
+    for (const name of team.alt || []) {
+      /* The gist repeats each club's abbreviation in its alternates. Those
+         belong in the abbreviation index, which refuses the ambiguous ones,
+         and not in the name index, which does not. */
+      if (String(name).toUpperCase().trim() === abbr) continue;
+      const key = schoolKey(name);
+      if (key && !byName.has(key)) byName.set(key, url);
+    }
+    if (!abbr) continue;
+    /* Ambiguous abbreviations are worse than none: a badge is a claim about
+       which game this is, and 79 of these belong to more than one club. Set
+       to null on the second sighting so the first cannot answer for both. */
+    byAbbr.set(abbr, byAbbr.has(abbr) ? null : url);
+  }
+  return {
+    size: byName.size,
+    /** The mark for a club, from whatever the scoreboard called it. */
+    logo(...names) {
+      for (const name of names) {
+        const key = schoolKey(name);
+        if (key && byName.has(key)) return byName.get(key);
+      }
+      for (const name of names) {
+        const abbr = String(name || '').toUpperCase().trim();
+        if (abbr && byAbbr.get(abbr)) return byAbbr.get(abbr);
+      }
+      return '';
+    },
+  };
+})();
+
 /** ncaa.com's state words, in the three the rest of this file speaks. */
 function ncaaStatus(state) {
   const word = String(state || '').toLowerCase();
@@ -4653,9 +4808,11 @@ function ncaaGame(row) {
     const names = team.names || {};
     return {
       abbr: names.char6 || names.short || '',
-      // Not shipped with this scoreboard. The card prints the abbreviation
-      // rather than leaving a hole, which is what that fallback is for.
-      logo: '',
+      /* Not shipped with this scoreboard, so it is looked up by name. Where
+         the name is one nothing recognises the card prints the abbreviation,
+         which is what that fallback has always been for. */
+      logo: collegeMarks.logo(names.short, String(names.seo || '').replace(/-/g, ' '),
+        names.full, names.char6),
       // '(4-1)' as ncaa.com writes it; the card wants '4-1'.
       record: String(team.description || '').replace(/[()]/g, '').trim(),
       score: team.score === undefined || team.score === null || team.score === ''
@@ -4758,7 +4915,13 @@ function sportsdbGame(row, sport) {
     /* No abbreviation is published, so the card gets the name it has. The
        mark usually loads, and where it does not the fallback prints this. */
     abbr: String(team || '').trim(),
-    logo: String(badge || ''),
+    /* This publisher does ship a badge. Where one is missing on a college
+       row the same table the NCAA scoreboard uses is asked — and it is asked
+       for the name with the mascot taken off too, because this list writes
+       'Michigan Wolverines' where that one writes 'Michigan'. */
+    logo: String(badge || '') || (sport === 'ncaaf'
+      ? collegeMarks.logo(team, String(team || '').split(' ').slice(0, -1).join(' '))
+      : ''),
     record: '',
     score: score === undefined || score === null || score === '' ? null : Number(score),
     possession: false,
@@ -7098,7 +7261,30 @@ async function handleApi(req, res, pathname, query) {
       // eslint-disable-next-line no-await-in-loop
       feeds.push({ sport, addresses: await probeFootball(sport, urls) });
     }
-    return json(res, 200, { at: Date.now(), feeds });
+    /* And one club mark, actually fetched. The addresses are ESPN's image
+       CDN, which is a different service from the API that refuses this box —
+       but "different service" is a reasonable belief, not a fact, and a
+       badge that does not load looks from the sofa exactly like a badge that
+       was never looked up. */
+    let mark = null;
+    const sample = collegeMarks.logo('Michigan');
+    if (sample) {
+      const began = Date.now();
+      try {
+        const probeRes = await request(sample, { headers: SITE_HEADERS, timeout: 15000 });
+        const body = await readBody(probeRes);
+        mark = {
+          url: sample,
+          status: probeRes.statusCode || 0,
+          bytes: body.length,
+          type: probeRes.headers['content-type'] || '',
+          ms: Date.now() - began,
+        };
+      } catch (err) {
+        mark = { url: sample, status: 0, error: err.message, ms: Date.now() - began };
+      }
+    }
+    return json(res, 200, { at: Date.now(), feeds, mark, marksKnown: collegeMarks.size });
   }
 
   if (pathname === '/api/scores') {
@@ -7138,6 +7324,18 @@ async function handleApi(req, res, pathname, query) {
           at: ncaaf.at,
           error: ncaaf.error || undefined,
           quiet: ncaaf.quiet || undefined,
+          /* How many clubs on the slate found a mark, and the names of the
+             ones that did not. Two lists have to agree on what a school is
+             called for a badge to appear, and when they do not the answer is
+             a name to add — which is only actionable if the box says which
+             name. */
+          marks: ncaaf.games.length ? {
+            known: collegeMarks.size,
+            missing: [...new Set(ncaaf.games.flatMap((g) => [
+              g.away && !g.away.logo ? g.away.abbr : '',
+              g.home && !g.home.logo ? g.home.abbr : '',
+            ]).filter(Boolean))].slice(0, 30),
+          } : undefined,
           tried: ncaaf.tried?.length ? ncaaf.tried : undefined },
         {
           sport: 'mlb',

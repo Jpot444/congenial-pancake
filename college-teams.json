@@ -1,0 +1,6249 @@
+{
+"_":"College football club marks. Names and ESPN team ids from https://gist.github.com/saiemgilani/c6596f0e1c8b148daabc2b7f1e6f6add — the addresses are built from `logo` in server.js, so only the id is kept. Regenerate by hand; nothing reads this at build time because there is no build.",
+"logo":"https://a.espncdn.com/i/teamlogos/ncaa/500/{id}.png",
+"teams":[
+{
+"id":"2000",
+"name":"Abilene Christian",
+"abbr":"ACU",
+"alt":[
+"ACU",
+"Abil Christian"
+]
+},
+{
+"id":"2001",
+"name":"Adams State",
+"abbr":"ADST",
+"alt":[
+"ADST",
+"Adams St"
+]
+},
+{
+"id":"2003",
+"name":"Adrian",
+"abbr":"ADR",
+"alt":[
+"ADR"
+]
+},
+{
+"id":"2005",
+"name":"Air Force",
+"abbr":"AFA",
+"alt":[
+"AFA"
+]
+},
+{
+"id":"2006",
+"name":"Akron",
+"abbr":"AKR",
+"alt":[
+"AKR"
+]
+},
+{
+"id":"333",
+"name":"Alabama",
+"abbr":"ALA",
+"alt":[
+"ALA"
+]
+},
+{
+"id":"2010",
+"name":"Alabama A&M",
+"abbr":"AAMU",
+"alt":[
+"AAMU"
+]
+},
+{
+"id":"2011",
+"name":"Alabama State",
+"abbr":"ALST",
+"alt":[
+"ALST"
+]
+},
+{
+"id":"399",
+"name":"Albany",
+"abbr":"ALBY",
+"alt":[
+"ALBY"
+]
+},
+{
+"id":"2013",
+"name":"Albany State (GA)",
+"abbr":"ALB",
+"alt":[
+"ALB",
+"Albany St (GA)"
+]
+},
+{
+"id":"2790",
+"name":"Albion",
+"abbr":"ALBI",
+"alt":[
+"ALBI"
+]
+},
+{
+"id":"2015",
+"name":"Albright",
+"abbr":"ALB",
+"alt":[
+"ALB"
+]
+},
+{
+"id":"2016",
+"name":"Alcorn State",
+"abbr":"ALCN",
+"alt":[
+"ALCN"
+]
+},
+{
+"id":"2017",
+"name":"Alderson-Broaddus",
+"abbr":"ABC",
+"alt":[
+"ABC",
+"Ald.-Broaddus"
+]
+},
+{
+"id":"365",
+"name":"Alfred",
+"abbr":"ALF",
+"alt":[
+"ALF"
+]
+},
+{
+"id":"3162",
+"name":"Alfred State College",
+"abbr":"ASC",
+"alt":[
+"ASC",
+"Alfred St"
+]
+},
+{
+"id":"2018",
+"name":"Allegheny",
+"abbr":"ALL",
+"alt":[
+"ALL"
+]
+},
+{
+"id":"2800",
+"name":"Alma College",
+"abbr":"ALM",
+"alt":[
+"ALM"
+]
+},
+{
+"id":"2022",
+"name":"American International",
+"abbr":"AIC",
+"alt":[
+"AIC",
+"American Intl."
+]
+},
+{
+"id":"7",
+"name":"Amherst College",
+"abbr":"AMH",
+"alt":[
+"Amherst",
+"AMH"
+]
+},
+{
+"id":"2023",
+"name":"Anderson (IN)",
+"abbr":"AND",
+"alt":[
+"AND"
+]
+},
+{
+"id":"2025",
+"name":"Angelo State",
+"abbr":"ANG",
+"alt":[
+"ANG",
+"Angelo St"
+]
+},
+{
+"id":"15",
+"name":"Anna Maria College",
+"abbr":"ANN",
+"alt":[
+"ANN",
+"Anna Maria"
+]
+},
+{
+"id":"2026",
+"name":"Appalachian State",
+"abbr":"APP",
+"alt":[
+"APP",
+"Appalachian St"
+]
+},
+{
+"id":"3111",
+"name":"Apprentice School",
+"abbr":"APP",
+"alt":[
+"APP"
+]
+},
+{
+"id":"12",
+"name":"Arizona",
+"abbr":"ARIZ",
+"alt":[
+"ARIZ"
+]
+},
+{
+"id":"9",
+"name":"Arizona State",
+"abbr":"ASU",
+"alt":[
+"ASU"
+]
+},
+{
+"id":"8",
+"name":"Arkansas",
+"abbr":"ARK",
+"alt":[
+"ARK"
+]
+},
+{
+"id":"2032",
+"name":"Arkansas State",
+"abbr":"ARST",
+"alt":[
+"ARST"
+]
+},
+{
+"id":"2033",
+"name":"Arkansas Tech",
+"abbr":"ARK",
+"alt":[
+"ARK"
+]
+},
+{
+"id":"2028",
+"name":"Arkansas-Monticello",
+"abbr":"ARK",
+"alt":[
+"ARK",
+"AR-Monticello"
+]
+},
+{
+"id":"2029",
+"name":"Arkansas-Pine Bluff",
+"abbr":"UAPB",
+"alt":[
+"UAPB",
+"AR-Pine Bluff"
+]
+},
+{
+"id":"349",
+"name":"Army",
+"abbr":"ARMY"
+},
+{
+"id":"308",
+"name":"Ashland",
+"abbr":"ASH",
+"alt":[
+"ASH"
+]
+},
+{
+"id":"2038",
+"name":"Assumption",
+"abbr":"ASP",
+"alt":[
+"ASP"
+]
+},
+{
+"id":"2",
+"name":"Auburn",
+"abbr":"AUB",
+"alt":[
+"AUB"
+]
+},
+{
+"id":"124",
+"name":"Augsburg",
+"abbr":"AUG",
+"alt":[
+"AUG"
+]
+},
+{
+"id":"2042",
+"name":"Augustana (IL)",
+"abbr":"AUG",
+"alt":[
+"AUG"
+]
+},
+{
+"id":"2043",
+"name":"Augustana (SD)",
+"abbr":"AUG",
+"alt":[
+"AUG"
+]
+},
+{
+"id":"2044",
+"name":"Aurora",
+"abbr":"AUR",
+"alt":[
+"AUR"
+]
+},
+{
+"id":"2045",
+"name":"Austin College",
+"abbr":"AUS",
+"alt":[
+"AUS"
+]
+},
+{
+"id":"2046",
+"name":"Austin Peay",
+"abbr":"PEAY",
+"alt":[
+"PEAY"
+]
+},
+{
+"id":"3178",
+"name":"Ave Maria",
+"abbr":"AMU",
+"alt":[
+"AMU"
+]
+},
+{
+"id":"2047",
+"name":"Averett",
+"abbr":"AVE",
+"alt":[
+"AVE"
+]
+},
+{
+"id":"2048",
+"name":"Avila College",
+"abbr":"AVC",
+"alt":[
+"AVC"
+]
+},
+{
+"id":"2049",
+"name":"Azusa Pacific",
+"abbr":"AZU",
+"alt":[
+"AZU"
+]
+},
+{
+"id":"487",
+"name":"Bacone College",
+"abbr":"BKN",
+"alt":[
+"BKN"
+]
+},
+{
+"id":"488",
+"name":"Baker University",
+"abbr":"BAK",
+"alt":[
+"BAK",
+"Baker U"
+]
+},
+{
+"id":"188",
+"name":"Baldwin-Wallace",
+"abbr":"BAL",
+"alt":[
+"BAL"
+]
+},
+{
+"id":"2050",
+"name":"Ball State",
+"abbr":"BALL",
+"alt":[
+"BALL"
+]
+},
+{
+"id":"121",
+"name":"Bates College",
+"abbr":"BAT",
+"alt":[
+"Bates",
+"BAT"
+]
+},
+{
+"id":"239",
+"name":"Baylor",
+"abbr":"BAY",
+"alt":[
+"BAY"
+]
+},
+{
+"id":"479",
+"name":"Becker College",
+"abbr":"BEC",
+"alt":[
+"BEC"
+]
+},
+{
+"id":"2056",
+"name":"Belhaven College",
+"abbr":"BEL",
+"alt":[
+"BEL",
+"Belhaven"
+]
+},
+{
+"id":"266",
+"name":"Beloit College",
+"abbr":"BEL",
+"alt":[
+"Beloit",
+"BEL"
+]
+},
+{
+"id":"132",
+"name":"Bemidji State",
+"abbr":"BEM",
+"alt":[
+"BEM"
+]
+},
+{
+"id":"2059",
+"name":"Benedict",
+"abbr":"BEN",
+"alt":[
+"BEN"
+]
+},
+{
+"id":"490",
+"name":"Benedict College",
+"abbr":"BBG",
+"alt":[
+"BBG",
+"Benedict"
+]
+},
+{
+"id":"2283",
+"name":"Benedictine (IL)",
+"abbr":"BEN",
+"alt":[
+"BEN"
+]
+},
+{
+"id":"16111",
+"name":"Benedictine College",
+"abbr":"BEN",
+"alt":[
+"BEN",
+"Benedictine"
+]
+},
+{
+"id":"2060",
+"name":"Bentley",
+"abbr":"BENT",
+"alt":[
+"BENT"
+]
+},
+{
+"id":"2757",
+"name":"Berry College",
+"abbr":"BER",
+"alt":[
+"BER",
+"Berry"
+]
+},
+{
+"id":"492",
+"name":"Bethany (KS)",
+"abbr":"BET",
+"alt":[
+"BET"
+]
+},
+{
+"id":"2062",
+"name":"Bethany (WV)",
+"abbr":"BET",
+"alt":[
+"BET"
+]
+},
+{
+"id":"2802",
+"name":"Bethel (MN)",
+"abbr":"BET",
+"alt":[
+"BET"
+]
+},
+{
+"id":"2064",
+"name":"Bethel (TN)",
+"abbr":"BET",
+"alt":[
+"BET"
+]
+},
+{
+"id":"2065",
+"name":"Bethune-Cookman",
+"abbr":"BCU",
+"alt":[
+"BCU"
+]
+},
+{
+"id":"3",
+"name":"Birmingham-Southern",
+"abbr":"BIR",
+"alt":[
+"BIR"
+]
+},
+{
+"id":"2069",
+"name":"Black Hills State",
+"abbr":"BLA",
+"alt":[
+"BLA",
+"Black Hills St"
+]
+},
+{
+"id":"2070",
+"name":"Blackburn",
+"abbr":"BLA",
+"alt":[
+"BLA"
+]
+},
+{
+"id":"2071",
+"name":"Bloomsburg",
+"abbr":"BLO",
+"alt":[
+"BLO"
+]
+},
+{
+"id":"495",
+"name":"Bluefield College",
+"abbr":"BLU",
+"alt":[
+"BLU",
+"Bluefield"
+]
+},
+{
+"id":"2074",
+"name":"Bluffton",
+"abbr":"BLU",
+"alt":[
+"BLU"
+]
+},
+{
+"id":"68",
+"name":"Boise State",
+"abbr":"BSU",
+"alt":[
+"BSU"
+]
+},
+{
+"id":"103",
+"name":"Boston College",
+"abbr":"BC",
+"alt":[
+"BC"
+]
+},
+{
+"id":"340",
+"name":"Bowdoin",
+"abbr":"BOW",
+"alt":[
+"BOW"
+]
+},
+{
+"id":"2075",
+"name":"Bowie State",
+"abbr":"BOW",
+"alt":[
+"BOW",
+"Bowie St"
+]
+},
+{
+"id":"189",
+"name":"Bowling Green",
+"abbr":"BGSU",
+"alt":[
+"Bowling Green State",
+"BGSU"
+]
+},
+{
+"id":"2913",
+"name":"Brevard College",
+"abbr":"BRE",
+"alt":[
+"BRE",
+"Brevard"
+]
+},
+{
+"id":"2079",
+"name":"Bridgewater (VA)",
+"abbr":"BRD",
+"alt":[
+"BRD"
+]
+},
+{
+"id":"18",
+"name":"Bridgewater State",
+"abbr":"BGW",
+"alt":[
+"BGW",
+"Bridgewater St"
+]
+},
+{
+"id":"2080",
+"name":"Brit Columbia",
+"abbr":"BBM",
+"alt":[
+"BBM"
+]
+},
+{
+"id":"2781",
+"name":"Brockport State (NY)",
+"abbr":"BRO",
+"alt":[
+"BRO",
+"Brockport St (NY)"
+]
+},
+{
+"id":"225",
+"name":"Brown",
+"abbr":"BRWN",
+"alt":[
+"BRWN"
+]
+},
+{
+"id":"2803",
+"name":"Bryant",
+"abbr":"BRY",
+"alt":[
+"BRY"
+]
+},
+{
+"id":"2083",
+"name":"Bucknell",
+"abbr":"BUCK",
+"alt":[
+"BUCK"
+]
+},
+{
+"id":"63",
+"name":"Buena Vista",
+"abbr":"BUE",
+"alt":[
+"BUE"
+]
+},
+{
+"id":"2084",
+"name":"Buffalo",
+"abbr":"BUFF",
+"alt":[
+"BUFF"
+]
+},
+{
+"id":"2085",
+"name":"Buffalo State",
+"abbr":"BUF",
+"alt":[
+"BUF",
+"Buffalo St"
+]
+},
+{
+"id":"2086",
+"name":"Butler",
+"abbr":"BUT",
+"alt":[
+"BUT"
+]
+},
+{
+"id":"252",
+"name":"BYU",
+"abbr":"BYU",
+"alt":[
+"Brigham Young"
+]
+},
+{
+"id":"2094",
+"name":"Cal Lutheran",
+"abbr":"CAL",
+"alt":[
+"California Lutheran",
+"CAL"
+]
+},
+{
+"id":"13",
+"name":"Cal Poly",
+"abbr":"CP",
+"alt":[
+"CP"
+]
+},
+{
+"id":"25",
+"name":"California",
+"abbr":"CAL",
+"alt":[
+"CAL",
+"Cal"
+]
+},
+{
+"id":"2858",
+"name":"California (PA)",
+"abbr":"CAL",
+"alt":[
+"CAL"
+]
+},
+{
+"id":"2097",
+"name":"Campbell",
+"abbr":"CAMP",
+"alt":[
+"CAMP"
+]
+},
+{
+"id":"424",
+"name":"Capital",
+"abbr":"CAP",
+"alt":[
+"CAP"
+]
+},
+{
+"id":"2101",
+"name":"Carleton",
+"abbr":"CAR",
+"alt":[
+"CAR"
+]
+},
+{
+"id":"2102",
+"name":"Carnegie Mellon",
+"abbr":"CAR",
+"alt":[
+"CAR"
+]
+},
+{
+"id":"32",
+"name":"Carroll (WI)",
+"abbr":"CAR",
+"alt":[
+"CAR"
+]
+},
+{
+"id":"2105",
+"name":"Carson-Newman",
+"abbr":"CNEW",
+"alt":[
+"CNEW"
+]
+},
+{
+"id":"2106",
+"name":"Carthage",
+"abbr":"CAR",
+"alt":[
+"CAR"
+]
+},
+{
+"id":"2963",
+"name":"Case Western Reserve",
+"abbr":"CSR",
+"alt":[
+"CSR",
+"Case West Reserve"
+]
+},
+{
+"id":"293",
+"name":"Castleton State College",
+"abbr":"CAS",
+"alt":[
+"CAS",
+"Castleton St"
+]
+},
+{
+"id":"2107",
+"name":"Catawba",
+"abbr":"CAT",
+"alt":[
+"CAT"
+]
+},
+{
+"id":"2108",
+"name":"Catholic University",
+"abbr":"CATH",
+"alt":[
+"CATH",
+"Catholic Univ."
+]
+},
+{
+"id":"2964",
+"name":"Central",
+"abbr":"CEN",
+"alt":[
+"CEN"
+]
+},
+{
+"id":"2110",
+"name":"Central Arkansas",
+"abbr":"UCA",
+"alt":[
+"UCA",
+"Cent Arkansas"
+]
+},
+{
+"id":"2115",
+"name":"Central Connecticut",
+"abbr":"CCSU",
+"alt":[
+"Central Connecticut State",
+"CCSU",
+"Cent Conn St"
+]
+},
+{
+"id":"2860",
+"name":"Central Methodist",
+"abbr":"CDF",
+"alt":[
+"CDF",
+"Cent Methodist"
+]
+},
+{
+"id":"2117",
+"name":"Central Michigan",
+"abbr":"CMU",
+"alt":[
+"CMU",
+"Cent Michigan"
+]
+},
+{
+"id":"2118",
+"name":"Central Missouri State",
+"abbr":"CEN",
+"alt":[
+"CEN",
+"Cent Missouri St"
+]
+},
+{
+"id":"2122",
+"name":"Central Oklahoma",
+"abbr":"CEN",
+"alt":[
+"CEN",
+"Cent Oklahoma"
+]
+},
+{
+"id":"2119",
+"name":"Central State",
+"abbr":"CCI",
+"alt":[
+"CCI",
+"Central St"
+]
+},
+{
+"id":"2120",
+"name":"Central Washington",
+"abbr":"CEN",
+"alt":[
+"CEN",
+"Cent Washington"
+]
+},
+{
+"id":"2121",
+"name":"Centre",
+"abbr":"CEN",
+"alt":[
+"CEN"
+]
+},
+{
+"id":"2123",
+"name":"Chadron State",
+"abbr":"CHA",
+"alt":[
+"CHA",
+"Chadron St"
+]
+},
+{
+"id":"411",
+"name":"Chapman",
+"abbr":"CHA",
+"alt":[
+"CHA"
+]
+},
+{
+"id":"2128",
+"name":"Charleston (WV)",
+"abbr":"CHA",
+"alt":[
+"CHA"
+]
+},
+{
+"id":"2127",
+"name":"Charleston Southern",
+"abbr":"CHSO",
+"alt":[
+"CHSO",
+"Charleston So"
+]
+},
+{
+"id":"2429",
+"name":"Charlotte",
+"abbr":"CHAR",
+"alt":[
+"CHAR"
+]
+},
+{
+"id":"236",
+"name":"Chattanooga",
+"abbr":"CHAT",
+"alt":[
+"CHAT"
+]
+},
+{
+"id":"2129",
+"name":"Cheyney",
+"abbr":"CHE",
+"alt":[
+"CHE"
+]
+},
+{
+"id":"80",
+"name":"Chicago",
+"abbr":"CHI",
+"alt":[
+"CHI"
+]
+},
+{
+"id":"2804",
+"name":"Chowan",
+"abbr":"CHO",
+"alt":[
+"CHO"
+]
+},
+{
+"id":"3112",
+"name":"Christopher Newport",
+"abbr":"CHR",
+"alt":[
+"CHR"
+]
+},
+{
+"id":"2132",
+"name":"Cincinnati",
+"abbr":"CIN",
+"alt":[
+"CIN"
+]
+},
+{
+"id":"17",
+"name":"Claremont",
+"abbr":"CLA",
+"alt":[
+"CLA"
+]
+},
+{
+"id":"2134",
+"name":"Clarion",
+"abbr":"CLA",
+"alt":[
+"CLA"
+]
+},
+{
+"id":"2805",
+"name":"Clark Atlanta",
+"abbr":"CLK",
+"alt":[
+"CLK"
+]
+},
+{
+"id":"228",
+"name":"Clemson",
+"abbr":"CLEM",
+"alt":[
+"CLEM"
+]
+},
+{
+"id":"2557",
+"name":"Coast Guard",
+"abbr":"COA",
+"alt":[
+"COA"
+]
+},
+{
+"id":"324",
+"name":"Coastal Carolina",
+"abbr":"CCU",
+"alt":[
+"CCU",
+"C. Carolina"
+]
+},
+{
+"id":"2141",
+"name":"Coe",
+"abbr":"COE",
+"alt":[
+"Coe College"
+]
+},
+{
+"id":"33",
+"name":"Colby",
+"abbr":"COL",
+"alt":[
+"COL"
+]
+},
+{
+"id":"2142",
+"name":"Colgate",
+"abbr":"COLG",
+"alt":[
+"COLG"
+]
+},
+{
+"id":"3211",
+"name":"College of Faith",
+"abbr":"FAI",
+"alt":[
+"FAI",
+"Faith-Arkansas"
+]
+},
+{
+"id":"3253",
+"name":"College of Faith - Charlotte",
+"abbr":"COFC",
+"alt":[
+"COFC",
+"Faith-Charlotte"
+]
+},
+{
+"id":"2442",
+"name":"College of New Jersey",
+"abbr":"CNJ",
+"alt":[
+"CNJ",
+"College of NJ"
+]
+},
+{
+"id":"38",
+"name":"Colorado",
+"abbr":"COLO",
+"alt":[
+"COLO"
+]
+},
+{
+"id":"2144",
+"name":"Colorado College",
+"abbr":"COL",
+"alt":[
+"COL"
+]
+},
+{
+"id":"11",
+"name":"Colorado Mesa",
+"abbr":"MESA",
+"alt":[
+"MESA"
+]
+},
+{
+"id":"2146",
+"name":"Colorado Mines",
+"abbr":"COL",
+"alt":[
+"COL"
+]
+},
+{
+"id":"36",
+"name":"Colorado State",
+"abbr":"CSU",
+"alt":[
+"CSU"
+]
+},
+{
+"id":"2570",
+"name":"Colorado State-Pueblo",
+"abbr":"CSUP",
+"alt":[
+"CSUP",
+"Colorado St-Pueblo"
+]
+},
+{
+"id":"171",
+"name":"Columbia",
+"abbr":"CLMB",
+"alt":[
+"CLMB"
+]
+},
+{
+"id":"2148",
+"name":"Concord",
+"abbr":"CON",
+"alt":[
+"CON"
+]
+},
+{
+"id":"3099",
+"name":"Concordia (AL)",
+"abbr":"CON",
+"alt":[
+"CON",
+"Concordia Col."
+]
+},
+{
+"id":"2151",
+"name":"Concordia (IL)",
+"abbr":"CON",
+"alt":[
+"CON"
+]
+},
+{
+"id":"2152",
+"name":"Concordia (MN)",
+"abbr":"CON",
+"alt":[
+"CON"
+]
+},
+{
+"id":"409",
+"name":"Concordia (WI)",
+"abbr":"CON",
+"alt":[
+"CON"
+]
+},
+{
+"id":"2985",
+"name":"Concordia College (MI)",
+"abbr":"CMI",
+"alt":[
+"CMI",
+"Concordia  (MI)"
+]
+},
+{
+"id":"3066",
+"name":"Concordia-St. Paul",
+"abbr":"CON",
+"alt":[
+"CON"
+]
+},
+{
+"id":"41",
+"name":"Connecticut",
+"abbr":"CONN",
+"alt":[
+"CONN",
+"UConn"
+]
+},
+{
+"id":"172",
+"name":"Cornell",
+"abbr":"COR",
+"alt":[
+"COR"
+]
+},
+{
+"id":"2155",
+"name":"Cornell College (IA)",
+"abbr":"COR",
+"alt":[
+"Cornell College",
+"COR",
+"Cornell  (IA)"
+]
+},
+{
+"id":"509",
+"name":"Crown College",
+"abbr":"CRO",
+"alt":[
+"CRO"
+]
+},
+{
+"id":"510",
+"name":"Culver-Stockton",
+"abbr":"CUL",
+"alt":[
+"CUL",
+"Culver-Stockton Coll"
+]
+},
+{
+"id":"2161",
+"name":"Cumberland",
+"abbr":"CUM",
+"alt":[
+"CUM",
+"Cumb (TN)"
+]
+},
+{
+"id":"511",
+"name":"Cumberland College",
+"abbr":"CUM",
+"alt":[
+"CUM",
+"Cumberland"
+]
+},
+{
+"id":"40",
+"name":"Curry",
+"abbr":"CUR",
+"alt":[
+"CUR"
+]
+},
+{
+"id":"512",
+"name":"Dakota State",
+"abbr":"DSU",
+"alt":[
+"DSU",
+"Dakota St"
+]
+},
+{
+"id":"513",
+"name":"Dakota Wesleyan",
+"abbr":"DWU",
+"alt":[
+"DWU"
+]
+},
+{
+"id":"159",
+"name":"Dartmouth",
+"abbr":"DART",
+"alt":[
+"DART"
+]
+},
+{
+"id":"2166",
+"name":"Davidson",
+"abbr":"DAV",
+"alt":[
+"DAV"
+]
+},
+{
+"id":"2168",
+"name":"Dayton",
+"abbr":"DAY",
+"alt":[
+"DAY"
+]
+},
+{
+"id":"190",
+"name":"Defiance",
+"abbr":"DEF",
+"alt":[
+"DEF"
+]
+},
+{
+"id":"48",
+"name":"Delaware",
+"abbr":"DEL",
+"alt":[
+"DEL"
+]
+},
+{
+"id":"2169",
+"name":"Delaware State",
+"abbr":"DSU",
+"alt":[
+"DSU"
+]
+},
+{
+"id":"2808",
+"name":"Delaware Valley",
+"abbr":"DV",
+"alt":[
+"DV"
+]
+},
+{
+"id":"2170",
+"name":"Delta State",
+"abbr":"DEL",
+"alt":[
+"DEL",
+"Delta St"
+]
+},
+{
+"id":"2171",
+"name":"Denison",
+"abbr":"DEN",
+"alt":[
+"DEN"
+]
+},
+{
+"id":"83",
+"name":"DePauw",
+"abbr":"DEP",
+"alt":[
+"DEP"
+]
+},
+{
+"id":"2175",
+"name":"Dickinson",
+"abbr":"DIC",
+"alt":[
+"DIC"
+]
+},
+{
+"id":"316",
+"name":"Dickinson State",
+"abbr":"DIC",
+"alt":[
+"DIC",
+"Dickinson St"
+]
+},
+{
+"id":"3101",
+"name":"Dixie State",
+"abbr":"DIX",
+"alt":[
+"DIX",
+"Dixie St"
+]
+},
+{
+"id":"2181",
+"name":"Drake",
+"abbr":"DRKE",
+"alt":[
+"DRKE"
+]
+},
+{
+"id":"49",
+"name":"Dubuque",
+"abbr":"DUB",
+"alt":[
+"DUB"
+]
+},
+{
+"id":"150",
+"name":"Duke",
+"abbr":"DUKE"
+},
+{
+"id":"2184",
+"name":"Duquesne",
+"abbr":"DUQ",
+"alt":[
+"DUQ"
+]
+},
+{
+"id":"2189",
+"name":"Earlham",
+"abbr":"EAR",
+"alt":[
+"EAR"
+]
+},
+{
+"id":"151",
+"name":"East Carolina",
+"abbr":"ECU",
+"alt":[
+"ECU"
+]
+},
+{
+"id":"2191",
+"name":"East Central",
+"abbr":"EAS",
+"alt":[
+"EAS"
+]
+},
+{
+"id":"2188",
+"name":"East Stroudsburg",
+"abbr":"EAS",
+"alt":[
+"EAS",
+"E Stroudsburg"
+]
+},
+{
+"id":"2193",
+"name":"East Tennessee State",
+"abbr":"ETSU",
+"alt":[
+"ETSU"
+]
+},
+{
+"id":"2194",
+"name":"East Texas Baptist",
+"abbr":"EAS",
+"alt":[
+"EAS",
+"E Texas Baptist"
+]
+},
+{
+"id":"2197",
+"name":"Eastern Illinois",
+"abbr":"EIU",
+"alt":[
+"EIU",
+"E Illinois"
+]
+},
+{
+"id":"2198",
+"name":"Eastern Kentucky",
+"abbr":"EKY",
+"alt":[
+"EKY",
+"E Kentucky"
+]
+},
+{
+"id":"2199",
+"name":"Eastern Michigan",
+"abbr":"EMU",
+"alt":[
+"EMU",
+"E Michigan"
+]
+},
+{
+"id":"2201",
+"name":"Eastern New Mexico",
+"abbr":"EAS",
+"alt":[
+"EAS",
+"E New Mexico"
+]
+},
+{
+"id":"2202",
+"name":"Eastern Oregon",
+"abbr":"EAS",
+"alt":[
+"EAS",
+"E Oregon"
+]
+},
+{
+"id":"331",
+"name":"Eastern Washington",
+"abbr":"EWU",
+"alt":[
+"EWU",
+"E Washington"
+]
+},
+{
+"id":"2205",
+"name":"Edinboro",
+"abbr":"EDI",
+"alt":[
+"EDI"
+]
+},
+{
+"id":"2207",
+"name":"Elizabeth City State",
+"abbr":"ELI",
+"alt":[
+"ELI",
+"Elizabeth City St"
+]
+},
+{
+"id":"72",
+"name":"Elmhurst",
+"abbr":"ELM",
+"alt":[
+"ELM"
+]
+},
+{
+"id":"2210",
+"name":"Elon",
+"abbr":"ELON"
+},
+{
+"id":"2213",
+"name":"Emory & Henry",
+"abbr":"EMO",
+"alt":[
+"EMO"
+]
+},
+{
+"id":"2214",
+"name":"Emporia State",
+"abbr":"EMP",
+"alt":[
+"EMP",
+"Emporia St"
+]
+},
+{
+"id":"452",
+"name":"Endicott College",
+"abbr":"END",
+"alt":[
+"END",
+"Endicott"
+]
+},
+{
+"id":"3236",
+"name":"Erie Community College",
+"abbr":"ECC",
+"alt":[
+"ECC",
+"Erie Community"
+]
+},
+{
+"id":"101",
+"name":"Eureka College",
+"abbr":"EUR",
+"alt":[
+"EUR"
+]
+},
+{
+"id":"2865",
+"name":"Evangel",
+"abbr":"EVA",
+"alt":[
+"EVA"
+]
+},
+{
+"id":"2986",
+"name":"Fairmont State",
+"abbr":"FAI",
+"alt":[
+"FAI",
+"Fairmont St"
+]
+},
+{
+"id":"2219",
+"name":"Faulkner",
+"abbr":"FAU",
+"alt":[
+"FAU"
+]
+},
+{
+"id":"2220",
+"name":"Fayetteville State",
+"abbr":"FAY",
+"alt":[
+"FAY",
+"Fayetteville St"
+]
+},
+{
+"id":"2221",
+"name":"FDU-Florham",
+"abbr":"FDU",
+"alt":[
+"FDU"
+]
+},
+{
+"id":"2222",
+"name":"Ferris State",
+"abbr":"FER",
+"alt":[
+"FER",
+"Ferris St"
+]
+},
+{
+"id":"366",
+"name":"Ferrum",
+"abbr":"FER",
+"alt":[
+"FER"
+]
+},
+{
+"id":"2224",
+"name":"Findlay",
+"abbr":"FIN",
+"alt":[
+"FIN"
+]
+},
+{
+"id":"114",
+"name":"Fitchburg State",
+"abbr":"FIT",
+"alt":[
+"FIT",
+"Fitchburg St"
+]
+},
+{
+"id":"57",
+"name":"Florida",
+"abbr":"FLA",
+"alt":[
+"FLA"
+]
+},
+{
+"id":"50",
+"name":"Florida A&M",
+"abbr":"FAMU",
+"alt":[
+"FAMU"
+]
+},
+{
+"id":"2226",
+"name":"Florida Atlantic",
+"abbr":"FAU",
+"alt":[
+"FAU"
+]
+},
+{
+"id":"2229",
+"name":"Florida International",
+"abbr":"FIU",
+"alt":[
+"FIU"
+]
+},
+{
+"id":"52",
+"name":"Florida State",
+"abbr":"FSU",
+"alt":[
+"FSU"
+]
+},
+{
+"id":"53",
+"name":"Florida Tech",
+"abbr":"FLTH",
+"alt":[
+"FLTH"
+]
+},
+{
+"id":"2230",
+"name":"Fordham",
+"abbr":"FOR",
+"alt":[
+"FOR"
+]
+},
+{
+"id":"2231",
+"name":"Fort Hays State",
+"abbr":"FHSU",
+"alt":[
+"FHSU",
+"Fort Hays St"
+]
+},
+{
+"id":"2237",
+"name":"Fort Lewis",
+"abbr":"FOR",
+"alt":[
+"FOR"
+]
+},
+{
+"id":"2232",
+"name":"Fort Valley State",
+"abbr":"FOR",
+"alt":[
+"FOR",
+"Fort Valley St"
+]
+},
+{
+"id":"2967",
+"name":"Framingham State",
+"abbr":"FRA",
+"alt":[
+"FRA",
+"Framingham St"
+]
+},
+{
+"id":"2233",
+"name":"Franklin",
+"abbr":"FRA",
+"alt":[
+"FRA"
+]
+},
+{
+"id":"2234",
+"name":"Franklin & Marshall",
+"abbr":"F&M",
+"alt":[
+"F&M"
+]
+},
+{
+"id":"278",
+"name":"Fresno State",
+"abbr":"FRES",
+"alt":[
+"FRES"
+]
+},
+{
+"id":"341",
+"name":"Frostburg State",
+"abbr":"FRO",
+"alt":[
+"FRO",
+"Frostburg St"
+]
+},
+{
+"id":"231",
+"name":"Furman",
+"abbr":"FUR",
+"alt":[
+"FUR"
+]
+},
+{
+"id":"417",
+"name":"Gallaudet",
+"abbr":"GAL",
+"alt":[
+"GAL"
+]
+},
+{
+"id":"367",
+"name":"Gannon",
+"abbr":"GAN",
+"alt":[
+"GAN"
+]
+},
+{
+"id":"2241",
+"name":"Gardner-Webb",
+"abbr":"WEBB",
+"alt":[
+"WEBB"
+]
+},
+{
+"id":"2242",
+"name":"Geneva College",
+"abbr":"GEN",
+"alt":[
+"GEN"
+]
+},
+{
+"id":"415",
+"name":"George Fox University",
+"abbr":"GFU",
+"alt":[
+"GFU",
+"George Fox"
+]
+},
+{
+"id":"2244",
+"name":"George Mason",
+"abbr":"GMU",
+"alt":[
+"GMU"
+]
+},
+{
+"id":"46",
+"name":"Georgetown",
+"abbr":"GTWN",
+"alt":[
+"GTWN"
+]
+},
+{
+"id":"61",
+"name":"Georgia",
+"abbr":"UGA",
+"alt":[
+"UGA"
+]
+},
+{
+"id":"290",
+"name":"Georgia Southern",
+"abbr":"GASO",
+"alt":[
+"GASO",
+"Ga Southern"
+]
+},
+{
+"id":"2247",
+"name":"Georgia State",
+"abbr":"GAST",
+"alt":[
+"GAST"
+]
+},
+{
+"id":"59",
+"name":"Georgia Tech",
+"abbr":"GT",
+"alt":[
+"GT"
+]
+},
+{
+"id":"2248",
+"name":"Gettysburg",
+"abbr":"GET",
+"alt":[
+"GET"
+]
+},
+{
+"id":"2249",
+"name":"Glenville State",
+"abbr":"GLE",
+"alt":[
+"GLE",
+"Glenville St"
+]
+},
+{
+"id":"530",
+"name":"Graceland University",
+"abbr":"GRC",
+"alt":[
+"GRC"
+]
+},
+{
+"id":"2755",
+"name":"Grambling",
+"abbr":"GRAM",
+"alt":[
+"Grambling State",
+"GRAM"
+]
+},
+{
+"id":"125",
+"name":"Grand Valley State",
+"abbr":"GVSU",
+"alt":[
+"GVSU",
+"Grand Valley St"
+]
+},
+{
+"id":"2256",
+"name":"Greensboro",
+"abbr":"GRN",
+"alt":[
+"GRN"
+]
+},
+{
+"id":"2257",
+"name":"Greenville",
+"abbr":"GRE",
+"alt":[
+"GRE"
+]
+},
+{
+"id":"65",
+"name":"Grinnell",
+"abbr":"GRI",
+"alt":[
+"GRI"
+]
+},
+{
+"id":"146",
+"name":"Grove City College",
+"abbr":"GRO",
+"alt":[
+"GRO",
+"Grove City"
+]
+},
+{
+"id":"2258",
+"name":"Guilford",
+"abbr":"GUI",
+"alt":[
+"GUI"
+]
+},
+{
+"id":"2968",
+"name":"Gustavus Adolphus",
+"abbr":"GUS",
+"alt":[
+"GUS"
+]
+},
+{
+"id":"348",
+"name":"Hamilton",
+"abbr":"HAM",
+"alt":[
+"HAM"
+]
+},
+{
+"id":"162",
+"name":"Hamline",
+"abbr":"HAM",
+"alt":[
+"HAM"
+]
+},
+{
+"id":"297",
+"name":"Hampden-Sydney",
+"abbr":"HAM",
+"alt":[
+"HAM"
+]
+},
+{
+"id":"2261",
+"name":"Hampton",
+"abbr":"HAMP",
+"alt":[
+"HAMP"
+]
+},
+{
+"id":"2262",
+"name":"Hanover",
+"abbr":"HAN",
+"alt":[
+"HAN"
+]
+},
+{
+"id":"2810",
+"name":"Hardin-Simmons",
+"abbr":"HAR",
+"alt":[
+"HAR"
+]
+},
+{
+"id":"2264",
+"name":"Harding",
+"abbr":"HAR",
+"alt":[
+"HAR"
+]
+},
+{
+"id":"173",
+"name":"Hartwick",
+"abbr":"HAR",
+"alt":[
+"HAR"
+]
+},
+{
+"id":"108",
+"name":"Harvard",
+"abbr":"HARV",
+"alt":[
+"HARV"
+]
+},
+{
+"id":"535",
+"name":"Haskell Indian Nations",
+"abbr":"HAS",
+"alt":[
+"HAS",
+"Haskell Indian Natio"
+]
+},
+{
+"id":"62",
+"name":"Hawai'i",
+"abbr":"HAW",
+"alt":[
+"HAW"
+]
+},
+{
+"id":"191",
+"name":"Heidelberg",
+"abbr":"HEI",
+"alt":[
+"HEI"
+]
+},
+{
+"id":"2271",
+"name":"Henderson State",
+"abbr":"HEN",
+"alt":[
+"HEN",
+"Henderson St"
+]
+},
+{
+"id":"418",
+"name":"Hendrix College",
+"abbr":"HEND",
+"alt":[
+"HEND",
+"Hendrix"
+]
+},
+{
+"id":"2273",
+"name":"Hillsdale",
+"abbr":"HIL",
+"alt":[
+"HIL"
+]
+},
+{
+"id":"2274",
+"name":"Hiram",
+"abbr":"HIR",
+"alt":[
+"HIR"
+]
+},
+{
+"id":"174",
+"name":"Hobart",
+"abbr":"HOB",
+"alt":[
+"HOB"
+]
+},
+{
+"id":"2275",
+"name":"Hofstra",
+"abbr":"HOF",
+"alt":[
+"HOF"
+]
+},
+{
+"id":"107",
+"name":"Holy Cross",
+"abbr":"HC",
+"alt":[
+"HC"
+]
+},
+{
+"id":"2812",
+"name":"Hope",
+"abbr":"HOP",
+"alt":[
+"HOP"
+]
+},
+{
+"id":"248",
+"name":"Houston",
+"abbr":"HOU",
+"alt":[
+"HOU"
+]
+},
+{
+"id":"2277",
+"name":"Houston Baptist",
+"abbr":"HBU",
+"alt":[
+"HBU"
+]
+},
+{
+"id":"47",
+"name":"Howard",
+"abbr":"HOW",
+"alt":[
+"HOW"
+]
+},
+{
+"id":"2758",
+"name":"Howard Payne",
+"abbr":"HOW",
+"alt":[
+"HOW"
+]
+},
+{
+"id":"2278",
+"name":"Humboldt State",
+"abbr":"HUM",
+"alt":[
+"HUM",
+"Humboldt St"
+]
+},
+{
+"id":"2938",
+"name":"Huntingdon",
+"abbr":"HUN",
+"alt":[
+"HUN"
+]
+},
+{
+"id":"2280",
+"name":"Husson",
+"abbr":"HUS",
+"alt":[
+"HUS"
+]
+},
+{
+"id":"70",
+"name":"Idaho",
+"abbr":"IDHO",
+"alt":[
+"IDHO"
+]
+},
+{
+"id":"304",
+"name":"Idaho State",
+"abbr":"IDST",
+"alt":[
+"IDST"
+]
+},
+{
+"id":"356",
+"name":"Illinois",
+"abbr":"ILL",
+"alt":[
+"ILL"
+]
+},
+{
+"id":"2286",
+"name":"Illinois College",
+"abbr":"ILLC",
+"alt":[
+"ILLC"
+]
+},
+{
+"id":"2287",
+"name":"Illinois State",
+"abbr":"ILST",
+"alt":[
+"ILST"
+]
+},
+{
+"id":"306",
+"name":"Illinois Wesleyan",
+"abbr":"ILL",
+"alt":[
+"ILL"
+]
+},
+{
+"id":"2916",
+"name":"Incarnate Word",
+"abbr":"IW",
+"alt":[
+"IW"
+]
+},
+{
+"id":"84",
+"name":"Indiana",
+"abbr":"IND",
+"alt":[
+"IND"
+]
+},
+{
+"id":"2291",
+"name":"Indiana (PA)",
+"abbr":"IND",
+"alt":[
+"IND"
+]
+},
+{
+"id":"282",
+"name":"Indiana State",
+"abbr":"INST",
+"alt":[
+"INST"
+]
+},
+{
+"id":"2292",
+"name":"Indianapolis",
+"abbr":"IND",
+"alt":[
+"IND"
+]
+},
+{
+"id":"2294",
+"name":"Iowa",
+"abbr":"IOWA"
+},
+{
+"id":"66",
+"name":"Iowa State",
+"abbr":"ISU",
+"alt":[
+"ISU"
+]
+},
+{
+"id":"2295",
+"name":"Iowa Wesleyan",
+"abbr":"IOW",
+"alt":[
+"IOW"
+]
+},
+{
+"id":"175",
+"name":"Ithaca",
+"abbr":"ITH",
+"alt":[
+"ITH"
+]
+},
+{
+"id":"2296",
+"name":"Jackson State",
+"abbr":"JKST",
+"alt":[
+"JKST"
+]
+},
+{
+"id":"294",
+"name":"Jacksonville",
+"abbr":"JAC",
+"alt":[
+"JAC"
+]
+},
+{
+"id":"55",
+"name":"Jacksonville State",
+"abbr":"JVST",
+"alt":[
+"JVST",
+"Jacksonville St"
+]
+},
+{
+"id":"256",
+"name":"James Madison",
+"abbr":"JMU",
+"alt":[
+"JMU"
+]
+},
+{
+"id":"2939",
+"name":"Jamestown",
+"abbr":"JAM",
+"alt":[
+"JAM"
+]
+},
+{
+"id":"2302",
+"name":"John Carroll",
+"abbr":"JOH",
+"alt":[
+"JOH"
+]
+},
+{
+"id":"118",
+"name":"Johns Hopkins",
+"abbr":"JOH",
+"alt":[
+"JOH"
+]
+},
+{
+"id":"2304",
+"name":"Johnson C Smith",
+"abbr":"JOH",
+"alt":[
+"JOH"
+]
+},
+{
+"id":"246",
+"name":"Juniata",
+"abbr":"JUN",
+"alt":[
+"JUN"
+]
+},
+{
+"id":"126",
+"name":"Kalamazoo",
+"abbr":"KAL",
+"alt":[
+"KAL"
+]
+},
+{
+"id":"2305",
+"name":"Kansas",
+"abbr":"KU",
+"alt":[
+"KU"
+]
+},
+{
+"id":"2306",
+"name":"Kansas State",
+"abbr":"KSU",
+"alt":[
+"KSU"
+]
+},
+{
+"id":"547",
+"name":"Kansas Wesleyan University",
+"abbr":"KNW",
+"alt":[
+"KNW",
+"Kansas Wesleyan U"
+]
+},
+{
+"id":"2871",
+"name":"Kean",
+"abbr":"KEA",
+"alt":[
+"KEA"
+]
+},
+{
+"id":"338",
+"name":"Kennesaw State",
+"abbr":"KENN",
+"alt":[
+"KENN",
+"Kennesaw St"
+]
+},
+{
+"id":"2309",
+"name":"Kent State",
+"abbr":"KENT",
+"alt":[
+"KENT"
+]
+},
+{
+"id":"96",
+"name":"Kentucky",
+"abbr":"UK",
+"alt":[
+"UK"
+]
+},
+{
+"id":"3077",
+"name":"Kentucky Christian",
+"abbr":"KCU",
+"alt":[
+"KCU"
+]
+},
+{
+"id":"2310",
+"name":"Kentucky State",
+"abbr":"KYS",
+"alt":[
+"KYS",
+"Kentucky St"
+]
+},
+{
+"id":"2316",
+"name":"Kentucky Wesleyan",
+"abbr":"KYW",
+"alt":[
+"KYW"
+]
+},
+{
+"id":"352",
+"name":"Kenyon",
+"abbr":"KEN",
+"alt":[
+"KEN"
+]
+},
+{
+"id":"247",
+"name":"King's College (PA)",
+"abbr":"KIN",
+"alt":[
+"KIN",
+"King's  (PA)"
+]
+},
+{
+"id":"255",
+"name":"Knox College",
+"abbr":"KNO",
+"alt":[
+"Knox",
+"KNO"
+]
+},
+{
+"id":"2315",
+"name":"Kutztown",
+"abbr":"KUT",
+"alt":[
+"KUT"
+]
+},
+{
+"id":"2318",
+"name":"La Verne",
+"abbr":"LAV",
+"alt":[
+"LAV"
+]
+},
+{
+"id":"322",
+"name":"Lafayette",
+"abbr":"LAF",
+"alt":[
+"LAF"
+]
+},
+{
+"id":"548",
+"name":"LaGrange College",
+"abbr":"LAG",
+"alt":[
+"LAG",
+"LaGrange"
+]
+},
+{
+"id":"437",
+"name":"Lake Erie College",
+"abbr":"LKE",
+"alt":[
+"LKE",
+"Lake Erie"
+]
+},
+{
+"id":"262",
+"name":"Lake Forest",
+"abbr":"LAK",
+"alt":[
+"LAK"
+]
+},
+{
+"id":"6353",
+"name":"Lakeland University",
+"abbr":"LAKE",
+"alt":[
+"LAKE",
+"Lakeland"
+]
+},
+{
+"id":"2320",
+"name":"Lamar",
+"abbr":"LAM",
+"alt":[
+"LAM"
+]
+},
+{
+"id":"2321",
+"name":"Lambuth",
+"abbr":"LAM",
+"alt":[
+"LAM"
+]
+},
+{
+"id":"2323",
+"name":"Lane",
+"abbr":"LAN",
+"alt":[
+"LAN"
+]
+},
+{
+"id":"2324",
+"name":"Langston",
+"abbr":"LAN",
+"alt":[
+"LAN"
+]
+},
+{
+"id":"268",
+"name":"Lawrence",
+"abbr":"LAW",
+"alt":[
+"LAW"
+]
+},
+{
+"id":"388",
+"name":"Lebanon Valley",
+"abbr":"LEB",
+"alt":[
+"LEB"
+]
+},
+{
+"id":"2329",
+"name":"Lehigh",
+"abbr":"LEH",
+"alt":[
+"LEH"
+]
+},
+{
+"id":"2331",
+"name":"Lenoir-Rhyne",
+"abbr":"LEN",
+"alt":[
+"LEN"
+]
+},
+{
+"id":"2333",
+"name":"Lewis & Clark",
+"abbr":"LEW",
+"alt":[
+"LEW"
+]
+},
+{
+"id":"2335",
+"name":"Liberty",
+"abbr":"LIB",
+"alt":[
+"LIB"
+]
+},
+{
+"id":"2336",
+"name":"Limestone",
+"abbr":"LIM",
+"alt":[
+"LIM"
+]
+},
+{
+"id":"2876",
+"name":"Lincoln (MO)",
+"abbr":"LIN",
+"alt":[
+"LIN"
+]
+},
+{
+"id":"2339",
+"name":"Lincoln (PA)",
+"abbr":"LIN",
+"alt":[
+"LIN"
+]
+},
+{
+"id":"2815",
+"name":"Lindenwood",
+"abbr":"LIN",
+"alt":[
+"LIN"
+]
+},
+{
+"id":"3209",
+"name":"Lindenwood Belleville",
+"abbr":"LIND",
+"alt":[
+"LIND",
+"Lindenwood Bell"
+]
+},
+{
+"id":"2877",
+"name":"Lindsey Wilson",
+"abbr":"LIN",
+"alt":[
+"LIN"
+]
+},
+{
+"id":"203",
+"name":"Linfield",
+"abbr":"LIN",
+"alt":[
+"LIN"
+]
+},
+{
+"id":"2089",
+"name":"LIU Post",
+"abbr":"LIU",
+"alt":[
+"LIU"
+]
+},
+{
+"id":"2940",
+"name":"Livingstone",
+"abbr":"LVI",
+"alt":[
+"LVI"
+]
+},
+{
+"id":"209",
+"name":"Lock Haven",
+"abbr":"LOC",
+"alt":[
+"LOC"
+]
+},
+{
+"id":"263",
+"name":"Loras College",
+"abbr":"LOR",
+"alt":[
+"LOR"
+]
+},
+{
+"id":"309",
+"name":"Louisiana",
+"abbr":"ULL",
+"alt":[
+"UL Lafayette",
+"ULL"
+]
+},
+{
+"id":"2347",
+"name":"Louisiana College",
+"abbr":"LAC",
+"alt":[
+"LAC",
+"Louisiana"
+]
+},
+{
+"id":"2433",
+"name":"Louisiana Monroe",
+"abbr":"ULM",
+"alt":[
+"La.-Monroe",
+"ULM",
+"UL Monroe"
+]
+},
+{
+"id":"2348",
+"name":"Louisiana Tech",
+"abbr":"LT",
+"alt":[
+"LT",
+"LA Tech"
+]
+},
+{
+"id":"97",
+"name":"Louisville",
+"abbr":"LOU",
+"alt":[
+"LOU"
+]
+},
+{
+"id":"99",
+"name":"LSU",
+"abbr":"LSU",
+"alt":[
+"Louisiana State"
+]
+},
+{
+"id":"67",
+"name":"Luther",
+"abbr":"LUT",
+"alt":[
+"LUT"
+]
+},
+{
+"id":"2354",
+"name":"Lycoming",
+"abbr":"LYC",
+"alt":[
+"LYC"
+]
+},
+{
+"id":"2359",
+"name":"Macalester",
+"abbr":"MAC",
+"alt":[
+"MAC"
+]
+},
+{
+"id":"273",
+"name":"MacMurray College",
+"abbr":"MAC",
+"alt":[
+"MAC",
+"MacMurray"
+]
+},
+{
+"id":"311",
+"name":"Maine",
+"abbr":"MAINE"
+},
+{
+"id":"274",
+"name":"Maine Maritime",
+"abbr":"MAI",
+"alt":[
+"MAI"
+]
+},
+{
+"id":"556",
+"name":"Malone",
+"abbr":"MAL",
+"alt":[
+"MAL"
+]
+},
+{
+"id":"2362",
+"name":"Manchester",
+"abbr":"MAN",
+"alt":[
+"MAN"
+]
+},
+{
+"id":"2770",
+"name":"Manitoba",
+"abbr":"MAN",
+"alt":[
+"MAN"
+]
+},
+{
+"id":"2365",
+"name":"Mansfield",
+"abbr":"MAN",
+"alt":[
+"MAN"
+]
+},
+{
+"id":"421",
+"name":"Maranatha Baptist College",
+"abbr":"MAR",
+"alt":[
+"MAR",
+"Maranatha Baptist"
+]
+},
+{
+"id":"2366",
+"name":"Marian",
+"abbr":"MAR",
+"alt":[
+"MAR"
+]
+},
+{
+"id":"317",
+"name":"Marietta",
+"abbr":"MAR",
+"alt":[
+"MAR"
+]
+},
+{
+"id":"2368",
+"name":"Marist",
+"abbr":"MRST",
+"alt":[
+"MRST"
+]
+},
+{
+"id":"2369",
+"name":"Mars Hill",
+"abbr":"MAR",
+"alt":[
+"MAR"
+]
+},
+{
+"id":"276",
+"name":"Marshall",
+"abbr":"MRSH",
+"alt":[
+"MRSH"
+]
+},
+{
+"id":"446",
+"name":"Martin Luther College",
+"abbr":"MAR",
+"alt":[
+"MAR",
+"Martin Luther"
+]
+},
+{
+"id":"2371",
+"name":"Mary Hardin-Baylor",
+"abbr":"MAR",
+"alt":[
+"MAR"
+]
+},
+{
+"id":"120",
+"name":"Maryland",
+"abbr":"MD",
+"alt":[
+"MD"
+]
+},
+{
+"id":"2373",
+"name":"Maryville TN",
+"abbr":"MAR",
+"alt":[
+"Maryville (TN)",
+"MAR"
+]
+},
+{
+"id":"110",
+"name":"Mass Maritime",
+"abbr":"MAS",
+"alt":[
+"MAS"
+]
+},
+{
+"id":"561",
+"name":"Mayville State",
+"abbr":"MAY",
+"alt":[
+"MAY",
+"Mayville St"
+]
+},
+{
+"id":"2700",
+"name":"McDaniel College",
+"abbr":"MCD",
+"alt":[
+"MCD",
+"McDaniel"
+]
+},
+{
+"id":"2816",
+"name":"McKendree",
+"abbr":"MAN",
+"alt":[
+"MAN"
+]
+},
+{
+"id":"241",
+"name":"McMurry",
+"abbr":"MCM",
+"alt":[
+"MCM"
+]
+},
+{
+"id":"2377",
+"name":"McNeese",
+"abbr":"MCNS",
+"alt":[
+"MCNS"
+]
+},
+{
+"id":"235",
+"name":"Memphis",
+"abbr":"MEM",
+"alt":[
+"MEM"
+]
+},
+{
+"id":"2381",
+"name":"Menlo",
+"abbr":"MEN",
+"alt":[
+"MEN"
+]
+},
+{
+"id":"2382",
+"name":"Mercer",
+"abbr":"MER",
+"alt":[
+"MER"
+]
+},
+{
+"id":"2383",
+"name":"Merchant Marine",
+"abbr":"MER",
+"alt":[
+"MER"
+]
+},
+{
+"id":"2385",
+"name":"Mercyhurst",
+"abbr":"MER",
+"alt":[
+"MER"
+]
+},
+{
+"id":"2771",
+"name":"Merrimack",
+"abbr":"MER",
+"alt":[
+"MER"
+]
+},
+{
+"id":"291",
+"name":"Methodist",
+"abbr":"MTH",
+"alt":[
+"MTH"
+]
+},
+{
+"id":"2390",
+"name":"Miami",
+"abbr":"MIAMI",
+"alt":[
+"Miami (FL)"
+]
+},
+{
+"id":"193",
+"name":"Miami (OH)",
+"abbr":"M-OH",
+"alt":[
+"M-OH"
+]
+},
+{
+"id":"130",
+"name":"Michigan",
+"abbr":"MICH",
+"alt":[
+"MICH"
+]
+},
+{
+"id":"127",
+"name":"Michigan State",
+"abbr":"MSU",
+"alt":[
+"MSU"
+]
+},
+{
+"id":"2392",
+"name":"Michigan Tech",
+"abbr":"MIC",
+"alt":[
+"MIC"
+]
+},
+{
+"id":"2393",
+"name":"Middle Tennessee",
+"abbr":"MTSU",
+"alt":[
+"Middle Tennessee State",
+"MTSU",
+"Mid Tennessee"
+]
+},
+{
+"id":"2394",
+"name":"Middlebury",
+"abbr":"MID",
+"alt":[
+"MID"
+]
+},
+{
+"id":"565",
+"name":"Midland University",
+"abbr":"MID",
+"alt":[
+"MID",
+"Midland U"
+]
+},
+{
+"id":"2395",
+"name":"Midwestern State",
+"abbr":"MID",
+"alt":[
+"MID",
+"Midwest"
+]
+},
+{
+"id":"2396",
+"name":"Miles",
+"abbr":"MIL",
+"alt":[
+"MIL"
+]
+},
+{
+"id":"210",
+"name":"Millersville",
+"abbr":"MIL",
+"alt":[
+"MIL"
+]
+},
+{
+"id":"74",
+"name":"Millikin",
+"abbr":"MIL",
+"alt":[
+"MIL"
+]
+},
+{
+"id":"2398",
+"name":"Millsaps",
+"abbr":"MIL",
+"alt":[
+"MIL"
+]
+},
+{
+"id":"135",
+"name":"Minnesota",
+"abbr":"MINN",
+"alt":[
+"MINN"
+]
+},
+{
+"id":"2817",
+"name":"Minnesota St-Moorhead",
+"abbr":"MOO",
+"alt":[
+"MOO",
+"Minn St-Moorhead"
+]
+},
+{
+"id":"2364",
+"name":"Minnesota State",
+"abbr":"MNST",
+"alt":[
+"MNST",
+"Minnesota St"
+]
+},
+{
+"id":"2772",
+"name":"Minnesota-Crookston",
+"abbr":"MIN",
+"alt":[
+"MIN"
+]
+},
+{
+"id":"134",
+"name":"Minnesota-Duluth",
+"abbr":"MNDU",
+"alt":[
+"MNDU"
+]
+},
+{
+"id":"2399",
+"name":"Minnesota-Morris",
+"abbr":"MIN",
+"alt":[
+"MIN"
+]
+},
+{
+"id":"568",
+"name":"Minot State",
+"abbr":"MIN",
+"alt":[
+"MIN",
+"Minot St"
+]
+},
+{
+"id":"2969",
+"name":"Misericordia",
+"abbr":"MISC",
+"alt":[
+"MISC"
+]
+},
+{
+"id":"2401",
+"name":"Mississippi College",
+"abbr":"MIS",
+"alt":[
+"MIS",
+"Miss. College"
+]
+},
+{
+"id":"344",
+"name":"Mississippi State",
+"abbr":"MSST",
+"alt":[
+"MSST",
+"Miss St"
+]
+},
+{
+"id":"2400",
+"name":"Mississippi Valley State",
+"abbr":"MVSU",
+"alt":[
+"MVSU",
+"Miss Valley St"
+]
+},
+{
+"id":"142",
+"name":"Missouri",
+"abbr":"MIZ",
+"alt":[
+"MIZ"
+]
+},
+{
+"id":"2880",
+"name":"Missouri Baptist",
+"abbr":"MB",
+"alt":[
+"MB",
+"MO Baptist"
+]
+},
+{
+"id":"2402",
+"name":"Missouri S&T",
+"abbr":"S&T",
+"alt":[
+"S&T"
+]
+},
+{
+"id":"2403",
+"name":"Missouri Southern State",
+"abbr":"MOS",
+"alt":[
+"MOS",
+"Missouri South St"
+]
+},
+{
+"id":"2623",
+"name":"Missouri State",
+"abbr":"MOST",
+"alt":[
+"MOST"
+]
+},
+{
+"id":"137",
+"name":"Missouri Western",
+"abbr":"MOW",
+"alt":[
+"MOW",
+"Missouri West"
+]
+},
+{
+"id":"109",
+"name":"MIT",
+"abbr":"MIT"
+},
+{
+"id":"2405",
+"name":"Monmouth",
+"abbr":"MONM",
+"alt":[
+"MONM"
+]
+},
+{
+"id":"2919",
+"name":"Monmouth (IL)",
+"abbr":"MON",
+"alt":[
+"MON"
+]
+},
+{
+"id":"149",
+"name":"Montana",
+"abbr":"MONT",
+"alt":[
+"MONT"
+]
+},
+{
+"id":"147",
+"name":"Montana State",
+"abbr":"MTST",
+"alt":[
+"MTST"
+]
+},
+{
+"id":"2701",
+"name":"Montana-Western",
+"abbr":"MWST",
+"alt":[
+"MWST"
+]
+},
+{
+"id":"2818",
+"name":"Montclair State",
+"abbr":"MON",
+"alt":[
+"MON",
+"Montclair St"
+]
+},
+{
+"id":"3100",
+"name":"Monterrey Tech",
+"abbr":"MON",
+"alt":[
+"MON"
+]
+},
+{
+"id":"323",
+"name":"Moravian",
+"abbr":"MOR",
+"alt":[
+"MOR"
+]
+},
+{
+"id":"2413",
+"name":"Morehead State",
+"abbr":"MORE",
+"alt":[
+"MORE"
+]
+},
+{
+"id":"60",
+"name":"Morehouse",
+"abbr":"MOR",
+"alt":[
+"MOR"
+]
+},
+{
+"id":"2415",
+"name":"Morgan State",
+"abbr":"MORG",
+"alt":[
+"MORG"
+]
+},
+{
+"id":"2416",
+"name":"Morningside",
+"abbr":"MAO",
+"alt":[
+"MAO"
+]
+},
+{
+"id":"3110",
+"name":"Morrisville State",
+"abbr":"MOR",
+"alt":[
+"MOR",
+"Morrisville St"
+]
+},
+{
+"id":"481",
+"name":"Mount Ida College",
+"abbr":"MOU",
+"alt":[
+"MOU",
+"Mount Ida"
+]
+},
+{
+"id":"2419",
+"name":"Mount St. Joseph",
+"abbr":"MTS",
+"alt":[
+"MTS"
+]
+},
+{
+"id":"426",
+"name":"Mount Union",
+"abbr":"MTU",
+"alt":[
+"MTU"
+]
+},
+{
+"id":"2422",
+"name":"Muhlenberg",
+"abbr":"MUH",
+"alt":[
+"MUH"
+]
+},
+{
+"id":"93",
+"name":"Murray State",
+"abbr":"MURR",
+"alt":[
+"MURR"
+]
+},
+{
+"id":"332",
+"name":"Muskingum",
+"abbr":"MUS",
+"alt":[
+"MUS"
+]
+},
+{
+"id":"2426",
+"name":"Navy",
+"abbr":"NAVY"
+},
+{
+"id":"152",
+"name":"NC State",
+"abbr":"NCST",
+"alt":[
+"North Carolina St.",
+"NCST"
+]
+},
+{
+"id":"286",
+"name":"NC Wesleyan",
+"abbr":"UNCW",
+"alt":[
+"UNCW",
+"UNC Welseyan"
+]
+},
+{
+"id":"158",
+"name":"Nebraska",
+"abbr":"NEB",
+"alt":[
+"NEB"
+]
+},
+{
+"id":"6845",
+"name":"Nebraska Wesleyan University",
+"abbr":"NWU",
+"alt":[
+"NWU",
+"Neb. Wesleyan"
+]
+},
+{
+"id":"2438",
+"name":"Nebraska-Kearney",
+"abbr":"NEB",
+"alt":[
+"NEB"
+]
+},
+{
+"id":"2437",
+"name":"Nebraska-Omaha",
+"abbr":"UNO",
+"alt":[
+"UNO",
+"Omaha"
+]
+},
+{
+"id":"2440",
+"name":"Nevada",
+"abbr":"NEV",
+"alt":[
+"NEV"
+]
+},
+{
+"id":"160",
+"name":"New Hampshire",
+"abbr":"UNH",
+"alt":[
+"UNH"
+]
+},
+{
+"id":"2441",
+"name":"New Haven",
+"abbr":"NH",
+"alt":[
+"NH"
+]
+},
+{
+"id":"167",
+"name":"New Mexico",
+"abbr":"UNM",
+"alt":[
+"UNM"
+]
+},
+{
+"id":"2424",
+"name":"New Mexico Highlands",
+"abbr":"NMH",
+"alt":[
+"NMH"
+]
+},
+{
+"id":"166",
+"name":"New Mexico State",
+"abbr":"NMSU",
+"alt":[
+"NMSU",
+"New Mexico St"
+]
+},
+{
+"id":"2444",
+"name":"Newberry",
+"abbr":"NBY",
+"alt":[
+"NBY"
+]
+},
+{
+"id":"2447",
+"name":"Nicholls",
+"abbr":"NICH",
+"alt":[
+"NICH"
+]
+},
+{
+"id":"2884",
+"name":"Nichols",
+"abbr":"NIC",
+"alt":[
+"NIC"
+]
+},
+{
+"id":"2450",
+"name":"Norfolk State",
+"abbr":"NSU",
+"alt":[
+"NSU"
+]
+},
+{
+"id":"2453",
+"name":"North Alabama",
+"abbr":"NOR",
+"alt":[
+"NOR"
+]
+},
+{
+"id":"153",
+"name":"North Carolina",
+"abbr":"UNC",
+"alt":[
+"UNC"
+]
+},
+{
+"id":"2448",
+"name":"North Carolina A&T",
+"abbr":"NCAT",
+"alt":[
+"NCAT",
+"NC A&T"
+]
+},
+{
+"id":"2428",
+"name":"North Carolina Central",
+"abbr":"NCCU",
+"alt":[
+"NCCU",
+"NC Central"
+]
+},
+{
+"id":"3071",
+"name":"North Central",
+"abbr":"NOC",
+"alt":[
+"NOC"
+]
+},
+{
+"id":"155",
+"name":"North Dakota",
+"abbr":"UND",
+"alt":[
+"UND"
+]
+},
+{
+"id":"2449",
+"name":"North Dakota State",
+"abbr":"NDSU",
+"alt":[
+"NDSU",
+"North Dakota St"
+]
+},
+{
+"id":"2822",
+"name":"North Greenville",
+"abbr":"NGR",
+"alt":[
+"NGR",
+"N Greenville"
+]
+},
+{
+"id":"75",
+"name":"North Park",
+"abbr":"NOR",
+"alt":[
+"NOR"
+]
+},
+{
+"id":"249",
+"name":"North Texas",
+"abbr":"UNT",
+"alt":[
+"UNT"
+]
+},
+{
+"id":"111",
+"name":"Northeastern",
+"abbr":"NE",
+"alt":[
+"NE"
+]
+},
+{
+"id":"196",
+"name":"Northeastern State",
+"abbr":"NEO",
+"alt":[
+"NEO",
+"NE St"
+]
+},
+{
+"id":"2464",
+"name":"Northern Arizona",
+"abbr":"NAU",
+"alt":[
+"NAU",
+"N Arizona"
+]
+},
+{
+"id":"2458",
+"name":"Northern Colorado",
+"abbr":"UNCO",
+"alt":[
+"UNCO",
+"N Colorado"
+]
+},
+{
+"id":"2459",
+"name":"Northern Illinois",
+"abbr":"NIU",
+"alt":[
+"NIU",
+"N Illinois"
+]
+},
+{
+"id":"2460",
+"name":"Northern Iowa",
+"abbr":"UNI",
+"alt":[
+"UNI"
+]
+},
+{
+"id":"128",
+"name":"Northern Michigan",
+"abbr":"NOR",
+"alt":[
+"NOR",
+"N Michigan"
+]
+},
+{
+"id":"425",
+"name":"Northern State",
+"abbr":"NOR",
+"alt":[
+"NOR",
+"Northern St"
+]
+},
+{
+"id":"138",
+"name":"Northwest Missouri State",
+"abbr":"NWMS",
+"alt":[
+"NWMS",
+"NW Missouri St"
+]
+},
+{
+"id":"77",
+"name":"Northwestern",
+"abbr":"NW",
+"alt":[
+"NW"
+]
+},
+{
+"id":"583",
+"name":"Northwestern (MN)",
+"abbr":"NWM",
+"alt":[
+"NWM",
+"NW (MN)"
+]
+},
+{
+"id":"2823",
+"name":"Northwestern Oklahoma State",
+"abbr":"NWO",
+"alt":[
+"NWO",
+"NW Oklahoma St"
+]
+},
+{
+"id":"2466",
+"name":"Northwestern State",
+"abbr":"NWST",
+"alt":[
+"NWST",
+"Northwestern St"
+]
+},
+{
+"id":"2886",
+"name":"Northwood (MI)",
+"abbr":"NAR",
+"alt":[
+"NAR",
+"Northwood"
+]
+},
+{
+"id":"2467",
+"name":"Norwich",
+"abbr":"NOR",
+"alt":[
+"NOR"
+]
+},
+{
+"id":"87",
+"name":"Notre Dame",
+"abbr":"ND",
+"alt":[
+"ND"
+]
+},
+{
+"id":"587",
+"name":"Notre Dame College",
+"abbr":"NOT",
+"alt":[
+"NOT"
+]
+},
+{
+"id":"391",
+"name":"Oberlin",
+"abbr":"OBE",
+"alt":[
+"OBE"
+]
+},
+{
+"id":"2475",
+"name":"Occidental",
+"abbr":"OCC",
+"alt":[
+"OCC"
+]
+},
+{
+"id":"195",
+"name":"Ohio",
+"abbr":"OHIO"
+},
+{
+"id":"427",
+"name":"Ohio Northern",
+"abbr":"ON",
+"alt":[
+"ON"
+]
+},
+{
+"id":"194",
+"name":"Ohio State",
+"abbr":"OSU",
+"alt":[
+"OSU"
+]
+},
+{
+"id":"3161",
+"name":"Ohio State Newark",
+"abbr":"OSU",
+"alt":[
+"OSU",
+"Ohio St Newark"
+]
+},
+{
+"id":"2980",
+"name":"Ohio Wesleyan",
+"abbr":"OHI",
+"alt":[
+"OHI"
+]
+},
+{
+"id":"2824",
+"name":"OK Panhandle St",
+"abbr":"OKP",
+"alt":[
+"OKP"
+]
+},
+{
+"id":"201",
+"name":"Oklahoma",
+"abbr":"OKLA",
+"alt":[
+"OKLA"
+]
+},
+{
+"id":"319",
+"name":"Oklahoma Baptist",
+"abbr":"OB",
+"alt":[
+"OB",
+"Oklahoma Bapt"
+]
+},
+{
+"id":"197",
+"name":"Oklahoma State",
+"abbr":"OKST",
+"alt":[
+"OKST"
+]
+},
+{
+"id":"295",
+"name":"Old Dominion",
+"abbr":"ODU",
+"alt":[
+"ODU"
+]
+},
+{
+"id":"145",
+"name":"Ole Miss",
+"abbr":"MISS",
+"alt":[
+"MISS"
+]
+},
+{
+"id":"354",
+"name":"Olivet College",
+"abbr":"OLI",
+"alt":[
+"OLI"
+]
+},
+{
+"id":"2483",
+"name":"Oregon",
+"abbr":"ORE",
+"alt":[
+"ORE"
+]
+},
+{
+"id":"204",
+"name":"Oregon State",
+"abbr":"ORST",
+"alt":[
+"ORST"
+]
+},
+{
+"id":"359",
+"name":"Otterbein",
+"abbr":"OTT",
+"alt":[
+"OTT"
+]
+},
+{
+"id":"2888",
+"name":"Ouachita Baptist",
+"abbr":"OUA",
+"alt":[
+"OUA"
+]
+},
+{
+"id":"2487",
+"name":"Pace",
+"abbr":"PAC",
+"alt":[
+"PAC"
+]
+},
+{
+"id":"205",
+"name":"Pacific (OR)",
+"abbr":"PAC",
+"alt":[
+"PAC"
+]
+},
+{
+"id":"2486",
+"name":"Pacific Lutheran",
+"abbr":"PAC",
+"alt":[
+"PAC"
+]
+},
+{
+"id":"213",
+"name":"Penn State",
+"abbr":"PSU",
+"alt":[
+"PSU"
+]
+},
+{
+"id":"219",
+"name":"Pennsylvania",
+"abbr":"PENN",
+"alt":[
+"PENN",
+"Penn"
+]
+},
+{
+"id":"95",
+"name":"Pikeville",
+"abbr":"PIK",
+"alt":[
+"PIK"
+]
+},
+{
+"id":"90",
+"name":"Pittsburg State",
+"abbr":"PIT",
+"alt":[
+"PIT",
+"Pittsburg St"
+]
+},
+{
+"id":"221",
+"name":"Pittsburgh",
+"abbr":"PITT",
+"alt":[
+"Pitt",
+"PITT"
+]
+},
+{
+"id":"2972",
+"name":"Plymouth State",
+"abbr":"PLY",
+"alt":[
+"PLY",
+"Plymouth St"
+]
+},
+{
+"id":"3179",
+"name":"Point University",
+"abbr":"POINT",
+"alt":[
+"POINT"
+]
+},
+{
+"id":"2923",
+"name":"Pomona-Pitzer",
+"abbr":"POM",
+"alt":[
+"POM"
+]
+},
+{
+"id":"2502",
+"name":"Portland State",
+"abbr":"PRST",
+"alt":[
+"PRST"
+]
+},
+{
+"id":"2504",
+"name":"Prairie View",
+"abbr":"PVAM",
+"alt":[
+"PVAM",
+"PV A&M"
+]
+},
+{
+"id":"2506",
+"name":"Presbyterian College",
+"abbr":"PRE",
+"alt":[
+"PRE",
+"Presbyterian"
+]
+},
+{
+"id":"597",
+"name":"Presentation College",
+"abbr":"PRE",
+"alt":[
+"PRE",
+"Presentation"
+]
+},
+{
+"id":"163",
+"name":"Princeton",
+"abbr":"PRIN",
+"alt":[
+"PRIN"
+]
+},
+{
+"id":"363",
+"name":"Principia College",
+"abbr":"PRI",
+"alt":[
+"PRI",
+"Principia"
+]
+},
+{
+"id":"2508",
+"name":"Puget Sound",
+"abbr":"PUG",
+"alt":[
+"PUG"
+]
+},
+{
+"id":"2509",
+"name":"Purdue",
+"abbr":"PUR",
+"alt":[
+"PUR"
+]
+},
+{
+"id":"2825",
+"name":"Quincy",
+"abbr":"QUI",
+"alt":[
+"QUI"
+]
+},
+{
+"id":"2516",
+"name":"Randolph-Macon",
+"abbr":"RAN",
+"alt":[
+"RAN"
+]
+},
+{
+"id":"29",
+"name":"Redlands",
+"abbr":"RED",
+"alt":[
+"RED"
+]
+},
+{
+"id":"2890",
+"name":"Reinhardt",
+"abbr":"REIN",
+"alt":[
+"REIN"
+]
+},
+{
+"id":"2528",
+"name":"Rensselaer",
+"abbr":"REN",
+"alt":[
+"REN"
+]
+},
+{
+"id":"227",
+"name":"Rhode Island",
+"abbr":"URI",
+"alt":[
+"URI"
+]
+},
+{
+"id":"2519",
+"name":"Rhodes",
+"abbr":"RHO",
+"alt":[
+"RHO"
+]
+},
+{
+"id":"242",
+"name":"Rice",
+"abbr":"RICE"
+},
+{
+"id":"257",
+"name":"Richmond",
+"abbr":"RICH",
+"alt":[
+"RICH"
+]
+},
+{
+"id":"2891",
+"name":"Ripon",
+"abbr":"RIPON"
+},
+{
+"id":"2523",
+"name":"Robert Morris",
+"abbr":"RMU",
+"alt":[
+"RMU"
+]
+},
+{
+"id":"599",
+"name":"Robert Morris (IL)",
+"abbr":"RMU",
+"alt":[
+"RMU"
+]
+},
+{
+"id":"184",
+"name":"Rochester",
+"abbr":"ROC",
+"alt":[
+"ROC"
+]
+},
+{
+"id":"2524",
+"name":"Rockford",
+"abbr":"ROC",
+"alt":[
+"ROC"
+]
+},
+{
+"id":"86",
+"name":"Rose-Hulman",
+"abbr":"ROS",
+"alt":[
+"ROS"
+]
+},
+{
+"id":"2827",
+"name":"Rowan",
+"abbr":"ROWAN"
+},
+{
+"id":"164",
+"name":"Rutgers",
+"abbr":"RUTG",
+"alt":[
+"RUTG"
+]
+},
+{
+"id":"16",
+"name":"Sacramento State",
+"abbr":"SAC",
+"alt":[
+"SAC",
+"Sacramento St"
+]
+},
+{
+"id":"2529",
+"name":"Sacred Heart",
+"abbr":"SHU",
+"alt":[
+"SHU"
+]
+},
+{
+"id":"129",
+"name":"Saginaw Valley",
+"abbr":"SAG",
+"alt":[
+"SAG"
+]
+},
+{
+"id":"2532",
+"name":"Salisbury",
+"abbr":"SAL",
+"alt":[
+"SAL"
+]
+},
+{
+"id":"2776",
+"name":"Salve Regina",
+"abbr":"SAL",
+"alt":[
+"SAL"
+]
+},
+{
+"id":"2534",
+"name":"Sam Houston State",
+"abbr":"SHSU",
+"alt":[
+"SHSU",
+"Sam Houston"
+]
+},
+{
+"id":"2535",
+"name":"Samford",
+"abbr":"SAM",
+"alt":[
+"SAM"
+]
+},
+{
+"id":"301",
+"name":"San Diego",
+"abbr":"USD",
+"alt":[
+"USD"
+]
+},
+{
+"id":"21",
+"name":"San Diego State",
+"abbr":"SDSU",
+"alt":[
+"SDSU"
+]
+},
+{
+"id":"23",
+"name":"San Jos� State",
+"abbr":"SJSU",
+"alt":[
+"San Jose St.",
+"SJSU",
+"San Jose State"
+]
+},
+{
+"id":"2542",
+"name":"Savannah State",
+"abbr":"SAV",
+"alt":[
+"SAV"
+]
+},
+{
+"id":"611",
+"name":"Seton Hill College",
+"abbr":"SET",
+"alt":[
+"SET",
+"Seton Hill"
+]
+},
+{
+"id":"2553",
+"name":"Sewanee Univ. of the South",
+"abbr":"SEW",
+"alt":[
+"Sewanee",
+"SEW",
+"Sewanee University"
+]
+},
+{
+"id":"2551",
+"name":"Shaw",
+"abbr":"SHA",
+"alt":[
+"SHA"
+]
+},
+{
+"id":"2828",
+"name":"Shenandoah",
+"abbr":"SHE",
+"alt":[
+"SHE"
+]
+},
+{
+"id":"2974",
+"name":"Shepherd",
+"abbr":"SHE",
+"alt":[
+"SHE"
+]
+},
+{
+"id":"3181",
+"name":"Shepherd Tech",
+"abbr":"STC",
+"alt":[
+"STC"
+]
+},
+{
+"id":"2559",
+"name":"Shippensburg",
+"abbr":"SHI",
+"alt":[
+"SHI"
+]
+},
+{
+"id":"2560",
+"name":"Shorter",
+"abbr":"SHO",
+"alt":[
+"SHO"
+]
+},
+{
+"id":"2562",
+"name":"Siena Heights",
+"abbr":"SH",
+"alt":[
+"SH"
+]
+},
+{
+"id":"2829",
+"name":"Simon Fraser",
+"abbr":"SIM",
+"alt":[
+"SIM"
+]
+},
+{
+"id":"2564",
+"name":"Simpson College",
+"abbr":"SIM",
+"alt":[
+"Simpson",
+"SIM"
+]
+},
+{
+"id":"2894",
+"name":"Sioux Falls",
+"abbr":"SIO",
+"alt":[
+"SIO"
+]
+},
+{
+"id":"215",
+"name":"Slippery Rock",
+"abbr":"SRU",
+"alt":[
+"SRU"
+]
+},
+{
+"id":"2567",
+"name":"SMU",
+"abbr":"SMU",
+"alt":[
+"Southern Methodist"
+]
+},
+{
+"id":"6",
+"name":"South Alabama",
+"abbr":"USA",
+"alt":[
+"USA"
+]
+},
+{
+"id":"2579",
+"name":"South Carolina",
+"abbr":"SC",
+"alt":[
+"SC"
+]
+},
+{
+"id":"2569",
+"name":"South Carolina State",
+"abbr":"SCST",
+"alt":[
+"SCST",
+"S Carolina St"
+]
+},
+{
+"id":"233",
+"name":"South Dakota",
+"abbr":"SDAK",
+"alt":[
+"SDAK"
+]
+},
+{
+"id":"613",
+"name":"South Dakota Mines",
+"abbr":"SDA",
+"alt":[
+"SDA",
+"SD Mines"
+]
+},
+{
+"id":"2571",
+"name":"South Dakota State",
+"abbr":"SDSU",
+"alt":[
+"SDSU",
+"South Dakota St"
+]
+},
+{
+"id":"58",
+"name":"South Florida",
+"abbr":"USF",
+"alt":[
+"USF"
+]
+},
+{
+"id":"2546",
+"name":"Southeast Missouri State",
+"abbr":"SEMO",
+"alt":[
+"SEMO",
+"SE Missouri St"
+]
+},
+{
+"id":"2545",
+"name":"Southeastern Louisiana",
+"abbr":"SELA",
+"alt":[
+"SELA",
+"SE Louisiana"
+]
+},
+{
+"id":"199",
+"name":"Southeastern Oklahoma",
+"abbr":"SEOS",
+"alt":[
+"SEOS",
+"SEOkla St"
+]
+},
+{
+"id":"267",
+"name":"Southeastern University",
+"abbr":"SEFL",
+"alt":[
+"SEFL",
+"Southeastern"
+]
+},
+{
+"id":"2582",
+"name":"Southern",
+"abbr":"SOU",
+"alt":[
+"SOU"
+]
+},
+{
+"id":"2568",
+"name":"Southern Arkansas",
+"abbr":"SOU",
+"alt":[
+"SOU",
+"S Arkansas"
+]
+},
+{
+"id":"2583",
+"name":"Southern Connecticut State",
+"abbr":"SOU",
+"alt":[
+"SOU",
+"S Conn St"
+]
+},
+{
+"id":"79",
+"name":"Southern Illinois",
+"abbr":"SIU",
+"alt":[
+"SIU",
+"S Illinois"
+]
+},
+{
+"id":"2572",
+"name":"Southern Mississippi",
+"abbr":"USM",
+"alt":[
+"USM",
+"Southern Miss"
+]
+},
+{
+"id":"200",
+"name":"Southern Nazarene",
+"abbr":"STN",
+"alt":[
+"STN",
+"S Nazarene"
+]
+},
+{
+"id":"2584",
+"name":"Southern Oregon",
+"abbr":"SOU",
+"alt":[
+"SOU",
+"So Oregon"
+]
+},
+{
+"id":"253",
+"name":"Southern Utah",
+"abbr":"SUU",
+"alt":[
+"SUU"
+]
+},
+{
+"id":"2896",
+"name":"Southern Virginia",
+"abbr":"SVA",
+"alt":[
+"SVA",
+"S Virginia"
+]
+},
+{
+"id":"2586",
+"name":"Southwest Baptist",
+"abbr":"SWB",
+"alt":[
+"SWB",
+"SW Baptist"
+]
+},
+{
+"id":"2587",
+"name":"Southwest Minnesota State",
+"abbr":"SWM",
+"alt":[
+"SWM",
+"SW Minnesota St"
+]
+},
+{
+"id":"2904",
+"name":"Southwestern Assemblies of God",
+"abbr":"SWA",
+"alt":[
+"SWA",
+"SW Assemblies of God"
+]
+},
+{
+"id":"616",
+"name":"Southwestern College",
+"abbr":"SWC",
+"alt":[
+"SWC",
+"SW"
+]
+},
+{
+"id":"2927",
+"name":"Southwestern Oklahoma",
+"abbr":"SWO",
+"alt":[
+"SWO",
+"SW Oklahoma"
+]
+},
+{
+"id":"2588",
+"name":"Southwestern University",
+"abbr":"SW",
+"alt":[
+"Southwestern (TX)",
+"SW",
+"Southwestern U"
+]
+},
+{
+"id":"81",
+"name":"Springfield",
+"abbr":"SPR",
+"alt":[
+"SPR"
+]
+},
+{
+"id":"2598",
+"name":"St Francis (PA)",
+"abbr":"SFU",
+"alt":[
+"Saint Francis (PA)",
+"SFU"
+]
+},
+{
+"id":"2779",
+"name":"St Lawrence",
+"abbr":"STL",
+"alt":[
+"STL"
+]
+},
+{
+"id":"2591",
+"name":"St. Ambrose",
+"abbr":"STA",
+"alt":[
+"STA"
+]
+},
+{
+"id":"2830",
+"name":"St. Anselm",
+"abbr":"STA",
+"alt":[
+"STA"
+]
+},
+{
+"id":"395",
+"name":"St. Augustine's",
+"abbr":"STA",
+"alt":[
+"STA"
+]
+},
+{
+"id":"2594",
+"name":"St. Cloud State",
+"abbr":"STC",
+"alt":[
+"STC",
+"St. Cloud St"
+]
+},
+{
+"id":"2595",
+"name":"St. Francis (IL)",
+"abbr":"SFIL",
+"alt":[
+"SFIL",
+"St Francis (IL)"
+]
+},
+{
+"id":"2831",
+"name":"St. Francis (IN)",
+"abbr":"SBP",
+"alt":[
+"SBP"
+]
+},
+{
+"id":"374",
+"name":"St. John Fisher",
+"abbr":"STJ",
+"alt":[
+"STJ"
+]
+},
+{
+"id":"2600",
+"name":"St. Johns (MN)",
+"abbr":"STJ",
+"alt":[
+"STJ"
+]
+},
+{
+"id":"2832",
+"name":"St. Norbert",
+"abbr":"STN",
+"alt":[
+"STN"
+]
+},
+{
+"id":"133",
+"name":"St. Olaf College",
+"abbr":"STO",
+"alt":[
+"STO",
+"St. Olaf"
+]
+},
+{
+"id":"2611",
+"name":"St. Paul's College",
+"abbr":"STP",
+"alt":[
+"STP",
+"St. Paul's"
+]
+},
+{
+"id":"2612",
+"name":"St. Peter's",
+"abbr":"SPU",
+"alt":[
+"SPU"
+]
+},
+{
+"id":"375",
+"name":"St. Scholastica",
+"abbr":"SS",
+"alt":[
+"SS"
+]
+},
+{
+"id":"2900",
+"name":"St. Thomas (MN)",
+"abbr":"STMN",
+"alt":[
+"STMN"
+]
+},
+{
+"id":"2614",
+"name":"St. Vincent",
+"abbr":"STV",
+"alt":[
+"STV"
+]
+},
+{
+"id":"2615",
+"name":"St. Xavier (IL)",
+"abbr":"STX",
+"alt":[
+"STX"
+]
+},
+{
+"id":"24",
+"name":"Stanford",
+"abbr":"STAN",
+"alt":[
+"STAN"
+]
+},
+{
+"id":"2617",
+"name":"Stephen F. Austin",
+"abbr":"SFA",
+"alt":[
+"Stephen F Austin",
+"SFA",
+"SF Austin"
+]
+},
+{
+"id":"618",
+"name":"Sterling College",
+"abbr":"STC",
+"alt":[
+"STC",
+"Sterling"
+]
+},
+{
+"id":"56",
+"name":"Stetson",
+"abbr":"STET",
+"alt":[
+"STET"
+]
+},
+{
+"id":"471",
+"name":"Stevenson",
+"abbr":"STU",
+"alt":[
+"STU"
+]
+},
+{
+"id":"284",
+"name":"Stonehill",
+"abbr":"SBI",
+"alt":[
+"SBI"
+]
+},
+{
+"id":"2619",
+"name":"Stony Brook",
+"abbr":"STON",
+"alt":[
+"STON"
+]
+},
+{
+"id":"2834",
+"name":"Sul Ross State",
+"abbr":"SUL",
+"alt":[
+"SUL",
+"Sul Ross St"
+]
+},
+{
+"id":"2782",
+"name":"SUNY Cortland",
+"abbr":"COR",
+"alt":[
+"COR"
+]
+},
+{
+"id":"2951",
+"name":"SUNY Maritime",
+"abbr":"MAR",
+"alt":[
+"MAR"
+]
+},
+{
+"id":"216",
+"name":"Susquehanna",
+"abbr":"SUS",
+"alt":[
+"SUS"
+]
+},
+{
+"id":"183",
+"name":"Syracuse",
+"abbr":"SYR",
+"alt":[
+"SYR"
+]
+},
+{
+"id":"2627",
+"name":"Tarleton State",
+"abbr":"TAR",
+"alt":[
+"TAR",
+"Tarleton St"
+]
+},
+{
+"id":"620",
+"name":"Taylor",
+"abbr":"TAY",
+"alt":[
+"TAY"
+]
+},
+{
+"id":"2628",
+"name":"TCU",
+"abbr":"TCU",
+"alt":[
+"Texas Christian"
+]
+},
+{
+"id":"218",
+"name":"Temple",
+"abbr":"TEM",
+"alt":[
+"TEM"
+]
+},
+{
+"id":"2633",
+"name":"Tennessee",
+"abbr":"TENN",
+"alt":[
+"TENN"
+]
+},
+{
+"id":"2634",
+"name":"Tennessee State",
+"abbr":"TNST",
+"alt":[
+"TNST",
+"Tennessee St"
+]
+},
+{
+"id":"2635",
+"name":"Tennessee Tech",
+"abbr":"TNTC",
+"alt":[
+"TNTC",
+"Tenn Tech"
+]
+},
+{
+"id":"251",
+"name":"Texas",
+"abbr":"TEX",
+"alt":[
+"TEX"
+]
+},
+{
+"id":"245",
+"name":"Texas A&M",
+"abbr":"TA&M",
+"alt":[
+"TA&M"
+]
+},
+{
+"id":"2837",
+"name":"Texas A&M-Commerce",
+"abbr":"TXA",
+"alt":[
+"TXA",
+"TX A&M-Commerce"
+]
+},
+{
+"id":"2658",
+"name":"Texas A&M-Kingsville",
+"abbr":"TXA",
+"alt":[
+"TXA"
+]
+},
+{
+"id":"2637",
+"name":"Texas College",
+"abbr":"TXCL",
+"alt":[
+"TXCL"
+]
+},
+{
+"id":"2639",
+"name":"Texas Lutheran",
+"abbr":"TEX",
+"alt":[
+"TEX"
+]
+},
+{
+"id":"2640",
+"name":"Texas Southern",
+"abbr":"TXSO",
+"alt":[
+"TXSO"
+]
+},
+{
+"id":"326",
+"name":"Texas State",
+"abbr":"TXST",
+"alt":[
+"TXST"
+]
+},
+{
+"id":"2641",
+"name":"Texas Tech",
+"abbr":"TTU",
+"alt":[
+"TTU"
+]
+},
+{
+"id":"2643",
+"name":"The Citadel",
+"abbr":"CIT",
+"alt":[
+"CIT"
+]
+},
+{
+"id":"2644",
+"name":"Thiel College",
+"abbr":"THI",
+"alt":[
+"THI"
+]
+},
+{
+"id":"2646",
+"name":"Thomas More",
+"abbr":"THO",
+"alt":[
+"THO"
+]
+},
+{
+"id":"2838",
+"name":"Tiffin",
+"abbr":"TIF",
+"alt":[
+"TIF"
+]
+},
+{
+"id":"2649",
+"name":"Toledo",
+"abbr":"TOL",
+"alt":[
+"TOL"
+]
+},
+{
+"id":"119",
+"name":"Towson",
+"abbr":"TOWS",
+"alt":[
+"TOWS"
+]
+},
+{
+"id":"2651",
+"name":"Trine",
+"abbr":"TRI",
+"alt":[
+"TRI"
+]
+},
+{
+"id":"2977",
+"name":"Trinity (CT)",
+"abbr":"TRI",
+"alt":[
+"TRI"
+]
+},
+{
+"id":"2652",
+"name":"Trinity (IL)",
+"abbr":"TRI",
+"alt":[
+"TRI"
+]
+},
+{
+"id":"386",
+"name":"Trinity (TX)",
+"abbr":"TRI",
+"alt":[
+"TRI"
+]
+},
+{
+"id":"3214",
+"name":"Trinity Bible",
+"abbr":"TRI",
+"alt":[
+"TRI"
+]
+},
+{
+"id":"2907",
+"name":"Trinity International (IL)",
+"abbr":"TRN",
+"alt":[
+"TRN",
+"Trinity Intl"
+]
+},
+{
+"id":"2653",
+"name":"Troy",
+"abbr":"TROY"
+},
+{
+"id":"2654",
+"name":"Truman State",
+"abbr":"TRU",
+"alt":[
+"TRU",
+"Truman St"
+]
+},
+{
+"id":"112",
+"name":"Tufts",
+"abbr":"TUF",
+"alt":[
+"TUF"
+]
+},
+{
+"id":"2655",
+"name":"Tulane",
+"abbr":"TULN",
+"alt":[
+"TULN"
+]
+},
+{
+"id":"202",
+"name":"Tulsa",
+"abbr":"TLSA",
+"alt":[
+"TLSA"
+]
+},
+{
+"id":"2839",
+"name":"Tusculum",
+"abbr":"TUS",
+"alt":[
+"TUS"
+]
+},
+{
+"id":"2657",
+"name":"Tuskegee",
+"abbr":"TUS",
+"alt":[
+"TUS"
+]
+},
+{
+"id":"5",
+"name":"UAB",
+"abbr":"UAB",
+"alt":[
+"Alabama-Birmingham"
+]
+},
+{
+"id":"302",
+"name":"UC Davis",
+"abbr":"UCD",
+"alt":[
+"California-Davis",
+"UCD"
+]
+},
+{
+"id":"2116",
+"name":"UCF",
+"abbr":"UCF",
+"alt":[
+"Central Florida"
+]
+},
+{
+"id":"26",
+"name":"UCLA",
+"abbr":"UCLA"
+},
+{
+"id":"113",
+"name":"UMass",
+"abbr":"UMASS"
+},
+{
+"id":"379",
+"name":"UMass Dartmouth",
+"abbr":"MAS",
+"alt":[
+"MAS"
+]
+},
+{
+"id":"2349",
+"name":"UMass Lowell",
+"abbr":"UML",
+"alt":[
+"UML"
+]
+},
+{
+"id":"2882",
+"name":"UNC Pembroke",
+"abbr":"NCP",
+"alt":[
+"NCP"
+]
+},
+{
+"id":"237",
+"name":"Union",
+"abbr":"UNI",
+"alt":[
+"UNI"
+]
+},
+{
+"id":"2841",
+"name":"Union College",
+"abbr":"UNI",
+"alt":[
+"Union",
+"UNI",
+"Union Ky College"
+]
+},
+{
+"id":"3254",
+"name":"University of Faith",
+"abbr":"UFFL",
+"alt":[
+"UFFL",
+"Faith-Florida"
+]
+},
+{
+"id":"559",
+"name":"University of Mary",
+"abbr":"MAR",
+"alt":[
+"MAR",
+"U of Mary"
+]
+},
+{
+"id":"2439",
+"name":"UNLV",
+"abbr":"UNLV",
+"alt":[
+"Nevada-Las Vegas"
+]
+},
+{
+"id":"389",
+"name":"Upper Iowa",
+"abbr":"UI",
+"alt":[
+"UI"
+]
+},
+{
+"id":"2666",
+"name":"Urbana",
+"abbr":"URB",
+"alt":[
+"URB"
+]
+},
+{
+"id":"2667",
+"name":"Ursinus",
+"abbr":"URS",
+"alt":[
+"URS"
+]
+},
+{
+"id":"30",
+"name":"USC",
+"abbr":"USC"
+},
+{
+"id":"2630",
+"name":"UT Martin",
+"abbr":"UTM",
+"alt":[
+"UTM"
+]
+},
+{
+"id":"2636",
+"name":"UT San Antonio",
+"abbr":"UTSA",
+"alt":[
+"Texas-San Antonio",
+"UTSA"
+]
+},
+{
+"id":"254",
+"name":"Utah",
+"abbr":"UTAH"
+},
+{
+"id":"328",
+"name":"Utah State",
+"abbr":"USU",
+"alt":[
+"USU"
+]
+},
+{
+"id":"2638",
+"name":"UTEP",
+"abbr":"UTEP",
+"alt":[
+"Texas-El Paso"
+]
+},
+{
+"id":"390",
+"name":"Utica",
+"abbr":"UTICA",
+"alt":[
+"Utica College"
+]
+},
+{
+"id":"2842",
+"name":"UVA-Wise",
+"abbr":"VAW",
+"alt":[
+"VAW"
+]
+},
+{
+"id":"271",
+"name":"UW-Oshkosh",
+"abbr":"WIS",
+"alt":[
+"WIS"
+]
+},
+{
+"id":"2723",
+"name":"UW-River Falls",
+"abbr":"WIS",
+"alt":[
+"WIS"
+]
+},
+{
+"id":"2744",
+"name":"UW-Stout",
+"abbr":"WIS",
+"alt":[
+"WIS"
+]
+},
+{
+"id":"2745",
+"name":"UW-Whitewater",
+"abbr":"WISW",
+"alt":[
+"WISW"
+]
+},
+{
+"id":"2673",
+"name":"Valdosta State",
+"abbr":"VAL",
+"alt":[
+"VAL",
+"Valdosta St"
+]
+},
+{
+"id":"628",
+"name":"Valley City State",
+"abbr":"VAL",
+"alt":[
+"VAL",
+"Valley City St"
+]
+},
+{
+"id":"2674",
+"name":"Valparaiso",
+"abbr":"VALP",
+"alt":[
+"VALP"
+]
+},
+{
+"id":"238",
+"name":"Vanderbilt",
+"abbr":"VAN",
+"alt":[
+"VAN"
+]
+},
+{
+"id":"222",
+"name":"Villanova",
+"abbr":"NOVA",
+"alt":[
+"NOVA"
+]
+},
+{
+"id":"258",
+"name":"Virginia",
+"abbr":"UVA",
+"alt":[
+"UVA"
+]
+},
+{
+"id":"330",
+"name":"Virginia State",
+"abbr":"VIR",
+"alt":[
+"VIR",
+"Virginia St"
+]
+},
+{
+"id":"259",
+"name":"Virginia Tech",
+"abbr":"VT",
+"alt":[
+"VT"
+]
+},
+{
+"id":"2676",
+"name":"Virginia Union",
+"abbr":"VIR",
+"alt":[
+"VIR"
+]
+},
+{
+"id":"2678",
+"name":"VMI",
+"abbr":"VMI",
+"alt":[
+"Virginia Military Institute"
+]
+},
+{
+"id":"89",
+"name":"Wabash College",
+"abbr":"WAB",
+"alt":[
+"Wabash",
+"WAB"
+]
+},
+{
+"id":"2681",
+"name":"Wagner",
+"abbr":"WAG",
+"alt":[
+"WAG"
+]
+},
+{
+"id":"154",
+"name":"Wake Forest",
+"abbr":"WAKE",
+"alt":[
+"WAKE"
+]
+},
+{
+"id":"3080",
+"name":"Waldorf",
+"abbr":"WAL",
+"alt":[
+"WAL"
+]
+},
+{
+"id":"2682",
+"name":"Walsh",
+"abbr":"WALSH"
+},
+{
+"id":"2683",
+"name":"Warner",
+"abbr":"UWS",
+"alt":[
+"UWS"
+]
+},
+{
+"id":"2685",
+"name":"Wartburg",
+"abbr":"WAR",
+"alt":[
+"WAR"
+]
+},
+{
+"id":"2687",
+"name":"Washburn",
+"abbr":"WAS",
+"alt":[
+"WAS"
+]
+},
+{
+"id":"264",
+"name":"Washington",
+"abbr":"WASH",
+"alt":[
+"WASH"
+]
+},
+{
+"id":"2686",
+"name":"Washington & Jefferson",
+"abbr":"WAS",
+"alt":[
+"WAS",
+"W&J"
+]
+},
+{
+"id":"2688",
+"name":"Washington & Lee",
+"abbr":"UWL",
+"alt":[
+"UWL",
+"Wash. & Lee"
+]
+},
+{
+"id":"143",
+"name":"Washington (MO)",
+"abbr":"WAS",
+"alt":[
+"WAS"
+]
+},
+{
+"id":"265",
+"name":"Washington State",
+"abbr":"WSU",
+"alt":[
+"WSU",
+"Washington St"
+]
+},
+{
+"id":"630",
+"name":"Wayland Baptist",
+"abbr":"WAY",
+"alt":[
+"WAY",
+"Wayland"
+]
+},
+{
+"id":"131",
+"name":"Wayne State (MI)",
+"abbr":"WAY",
+"alt":[
+"WAY",
+"Wayne St (MI)"
+]
+},
+{
+"id":"2844",
+"name":"Wayne State (NE)",
+"abbr":"WAY",
+"alt":[
+"WAY",
+"Wayne St (NE)"
+]
+},
+{
+"id":"2845",
+"name":"Waynesburg",
+"abbr":"WAY",
+"alt":[
+"WAY"
+]
+},
+{
+"id":"2691",
+"name":"Webber International",
+"abbr":"WEBB",
+"alt":[
+"WEBB",
+"Webber College"
+]
+},
+{
+"id":"2692",
+"name":"Weber State",
+"abbr":"WEB",
+"alt":[
+"WEB"
+]
+},
+{
+"id":"2846",
+"name":"Wesley College",
+"abbr":"WES",
+"alt":[
+"WES"
+]
+},
+{
+"id":"336",
+"name":"Wesleyan",
+"abbr":"WES",
+"alt":[
+"WES"
+]
+},
+{
+"id":"2695",
+"name":"West Alabama",
+"abbr":"WES",
+"alt":[
+"WES"
+]
+},
+{
+"id":"223",
+"name":"West Chester",
+"abbr":"WES",
+"alt":[
+"WES"
+]
+},
+{
+"id":"2698",
+"name":"West Georgia",
+"abbr":"WES",
+"alt":[
+"WES"
+]
+},
+{
+"id":"2699",
+"name":"West Liberty",
+"abbr":"WES",
+"alt":[
+"WES"
+]
+},
+{
+"id":"2704",
+"name":"West Texas A&M",
+"abbr":"WES",
+"alt":[
+"WES"
+]
+},
+{
+"id":"277",
+"name":"West Virginia",
+"abbr":"WVU",
+"alt":[
+"WVU"
+]
+},
+{
+"id":"2706",
+"name":"West Virginia Tech",
+"abbr":"WVT",
+"alt":[
+"WVT",
+"W Virginia Tech"
+]
+},
+{
+"id":"2717",
+"name":"Western Carolina",
+"abbr":"WCU",
+"alt":[
+"WCU",
+"W Carolina"
+]
+},
+{
+"id":"2843",
+"name":"Western Connecticut State",
+"abbr":"WES",
+"alt":[
+"WES",
+"W Conn St"
+]
+},
+{
+"id":"2710",
+"name":"Western Illinois",
+"abbr":"WIU",
+"alt":[
+"WIU",
+"W Illinois"
+]
+},
+{
+"id":"98",
+"name":"Western Kentucky",
+"abbr":"WKU",
+"alt":[
+"WKU",
+"W Kentucky"
+]
+},
+{
+"id":"2711",
+"name":"Western Michigan",
+"abbr":"WMU",
+"alt":[
+"WMU",
+"W Michigan"
+]
+},
+{
+"id":"2702",
+"name":"Western New England",
+"abbr":"WES",
+"alt":[
+"WES",
+"W New England"
+]
+},
+{
+"id":"2703",
+"name":"Western New Mexico",
+"abbr":"WES",
+"alt":[
+"WES",
+"W New Mexico"
+]
+},
+{
+"id":"2848",
+"name":"Western Oregon",
+"abbr":"WES",
+"alt":[
+"WES"
+]
+},
+{
+"id":"2714",
+"name":"Western State",
+"abbr":"WES",
+"alt":[
+"WES",
+"Western St."
+]
+},
+{
+"id":"2847",
+"name":"Western Washington",
+"abbr":"WES",
+"alt":[
+"WES",
+"W Washington"
+]
+},
+{
+"id":"2909",
+"name":"Westfield State",
+"abbr":"WES",
+"alt":[
+"WES",
+"Westfield St"
+]
+},
+{
+"id":"433",
+"name":"Westminster",
+"abbr":"WMN",
+"alt":[
+"WMN"
+]
+},
+{
+"id":"2849",
+"name":"Westminster PA",
+"abbr":"WMN",
+"alt":[
+"WMN"
+]
+},
+{
+"id":"396",
+"name":"Wheaton College (Ill)",
+"abbr":"WHE",
+"alt":[
+"WHE",
+"Wheaton  (Ill)"
+]
+},
+{
+"id":"2850",
+"name":"Whittier",
+"abbr":"WHI",
+"alt":[
+"WHI"
+]
+},
+{
+"id":"2721",
+"name":"Whitworth",
+"abbr":"WHI",
+"alt":[
+"WHI"
+]
+},
+{
+"id":"2725",
+"name":"Widener",
+"abbr":"WID",
+"alt":[
+"WID"
+]
+},
+{
+"id":"398",
+"name":"Wilkes",
+"abbr":"WIL",
+"alt":[
+"WIL"
+]
+},
+{
+"id":"2930",
+"name":"Willamette",
+"abbr":"WIL",
+"alt":[
+"WIL"
+]
+},
+{
+"id":"2729",
+"name":"William & Mary",
+"abbr":"W&M",
+"alt":[
+"W&M"
+]
+},
+{
+"id":"2911",
+"name":"William Jewell College",
+"abbr":"WJC",
+"alt":[
+"WJC",
+"William Jewell"
+]
+},
+{
+"id":"2970",
+"name":"William Paterson",
+"abbr":"WMP",
+"alt":[
+"WMP"
+]
+},
+{
+"id":"2912",
+"name":"William Penn",
+"abbr":"WIL",
+"alt":[
+"WIL"
+]
+},
+{
+"id":"2731",
+"name":"Williams",
+"abbr":"WIL",
+"alt":[
+"WIL"
+]
+},
+{
+"id":"3130",
+"name":"Williamson Trade",
+"abbr":"WIL",
+"alt":[
+"WIL"
+]
+},
+{
+"id":"2733",
+"name":"Wilmington (OH)",
+"abbr":"WIL",
+"alt":[
+"WIL"
+]
+},
+{
+"id":"351",
+"name":"Wingate",
+"abbr":"WIN",
+"alt":[
+"WIN"
+]
+},
+{
+"id":"2851",
+"name":"Winona State",
+"abbr":"WIN",
+"alt":[
+"WIN",
+"Winona St"
+]
+},
+{
+"id":"2736",
+"name":"Winston-Salem",
+"abbr":"WSSU",
+"alt":[
+"WSSU"
+]
+},
+{
+"id":"275",
+"name":"Wisconsin",
+"abbr":"WIS",
+"alt":[
+"WIS"
+]
+},
+{
+"id":"2741",
+"name":"Wisconsin Lutheran",
+"abbr":"WIS",
+"alt":[
+"WIS"
+]
+},
+{
+"id":"2738",
+"name":"Wisconsin-Eau Claire",
+"abbr":"WIS",
+"alt":[
+"WIS",
+"UW-Eau Claire"
+]
+},
+{
+"id":"2740",
+"name":"Wisconsin-La Crosse",
+"abbr":"WIS",
+"alt":[
+"WIS",
+"UW-La Crosse"
+]
+},
+{
+"id":"272",
+"name":"Wisconsin-Platteville",
+"abbr":"WIS",
+"alt":[
+"WIS",
+"UW-Platteville"
+]
+},
+{
+"id":"2743",
+"name":"Wisconsin-Stevens Point",
+"abbr":"WIS",
+"alt":[
+"WIS",
+"UW-Stevens Point"
+]
+},
+{
+"id":"2746",
+"name":"Wittenberg",
+"abbr":"WIT",
+"alt":[
+"WIT"
+]
+},
+{
+"id":"2747",
+"name":"Wofford",
+"abbr":"WOF",
+"alt":[
+"WOF"
+]
+},
+{
+"id":"2748",
+"name":"Wooster",
+"abbr":"WOO",
+"alt":[
+"WOO"
+]
+},
+{
+"id":"2749",
+"name":"Worcester Polytechnic",
+"abbr":"WPI",
+"alt":[
+"WPI"
+]
+},
+{
+"id":"402",
+"name":"Worcester State College",
+"abbr":"WOR",
+"alt":[
+"WOR",
+"Worcester St"
+]
+},
+{
+"id":"2750",
+"name":"Wright State University",
+"abbr":"WRST",
+"alt":[
+"WRST",
+"Wright State"
+]
+},
+{
+"id":"2707",
+"name":"WV State",
+"abbr":"WES",
+"alt":[
+"WES",
+"WV St"
+]
+},
+{
+"id":"455",
+"name":"WV Wesleyan",
+"abbr":"WVW",
+"alt":[
+"West Virginia Wesleyan",
+"WVW"
+]
+},
+{
+"id":"2751",
+"name":"Wyoming",
+"abbr":"WYO",
+"alt":[
+"WYO"
+]
+},
+{
+"id":"43",
+"name":"Yale",
+"abbr":"YALE"
+},
+{
+"id":"2754",
+"name":"Youngstown State",
+"abbr":"YSU",
+"alt":[
+"YSU",
+"Youngstown St"
+]
+}
+]
+}

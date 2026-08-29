@@ -40,6 +40,9 @@ rm -rf "$DIR"
 mkdir -p "$DIR/downloads"
 cp -R "$ROOT/public" "$DIR/public"
 cp "$ROOT/server.js" "$ROOT/local-library.js" "$ROOT/epg-guide.js" "$ROOT/people.js" "$ROOT/providers.js" "$ROOT/recordings.js" "$DIR/"
+# Data the box reads at boot, not code — but it is required like code, and a
+# box without it draws college cards with no club marks on them.
+cp "$ROOT/college-teams.json" "$DIR/"
 [ -f "$ROOT/library-index.ndjson" ] && cp "$ROOT/library-index.ndjson" "$DIR/"
 
 # An m3u pointed at nothing: every suite stubs the library calls it needs, and
