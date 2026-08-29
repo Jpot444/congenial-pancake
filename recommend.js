@@ -492,7 +492,13 @@ async function forYou({ profile, movies, categoryAffinity, people, seeds, cache,
     || (b.film.added || 0) - (a.film.added || 0));
 
   return {
-    items: scored.slice(0, 24).map((row) => ({ ...row.film, why: row.why })),
+    /* One recommendation per FILM, not per copy. The catalogue holds the same
+       film three and four times over — a 4K one, a Dutch one — and every copy
+       scores alike, so a row of twenty-four could be eight films wearing three
+       faces each. The screen groups them into one card too; this is so the
+       twenty-four are twenty-four different suggestions before it gets
+       there. */
+    items: oncePerTitle(scored).slice(0, 24).map((row) => ({ ...row.film, why: row.why })),
     needs: scored.length ? '' : 'seeds',
     liked: taste.liked.length,
     picks: scored.length ? [] : worthAsking(catalogue, taste),
@@ -589,9 +595,29 @@ async function similarTo({ film, movies, people, cache, fetchJson, tmdbKey, log,
     || (Number(b.film.rating) || 0) - (Number(a.film.rating) || 0));
 
   return {
-    items: scored.slice(0, want).map((row) => ({ ...row.film, why: row.why })),
+    // Once per film here too: 'Others enjoyed' offering the same title three
+    // times is a shorter row pretending to be a longer one.
+    items: oncePerTitle(scored).slice(0, want).map((row) => ({ ...row.film, why: row.why })),
     similar: report,
   };
+}
+
+/**
+ * One row per title, keeping the best-scoring copy of each.
+ *
+ * The list is already in the order that matters, so the first of any title to
+ * come past is the one to keep.
+ */
+function oncePerTitle(scored) {
+  const seen = new Set();
+  const out = [];
+  for (const row of scored) {
+    const key = foldTitle(row.film.name);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    out.push(row);
+  }
+  return out;
 }
 
 /**

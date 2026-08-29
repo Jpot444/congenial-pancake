@@ -82,12 +82,44 @@ const CATS = ITEMS.map((it, i) => ({ id: `c${i}`, name: `Category ${i}` }));
     state.library.movies = { categories: args.cats, items: args.items };
   }, { items: ITEMS, cats: CATS });
 
+  /* ---- the shelves, which are the page you land on -------------------- */
+  /*
+   * The grid grouped and the shelves did not, so the same film appeared three
+   * times along a rail — and the Movies page IS the shelves. This suite only
+   * ever looked at the grid, which is why it went unnoticed: the one view
+   * that was tested was the one view that was right.
+   */
+  console.log('\n  the shelves');
+  const shelves = await page.evaluate(() => {
+    state.tab = 'movies';
+    state.movieId = '';
+    state.category = null;
+    state.query = '';
+    const rows = buildShelves('movies');
+    const all = rows.find((r) => /new releases|all movies/i.test(r.title)) || rows[0];
+    return {
+      titles: all.items.map((i) => i.name),
+      copies: (all.items.find((i) => i.name === 'Trading Places') || {}).variants?.length || 0,
+    };
+  });
+  console.log('   ', JSON.stringify(shelves));
+  check('a rail shows one card per film, not one per copy',
+    shelves.titles.filter((t) => t === 'Trading Places').length === 1,
+    JSON.stringify(shelves.titles));
+  check('with the copies held behind it, the way the grid holds them',
+    shelves.copies === 3, String(shelves.copies));
+  check('and the films that only share a name keep their own cards',
+    shelves.titles.includes('Bytta roller/Trading Places')
+    && shelves.titles.includes('Trading Places (2023)'),
+    JSON.stringify(shelves.titles));
+
   console.log('\n  the grid');
   const grid = await page.evaluate(() => {
     state.tab = 'movies';
     state.movieId = '';
     state.category = null;
     state.query = 'trading';
+    state.shelf = null;
     render();
     return [...document.querySelectorAll('#grid .card .card-title')].map((t) => t.textContent);
   });

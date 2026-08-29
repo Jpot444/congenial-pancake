@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '35.0';
+const VERSION = '35.1';
 
 const PAGE_SIZE = 60;
 
@@ -4416,7 +4416,10 @@ const SHELF_DEFS = { movies: MOVIE_ROWS, series: SERIES_ROWS };
 const forYou = { items: [], needs: '', picks: [], similar: null, at: 0, asking: null };
 
 function forYouItems(tab) {
-  if (tab === 'movies') return forYou.items;
+  /* Grouped like every other row of films. The box recommends out of the
+     whole catalogue, which holds every copy, so without this a row of
+     twenty-four could be eight films wearing three faces each. */
+  if (tab === 'movies') return groupVariants(forYou.items);
 
   const lib = state.library[tab];
   if (!lib) return [];
@@ -4559,6 +4562,15 @@ function buildShelves(tab) {
     // and lets `added` do the work. The answer is then the same either way —
     // newest first — rather than an empty shelf.
     if (!items.length && def.fallbackAll) items = pool;
+
+    /* One card per title, here as well as in the grid.
+     *
+     * The grid grouped and the shelves did not, so the same film appeared
+     * three times along a rail — and the Movies page IS the shelves. Grouped
+     * per row rather than across the page, the same way the grid groups after
+     * filtering: two shelves are two questions, and a film that is on both is
+     * legitimately on both. */
+    if (tab === 'movies' || tab === 'series') items = groupVariants(items);
 
     if (def.sort === 'added') {
       items = [...items].sort((a, b) => (b.added || 0) - (a.added || 0));
@@ -6166,7 +6178,7 @@ const seedPicker = {
       grid.append(Object.assign(el('p', 'health-note'), { textContent: 'Asking the box…' }));
       return;
     }
-    for (const film of forYou.picks) {
+    for (const film of groupVariants(forYou.picks)) {
       const tile = el('button', 'seed-tile');
       tile.type = 'button';
       if (this.chosen.has(String(film.id))) tile.classList.add('on');
