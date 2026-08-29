@@ -163,6 +163,63 @@ const watchedHeat = (extra = {}) => ({
   check('and the answer reports that the asking worked',
     coTaste.similar.answered > 0, JSON.stringify(coTaste.similar));
 
+  console.log('\n  the source that is actually built for the question');
+  /*
+   * The Movie Database answers what its users went on to watch — the
+   * audience answer, not a similarity score off a genre tag — which is
+   * exactly what was asked for. It wants a key, so it is first on the list
+   * only when there is one.
+   */
+  const seenUrls = [];
+  const tmdb = await recommend.forYou({
+    profile,
+    movies: MOVIES,
+    categoryAffinity: AFFINITY,
+    people,
+    seeds: [],
+    cache: new Map(),
+    tmdbKey: 'a-key-that-is-long-enough',
+    fetchJson: async (url) => {
+      seenUrls.push(url);
+      if (url.includes('/search/movie')) return { results: [{ id: 949, title: 'Heat' }] };
+      if (url.includes('/recommendations')) {
+        return { results: [{ title: 'Nobody Knows This' }] };
+      }
+      return { results: [] };
+    },
+  });
+  console.log('   asked:', JSON.stringify(seenUrls.slice(0, 2).map((u) => u.split('?')[0])));
+  check('it looks the film up and then asks what that audience watched next',
+    seenUrls.some((u) => u.includes('/search/movie'))
+    && seenUrls.some((u) => u.includes('/949/recommendations')),
+    JSON.stringify(seenUrls.map((u) => u.split('?')[0])));
+  check('and what comes back leads the row',
+    tmdb.items[0] && tmdb.items[0].id === '8', JSON.stringify(tmdb.items.map((i) => i.id)));
+  check('the answer names which service it was',
+    tmdb.similar.source === 'themoviedb', JSON.stringify(tmdb.similar));
+  /* The key is a secret. It has to travel in the request to that service and
+     nowhere else — not into a log line, not into what this box hands back. */
+  check('and the key is not in anything the box reports',
+    !JSON.stringify(tmdb).includes('a-key-that-is-long-enough'),
+    'the key appears in the answer');
+
+  console.log('\n  and without a key it says so rather than blaming the server');
+  const keyless = await recommend.forYou({
+    profile,
+    movies: MOVIES,
+    categoryAffinity: AFFINITY,
+    people,
+    seeds: [],
+    cache: new Map(),
+    fetchJson: async () => { throw new Error('HTTP 404'); },
+  });
+  console.log('   keyless:', JSON.stringify(keyless.similar));
+  /* A door nobody has been given a key to is not a broken door. Saying
+     'HTTP 401' about it sends somebody looking for a fault instead of for a
+     key. */
+  check('a source with no key reads as no key, not as a failure',
+    /no key/.test(keyless.similar.error || ''), JSON.stringify(keyless.similar));
+
   console.log('\n  a service that will not answer costs the row nothing');
   const refused = await recommend.forYou({
     profile,

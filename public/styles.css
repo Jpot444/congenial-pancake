@@ -5759,3 +5759,27 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .seed-tile.on img { opacity: 1; }
 .seed-tile:not(.on) img { opacity: .72; }
 .seed-tile:hover img { opacity: 1; }
+
+/* The key box inside the picker. Folded away by default: it is the better
+   answer, not the required one, and a form is a bad first thing to meet. */
+.seed-key { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.seed-key > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.seed-key.on > summary { color: var(--text); }
+.seed-key-row { display: flex; gap: 8px; margin-top: 8px; }
+.seed-key-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .03);
+  color: var(--text);
+  font-size: 13px;
+}

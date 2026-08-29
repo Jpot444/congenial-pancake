@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '34.4';
+const VERSION = '34.5';
 
 const PAGE_SIZE = 60;
 
@@ -6115,6 +6115,7 @@ const seedPicker = {
     $('#seedError').hidden = true;
     $('#seedModal').hidden = false;
     this.paint();
+    this.paintKey();
     // The picks come with the recommendation, so a row that has never been
     // asked for has none to show yet.
     if (!forYou.picks.length) loadForYou({ force: true }).then(() => this.paint());
@@ -6164,6 +6165,43 @@ const seedPicker = {
       : `Use these ${n}`;
   },
 
+  /** Whether the box has a key, which is the only thing it will say about it. */
+  async paintKey() {
+    try {
+      const data = await api('/api/tmdb');
+      $('#seedKeyState').textContent = data.set ? '· on' : '· off';
+      $('#seedKeyBox').classList.toggle('on', Boolean(data.set));
+      $('#seedKey').placeholder = data.set
+        ? 'A key is saved — paste a new one to replace it'
+        : 'Paste the API key';
+    } catch {
+      $('#seedKeyState').textContent = '';
+    }
+  },
+
+  async saveKey() {
+    const field = $('#seedKey');
+    const error = $('#seedError');
+    error.hidden = true;
+    try {
+      const res = await fetch('/api/tmdb', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: field.value.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `the box answered ${res.status}`);
+      // Never held in the page any longer than the keystroke that typed it.
+      field.value = '';
+      await this.paintKey();
+      toast(data.set ? 'Saved. Suggestions will use it.' : 'Key removed.');
+      await loadForYou({ force: true });
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    }
+  },
+
   async save() {
     const seeds = forYou.picks
       .filter((film) => this.chosen.has(String(film.id)))
@@ -6196,6 +6234,7 @@ const seedPicker = {
 
 $('#seedClose').addEventListener('click', () => seedPicker.close());
 $('#seedSave').addEventListener('click', () => seedPicker.save());
+$('#seedKeySave').addEventListener('click', () => seedPicker.saveKey());
 $('#seedModal').addEventListener('click', (e) => {
   if (e.target.id === 'seedModal') seedPicker.close();
 });

@@ -302,6 +302,25 @@
 
     <div class="seed-grid" id="seedGrid"></div>
 
+    <!-- The one recommendation service properly built for "people who liked
+         that also liked this". Free, two minutes, and the key never leaves
+         the box: it is written into config.json beside the provider password
+         and read back only as "there is one". -->
+    <details class="seed-key" id="seedKeyBox">
+      <summary>Better suggestions <span id="seedKeyState"></span></summary>
+      <p class="health-note">
+        The Movie Database answers what its users actually watched next, which
+        is the question this row is asking. A free key at
+        <strong>themoviedb.org/settings/api</strong> turns it on. It stays on
+        this box — it is never sent to a browser or put in a link.
+      </p>
+      <div class="seed-key-row">
+        <input id="seedKey" type="password" spellcheck="false" autocomplete="off"
+               placeholder="Paste the API key" />
+        <button type="button" class="btn btn-ghost btn-sm" id="seedKeySave">Save it</button>
+      </div>
+    </details>
+
     <p class="form-error" id="seedError" hidden></p>
 
     <div class="modal-actions">

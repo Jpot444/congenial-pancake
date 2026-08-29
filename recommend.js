@@ -193,14 +193,33 @@ function tasteOf(profile, seeds) {
  * row that is thin should be able to say whether that is because nobody was
  * asked or because nobody answered.
  */
-const SIMILAR_URLS = [
-  (title) => 'https://tastedive.com/api/similar?type=movie&limit=20&q='
-    + encodeURIComponent(title),
-  (title) => 'https://tastedive.com/api/similar?type=movies&limit=20&q='
-    + encodeURIComponent(title),
-];
-
-/** The titles out of a similarity answer, whichever spelling it uses. */
+/*
+ * Where "people who liked that also liked" can be got from.
+ *
+ * Each source is a couple of steps at most and hands back plain titles. They
+ * are asked in order and the first that answers wins, which is the same shape
+ * the scoreboards use and for the same reason: these are other people's
+ * servers and none of them owes this box anything.
+ *
+ * THE MOVIE DATABASE is first and is the only one of these that is properly
+ * built for the question. Its `recommendations` list is made out of what its
+ * users actually watched next — it is the audience answer, not a similarity
+ * score off a genre tag — and `similar` stands behind it for a title too
+ * obscure to have one. It wants a key, which is free and takes two minutes,
+ * and the key lives in config.json beside the provider password: 0600, never
+ * sent to a browser, never in a URL this box hands out.
+ *
+ * TASTE.IO is next. Its own website reads this address; there is no
+ * documentation and no promise, which is exactly why it is behind the one
+ * that has both.
+ *
+ * TASTEDIVE last, keyless and rate-limited, as the answer of last resort.
+ *
+ * word.studio's recommender was suggested too and is not here: it is a web
+ * page wrapping a language model, with no address a box can call and nothing
+ * to call it with. A page a person uses is not an interface a program has.
+ */
+/** The titles out of a TasteDive answer, whichever spelling it uses. */
 function similarTitles(body) {
   const block = body?.Similar || body?.similar || {};
   const rows = block.Results || block.results || [];
@@ -209,6 +228,59 @@ function similarTitles(body) {
     .filter(Boolean);
 }
 
+const SOURCES = [
+  {
+    name: 'themoviedb',
+    needsKey: true,
+    /* Two steps: find the film, then ask what its audience went on to watch.
+       Both answers are cached under the film's title, so a seed costs this
+       pair once a week rather than once a page. */
+    async titles(title, { fetchJson, key }) {
+      const found = await fetchJson('https://api.themoviedb.org/3/search/movie'
+        + `?api_key=${encodeURIComponent(key)}&include_adult=false`
+        + `&query=${encodeURIComponent(title)}`);
+      const first = (found?.results || [])[0];
+      if (!first || !first.id) return [];
+      const out = [];
+      for (const kind of ['recommendations', 'similar']) {
+        // eslint-disable-next-line no-await-in-loop
+        const list = await fetchJson(`https://api.themoviedb.org/3/movie/${first.id}/${kind}`
+          + `?api_key=${encodeURIComponent(key)}`);
+        for (const row of list?.results || []) {
+          const name = String(row?.title || row?.original_title || '').trim();
+          if (name) out.push(name);
+        }
+        // The audience answer on its own is enough when there is one.
+        if (out.length >= 10) break;
+      }
+      return out;
+    },
+  },
+  {
+    name: 'taste.io',
+    async titles(title, { fetchJson }) {
+      const found = await fetchJson('https://www.taste.io/api/items?type=movie&limit=1'
+        + `&q=${encodeURIComponent(title)}`);
+      const first = (found?.items || found?.data || [])[0];
+      const slug = first?.slug || first?.id;
+      if (!slug) return [];
+      const near = await fetchJson(
+        `https://www.taste.io/api/items/${encodeURIComponent(slug)}/related?type=movie`);
+      return (near?.items || near?.data || [])
+        .map((row) => String(row?.name || row?.title || '').trim())
+        .filter(Boolean);
+    },
+  },
+  {
+    name: 'tastedive',
+    async titles(title, { fetchJson }) {
+      const body = await fetchJson('https://tastedive.com/api/similar?type=movie&limit=20'
+        + `&q=${encodeURIComponent(title)}`);
+      return similarTitles(body);
+    },
+  },
+];
+
 /**
  * Ask about one title, remembering the answer and the failure alike.
  *
@@ -216,7 +288,7 @@ function similarTitles(body) {
  * is simply not reachable from this box is asked again for every seed on
  * every visit, for ever.
  */
-async function alsoEnjoyed(title, cache, fetchJson, log) {
+async function alsoEnjoyed(title, cache, fetchJson, log, tmdbKey) {
   const key = foldTitle(title);
   if (!key) return { titles: [], source: '', error: '' };
   const held = cache.get(key);
@@ -225,19 +297,24 @@ async function alsoEnjoyed(title, cache, fetchJson, log) {
   }
 
   const tried = [];
-  for (const build of SIMILAR_URLS) {
-    const url = build(title);
+  for (const source of SOURCES) {
+    /* A source that wants a key and has not got one is not a failure — it is
+       a door nobody has been given a key to, and saying "HTTP 401" about it
+       would send somebody looking for a fault instead of for a key. */
+    if (source.needsKey && !tmdbKey) {
+      tried.push(`${source.name}: no key`);
+      continue;
+    }
     try {
       // eslint-disable-next-line no-await-in-loop
-      const body = await fetchJson(url);
-      const titles = similarTitles(body);
+      const titles = await source.titles(title, { fetchJson, key: tmdbKey });
       if (titles.length) {
-        cache.set(key, { at: Date.now(), titles, source: url });
-        return { titles, source: url, error: '' };
+        cache.set(key, { at: Date.now(), titles, source: source.name });
+        return { titles, source: source.name, error: '' };
       }
-      tried.push('no answer');
+      tried.push(`${source.name}: no answer`);
     } catch (err) {
-      tried.push(err.message);
+      tried.push(`${source.name}: ${err.message}`);
     }
   }
   const error = [...new Set(tried)].join(' · ');
@@ -256,7 +333,8 @@ async function alsoEnjoyed(title, cache, fetchJson, log) {
  * talks to the internet; passing it in keeps this file testable and keeps it
  * from knowing anything about HTTP.
  */
-async function forYou({ profile, movies, categoryAffinity, people, seeds, cache, fetchJson, log }) {
+async function forYou({ profile, movies, categoryAffinity, people, seeds, cache,
+  fetchJson, log, tmdbKey }) {
   const taste = tasteOf(profile, seeds);
   const catalogue = movies || [];
 
@@ -301,7 +379,7 @@ async function forYou({ profile, movies, categoryAffinity, people, seeds, cache,
     for (const film of taste.liked.slice(0, 5)) {
       report.asked += 1;
       // eslint-disable-next-line no-await-in-loop
-      const answer = await alsoEnjoyed(film.name, cache, fetchJson, log);
+      const answer = await alsoEnjoyed(film.name, cache, fetchJson, log, tmdbKey);
       if (answer.source) {
         report.answered += 1;
         report.source = report.source || answer.source;
@@ -424,4 +502,4 @@ function worthAsking(movies, taste, want = 40) {
   return out;
 }
 
-module.exports = { forYou, foldTitle, yearOf, worthAsking, tasteOf, similarTitles };
+module.exports = { forYou, foldTitle, yearOf, worthAsking, tasteOf, similarTitles, SOURCES };

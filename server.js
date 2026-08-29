@@ -6404,6 +6404,11 @@ async function handleApi(req, res, pathname, query) {
       const held = readConfig();
       next.epgUrls = guideSources(held);
       next.useProviderGuide = held?.useProviderGuide !== false;
+      /* Carried over for the same reason the guide feeds are: this object is
+         built from scratch on every save, so anything not named here is
+         quietly dropped — and connecting a provider must not throw away a
+         recommendation key somebody pasted a month ago. */
+      if (held?.tmdbKey) next.tmdbKey = held.tmdbKey;
 
       if (next.mode === 'xtream') {
         if (!incoming.host || !incoming.username || !incoming.password) {
@@ -6566,6 +6571,41 @@ async function handleApi(req, res, pathname, query) {
    * how many it thinks are open — beside the box's own count of what it is
    * using. Passwords never leave the box: they are what this file is 0600 for.
    */
+  /*
+   * The key for the one recommendation service properly built for the
+   * question.
+   *
+   * Written, never read back. It goes in config.json beside the provider
+   * password — the file this box keeps at 0600 — and the only thing any
+   * screen is ever told about it is whether there is one. A key that can be
+   * fetched by anything that can reach this page is a key that has been
+   * given away.
+   */
+  if (pathname === '/api/tmdb') {
+    const cfg = readConfig();
+    if (req.method === 'GET') {
+      return json(res, 200, { set: Boolean(String(cfg.tmdbKey || '').trim()) });
+    }
+    if (req.method === 'PUT') {
+      let incoming;
+      try {
+        incoming = JSON.parse(await collectRequestBody(req));
+      } catch {
+        return json(res, 400, { error: 'Invalid JSON' });
+      }
+      const key = String(incoming.key || '').trim();
+      if (key && !/^[A-Za-z0-9._-]{16,120}$/.test(key)) {
+        return json(res, 400, { error: 'That does not look like a key.' });
+      }
+      writeConfig({ ...cfg, tmdbKey: key });
+      /* Whatever was remembered was remembered without it, or with the old
+         one. Both are the wrong answer now. */
+      similarCache.clear();
+      return json(res, 200, { set: Boolean(key) });
+    }
+    return json(res, 405, { error: 'Method not allowed' });
+  }
+
   if (pathname === '/api/providers') {
     if (req.method === 'GET') {
       const list = providers.accounts(cfg);
@@ -7016,6 +7056,10 @@ async function handleApi(req, res, pathname, query) {
            address here is asked, and it is allowed to fail. */
         fetchJson: (url) => fetchJson(url, SITE_HEADERS),
         log: (line) => console.log(line),
+        /* Read here rather than passed around: it lives in config.json with
+           the provider password, 0600, and it must not travel to a browser
+           or into any URL this box hands out. */
+        tmdbKey: String(readConfig().tmdbKey || '').trim(),
       });
       return json(res, 200, answer);
     }
