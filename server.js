@@ -4580,24 +4580,156 @@ function espnEvents(body) {
   return [];
 }
 
+/*
+ * The NCAA's own scoreboard, for the days ESPN will not talk to this box.
+ *
+ * Which is every day so far: the report from the box came back 403 on
+ * site.api.espn.com for the NFL scoreboard and all four college addresses,
+ * and an empty body from cdn.espn.com. The user agent is already a browser's,
+ * so this is not a header that can be fixed — it is the address being refused
+ * this house, and no sixth ESPN address is going to change that.
+ *
+ * ncaa.com's scoreboard reads this, unauthenticated, filed by the day's date
+ * and by division, so `/fbs/` is the same cut `groups=80` was asking ESPN
+ * for. It carries the score, the period, the clock, the start time and the
+ * network — everything a card draws except the down and the yard line, which
+ * only ESPN publishes. So a college card sourced from here shows the field
+ * with no ball on it rather than a wrong one, and the same is true of the
+ * club marks: ncaa.com does not ship a logo address with the scoreboard, and
+ * the card already prefers an abbreviation to a hole where a badge should be.
+ *
+ * Second in the list, not first, for exactly that reason: ESPN's answer is
+ * the better one on any day it can be had.
+ */
+const NCAA_URL = process.env.NCAA_URL || '';
+
+/** Today, in the timezone the games are filed under. */
+function easternDate(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now);
+  const get = (t) => (parts.find((p) => p.type === t) || {}).value || '';
+  return { year: get('year'), month: get('month'), day: get('day') };
+}
+
+function ncaaUrl() {
+  if (NCAA_URL) return NCAA_URL;
+  const { year, month, day } = easternDate();
+  return `https://data.ncaa.com/casablanca/scoreboard/football/fbs/${year}/${month}/${day}/scoreboard.json`;
+}
+
+/** ncaa.com's state words, in the three the rest of this file speaks. */
+function ncaaStatus(state) {
+  const word = String(state || '').toLowerCase();
+  if (word === 'live' || word === 'in') return 'live';
+  if (word === 'final' || word === 'post') return 'final';
+  return 'upcoming';
+}
+
+/** One ncaa.com game as the Game shape `public/tv/js/scores.js` documents. */
+function ncaaGame(row) {
+  const game = row?.game || row || {};
+  const state = ncaaStatus(game.gameState);
+  const kickoff = (Number(game.startTimeEpoch) || 0) * 1000;
+
+  const side = (which) => {
+    const team = game[which] || {};
+    const names = team.names || {};
+    return {
+      abbr: names.char6 || names.short || '',
+      // Not shipped with this scoreboard. The card prints the abbreviation
+      // rather than leaving a hole, which is what that fallback is for.
+      logo: '',
+      // '(4-1)' as ncaa.com writes it; the card wants '4-1'.
+      record: String(team.description || '').replace(/[()]/g, '').trim(),
+      score: team.score === undefined || team.score === null || team.score === ''
+        ? null : Number(team.score),
+      possession: false,
+    };
+  };
+
+  let clock = '';
+  if (state === 'live') {
+    clock = [game.currentPeriod, game.contestClock].filter(Boolean).join(' · ');
+  } else if (state === 'final') {
+    clock = game.finalMessage || 'Final';
+  } else if (kickoff) {
+    clock = new Date(kickoff).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  } else {
+    clock = String(game.startTime || '');
+  }
+
+  let note = '';
+  if (state === 'upcoming' && kickoff) {
+    const mins = Math.round((kickoff - Date.now()) / 60000);
+    if (mins > 0 && mins < 240) note = `Kicks off in ${mins} min`;
+  }
+
+  const named = (which, key) => String((game[which]?.names || {})[key] || '').trim();
+
+  return {
+    id: String(game.gameID || game.url || ''),
+    sport: 'ncaaf',
+    status: state,
+    detailedState: state === 'final' ? (game.finalMessage || 'Final')
+      : String(game.currentPeriod || game.startTime || ''),
+    channelMatch: game.network || '',
+    channelName: game.network || '',
+    /* The school as a broadcast says it — 'Michigan', 'Ohio State' — which is
+       what a provider's own row for the game is likeliest to be named after. */
+    teamMatch: [named('away', 'short'), named('home', 'short')].filter(Boolean),
+    teamAlt: [],
+    /* Six characters, which is what a cramped provider row uses. Short and
+       therefore dangerous alone; the matcher reaches for them last. */
+    teamShort: [named('away', 'char6'), named('home', 'char6')].filter(Boolean),
+    redZone: false,
+    away: side('away'),
+    home: side('home'),
+    clock,
+    situation: '',
+    // Only ESPN publishes the down and the spot. A field with no ball on it
+    // is honest; a field with a guessed one is not.
+    drive: null,
+    kickoff,
+    note,
+    progress: null,
+    placeholder: false,
+  };
+}
+
+/** The games out of an ncaa.com scoreboard answer. */
+function ncaaGames(body) {
+  const rows = Array.isArray(body?.games) ? body.games : [];
+  return rows.map(ncaaGame);
+}
+
 /**
- * A football slate, from the first address that answers.
+ * A football slate, from the first SOURCE that answers.
+ *
+ * A source is an address and a way of reading what comes back, because the
+ * chain is no longer a list of ESPN addresses that differ only in their query
+ * string — ESPN refuses this box outright, on every path and from both of its
+ * hosts, so the list has to be able to hold somebody else's scoreboard.
  *
  * Falls through on failure only. What comes back carries `source` — which
  * address actually answered — and `tried`, the ones that did not and why,
  * because "the band is empty" has several causes and they are
  * indistinguishable from the sofa.
  */
-async function espnSlate(urls, sport, cache) {
+async function footballSlate(sources, cache) {
   const tried = [];
-  for (const url of urls) {
+  for (const src of sources) {
+    let url = '';
     try {
+      // The NCAA's own scoreboard is filed by date, so an address can be a
+      // function of the day rather than a constant.
+      url = typeof src.url === 'function' ? src.url() : src.url;
       // eslint-disable-next-line no-await-in-loop
-      const body = await fetchJson(url, SITE_HEADERS);
-      const games = espnEvents(body).map((e) => nflGame(e, sport)).filter((g) => g.id);
+      const body = await fetchJson(url, src.headers || SITE_HEADERS);
+      const games = src.games(body).filter((g) => g.id);
       return { at: Date.now(), games, error: '', source: url, tried };
     } catch (err) {
-      tried.push({ url, error: err.message });
+      tried.push({ url: url || String(src.url), error: err.message });
     }
   }
   /* Every address refused. Keep the last good slate for a few minutes rather
@@ -4634,15 +4766,40 @@ function feedFresh(cache, ttl) {
   return age < (cache.error && !cache.games.length ? FEED_FAIL_TTL_MS : ttl);
 }
 
+/** An ESPN address, as a source. */
+const espnSource = (url, sport) => ({
+  url,
+  games: (body) => espnEvents(body).map((e) => nflGame(e, sport)),
+});
+
+const NFL_SOURCES = NFL_URLS.map((u) => espnSource(u, 'nfl'));
+/* ESPN first, because its answer carries the down and the yard line and
+   nobody else's does. The NCAA's own scoreboard behind it, because a card
+   with no ball on the field beats no card at all. */
+const NCAAF_SOURCES = [
+  ...NCAAF_URLS.map((u) => espnSource(u, 'ncaaf')),
+  /* When the addresses are pinned by the environment, that IS the list: a
+     test that stands up its own scoreboard must not also reach out to the
+     real internet behind its own back. Setting NCAA_URL puts this source
+     back, pointed wherever it says. */
+  ...((!process.env.NCAAF_URLS && !process.env.NCAAF_URL) || process.env.NCAA_URL
+    ? [{ url: ncaaUrl, games: ncaaGames }]
+    : []),
+];
+
+/** Every address a feed may knock on, for the report. */
+const addressesOf = (sources) =>
+  sources.map((s) => (typeof s.url === 'function' ? s.url() : s.url));
+
 async function ncaafScores() {
   if (feedFresh(ncaafCache, NCAAF_TTL_MS)) return ncaafCache;
-  ncaafCache = await espnSlate(NCAAF_URLS, 'ncaaf', ncaafCache);
+  ncaafCache = await footballSlate(NCAAF_SOURCES, ncaafCache);
   return ncaafCache;
 }
 
 async function nflScores() {
   if (feedFresh(nflCache, NFL_TTL_MS)) return nflCache;
-  nflCache = await espnSlate(NFL_URLS, 'nfl', nflCache);
+  nflCache = await footballSlate(NFL_SOURCES, nflCache);
   return nflCache;
 }
 
@@ -6702,7 +6859,7 @@ async function handleApi(req, res, pathname, query) {
        * carry no credentials, so they can be shown. */
       feeds: [
         { sport: 'nfl',
-          url: NFL_URLS,
+          url: addressesOf(NFL_SOURCES),
           source: nfl.source || undefined,
           games: nfl.games.length,
           at: nfl.at,
@@ -6711,7 +6868,7 @@ async function handleApi(req, res, pathname, query) {
              several causes and this is the line that tells them apart. */
           tried: nfl.tried?.length ? nfl.tried : undefined },
         { sport: 'ncaaf',
-          url: NCAAF_URLS,
+          url: addressesOf(NCAAF_SOURCES),
           source: ncaaf.source || undefined,
           games: ncaaf.games.length,
           at: ncaaf.at,

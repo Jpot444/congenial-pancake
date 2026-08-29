@@ -82,6 +82,42 @@ const SLATE = { events: [EVENT('1', 'Alabama', 'Georgia'), EVENT('2', 'Ohio Stat
    each other. */
 const NESTED = { content: { sbData: { events: SLATE.events } } };
 
+/* And ncaa.com's own scoreboard, which is a different shape entirely — it is
+   somebody else's scoreboard, not another ESPN address, which is the whole
+   point of it being on the list. One live game and one that has not started,
+   because the two are read out of different fields. */
+const NCAA = {
+  updated_at: new Date().toISOString(),
+  games: [
+    { game: {
+      gameID: '6301234',
+      gameState: 'live',
+      currentPeriod: '2nd',
+      contestClock: '4:22',
+      startTime: '12:00PM ET',
+      startTimeEpoch: String(Math.floor(Date.now() / 1000) - 3600),
+      network: 'FOX',
+      away: { score: '14', description: '(4-1)',
+        names: { char6: 'MICH', short: 'Michigan', seo: 'michigan' } },
+      home: { score: '10', description: '(5-0)',
+        names: { char6: 'OHIOST', short: 'Ohio State', seo: 'ohio-state' } },
+    } },
+    { game: {
+      gameID: '6301235',
+      gameState: 'pre',
+      currentPeriod: '',
+      contestClock: '',
+      startTime: '7:30PM ET',
+      startTimeEpoch: String(Math.floor(Date.now() / 1000) + 5400),
+      network: 'ESPN',
+      away: { score: '', description: '(3-2)',
+        names: { char6: 'ALA', short: 'Alabama', seo: 'alabama' } },
+      home: { score: '', description: '(4-1)',
+        names: { char6: 'UGA', short: 'Georgia', seo: 'georgia' } },
+    } },
+  ],
+};
+
 (async () => {
   /* ================= the feed, and the addresses it lives at ============= */
   const feed = http.createServer((req, res) => {
@@ -95,6 +131,7 @@ const NESTED = { content: { sbData: { events: SLATE.events } } };
     }
     res.writeHead(200, { 'content-type': 'application/json' });
     if (req.url.includes('/core')) return res.end(JSON.stringify(NESTED));
+    if (req.url.includes('/ncaa')) return res.end(JSON.stringify(NCAA));
     if (req.url.includes('/empty')) return res.end(JSON.stringify({ events: [] }));
     return res.end(JSON.stringify(SLATE));
   });
@@ -121,6 +158,10 @@ const NESTED = { content: { sbData: { events: SLATE.events } } };
       HOST: '127.0.0.1',
       // Two refusals of the kind actually seen, then the address that works.
       NCAAF_URLS: [at('/400'), at('/403'), at('/core')].join(','),
+      /* Pinned at the fake one so nothing in this suite reaches out to the
+         real internet behind its own back. It must never be asked here — the
+         ESPN address before it answers. */
+      NCAA_URL: at('/ncaa'),
       NFL_URL: at('/empty'),
       MLB_STATS_URL: at('/403'),
       MLB_URL: at('/403'),
@@ -156,7 +197,9 @@ const NESTED = { content: { sbData: { events: SLATE.events } } };
     check('with nothing reported as broken, because the slate arrived',
       !college.error, college.error);
     check('the report lists every address it may knock on',
-      Array.isArray(college.url) && college.url.length === 3, JSON.stringify(college.url));
+      Array.isArray(college.url) && college.url.length === 4, JSON.stringify(college.url));
+    check('and the NCAA\'s own scoreboard was not one of them, because ESPN answered',
+      !feed.__hits.some((u) => u.includes('/ncaa')), JSON.stringify(feed.__hits));
 
     console.log('\n  and the nested shape is read as the flat one');
     const games = (report.games || []).filter((g) => g.sport === 'ncaaf');
@@ -179,16 +222,27 @@ const NESTED = { content: { sbData: { events: SLATE.events } } };
     box.kill();
   }
 
-  /* ---- and when every address on the list refuses --------------------- */
-  console.log('\n  a list that fails all the way down');
+  /* ---- when ESPN refuses the whole way down --------------------------- */
+  /*
+   * Which is what the box actually reported from the sofa: 403 on every
+   * college address AND on the NFL one, and an empty body from cdn.espn.com.
+   * The user agent is already a browser's, so no sixth ESPN address was going
+   * to change that — the list needed somebody else's scoreboard on it.
+   *
+   * College has one and football does not, which is what this box shows: the
+   * college feed falls past ESPN onto ncaa.com and comes back with games,
+   * while the NFL feed runs out of addresses and says so.
+   */
+  console.log('\n  when ESPN will not talk to this box at all');
   const DEAD_PORT = 8489;
   const deadBox = spawn('node', [path.join(DIR, 'server.js')], {
     env: {
       ...process.env,
       PORT: String(DEAD_PORT),
       HOST: '127.0.0.1',
-      NCAAF_URLS: [at('/403'), at('/400'), at('/403')].join(','),
-      NFL_URL: at('/empty'),
+      NCAAF_URLS: [at('/403'), at('/400')].join(','),
+      NCAA_URL: at('/ncaa'),
+      NFL_URLS: [at('/403'), at('/400')].join(','),
       MLB_STATS_URL: at('/403'),
       MLB_URL: at('/403'),
     },
@@ -206,17 +260,55 @@ const NESTED = { content: { sbData: { events: SLATE.events } } };
     for (let i = 0; i < 40; i += 1) {
       try { body = await ask(); break; } catch { await wait(250); }
     }
-    const dead = (JSON.parse(body || '{}').feeds || []).find((f) => f.sport === 'ncaaf') || {};
-    console.log('   dead feed:', JSON.stringify(dead));
-    check('no games, and it says so rather than pretending it is Tuesday',
+    const answer = JSON.parse(body || '{}');
+    const dead = (answer.feeds || []).find((f) => f.sport === 'nfl') || {};
+    const fallen = (answer.feeds || []).find((f) => f.sport === 'ncaaf') || {};
+
+    console.log('   college feed:', JSON.stringify(fallen));
+    check('college falls past ESPN onto the NCAA\'s own scoreboard',
+      fallen.games === 2 && String(fallen.source).includes('/ncaa'),
+      JSON.stringify([fallen.games, fallen.source]));
+    check('having tried both ESPN addresses first, because ESPN\'s answer is better',
+      (fallen.tried || []).length === 2, JSON.stringify(fallen.tried));
+
+    const college2 = (answer.games || []).filter((g) => g.sport === 'ncaaf');
+    console.log('   mapped:', JSON.stringify(college2.map(
+      (g) => [g.status, g.clock, g.away.abbr, g.away.score, g.home.abbr, g.home.score])));
+    const on = college2.find((g) => g.status === 'live');
+    const soon = college2.find((g) => g.status === 'upcoming');
+    check('a game in progress carries the period and the clock the way a broadcast says it',
+      on && on.clock === '2nd · 4:22', on && on.clock);
+    check('and the score on both sides', on && on.away.score === 14 && on.home.score === 10,
+      JSON.stringify(on && [on.away.score, on.home.score]));
+    check('with the record read out of the parentheses ncaa.com writes it in',
+      on && on.away.record === '4-1', on && on.away.record);
+    /* Both schools travel with the game, which is what lets a card find the
+       provider's row for THAT GAME rather than the network. */
+    check('both schools travel with it, and both abbreviations behind them',
+      on && on.teamMatch.join(',') === 'Michigan,Ohio State'
+      && on.teamShort.join(',') === 'MICH,OHIOST',
+      JSON.stringify(on && [on.teamMatch, on.teamShort]));
+    check('the network comes with it too, which is the last pass the matcher has',
+      on && on.channelMatch === 'FOX', on && on.channelMatch);
+    /* Only ESPN publishes the down and the spot. A field with no ball on it
+       is honest; a field with a guessed one is not. */
+    check('and no drive is invented, because this source does not publish one',
+      on && on.drive === null, JSON.stringify(on && on.drive));
+    check('a game that has not started is upcoming, with its start time',
+      soon && soon.status === 'upcoming' && /\d/.test(soon.clock)
+      && soon.away.score === null,
+      JSON.stringify(soon && [soon.status, soon.clock, soon.away.score]));
+
+    console.log('   nfl feed:', JSON.stringify(dead));
+    check('football has no such second source, and says so rather than pretending it is Tuesday',
       dead.games === 0 && Boolean(dead.error), JSON.stringify(dead));
-    /* Two 403s and a 400 read as one confusing sentence without the count,
-       and the count is what says "this was a list and all of it failed"
-       rather than "the feed is down". */
+    /* A 403 and a 400 read as one confusing sentence without the count, and
+       the count is what says "this was a list and all of it failed" rather
+       than "the feed is down". */
     check('the message names the reasons and how many addresses gave them',
-      /403/.test(dead.error) && /400/.test(dead.error) && /3 addresses tried/.test(dead.error),
+      /403/.test(dead.error) && /400/.test(dead.error) && /2 addresses tried/.test(dead.error),
       dead.error);
-    check('and all three are in the report', (dead.tried || []).length === 3,
+    check('and both are in the report', (dead.tried || []).length === 2,
       JSON.stringify(dead.tried));
 
     /* A chain is only cheap while something on it answers. Asked again a
