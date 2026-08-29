@@ -147,6 +147,12 @@ const NESTED = { content: { sbData: { events: SLATE.events } } };
       && /400/.test(JSON.stringify(college.tried))
       && /403/.test(JSON.stringify(college.tried)),
       JSON.stringify(college.tried));
+    /* The order is by how much the answer is WANTED, not by how likely it is
+       to work: falling through on failure only means the box always settles
+       on the best address that actually answers, and adding a worse-but-more-
+       reliable one to the end of the list can never cost it a better one. */
+    check('which is to say it settles on the best address that answers, not the first',
+      String(college.source) === at('/core'), String(college.source));
     check('with nothing reported as broken, because the slate arrived',
       !college.error, college.error);
     check('the report lists every address it may knock on',
@@ -171,6 +177,65 @@ const NESTED = { content: { sbData: { events: SLATE.events } } };
       nfl.games === 0 && !nfl.error && !nfl.tried, JSON.stringify(nfl));
   } finally {
     box.kill();
+  }
+
+  /* ---- and when every address on the list refuses --------------------- */
+  console.log('\n  a list that fails all the way down');
+  const DEAD_PORT = 8489;
+  const deadBox = spawn('node', [path.join(DIR, 'server.js')], {
+    env: {
+      ...process.env,
+      PORT: String(DEAD_PORT),
+      HOST: '127.0.0.1',
+      NCAAF_URLS: [at('/403'), at('/400'), at('/403')].join(','),
+      NFL_URL: at('/empty'),
+      MLB_STATS_URL: at('/403'),
+      MLB_URL: at('/403'),
+    },
+    stdio: 'ignore',
+  });
+  try {
+    const ask = () => new Promise((resolve, reject) => {
+      http.get(`http://127.0.0.1:${DEAD_PORT}/api/scores`, (r) => {
+        let out = '';
+        r.on('data', (d) => { out += d; });
+        r.on('end', () => resolve(out));
+      }).on('error', reject);
+    });
+    let body = '';
+    for (let i = 0; i < 40; i += 1) {
+      try { body = await ask(); break; } catch { await wait(250); }
+    }
+    const dead = (JSON.parse(body || '{}').feeds || []).find((f) => f.sport === 'ncaaf') || {};
+    console.log('   dead feed:', JSON.stringify(dead));
+    check('no games, and it says so rather than pretending it is Tuesday',
+      dead.games === 0 && Boolean(dead.error), JSON.stringify(dead));
+    /* Two 403s and a 400 read as one confusing sentence without the count,
+       and the count is what says "this was a list and all of it failed"
+       rather than "the feed is down". */
+    check('the message names the reasons and how many addresses gave them',
+      /403/.test(dead.error) && /400/.test(dead.error) && /3 addresses tried/.test(dead.error),
+      dead.error);
+    check('and all three are in the report', (dead.tried || []).length === 3,
+      JSON.stringify(dead.tried));
+
+    /* A chain is only cheap while something on it answers. Asked again a
+       moment later it must not walk the whole list again — five addresses
+       every thirty seconds is ten requests a minute at somebody else's
+       server for as long as a page is open, which is how a box gets itself
+       blocked properly rather than intermittently. (The failure back-off is
+       two minutes rather than thirty seconds; a suite that proved the length
+       of it would have to sit still for half a minute, so what is checked
+       here is the property that matters: asking twice does not ask ESPN
+       twice.) */
+    feed.__hits = [];
+    await ask();
+    await ask();
+    console.log('   upstream hits for two more asks:', feed.__hits.length, feed.__hits);
+    check('and asking again does not walk the list again',
+      feed.__hits.length === 0, JSON.stringify(feed.__hits));
+  } finally {
+    deadBox.kill();
     feed.close();
   }
 

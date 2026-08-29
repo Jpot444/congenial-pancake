@@ -4380,24 +4380,40 @@ function nflStatus(state) {
 const NCAAF_URL = process.env.NCAAF_URL
   || 'https://site.api.espn.com/apis/site/v2/sports/football/college-football/'
     + 'scoreboard?groups=80&limit=100';
-/* Three addresses for the same slate, asked in order and only when the one
+/* Several addresses for the same slate, asked in order and only when the one
  * before it FAILED — an empty answer from a source that answered is an
- * answer, and falling through on empty would mean three requests every thirty
+ * answer, and falling through on empty would mean five requests every thirty
  * seconds all through a quiet Tuesday.
  *
- *   1. The one that has always been used, with limit=100 rather than 200. A
- *      full FBS Saturday is about sixty-five games, so a hundred is ample,
- *      and a limit a server decides is too large comes back HTTP 400 — which
- *      looks exactly like "no college football today" from the sofa.
- *   2. The same thing with no limit at all, which settles that question.
- *   3. espn.com's own scoreboard feed, for the day the site API edge is what
- *      is refusing us.
+ * The order is by how much the answer is WANTED, not by how likely it is to
+ * work, because falling through on failure means the box always settles on
+ * the best address that actually answers. FBS-only and complete is the best
+ * answer; all of Division I is a worse one; nothing is the worst of all.
+ *
+ * What the box reported from the sofa is what shaped this list. The NFL
+ * scoreboard on site.api.espn.com answers fine, so ESPN's edge is not
+ * refusing this box — but the college-football scoreboard with a query string
+ * on it comes back 403. Which points at the query string rather than at the
+ * path, and the only way to find out which part of it is to ask without each
+ * part in turn.
+ *
+ *   1. groups=80 (FBS) and limit=100. What is actually wanted.
+ *   2. groups=80 alone — if `limit` is what the edge objects to.
+ *   3. limit=100 alone — if `groups` is what it objects to. All of Division I,
+ *      so a hundred rather than sixty-five games, but real ones.
+ *   4. No query string at all: the exact shape of the NFL address that is
+ *      known to work today. Whatever ESPN chooses to feature.
+ *   5. espn.com's own scoreboard feed, bare for the same reason — the one
+ *      with parameters on it answered 200 with an empty body.
  */
 const NCAAF_URLS = espnAddresses(process.env.NCAAF_URLS, process.env.NCAAF_URL, [
   NCAAF_URL,
   'https://site.api.espn.com/apis/site/v2/sports/football/college-football/'
     + 'scoreboard?groups=80',
-  'https://cdn.espn.com/core/college-football/scoreboard?xhr=1&groups=80&limit=100',
+  'https://site.api.espn.com/apis/site/v2/sports/football/college-football/'
+    + 'scoreboard?limit=100',
+  'https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard',
+  'https://cdn.espn.com/core/college-football/scoreboard?xhr=1',
 ]);
 const NCAAF_TTL_MS = 30000;
 let ncaafCache = { at: 0, games: [], error: '', source: '', tried: [] };
@@ -4589,23 +4605,43 @@ async function espnSlate(urls, sport, cache) {
      exactly when ESPN is least willing to talk to a Raspberry Pi — but do not
      silently serve last Sunday either. */
   const stale = Date.now() - cache.at < 10 * 60 * 1000;
+  /* The distinct reasons, and how many addresses gave them. Two 403s and a
+     truncated body reads as one confusing sentence without the count — and
+     the count is what says "this was a list, and all of it failed" rather
+     than "the feed is down", which are different problems. */
+  const why = [...new Set(tried.map((t) => t.error))].join(' · ');
   return {
     at: stale ? cache.at : Date.now(),
     games: stale ? cache.games : [],
-    error: [...new Set(tried.map((t) => t.error))].join(' · '),
+    error: tried.length > 1 ? `${why} (${tried.length} addresses tried)` : why,
     source: stale ? cache.source || '' : '',
     tried,
   };
 }
 
+/* How long to leave a feed alone after EVERY address on its list refused.
+ *
+ * A chain is only cheap while something on it answers. Five addresses asked
+ * every thirty seconds is ten requests a minute at somebody else's server for
+ * as long as a page is open, which is how a box gets itself blocked properly
+ * rather than intermittently. A feed that is down is still down two minutes
+ * later, and a slate is not worth a stampede. */
+const FEED_FAIL_TTL_MS = 120000;
+
+/** Is the last answer still good enough not to ask again? */
+function feedFresh(cache, ttl) {
+  const age = Date.now() - cache.at;
+  return age < (cache.error && !cache.games.length ? FEED_FAIL_TTL_MS : ttl);
+}
+
 async function ncaafScores() {
-  if (Date.now() - ncaafCache.at < NCAAF_TTL_MS) return ncaafCache;
+  if (feedFresh(ncaafCache, NCAAF_TTL_MS)) return ncaafCache;
   ncaafCache = await espnSlate(NCAAF_URLS, 'ncaaf', ncaafCache);
   return ncaafCache;
 }
 
 async function nflScores() {
-  if (Date.now() - nflCache.at < NFL_TTL_MS) return nflCache;
+  if (feedFresh(nflCache, NFL_TTL_MS)) return nflCache;
   nflCache = await espnSlate(NFL_URLS, 'nfl', nflCache);
   return nflCache;
 }

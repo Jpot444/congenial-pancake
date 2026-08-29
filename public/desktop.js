@@ -1421,9 +1421,19 @@
        is for. Everything else falls in behind by state: what is on now, then
        what is about to start, then what is over. */
     const sport = scoreSport();
+    /* A game with a network against its name, ahead of one without.
+     *
+     * Only for college, and only because the college slate may not be an FBS
+     * one: the box asks for FBS first, but if ESPN refuses that address it
+     * settles for all of Division I, which is a hundred and something games
+     * against a grid that holds forty-eight. A televised game is the one this
+     * house could actually watch, so it is the one worth the space. A
+     * tie-break rather than a filter — nothing is dropped, it is ordered. */
+    const televised = (g) => (String(g.channelMatch || g.channelName || '') ? 1 : 0);
     const games = slate.games.filter((g) => (g.sport || 'nfl') === sport)
       .sort((a, b) => (pinnedGame(b) - pinnedGame(a))
         || (SLATE_ORDER[a.status] ?? 3) - (SLATE_ORDER[b.status] ?? 3)
+        || (sport === 'ncaaf' ? televised(b) - televised(a) : 0)
         || (a.kickoff || 0) - (b.kickoff || 0))
       .slice(0, sport === 'ncaaf' ? GAMES_IN_GRID : GAMES_IN_ROW);
 

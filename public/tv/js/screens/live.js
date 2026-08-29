@@ -96,7 +96,14 @@ export async function render(host, app) {
   view.sport = sport;
   view.games = games
     .filter((g) => (g.sport || 'nfl') === sport)
+    /* A televised college game ahead of one without a network against its
+       name: the box asks ESPN for FBS first, but when that address is refused
+       it settles for all of Division I — a hundred and something games
+       against a grid that holds forty-eight. A tie-break, not a filter. */
     .sort((a, b) => (SLATE_ORDER[a.status] ?? 3) - (SLATE_ORDER[b.status] ?? 3)
+      || (sport === 'ncaaf'
+        ? (b.channelMatch || b.channelName ? 1 : 0) - (a.channelMatch || a.channelName ? 1 : 0)
+        : 0)
       || (a.kickoff || 0) - (b.kickoff || 0))
     .slice(0, sport === 'ncaaf' ? GAMES_IN_GRID : GAMES_IN_ROW);
 
