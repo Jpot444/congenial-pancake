@@ -28,7 +28,16 @@
  *   redZone      boolean  the whip-around card, which gets the brand field
  *   away/home    { abbr, record, score, possession }
  *   clock        string   'Q2 · 4:22'
- *   situation    string   '3rd & 7 · GB 41'
+ *   onBase       {first,second,third}  baseball, as booleans — the diamond
+ *   count        {balls,strikes,outs}  baseball, as numbers — the dots
+ *   drive        {down,distance,text,spot,yardLine,driving,redZone}
+ *                         football. `yardLine` is 0-100 measured from the
+ *                         AWAY side's goal line, so the card can draw it the
+ *                         way it lays the marks out; `driving` is 'left' or
+ *                         'right' in those same terms.
+ *   warmup       boolean  the league says the broadcast is up
+ *   situation    string   '3rd & 7 · GB 41' — the same facts as a sentence,
+ *                         for anywhere that cannot draw them
  *   kickoff      number   epoch ms, upcoming games only
  *   note         string   free text for an upcoming card ('Kicks off in 42 min')
  *   progress     number   0–100 through the broadcast. Left null when a
@@ -56,17 +65,35 @@ const ENDPOINT = '/api/scores';
  * missing, whatever answered.
  */
 function normalize(row) {
+  const names = (list) => (Array.isArray(list) ? list.filter(Boolean) : []);
   return {
     id: String(row.id ?? ''),
     sport: row.sport || 'nfl',
     status: row.status || 'live',
+    /* The league's own word for the state — 'Warmup', 'Halftime', 'Delayed:
+       Rain'. Warmup is the one worth drawing: it is the moment the broadcast
+       comes up, which is the moment tuning to the channel is worth doing. */
+    detailedState: row.detailedState || '',
+    warmup: Boolean(row.warmup),
     channelMatch: row.channelMatch || '',
     channelName: row.channelName || '',
-    teamMatch: Array.isArray(row.teamMatch) ? row.teamMatch.filter(Boolean) : [],
+    /* Three spellings of the two sides, best first. College is why: a row
+       says 'ALABAMA X GEORGIA' far more often than 'CRIMSON TIDE X BULLDOGS',
+       and some say neither and go with 'ALA X UGA'. */
+    teamMatch: names(row.teamMatch),
+    teamAlt: names(row.teamAlt),
+    teamShort: names(row.teamShort),
     redZone: Boolean(row.redZone),
     away: row.away || null,
     home: row.home || null,
     clock: row.clock || '',
+    /* Baseball's state as a diamond and a count, football's as a ball on a
+       line. A card DRAWS these; the sentence below is what it used to print
+       instead, and it is kept because a card that has neither still says
+       something. */
+    onBase: row.onBase || null,
+    count: row.count || null,
+    drive: row.drive || null,
     situation: row.situation || '',
     kickoff: Number(row.kickoff) || 0,
     note: row.note || '',
