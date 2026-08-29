@@ -45,6 +45,22 @@ const PORT = 8487;
 const FEED_PORT = 8488;
 const BASE = 'http://127.0.0.1:8481';
 
+/* The fixture's kickoff is written the way a scoreboard writes one — a date
+   and a clock face in Eastern — so the test has to build the same two pieces
+   to know what instant it should come out as. An hour ago, in the zone this
+   house keeps. */
+const easternParts = (at) => Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  year: 'numeric', month: '2-digit', day: '2-digit', hour: 'numeric', hour12: true,
+}).formatToParts(at).map((p) => [p.type, p.value]));
+const ANCHOR = new Date(Date.now() - 3600 * 1000);
+const EASTERN = easternParts(ANCHOR);
+const EASTERN_TODAY_US = `${EASTERN.month}-${EASTERN.day}-${EASTERN.year}`;
+const EASTERN_HOUR_12 = EASTERN.hour;
+/* Only meaningful in the afternoon, and a suite that quietly proves nothing
+   between midnight and noon is worse than one that says so. */
+const AFTERNOON = EASTERN.dayPeriod === 'PM';
+
 const fails = [];
 const check = (name, ok, detail) => {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${!ok && detail ? ` — ${detail}` : ''}`);
@@ -225,6 +241,45 @@ const LAST_NIGHT = {
   ],
 };
 
+/* The file as the mirror that actually answers writes it: the kickoff in
+   words — a date and a clock face — and no startTimeEpoch anywhere.
+   Wanting the epoch and nothing else read thirty-five kilobytes of Saturday
+   as no games at all. */
+const NO_EPOCH = {
+  updated_at: new Date().toISOString(),
+  games: [
+    { game: {
+      gameID: '6400001',
+      gameState: 'live',
+      currentPeriod: '3rd',
+      contestClock: '11:42',
+      startDate: EASTERN_TODAY_US,
+      startTime: `${EASTERN_HOUR_12}:00PM ET`,
+      network: 'ESPN',
+      away: { score: '17', description: '(1-0)',
+        names: { char6: 'UNC', short: 'North Carolina', seo: 'north-carolina' } },
+      home: { score: '14', description: '(0-1)',
+        names: { char6: 'TCU', short: 'TCU', seo: 'tcu' } },
+    } },
+    /* And one on the same file whose kickoff has not been set. A scoreboard
+       asked for a date it has nothing for rolls forward and hands back next
+       week, where nothing has a time yet. */
+    { game: {
+      gameID: '6400002',
+      gameState: 'pre',
+      currentPeriod: '',
+      contestClock: '',
+      startDate: EASTERN_TODAY_US,
+      startTime: 'TBA',
+      network: '',
+      away: { score: '', description: '',
+        names: { char6: 'NEXTWK', short: 'Next Week', seo: 'next-week' } },
+      home: { score: '', description: '',
+        names: { char6: 'LATER', short: 'Later On', seo: 'later-on' } },
+    } },
+  ],
+};
+
 /* And TheSportsDB's, which is a third shape again: a day's fixtures, with a
    badge per club and a status word rather than a period and a clock. */
 const SPORTSDB = {
@@ -306,6 +361,9 @@ const NFL_NIGHT = {
     if (req.url.includes('/core')) return res.end(JSON.stringify(NESTED));
     // Yesterday's file, holding the late game that is still being played.
     if (req.url.includes('/lastnight')) return res.end(JSON.stringify(LAST_NIGHT));
+    // A file with the kickoff in words and no epoch anywhere, which is how
+    // the mirror that actually answers writes one.
+    if (req.url.includes('/noepoch')) return res.end(JSON.stringify(NO_EPOCH));
     if (req.url.includes('/ncaa')) return res.end(JSON.stringify(NCAA));
     if (req.url.includes('/nflday')) return res.end(JSON.stringify(NFL_DAY));
     if (req.url.includes('/nflnight')) return res.end(JSON.stringify(NFL_NIGHT));
@@ -672,6 +730,67 @@ const NFL_NIGHT = {
       /* 'NS' is this publisher's way of writing 'has not started', which is
          what a start time on a card already says. */
 
+
+      /* ---- a kickoff written in words rather than as a number --------- */
+      /*
+       * The mirror that actually answers does not send startTimeEpoch, and
+       * wanting the epoch and nothing else read thirty-five kilobytes of
+       * Saturday as no games at all: every game came out undated, and once
+       * undated games were dropped from the band the whole slate went with
+       * them. The time is there — it is just written the way a scoreboard
+       * writes one, as a date and a clock face in Eastern.
+       */
+      if (!AFTERNOON) {
+        console.log('\n  (the kickoff-in-words case wants an afternoon; skipped)');
+      } else {
+        console.log('\n  a kickoff written in words, with no epoch anywhere');
+        const wordsPort = 8491;
+        const wordsBox = start({
+          env: {
+            ...process.env,
+            PORT: String(wordsPort),
+            HOST: '127.0.0.1',
+            NCAAF_URL: at('/noepoch'),
+            NFL_URL: at('/empty'),
+            MLB_STATS_URL: at('/403-mlb'),
+            MLB_URL: at('/403-mlb2'),
+          },
+          stdio: 'ignore',
+        });
+        try {
+          let out = '';
+          for (let i = 0; i < 40; i += 1) {
+            try {
+              out = await new Promise((resolve, reject) => {
+                http.get(`http://127.0.0.1:${wordsPort}/api/scores`, (r) => {
+                  let body = '';
+                  r.on('data', (d) => { body += d; });
+                  r.on('end', () => resolve(body));
+                }).on('error', reject);
+              });
+              break;
+            } catch { await wait(250); }
+          }
+          const words = (JSON.parse(out || '{}').games || []).filter((g) => g.sport === 'ncaaf');
+          console.log('   in words:', JSON.stringify(words.map(
+            (g) => [g.away.abbr, g.status, g.kickoff, g.clock])));
+          const unc = words.find((g) => g.away.abbr === 'UNC');
+          check('the slate is read, though not one game carries an epoch',
+            Boolean(unc), JSON.stringify(words.map((g) => g.away.abbr)));
+          /* The whole point: an instant, built from the two pieces the
+             scoreboard prints, in the zone the sport is scheduled in. */
+          check('and the kickoff is an instant, an hour ago as the fixture wrote it',
+            unc && Math.abs(unc.kickoff - ANCHOR.getTime()) < 62 * 60 * 1000,
+            JSON.stringify(unc && [unc.kickoff, ANCHOR.getTime()]));
+          check('the game still being played is live',
+            unc && unc.status === 'live', unc && unc.status);
+          check('and the one with no time on it is still left off',
+            !words.some((g) => g.away.abbr === 'NEXTWK'),
+            JSON.stringify(words.map((g) => g.away.abbr)));
+        } finally {
+          wordsBox.kill();
+        }
+      }
 
       /* ---- and the professional games, filed across two days ---------- */
       const pros = (JSON.parse(raw || '{}').games || []).filter((g) => g.sport === 'nfl');

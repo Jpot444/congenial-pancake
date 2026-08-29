@@ -4413,43 +4413,38 @@ const stamp = ({ year, month, day }) => `${year}-${month}-${day}`;
  * TheSportsDB's addresses, in the order they are worth asking.
  *
  * Filed by day, which is the whole difficulty: whose day? A game at eight in
- * the evening Eastern is the small hours of tomorrow in UTC, and a source
- * keeping its dates in UTC files it under tomorrow. Asked for today, it
- * answers a perfectly polite empty list — which is what put "no football on
- * right now" over a band with two games about to kick off.
+ * the evening Eastern is the small hours of tomorrow in UTC. So the days are
+ * a GROUP — fetched together and merged — rather than three entries in a
+ * row, because a list stops at the first address that ANSWERS and a day with
+ * one game on it is an answer.
  *
- * So: today, then tomorrow, then by sport rather than by league in case the
- * league is not spelled the way this list spells it, then the league's own
- * next fixtures, which carry no date in the address at all and are therefore
- * the one form that cannot be asked for the wrong day.
+ * `league` is a NAME, and it has to be the name this publisher uses. Asked
+ * for 'NCAA Football' it replies, politely and with a 200,
+ * `{"events":[],"Message":"Invalid League ID passed"}` — which reads as a
+ * quiet Saturday until something prints the body. So college passes no name
+ * at all and goes by sport and by league id instead, both of which this box
+ * has watched answer.
  */
 const sportsdbDay = (league, leagueId) => {
   const today = stamp(easternDate());
   const tomorrow = stamp(easternDate(new Date(Date.now() + 24 * 3600 * 1000)));
+  const yesterday = stamp(easternDate(new Date(Date.now() - 24 * 3600 * 1000)));
   const day = (key, date, query) =>
     `https://www.thesportsdb.com/api/v1/json/${key}/eventsday.php?d=${date}&${query}`;
-  const yesterday = stamp(easternDate(new Date(Date.now() - 24 * 3600 * 1000)));
-  const named = `l=${encodeURIComponent(league)}`;
+  const days = (query) => [yesterday, today, tomorrow].map((d) => day(SPORTSDB_KEYS[0], d, query));
   return [
-    /* Three days as one answer, not three answers in a row.
-     *
-     * A list stops at the first address that ANSWERS, and a day with one
-     * game on it is an answer — so an afternoon game found under today ended
-     * the search and the night game filed under tomorrow was never asked
-     * for. Two NFL games, one card. Fetched together and merged, the day
-     * boundary stops mattering; the window in footballGames() throws back
-     * whatever that drags in from either side. */
-    [day(SPORTSDB_KEYS[0], yesterday, named),
-      day(SPORTSDB_KEYS[0], today, named),
-      day(SPORTSDB_KEYS[0], tomorrow, named)],
-    /* By sport, which answers both American codes at once — footballGames()
-       keeps only the rows belonging to the one being asked for. */
-    day(SPORTSDB_KEYS[0], today, 's=American%20Football'),
+    ...(league ? [days(`l=${encodeURIComponent(league)}`)] : []),
+    /* By sport, which answers every American code at once — the Canadian one
+       included, so footballGames() keeps only the rows belonging to the code
+       being asked for. */
+    days('s=American%20Football'),
+    /* The league's own next fixtures. No date in the address, so it is the
+       one form that cannot be asked for the wrong day. */
     ...(leagueId
       ? [`https://www.thesportsdb.com/api/v1/json/${SPORTSDB_KEYS[0]}/eventsnextleague.php?id=${leagueId}`]
       : []),
     // And the other published free key, for the day the first one is retired.
-    day(SPORTSDB_KEYS[1], today, named),
+    ...(league ? [day(SPORTSDB_KEYS[1], today, `l=${encodeURIComponent(league)}`)] : []),
   ];
 };
 
@@ -4458,27 +4453,31 @@ const sportsdbDay = (league, leagueId) => {
  * The NCAA files a game under the day it KICKED OFF, and a college Saturday
  * does not fit inside a calendar day: a ten-thirty kickoff on the east coast
  * is still being played at half past one the next morning, by which time
- * "today" is a different file with that game nowhere in it. Whether the
- * boundary is Eastern or UTC decides which hours are affected and this box
- * cannot see which — so it asks either side and stops needing to know.
+ * "today" is a different file with that game nowhere in it.
  *
  * A GROUP, not three more entries on the list. Three separate addresses
  * would stop at the first that answered, which is the same single day again;
  * these are fetched together, merged and de-duplicated, and the group as a
- * whole is one answer. What is out of date drops out at the window below. */
+ * whole is one answer. What is out of date drops out at the window.
+ *
+ * data.ncaa.com is not on this list any more. Four addresses were tried
+ * there and all four answered 404 NoSuchKey — not a refusal, a path that
+ * does not exist — while this mirror of the same data answered thirty-five
+ * kilobytes of Saturday. Guessing at somebody else's bucket layout is not
+ * worth four requests a poll when the thing being guessed at is already
+ * being served.
+ */
 const ncaaDay = ({ year, month, day }) =>
-  `https://data.ncaa.com/casablanca/scoreboard/football/fbs/${year}/${month}/${day}/all-conf/scoreboard.json`;
+  `https://ncaa-api.henrygd.me/scoreboard/football/fbs/${year}/${month}/${day}/all-conf`;
 
 function collegeAddresses() {
   const today = easternDate();
   const yesterday = easternDate(new Date(Date.now() - 24 * 3600 * 1000));
   const tomorrow = easternDate(new Date(Date.now() + 24 * 3600 * 1000));
-  const { year, month, day } = today;
   return [
     [ncaaDay(yesterday), ncaaDay(today), ncaaDay(tomorrow)],
-    `https://data.ncaa.com/casablanca/scoreboard/football/fbs/${year}/${month}/${day}/scoreboard.json`,
-    `https://ncaa-api.henrygd.me/scoreboard/football/fbs/${year}/${month}/${day}/all-conf`,
-    ...sportsdbDay('NCAA Football', '4479'),
+    // No league NAME: this publisher does not know 'NCAA Football' as one.
+    ...sportsdbDay(null, '4479'),
   ];
 }
 
@@ -4864,16 +4863,92 @@ function ncaaStatus(game) {
 }
 
 /** One ncaa.com game as the Game shape `public/tv/js/scores.js` documents. */
+/**
+ * How far behind UTC the house zone is at a given instant.
+ *
+ * There is no way to build a Date from a wall-clock time in a named zone, so
+ * it is done the other way round: format the guess IN that zone, read back
+ * what it called itself, and the difference is the offset. One pass is exact
+ * everywhere except the hour a clock change lands in, which is four in the
+ * morning in March and not a kickoff.
+ */
+function zoneOffsetMs(atUtc) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: HOUSE_ZONE,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date(atUtc));
+  const at = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  const asUtc = Date.UTC(Number(at.year), Number(at.month) - 1, Number(at.day),
+    Number(at.hour) % 24, Number(at.minute), Number(at.second));
+  return atUtc - asUtc;
+}
+
+/**
+ * A kickoff, from the words a scoreboard prints rather than from a number.
+ *
+ * '08-29-2026' and '7:00PM ET' is what the NCAA's scoreboard gives, and for
+ * a long time this code wanted `startTimeEpoch` instead — which the mirror
+ * that actually answers does not send. Every game came out undated, and once
+ * undated games were dropped from the band the whole slate went with them:
+ * thirty-five kilobytes of Saturday read as nothing at all.
+ *
+ * The times are Eastern, which is both the zone the sport is scheduled in
+ * and the one this house keeps, so no zone has to be parsed out of the
+ * string — 'ET' is the only thing it ever says.
+ */
+function ncaaKickoff(game) {
+  const stamped = (Number(game.startTimeEpoch) || 0) * 1000;
+  if (stamped) return stamped;
+
+  const date = String(game.startDate || '').trim();
+  const time = String(game.startTime || '').trim();
+  if (!date || !time) return 0;
+
+  // '08-29-2026', and '2026-08-29' in case the mirror normalises it.
+  const us = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(date);
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(date);
+  if (!us && !iso) return 0;
+  const [year, month, day] = us
+    ? [Number(us[3]), Number(us[1]), Number(us[2])]
+    : [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+
+  // '7:00PM ET', '7:00 PM ET', '12:00PM'. Noon is written out sometimes.
+  let hour;
+  let minute = 0;
+  const clock = /(\d{1,2}):(\d{2})\s*([AP])\.?M\.?/i.exec(time);
+  if (clock) {
+    hour = Number(clock[1]) % 12;
+    minute = Number(clock[2]);
+    if (/^P$/i.test(clock[3])) hour += 12;
+  } else if (/^noon$/i.test(time)) {
+    hour = 12;
+  } else {
+    return 0;
+  }
+
+  /* Read as if the wall clock were UTC, then moved by however far the house
+     zone is behind UTC at that moment. */
+  const guess = Date.UTC(year, month - 1, day, hour, minute);
+  return guess + zoneOffsetMs(guess);
+}
+
 function ncaaGame(row) {
   const game = row?.game || row || {};
   const state = ncaaStatus(game);
-  /* A game whose kickoff has not been set carries a placeholder instant —
-     midnight — beside a startTime that says TBA. Taken at face value that is
-     a card claiming a twelve o'clock kickoff, sorted to the front of the day
-     because midnight is the earliest thing on it. No instant is the truth. */
-  const stamped = (Number(game.startTimeEpoch) || 0) * 1000;
-  const tba = !stamped || /\btb[ad]\b/i.test(String(game.startTime || ''));
-  const kickoff = tba ? 0 : stamped;
+  /* A game whose kickoff has not been set says so in words, and may carry a
+     placeholder instant — midnight — beside them. Taken at face value that
+     is a card claiming a twelve o'clock kickoff, sorted to the front of the
+     day because midnight is the earliest thing on it. No instant is the
+     truth, and the band leaves those games off altogether. */
+  const said = ncaaKickoff(game);
+  const tba = !said || /\btb[ad]\b/i.test(String(game.startTime || ''));
+  const kickoff = tba ? 0 : said;
 
   const side = (which) => {
     const team = game[which] || {};
