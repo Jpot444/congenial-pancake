@@ -1287,7 +1287,7 @@
 
   /* Held across renders so the row does not blink out and back on every
      repaint of the page while the box is being asked again. */
-  let slate = { games: [], at: 0, trouble: '', asked: false, epg: new Map() };
+  let slate = { games: [], at: 0, trouble: '', asked: false, epg: new Map(), feeds: [] };
   let slateInFlight = null;
 
   function scoreboard() {
@@ -1328,10 +1328,16 @@
                An empty slate the BOX is unhappy about is a different thing,
                and it travels back in `error`. */
             trouble: rows.length ? '' : String((data && data.error) || ''),
+            /* Per feed, because `trouble` above is about the whole answer and
+               the band is about one sport. Baseball answering is what makes
+               `rows.length` true, and without this the college band reads a
+               refused ESPN as "the feed answered, with an empty slate" — the
+               one sentence that rules out the thing that actually happened. */
+            feeds: Array.isArray(data && data.feeds) ? data.feeds : [],
           };
         })
         .catch((err) => {
-          slate = { ...slate, games: [], at: Date.now(), asked: true,
+          slate = { ...slate, games: [], at: Date.now(), asked: true, feeds: [],
             trouble: err.message || 'the box could not be reached' };
         })
         .then(() => askGuide())
@@ -1383,7 +1389,11 @@
       if (onShelf(c, cats, 'ncaaf')) return true;
       const name = String(c.name || '').toUpperCase();
       return [...networks].some((n) => name.includes(n));
-    }).slice(0, GUIDE_CHANNELS);
+    })
+      /* Most obviously college first, because only forty of these get asked
+         about and the library's own order has nothing to do with football. */
+      .sort((a, b) => collegeRank(a, cats) - collegeRank(b, cats))
+      .slice(0, GUIDE_CHANNELS);
 
     if (!wanted.length) {
       slate.epg = new Map();
@@ -1434,8 +1444,13 @@
       const note = document.createElement('p');
       note.className = 'sc-empty';
       const named = { nfl: 'football', ncaaf: 'college football', mlb: 'baseball' }[scoreSport()];
+      /* This sport's own feed, which is the only one this band is about. */
+      const feed = (slate.feeds || []).find((f) => f && f.sport === sport);
       if (!slate.asked) note.textContent = 'Reading the slate…';
-      else if (slate.trouble) {
+      else if (feed && feed.error) {
+        note.textContent = `No ${named}: the feed did not answer — ${feed.error}. `
+          + `${location.origin}/api/scores shows every address it tried.`;
+      } else if (slate.trouble) {
         note.textContent = `No scores: ${slate.trouble}. `
           + `${location.origin}/api/scores shows what was asked.`;
       } else {
@@ -1782,19 +1797,66 @@
   const DATED_EVENT = /\(\s*\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/;
 
   /* Which of the provider's shelves a sport's own rows live on. */
-  const SPORT_SHELF = {
-    mlb: /\bMLB\b|BASEBALL/i,
-    nfl: /\bNFL\b|FOOTBALL/i,
-    /* College is filed under any of these depending on the panel, and the
-       college rows are often mixed in with the pro ones on a FOOTBALL shelf —
-       so this is deliberately the widest of the three. */
-    ncaaf: /NCAA|COLLEGE|\bCFB\b|FOOTBALL/i,
-  };
+  const BASEBALL_SHELF = /\bMLB\b|BASEBALL/i;
 
-  /** Is this channel on the shelf this sport's own rows live on? */
+  /* The word FOOTBALL is the problem, not the solution.
+   *
+   * On this provider — on every provider — a shelf called FOOTBALL is soccer,
+   * and there are hundreds of rows on it. The old test was
+   * `NCAA|COLLEGE|CFB|FOOTBALL`, which matched every one of them.
+   *
+   * It costs the by-row pass nothing: no soccer row names two American
+   * schools. It costs the guide pass everything. askGuide asks about at most
+   * forty channels, and if four hundred soccer rows come first in library
+   * order then the forty are all soccer — so the one pass that can tell two
+   * regional feeds of the same network apart never sees a college game at
+   * all. Which is precisely the pass college football cannot do without.
+   *
+   * So: an explicit gridiron word admits a row outright. A bare FOOTBALL
+   * admits one only in an American context, because that is the only place
+   * the word means this sport. And an unmistakably soccer shelf is refused
+   * whatever else it says. */
+  const GRIDIRON_SHELF = /\bNFL\b|NCAA|\bCFB\b|COLLEGE|AMERICAN FOOTBALL|GRIDIRON/i;
+  const AMERICAN = /\bUSA?\b|\bNFL\b|NCAA|\bCFB\b|COLLEGE/i;
+  const SOCCER_SHELF = new RegExp([
+    'SOCCER', 'FUTBOL', 'FUSSBALL', 'CALCIO',
+    '\\bEPL\\b', 'PREMIER LEAGUE', '\\bEFL\\b', '\\bFA CUP\\b',
+    '\\bUEFA\\b', 'CHAMPIONS LEAGUE', 'EUROPA', 'CONFERENCE LEAGUE',
+    'LA ?LIGA', 'SERIE ?A', 'BUNDESLIGA', 'LIGUE ?1', 'EREDIVISIE',
+    '\\bMLS\\b', 'LIGA MX', '\\bFIFA\\b', 'CONCACAF', 'CONMEBOL',
+    'WORLD CUP', '\\bCOPA\\b',
+  ].join('|'), 'i');
+
+  /**
+   * Is this channel on the shelf this sport's own rows live on?
+   *
+   * The channel name and its category read together, because either can carry
+   * the signal: "US| NCAAF 07 | ALABAMA X GEORGIA" says it in the name, and
+   * "US| ESPN" says it only by sitting on a shelf called USA NCAAF.
+   */
   function onShelf(channel, catNames, sport) {
-    const test = SPORT_SHELF[sport] || SPORT_SHELF.mlb;
-    return test.test(`${channel.name || ''} ${catNames.get(String(channel.categoryId)) || ''}`);
+    const where = `${channel.name || ''} ${catNames.get(String(channel.categoryId)) || ''}`;
+    if (sport === 'mlb') return BASEBALL_SHELF.test(where);
+    if (SOCCER_SHELF.test(where)) return false;
+    if (GRIDIRON_SHELF.test(where)) return true;
+    return /FOOTBALL/i.test(where) && AMERICAN.test(where);
+  }
+
+  /* How well a channel answers to "this is where college football lives".
+   *
+   * Only used to decide which forty channels the guide is asked about, and
+   * only because that budget is real: a row named for the sport outright is
+   * worth asking about before a row that merely sits on a shelf that mentions
+   * it, and both are worth asking about before a network the slate happened
+   * to name. Without an order the forty are whatever the library listed
+   * first, which is nothing to do with football. */
+  function collegeRank(channel, catNames) {
+    const name = String(channel.name || '').toUpperCase();
+    const shelf = String(catNames.get(String(channel.categoryId)) || '').toUpperCase();
+    if (/NCAA|\bCFB\b|COLLEGE/.test(name)) return 0;
+    if (/NCAA|\bCFB\b|COLLEGE/.test(shelf)) return 1;
+    if (/\bESPN\b|\bABC\b|\bFOX\b|\bCBS\b|\bBTN\b|BIG TEN|\bSEC\b|\bACC\b/.test(name)) return 2;
+    return 3;
   }
 
   /* Comparing a school to a channel name.

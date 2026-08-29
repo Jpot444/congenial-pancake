@@ -16,7 +16,7 @@
 import { el, clear, cleanName } from '../ui.js';
 import { loadLibrary, loadEpg, nowOn, favorites, pinnedIds, pinnedFirst, state }
   from '../state.js';
-import { getGames, usingPlaceholders, matchChannel, slateTrouble, slateSource }
+import { getGames, usingPlaceholders, matchChannel, slateTrouble, feedTrouble, slateSource }
   from '../scores.js';
 import { channelCard, categoryCard, allCategoriesCard, rowHead, strip, rowBlock } from './cards.js';
 import { putProfilePrefs } from '../api.js';
@@ -238,7 +238,9 @@ function gameRow(app) {
      question after "why is it empty" is always "where does it even come
      from". */
   if (!view.games.length) {
-    const why = slateTrouble();
+    /* This row's own sport first: the slate as a whole can be perfectly
+       healthy while the one league this row shows was refused. */
+    const why = feedTrouble(view.sport) || slateTrouble();
     /* The whole address, not the path. A line that says to open '/api/scores'
        is asking somebody standing in their living room to work out what to put
        in front of it. */

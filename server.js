@@ -4327,12 +4327,41 @@ function knownLiveChannels() {
  * place understands ESPN, one cache serves every screen in the house, and the
  * Shield never learns where any of it came from.
  */
+/**
+ * Where a football slate may be asked for, in order.
+ *
+ * `<SPORT>_URLS` is a comma-separated list and overrides everything;
+ * `<SPORT>_URL` is the single-address override that was here first and still
+ * works; otherwise the built-in chain.
+ */
+function espnAddresses(list, one, fallback) {
+  const given = String(list || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (given.length) return given;
+  if (one) return [one];
+  return fallback;
+}
+
 const NFL_URL = process.env.NFL_URL
   || 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
+/* More than one address, asked in order, the way baseball already is.
+ *
+ * One address is a single point of failure against somebody else's edge, and
+ * this one has form: SITE_HEADERS exists because ESPN's front end refuses
+ * this box some days. A refusal there is invisible in August — the NFL is
+ * out of season and baseball comes from statsapi.mlb.com — and the first
+ * anybody notices is a college Saturday with an empty band.
+ *
+ * cdn.espn.com/core is the address espn.com's own scoreboard page fetches.
+ * It answers the same event objects one level down, under
+ * content.sbData.events, which is what espnEvents() below is for. */
+const NFL_URLS = espnAddresses(process.env.NFL_URLS, process.env.NFL_URL, [
+  'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',
+  'https://cdn.espn.com/core/nfl/scoreboard?xhr=1',
+]);
 /* Live scores move on every play, and a living room with four screens open
  * must not become four requests a second at somebody else's server. */
 const NFL_TTL_MS = 30000;
-let nflCache = { at: 0, games: [], error: '' };
+let nflCache = { at: 0, games: [], error: '', source: '', tried: [] };
 
 function nflStatus(state) {
   if (state === 'in') return 'live';
@@ -4350,9 +4379,28 @@ function nflStatus(state) {
  */
 const NCAAF_URL = process.env.NCAAF_URL
   || 'https://site.api.espn.com/apis/site/v2/sports/football/college-football/'
-    + 'scoreboard?groups=80&limit=200';
+    + 'scoreboard?groups=80&limit=100';
+/* Three addresses for the same slate, asked in order and only when the one
+ * before it FAILED — an empty answer from a source that answered is an
+ * answer, and falling through on empty would mean three requests every thirty
+ * seconds all through a quiet Tuesday.
+ *
+ *   1. The one that has always been used, with limit=100 rather than 200. A
+ *      full FBS Saturday is about sixty-five games, so a hundred is ample,
+ *      and a limit a server decides is too large comes back HTTP 400 — which
+ *      looks exactly like "no college football today" from the sofa.
+ *   2. The same thing with no limit at all, which settles that question.
+ *   3. espn.com's own scoreboard feed, for the day the site API edge is what
+ *      is refusing us.
+ */
+const NCAAF_URLS = espnAddresses(process.env.NCAAF_URLS, process.env.NCAAF_URL, [
+  NCAAF_URL,
+  'https://site.api.espn.com/apis/site/v2/sports/football/college-football/'
+    + 'scoreboard?groups=80',
+  'https://cdn.espn.com/core/college-football/scoreboard?xhr=1&groups=80&limit=100',
+]);
 const NCAAF_TTL_MS = 30000;
-let ncaafCache = { at: 0, games: [], error: '' };
+let ncaafCache = { at: 0, games: [], error: '', source: '', tried: [] };
 
 /** One ESPN event as the Game shape `public/tv/js/scores.js` documents. */
 function nflGame(event, sport = 'nfl') {
@@ -4502,50 +4550,63 @@ function nflGame(event, sport = 'nfl') {
   };
 }
 
+/**
+ * The events out of an ESPN scoreboard answer, whichever address it came from.
+ *
+ * The site API puts them at the top level. espn.com's own feed wraps the very
+ * same objects a couple of levels down. Reading both here is what lets the
+ * addresses above stand in for each other without nflGame() knowing.
+ */
+function espnEvents(body) {
+  if (Array.isArray(body?.events)) return body.events;
+  if (Array.isArray(body?.content?.sbData?.events)) return body.content.sbData.events;
+  if (Array.isArray(body?.scoreboard?.events)) return body.scoreboard.events;
+  return [];
+}
+
+/**
+ * A football slate, from the first address that answers.
+ *
+ * Falls through on failure only. What comes back carries `source` — which
+ * address actually answered — and `tried`, the ones that did not and why,
+ * because "the band is empty" has several causes and they are
+ * indistinguishable from the sofa.
+ */
+async function espnSlate(urls, sport, cache) {
+  const tried = [];
+  for (const url of urls) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const body = await fetchJson(url, SITE_HEADERS);
+      const games = espnEvents(body).map((e) => nflGame(e, sport)).filter((g) => g.id);
+      return { at: Date.now(), games, error: '', source: url, tried };
+    } catch (err) {
+      tried.push({ url, error: err.message });
+    }
+  }
+  /* Every address refused. Keep the last good slate for a few minutes rather
+     than emptying the band over one bad poll — a Saturday afternoon is
+     exactly when ESPN is least willing to talk to a Raspberry Pi — but do not
+     silently serve last Sunday either. */
+  const stale = Date.now() - cache.at < 10 * 60 * 1000;
+  return {
+    at: stale ? cache.at : Date.now(),
+    games: stale ? cache.games : [],
+    error: [...new Set(tried.map((t) => t.error))].join(' · '),
+    source: stale ? cache.source || '' : '',
+    tried,
+  };
+}
+
 async function ncaafScores() {
   if (Date.now() - ncaafCache.at < NCAAF_TTL_MS) return ncaafCache;
-  try {
-    const body = await fetchJson(NCAAF_URL, SITE_HEADERS);
-    const games = (body.events || [])
-      .map((e) => nflGame(e, 'ncaaf'))
-      .filter((g) => g.id);
-    ncaafCache = { at: Date.now(), games, error: '' };
-  } catch (err) {
-    /* Keep the last good slate for a few minutes rather than emptying the
-       band because one poll was refused — a Saturday afternoon is exactly
-       when ESPN is least willing to talk to a Raspberry Pi. */
-    const stale = Date.now() - ncaafCache.at < 10 * 60 * 1000;
-    ncaafCache = {
-      at: stale ? ncaafCache.at : Date.now(),
-      games: stale ? ncaafCache.games : [],
-      error: err.message,
-    };
-  }
+  ncaafCache = await espnSlate(NCAAF_URLS, 'ncaaf', ncaafCache);
   return ncaafCache;
 }
 
 async function nflScores() {
   if (Date.now() - nflCache.at < NFL_TTL_MS) return nflCache;
-  try {
-    const res = await request(NFL_URL, { headers: SITE_HEADERS });
-    if ((res.statusCode || 500) >= 400) {
-      res.resume();
-      throw new Error(`HTTP ${res.statusCode}`);
-    }
-    const body = JSON.parse((await readBody(res)).toString('utf8'));
-    const games = (body.events || []).map(nflGame).filter((g) => g.id);
-    nflCache = { at: Date.now(), games, error: '' };
-  } catch (err) {
-    /* A feed that is down must not take the football row down with it, and it
-     * must not silently serve a slate from last Sunday either. The last good
-     * answer stands for as long as it is worth standing. */
-    const stale = Date.now() - nflCache.at < 10 * 60 * 1000;
-    nflCache = {
-      at: stale ? nflCache.at : Date.now(),
-      games: stale ? nflCache.games : [],
-      error: err.message,
-    };
-  }
+  nflCache = await espnSlate(NFL_URLS, 'nfl', nflCache);
   return nflCache;
 }
 
@@ -6604,12 +6665,22 @@ async function handleApi(req, res, pathname, query) {
        * and what came back" in one line each. The addresses are public and
        * carry no credentials, so they can be shown. */
       feeds: [
-        { sport: 'nfl', url: NFL_URL, games: nfl.games.length, at: nfl.at, error: nfl.error || undefined },
+        { sport: 'nfl',
+          url: NFL_URLS,
+          source: nfl.source || undefined,
+          games: nfl.games.length,
+          at: nfl.at,
+          error: nfl.error || undefined,
+          /* Which addresses were asked and what each said. An empty band has
+             several causes and this is the line that tells them apart. */
+          tried: nfl.tried?.length ? nfl.tried : undefined },
         { sport: 'ncaaf',
-          url: NCAAF_URL,
+          url: NCAAF_URLS,
+          source: ncaaf.source || undefined,
           games: ncaaf.games.length,
           at: ncaaf.at,
-          error: ncaaf.error || undefined },
+          error: ncaaf.error || undefined,
+          tried: ncaaf.tried?.length ? ncaaf.tried : undefined },
         {
           sport: 'mlb',
           /* Two sources, asked in this order. Which one answered matters when

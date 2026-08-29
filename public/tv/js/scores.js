@@ -149,6 +149,12 @@ const PLACEHOLDER = [
 let live = false;
 let trouble = '';
 let asked = 0;
+/* Per feed, because `trouble` above is about the whole answer and a row is
+   about one sport. Baseball answering is enough to make the slate non-empty,
+   and without this the college row reads a refused ESPN as "the feed
+   answered, with nothing on it" — the one sentence that rules out what
+   actually happened. */
+let feeds = [];
 
 export async function getGames() {
   if (!ENDPOINT) {
@@ -170,11 +176,13 @@ export async function getGames() {
     live = true;
     asked = Date.now();
     trouble = games.length ? '' : String((data && data.error) || '');
+    feeds = Array.isArray(data && data.feeds) ? data.feeds : [];
     return games;
   } catch (err) {
     live = true;
     asked = Date.now();
     trouble = err.message || 'the box could not be reached';
+    feeds = [];
     return [];
   }
 }
@@ -184,6 +192,17 @@ export const usingPlaceholders = () => !ENDPOINT || !live;
 
 /** What went wrong the last time the slate was asked for, if anything. */
 export const slateTrouble = () => trouble;
+
+/**
+ * What went wrong for ONE sport's feed, if anything.
+ *
+ * The row that is empty is the row that has to explain itself, and it is
+ * showing one sport. A college row with nothing in it while baseball is fine
+ * has to be able to say ESPN refused rather than that college football is
+ * over for the year.
+ */
+export const feedTrouble = (sport) =>
+  String((feeds.find((f) => f && f.sport === sport) || {}).error || '');
 
 /** When the slate was last asked for, so an empty row can prove it tried. */
 export const slateAsked = () => asked;
@@ -212,14 +231,36 @@ export function matchChannel(game, channels) {
      itself rather than the network that happens to be showing it, so a channel
      naming both teams beats anything the network match could find.
 
-     Restricted to the provider's baseball rows, because naming both teams is
-     not rare: a highlights channel does it, and so does a pay-per-view page. */
-  const teams = (game.teamMatch || []).map((t) => String(t).toUpperCase().trim()).filter(Boolean);
-  if (teams.length >= 2) {
+     Restricted to the shelf the sport's own rows live on, because naming both
+     teams is not rare: a highlights channel does it, and so does a
+     pay-per-view page.
+
+     The word FOOTBALL is no use for that restriction — on every provider
+     panel there is, a shelf called FOOTBALL is soccer — so the gridiron test
+     wants an explicit NFL/NCAA/CFB/COLLEGE, or a bare FOOTBALL in an American
+     context, and refuses an unmistakably soccer row whatever else it says. */
+  const shelf = (name) => {
+    if ((game.sport || 'mlb') === 'mlb') return /\bMLB\b|BASEBALL/.test(name);
+    if (/SOCCER|FUTBOL|\bEPL\b|PREMIER LEAGUE|\bUEFA\b|LA ?LIGA|SERIE ?A|BUNDESLIGA|\bMLS\b|\bFIFA\b/
+      .test(name)) return false;
+    if (/\bNFL\b|NCAA|\bCFB\b|COLLEGE|AMERICAN FOOTBALL/.test(name)) return true;
+    return /FOOTBALL/.test(name) && /\bUSA?\b/.test(name);
+  };
+
+  /* Two spellings per side, best first. A pro row says 'BEARS X PACKERS'; a
+     college row is far likelier to say 'ALABAMA X GEORGIA' than 'CRIMSON TIDE
+     X BULLDOGS', and some go with 'ALA X UGA'. Without this the college games
+     had no by-row pass at all on the television — the restriction above was
+     baseball's alone — and every one of them fell through to the network,
+     which on a Saturday is eight games all saying ESPN. */
+  const pairs = [game.teamMatch, game.teamAlt, game.teamShort]
+    .map((pair) => (pair || []).map((t) => String(t).toUpperCase().trim()).filter(Boolean))
+    .filter((pair) => pair.length >= 2);
+  for (const teams of pairs) {
     let byTeams = null;
     for (const channel of live) {
       const name = String(channel.name || '').toUpperCase();
-      if (!/\bMLB\b|BASEBALL/.test(name)) continue;
+      if (!shelf(name)) continue;
       if (!teams.every((team) => name.includes(team))) continue;
       if (!byTeams || name.length < String(byTeams.name).length) byTeams = channel;
     }
