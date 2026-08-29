@@ -35,6 +35,17 @@ const check = (name, ok, detail) => {
   if (!ok) fails.push(name);
 };
 
+
+/* Two fixed instants, used both to build the fixture and to say what the card
+   should read. The card draws a start time from the INSTANT now — the box is
+   one machine in one timezone and the screens are wherever somebody is
+   sitting — so a fixture whose `clock` string and `kickoff` disagree is a
+   fixture asserting the bug. */
+const FIRST_PITCH = Date.now() + 20 * 60000;
+const KICKOFF = Date.now() + 45 * 60000;
+const clockAt = (ms) =>
+  new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
 const CHANNELS = [
   { kind: 'live', id: 700, num: 700, name: 'US| FOX ᴴᴰ', categoryId: 'c1', logo: '' },
   { kind: 'live', id: 701, num: 701, name: 'US| MLB 01 | ROCKIES X NATIONALS', categoryId: 'c4', logo: '' },
@@ -97,7 +108,7 @@ const SCORES = {
       home: { abbr: 'OAK', teamId: 133, logo: 'https://www.mlbstatic.com/team-logos/133.svg',
         record: '65-65', score: null,
         pitcher: { name: 'Jesse Chavez', last: 'Chavez', wins: 6, losses: 4, era: '2.93' } },
-      clock: '4:05 PM', kickoff: Date.now() + 20 * 60000 },
+      clock: clockAt(FIRST_PITCH), kickoff: FIRST_PITCH },
     { id: 'nyy-bos', sport: 'mlb', status: 'final', channelMatch: 'YES NETWORK',
       channelName: 'YES Network', teamMatch: ['Yankees', 'Red Sox'],
       detailedState: 'Final', warmup: false,
@@ -127,7 +138,7 @@ const SCORES = {
         record: '7-3', score: null },
       home: { abbr: 'PHI', logo: 'https://a.espncdn.com/i/teamlogos/nfl/500/phi.png',
         record: '8-2', score: null },
-      clock: '8:20 PM', kickoff: Date.now() + 45 * 60000 },
+      clock: clockAt(KICKOFF), kickoff: KICKOFF },
 
     /* College football. Four games, each testing a different way of finding
        the channel — and one that must find nothing. */
@@ -338,7 +349,8 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
     first.chan === 'Watch on US| MLB 01 | ROCKIES X NATIONALS', first.chan);
 
   check('a game about to start shows the time, not a score',
-    soon.time === '4:05 PM' && soon.score === null, JSON.stringify([soon.time, soon.score]));
+    soon.time === clockAt(FIRST_PITCH) && soon.score === null,
+    JSON.stringify([soon.time, soon.score, clockAt(FIRST_PITCH)]));
   /* The club and the pitcher are separate elements set apart by the layout,
      so textContent runs them together — the words are what is being checked,
      not the gap between them. */
@@ -471,8 +483,8 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
     playing.going === 'go-right', playing.going);
 
   check('a football game about to start shows its kickoff time',
-    kicking.time === '8:20 PM' && kicking.score === null,
-    JSON.stringify([kicking.time, kicking.score]));
+    kicking.time === clockAt(KICKOFF) && kicking.score === null,
+    JSON.stringify([kicking.time, kicking.score, clockAt(KICKOFF)]));
   /* Football has no probable starters, so the strip that carries the pitchers
      in baseball carries the thing a football card would say instead. */
   check('and the two records where baseball puts its pitchers',

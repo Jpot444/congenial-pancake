@@ -104,7 +104,9 @@ export async function render(host, app) {
       || (sport === 'ncaaf'
         ? (b.channelMatch || b.channelName ? 1 : 0) - (a.channelMatch || a.channelName ? 1 : 0)
         : 0)
-      || (a.kickoff || 0) - (b.kickoff || 0))
+      /* A game with no announced kickoff goes to the END of the day. Zero is
+         the earliest number there is and it is not an early kickoff. */
+      || (a.kickoff || Number.MAX_SAFE_INTEGER) - (b.kickoff || Number.MAX_SAFE_INTEGER))
     .slice(0, sport === 'ncaaf' ? GAMES_IN_GRID : GAMES_IN_ROW);
 
   view.categories = pinnedFirst(lib.categories || [], 'live');
@@ -337,13 +339,28 @@ function teamMark(team) {
   return box;
 }
 
+/*
+ * When a game starts, said where the television is standing.
+ *
+ * Drawn here, from the instant, rather than taken from whatever the box
+ * formatted into `clock`. The box is one machine in one timezone and the
+ * screens are wherever anybody happens to be — a start time formatted on the
+ * server is the SERVER's evening, which is how a slate of Eastern kickoffs
+ * came to be printed as local ones. `clock` still stands in when there is no
+ * instant: a game whose kickoff has not been announced has no time to say in
+ * any zone.
+ */
+const startsAt = (game) => (game.kickoff
+  ? new Date(game.kickoff).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  : (game.clock || 'TBA'));
+
 /** Mark, score, mark — the line a scoreboard reads along. */
 function scoreLine(game) {
   const row = el('div', 'game-line');
   const mid = el('div', 'game-mid');
   if (game.status === 'upcoming') {
     mid.append(el('div', 'game-at', '@'));
-    mid.append(el('div', 'game-start', game.clock || ''));
+    mid.append(el('div', 'game-start', startsAt(game)));
     if (game.warmup) mid.append(el('div', 'game-warmup', 'WARMUP'));
   } else {
     const away = game.away && game.away.score;
@@ -466,7 +483,7 @@ function gameTop(game, channel) {
   top.append(name);
 
   if (game.status === 'upcoming') {
-    top.append(el('span', 'game-time', game.clock || ''));
+    top.append(el('span', 'game-time', startsAt(game)));
   } else if (game.status === 'final') {
     /* A game that is over is not live, and a red dot saying it is turns the
        whole row into a thing you cannot trust. */

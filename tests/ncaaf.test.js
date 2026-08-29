@@ -119,6 +119,23 @@ const NCAA = {
       home: { score: '10', description: '(5-0)',
         names: { char6: 'OHIOST', short: 'Ohio State', seo: 'ohio-state' } },
     } },
+    /* A game whose kickoff has not been set. ncaa.com files these with a
+       placeholder instant — midnight — beside a startTime that says TBA,
+       which taken at face value is a card claiming a twelve o'clock kickoff
+       sorted to the front of the day. */
+    { game: {
+      gameID: '6301236',
+      gameState: 'pre',
+      currentPeriod: '',
+      contestClock: '',
+      startTime: 'TBA',
+      startTimeEpoch: String(Math.floor(new Date().setHours(0, 0, 0, 0) / 1000)),
+      network: '',
+      away: { score: '', description: '(2-3)',
+        names: { char6: 'TXTECH', short: 'Texas Tech', seo: 'texas-tech' } },
+      home: { score: '', description: '(3-2)',
+        names: { char6: 'CINCY', short: 'Cincinnati', seo: 'cincinnati' } },
+    } },
     { game: {
       gameID: '6301235',
       gameState: 'pre',
@@ -306,8 +323,8 @@ const SPORTSDB = {
     const fallen = (answer.feeds || []).find((f) => f.sport === 'ncaaf') || {};
 
     console.log('   college feed:', JSON.stringify(fallen));
-    check('college falls past ESPN onto the NCAA\'s own scoreboard',
-      fallen.games === 2 && String(fallen.source).includes('/ncaa'),
+    check('college falls past the addresses before it onto the NCAA\'s scoreboard',
+      fallen.games === 3 && String(fallen.source).includes('/ncaa'),
       JSON.stringify([fallen.games, fallen.source]));
     check('having tried the two before it first',
       (fallen.tried || []).length === 2, JSON.stringify(fallen.tried));
@@ -316,7 +333,8 @@ const SPORTSDB = {
     console.log('   mapped:', JSON.stringify(college2.map(
       (g) => [g.status, g.clock, g.away.abbr, g.away.score, g.home.abbr, g.home.score])));
     const on = college2.find((g) => g.status === 'live');
-    const soon = college2.find((g) => g.status === 'upcoming');
+    // By name, not by status: two of these are upcoming now.
+    const soon = college2.find((g) => g.away.abbr === 'ALA');
     check('a game in progress carries the period and the clock the way a broadcast says it',
       on && on.clock === '2nd · 4:22', on && on.clock);
     check('and the score on both sides', on && on.away.score === 14 && on.home.score === 10,
@@ -339,6 +357,30 @@ const SPORTSDB = {
       soon && soon.status === 'upcoming' && /\d/.test(soon.clock)
       && soon.away.score === null,
       JSON.stringify(soon && [soon.status, soon.clock, soon.away.score]));
+    /* An instant is what the screens draw the clock from, and every screen is
+       in a different place from this box. So it has to be the moment itself,
+       not a moment plus however many hours the box happens to be east of the
+       person looking at it. */
+    check('and it travels as an instant, so a screen can say it in its own timezone',
+      soon && Math.abs(soon.kickoff - (Date.now() + 5400000)) < 120000,
+      JSON.stringify(soon && [soon.kickoff, Date.now()])); 
+
+    const nobody = college2.find((g) => g.away.abbr === 'TXTECH');
+    console.log('   tba:', JSON.stringify(nobody
+      && [nobody.kickoff, nobody.clock, nobody.detailedState]));
+    /* The placeholder midnight is not a kickoff. Taken at face value it is a
+       card claiming twelve o'clock, sorted to the front of the day because
+       midnight is the earliest thing on it. */
+    check('a kickoff that has not been announced carries no instant at all',
+      nobody && nobody.kickoff === 0, JSON.stringify(nobody && nobody.kickoff));
+    check('and says so, rather than saying midnight',
+      nobody && nobody.clock === 'TBA' && /announced/i.test(nobody.detailedState),
+      JSON.stringify(nobody && [nobody.clock, nobody.detailedState]));
+    /* ncaa.com writes its start times in Eastern — '7:00 PM ET'. Printed
+       under a time the card has just drawn in the viewer's own zone, that is
+       two different times on one card. */
+    check('and a game that HAS a kickoff carries no second time under it',
+      soon && soon.detailedState === '', JSON.stringify(soon && soon.detailedState));
 
     /* ---- and a third publisher's shape again ------------------------- */
     /*
@@ -420,6 +462,8 @@ const SPORTSDB = {
       console.log('   probe:', JSON.stringify(rows.map((r) => [r.status, r.games, r.bytes])));
       check('it asks all of them, including the ones a poll never reaches',
         rows.length === 3, String(rows.length));
+      check('and reads three games out of the one that answers',
+        rows[2].games === 3, JSON.stringify(rows[2].games));
       check('and says what each one actually answered',
         rows[0].status === 403 && rows[1].status === 400 && rows[2].status === 200,
         JSON.stringify(rows.map((r) => r.status)));
@@ -427,7 +471,7 @@ const SPORTSDB = {
          with perfectly good JSON in a shape nothing here understands, and
          from the sofa that is indistinguishable from a refusal. */
       check('and how many games this box could read out of it',
-        rows[2].games === 2, JSON.stringify(rows[2]));
+        rows[2].games === 3, JSON.stringify(rows[2]));
       check('with the start of the body, so a login wall says so',
         typeof rows[0].head === 'string', JSON.stringify(rows[0]).slice(0, 120));
       check('asked for one sport only when one is named',
@@ -557,6 +601,77 @@ const SPORTSDB = {
     /\b700\b/.test(asked) && /\b701\b/.test(asked), asked.slice(0, 200));
   check('and not one soccer row is, though sixty of them come first',
     !/\b9\d\d\b/.test(asked), asked.slice(0, 200));
+
+  /* ---- and the clock on the card is the viewer's, not the box's -------- */
+  /*
+   * The complaint that started this: a slate of Eastern kickoffs printed as
+   * if they were local. `clock` is filled in by the box, which is one machine
+   * in one timezone, and the screens are wherever anybody is sitting.
+   *
+   * So the card is handed an instant and a `clock` string that disagree with
+   * each other on purpose. If the card is reading the string, it says the
+   * wrong thing here — which is exactly what it was doing.
+   */
+  console.log('\n  the clock on the card is the one where the viewer is');
+  const KICK = Date.now() + 3 * 3600 * 1000;
+  const WHEN = new Date(KICK).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const TIMED = {
+    games: [
+      { id: 'k1', sport: 'ncaaf', status: 'upcoming', channelMatch: 'ESPN',
+        channelName: 'ESPN', teamMatch: ['Duke', 'Virginia'], teamAlt: [], teamShort: [],
+        away: { abbr: 'DUKE', score: null }, home: { abbr: 'UVA', score: null },
+        // Deliberately not the time the instant means.
+        clock: '7:00 PM', detailedState: '', kickoff: KICK },
+      { id: 'k2', sport: 'ncaaf', status: 'upcoming', channelMatch: '',
+        channelName: '', teamMatch: ['Texas Tech', 'Cincinnati'], teamAlt: [], teamShort: [],
+        away: { abbr: 'TXTECH', score: null }, home: { abbr: 'CINCY', score: null },
+        clock: 'TBA', detailedState: 'Start time to be announced', kickoff: 0 },
+    ],
+    feeds: [{ sport: 'ncaaf', games: 2 }],
+  };
+  const timed = await browser.newPage({ viewport: { width: 1440, height: 950 } });
+  timed.on('pageerror', (e) => { console.log('  PAGE ERROR', e.message); fails.push('pageerror'); });
+  await timed.route('**/cdn.jsdelivr.net/**', (r) => r.abort());
+  await timed.route('**/api/library**', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(LIVE) }));
+  await timed.route('**/api/profiles/*/prefs', (r) => (r.request().method() === 'GET'
+    ? r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(PREFS) })
+    : r.continue()));
+  await timed.route('**/api/profiles/*/taste', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json',
+      body: '{"recentlyWatched":[],"categoryAffinity":[],"ratings":{}}' }));
+  await timed.route('**/api/epg/now**', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: '{"channels":[]}' }));
+  await timed.route('**/api/scores**', (r) => r.fulfill({ status: 200,
+    contentType: 'application/json', body: JSON.stringify(TIMED) }));
+  await timed.goto(BASE, { waitUntil: 'networkidle' });
+  if (await timed.locator('#profileGate').isVisible()) {
+    await timed.locator('.profile-tile').first().click();
+    await timed.waitForTimeout(1400);
+  }
+  await timed.evaluate(() => { state.config.mode = 'xtream'; location.hash = '#/live'; });
+  await timed.waitForTimeout(2600);
+
+  const cards = await timed.evaluate(() => [...document.querySelectorAll('.sc-card')].map((c) => ({
+    mark: c.querySelector('.sc-mark .sc-fallback')?.textContent || '',
+    time: c.querySelector('.sc-time')?.textContent || '',
+    state: c.querySelector('.sc-state')?.textContent || '',
+  })));
+  console.log('   cards:', JSON.stringify(cards), 'expected', WHEN);
+  const duke = cards.find((c) => c.mark === 'DUKE');
+  const tba = cards.find((c) => c.mark === 'TXTECH');
+  check('the card says the time the instant means where the viewer is',
+    duke && duke.time === WHEN, JSON.stringify([duke, WHEN]));
+  check('not the string the box formatted in its own timezone',
+    duke && duke.time !== '7:00 PM', duke && duke.time);
+  /* A game with no announced kickoff has no instant to draw from, which is
+     the one case the box's own words are still the answer. */
+  check('a kickoff nobody has announced still says so',
+    tba && tba.time === 'TBA', JSON.stringify(tba));
+  check('and it sorts to the end of the day rather than the front of it',
+    cards[cards.length - 1] && cards[cards.length - 1].mark === 'TXTECH',
+    JSON.stringify(cards.map((c) => c.mark)));
+  await timed.close();
 
   await page.close();
   await browser.close();

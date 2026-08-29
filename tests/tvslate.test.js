@@ -22,6 +22,16 @@
  *   channels and the categories, and ▼ off the last game would go somewhere
  *   nobody meant.
  */
+/* Two fixed instants, used both to build the fixture and to say what the card
+   should read. The card draws a start time from the INSTANT now — the box is
+   one machine in one timezone and the screens are wherever somebody is
+   sitting — so a fixture whose `clock` string and `kickoff` disagree is a
+   fixture asserting the bug. */
+const FIRST_PITCH = Date.now() + 20 * 60000;
+const KICKOFF = Date.now() + 45 * 60000;
+const clockAt = (ms) =>
+  new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
 const { chromium } = require('./playwright.js');
 const BASE = 'http://127.0.0.1:8481';
 
@@ -70,7 +80,7 @@ const SCORES = {
         pitcher: { last: 'De La Rosa', wins: 2, losses: 2, era: '2.84' } },
       home: { abbr: 'OAK', logo: LOGO, record: '65-65', score: null,
         pitcher: { last: 'Chavez', wins: 6, losses: 4, era: '2.93' } },
-      clock: '4:05 PM', kickoff: Date.now() + 20 * 60000 },
+      clock: clockAt(FIRST_PITCH), kickoff: FIRST_PITCH },
     { id: 'chi-gb', sport: 'nfl', status: 'live', channelMatch: 'FOX',
       channelName: 'FOX', teamMatch: ['Bears', 'Packers'],
       away: { abbr: 'CHI', logo: LOGO, record: '4-6', score: 17, possession: true },
@@ -153,7 +163,8 @@ const SCORES = {
   check('and the count is the count', playing.count === 'B2,S1,O1', playing.count);
 
   check('a game about to start shows its first pitch',
-    soon.start === '4:05 PM' && soon.score === null, JSON.stringify([soon.start, soon.score]));
+    soon.start === clockAt(FIRST_PITCH) && soon.score === null,
+    JSON.stringify([soon.start, soon.score, clockAt(FIRST_PITCH)]));
   check('and WARMUP when the league says the broadcast is up',
     soon.warmup === 'WARMUP', soon.warmup);
   check('with the two probables, record and ERA',

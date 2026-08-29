@@ -4384,9 +4384,16 @@ function easternDate(now = new Date()) {
 const SPORTSDB_KEYS = ['3', '123'];
 const sportsdbDay = (league) => {
   const { year, month, day } = easternDate();
-  return SPORTSDB_KEYS.map((key) =>
-    `https://www.thesportsdb.com/api/v1/json/${key}/eventsday.php`
-    + `?d=${year}-${month}-${day}&l=${encodeURIComponent(league)}`);
+  const at = (key, query) =>
+    `https://www.thesportsdb.com/api/v1/json/${key}/eventsday.php?d=${year}-${month}-${day}&${query}`;
+  return [
+    ...SPORTSDB_KEYS.map((key) => at(key, `l=${encodeURIComponent(league)}`)),
+    /* By sport rather than by league, for the day the league name is not
+       spelled the way this list spells it. That answers both American
+       codes at once, so footballGames() keeps only the rows belonging to
+       the one being asked for. */
+    ...SPORTSDB_KEYS.map((key) => at(key, 's=American%20Football')),
+  ];
 };
 
 function collegeAddresses() {
@@ -4609,7 +4616,13 @@ function ncaaStatus(state) {
 function ncaaGame(row) {
   const game = row?.game || row || {};
   const state = ncaaStatus(game.gameState);
-  const kickoff = (Number(game.startTimeEpoch) || 0) * 1000;
+  /* A game whose kickoff has not been set carries a placeholder instant —
+     midnight — beside a startTime that says TBA. Taken at face value that is
+     a card claiming a twelve o'clock kickoff, sorted to the front of the day
+     because midnight is the earliest thing on it. No instant is the truth. */
+  const stamped = (Number(game.startTimeEpoch) || 0) * 1000;
+  const tba = !stamped || /\btb[ad]\b/i.test(String(game.startTime || ''));
+  const kickoff = tba ? 0 : stamped;
 
   const side = (which) => {
     const team = game[which] || {};
@@ -4633,9 +4646,12 @@ function ncaaGame(row) {
   } else if (state === 'final') {
     clock = game.finalMessage || 'Final';
   } else if (kickoff) {
+    /* A fallback only. The screen draws this from `kickoff` itself — see the
+       note on startsAt() in desktop.js — because this box is one machine in
+       one timezone and the screens are wherever somebody is sitting. */
     clock = new Date(kickoff).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   } else {
-    clock = String(game.startTime || '');
+    clock = 'TBA';
   }
 
   let note = '';
@@ -4650,8 +4666,12 @@ function ncaaGame(row) {
     id: String(game.gameID || game.url || ''),
     sport: 'ncaaf',
     status: state,
+    /* NOT the startTime string. ncaa.com writes it in Eastern — '7:00 PM ET'
+       — and printing that under a start time the card has just drawn in the
+       viewer's own zone is two different times on one card. */
     detailedState: state === 'final' ? (game.finalMessage || 'Final')
-      : String(game.currentPeriod || game.startTime || ''),
+      : state === 'live' ? String(game.currentPeriod || '')
+        : (tba ? 'Start time to be announced' : ''),
     channelMatch: game.network || '',
     channelName: game.network || '',
     /* The school as a broadcast says it — 'Michigan', 'Ohio State' — which is
@@ -4785,7 +4805,15 @@ function footballGames(body, sport) {
     return events.map((e) => nflGame(e, sport)).filter((g) => g.id);
   }
   if (events[0] && (events[0].idEvent || events[0].strHomeTeam)) {
-    return events.map((e) => sportsdbGame(e, sport)).filter((g) => g.id);
+    /* An address asked by sport rather than by league answers with both
+       American codes in one list, and a college band full of NFL fixtures is
+       worse than an empty one. A row that does not say which league it is in
+       is kept: the address was asked for this sport either way. */
+    const belongs = sport === 'nfl' ? /\bNFL\b/i : /NCAA|COLLEGE/i;
+    return events
+      .filter((e) => !e.strLeague || belongs.test(String(e.strLeague)))
+      .map((e) => sportsdbGame(e, sport))
+      .filter((g) => g.id);
   }
   return [];
 }

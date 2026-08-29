@@ -1434,7 +1434,10 @@
       .sort((a, b) => (pinnedGame(b) - pinnedGame(a))
         || (SLATE_ORDER[a.status] ?? 3) - (SLATE_ORDER[b.status] ?? 3)
         || (sport === 'ncaaf' ? televised(b) - televised(a) : 0)
-        || (a.kickoff || 0) - (b.kickoff || 0))
+        /* A game with no announced kickoff goes to the END of the day, not
+           the front of it. Zero is the earliest number there is and it is not
+           an early kickoff, it is no kickoff. */
+        || (a.kickoff || Number.MAX_SAFE_INTEGER) - (b.kickoff || Number.MAX_SAFE_INTEGER))
       .slice(0, sport === 'ncaaf' ? GAMES_IN_GRID : GAMES_IN_ROW);
 
     const playing = games.filter((g) => g.status === 'live').length;
@@ -1577,13 +1580,30 @@
     return box;
   }
 
+  /*
+   * When a game starts, said where somebody is sitting.
+   *
+   * Drawn here, from the instant, rather than taken from whatever the box
+   * formatted into `clock`. The box is one machine in one timezone and the
+   * screens are wherever anybody happens to be — a start time formatted on
+   * the server is the SERVER's evening, which is how a slate of Eastern
+   * kickoffs came to be printed as local ones on a television in Montana.
+   *
+   * The box still fills `clock` in, and it is still what is used when there
+   * is no instant to draw from: a game whose kickoff has not been announced
+   * has no time to say in any zone.
+   */
+  const startsAt = (game) => (game.kickoff
+    ? new Date(game.kickoff).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : (game.clock || 'TBA'));
+
   function middle(game) {
     const mid = document.createElement('div');
     mid.className = 'sc-mid';
 
     if (game.status === 'upcoming') {
       mid.append(bit('div', 'sc-at', '@'));
-      mid.append(bit('div', 'sc-time', game.clock || ''));
+      mid.append(bit('div', 'sc-time', startsAt(game)));
       /* The one caption worth having under a start time: the league saying the
          broadcast is on. Anything else it says — Pre-Game, Delayed: Rain — is
          worth printing too, in the same place, in its own colour. */
