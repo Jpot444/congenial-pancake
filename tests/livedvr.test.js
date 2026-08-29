@@ -101,6 +101,20 @@ const get = (p) => new Promise((resolve, reject) => {
     /temp_file/.test(SERVER));
   check('transport drops are ridden out without the process exiting',
     /'-reconnect', '1', '-reconnect_streamed', '1'/.test(SERVER));
+  /* The one that was missing, and its absence was the "it jumped forward"
+     report. The three above cover a socket that BREAKS; this covers one that
+     ENDS POLITELY, which is what the provider does when the ingest catches up
+     to the live edge and asks for a segment that does not exist yet. ffmpeg
+     read that as the stream being over and exited CLEANLY — code 0, twice in
+     ninety seconds in the capture that found it — and every exit leaves a
+     hole the viewer skips over, because the resume takes the live edge and
+     never ingests what was published while it was down.
+
+     The film path had carried this flag for months. The live path had three
+     of the four. */
+  check('and so is a live edge that has not published the next segment yet',
+    /'-reconnect_at_eof', '1'/.test(dvrArgs)
+    && /'-m3u8_hold_counters'/.test(dvrArgs), dvrArgs.slice(0, 600));
   // The input decides startup time. A TS push feed arrives at 1x and a stream
   // copy can only cut on keyframes, so the first segments took longer than the
   // readiness timeout and every tune-in fell back to the direct path — which a
@@ -195,8 +209,11 @@ const get = (p) => new Promise((resolve, reject) => {
     /\/\^\[\\w-\]\+\$\/\.test\(id\)/.test(SERVER));
   check('a live playlist is never closed with ENDLIST between drop and respawn',
     /session\.exited && !session\.live/.test(SERVER));
+  /* The span is generous because it is measuring "inside the exit handler",
+     and the handler has grown a paragraph explaining what it keeps in the
+     black box. A tighter bound was measuring comment length. */
   check('a dropped feed is respawned for an audience, not declared an ending',
-    /proc\.on\('exit'[\s\S]{0,900}spawnLiveDvr\(session, input, true\)/.test(SERVER));
+    /proc\.on\('exit'[\s\S]{0,1600}spawnLiveDvr\(session, input, true\)/.test(SERVER));
   check('and the respawn marks a discontinuity, since its timestamps restart',
     /resumed \? '\+discont_start' : ''/.test(SERVER));
   // Both sweeps spare live, in their two different shapes: the blanket stop

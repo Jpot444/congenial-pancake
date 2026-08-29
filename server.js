@@ -3324,9 +3324,33 @@ function liveDvrArgs(input, dir, resumed = false, low = false) {
   ];
   return [
     '-v', 'info', '-nostats', '-hide_banner', '-y',
-    // The feed drops; these ride out the transport-level ones without ffmpeg
-    // exiting at all. A full exit is handled by the respawn in spawnLiveDvr.
-    '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+    /* The feed drops; these ride out the transport-level ones without ffmpeg
+     * exiting at all. A full exit is handled by the respawn in spawnLiveDvr.
+     *
+     * `reconnect_at_eof` is the one that was missing, and its absence is the
+     * whole of the "it jumped forward" report. The other two cover a socket
+     * that BREAKS. This covers a socket that ENDS POLITELY — which is what
+     * happens when the ingest catches up to the provider's live edge and asks
+     * for a segment that does not exist yet. ffmpeg read that as the stream
+     * being over and exited with code 0, cleanly, every twenty seconds or so;
+     * the black box caught it doing exactly that twice in ninety seconds.
+     *
+     * Every one of those exits costs the viewer a hole. The resume takes the
+     * provider's live edge, so whatever was published while ffmpeg was down —
+     * plus whatever sat between its last segment and the edge — is never
+     * ingested at all. The player, seated forty-five seconds back, eventually
+     * reaches that hole and skips it. That is the jump.
+     *
+     * Bounding the cold start is what exposed this: with minutes of backlog
+     * to chew through the ingest never sat at the edge waiting, so it never
+     * hit the EOF that ends it. */
+    '-reconnect', '1', '-reconnect_streamed', '1',
+    '-reconnect_at_eof', '1', '-reconnect_on_network_error', '1',
+    '-reconnect_delay_max', '5',
+    /* And the same fact one layer up: a live playlist that has not gained a
+       segment yet is not a playlist that has ended. The default gives up far
+       too readily for a provider whose refresh is lumpy. */
+    '-m3u8_hold_counters', '120',
     /* Where in the provider's playlist to start reading — counted BACK from
      * their live edge, never forward from the start of it.
      *
@@ -3483,7 +3507,11 @@ function spawnLiveDvr(session, input, resumed = false) {
     session.exitCode = code;
     liveNote(session, 'ingest-exited', {
       code,
-      last: (session._stderr || '').split('\n').filter(Boolean).pop() || '',
+      /* The last few lines, not the last one. The final line is the encoder's
+         own sign-off — "Qavg: 568.015" — which says nothing about why the
+         run ended; the reason is a line or two above it, and a capture that
+         cuts it off is a capture that cannot be read. */
+      last: (session._stderr || '').split('\n').filter(Boolean).slice(-4).join(' | '),
     });
     if (remuxSessions.get(session.id) !== session) return; // killed on purpose
     // The feed dropped out from under an audience: reconnect. append_list
