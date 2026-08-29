@@ -1316,7 +1316,8 @@
     }
 
     const channels = (state.library.live?.items || []).filter((c) => !profiles.isDeleted(c));
-    for (const game of games) strip.append(scoreCard(game, matchChannel(game, channels)));
+    const cats = state.library.live?.categories || [];
+    for (const game of games) strip.append(scoreCard(game, matchChannel(game, channels, cats)));
   }
 
   /*
@@ -1564,12 +1565,51 @@
    * 'US| FOX ᴴᴰ'. Shortest match wins so 'NFL' does not answer for
    * 'NFL NETWORK'.
    */
-  function matchChannel(game, channels) {
+  /* A channel entry that is a SCHEDULED EVENT rather than a channel.
+   *
+   * This provider carries rows like "US (Peacock 023) | Marlins at Nationals
+   * (2026-08-30 12:00:00)" — a placeholder for a broadcast at a stated time,
+   * with nothing on it. They are the best possible match by name, which is
+   * exactly the problem: a game card pointed at one opens a channel that is
+   * not playing. The stamped time in the name is what identifies them, and it
+   * is a far more reliable signal than the words around it. */
+  const DATED_EVENT = /\(\s*\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/;
+
+  /** Is this channel one of the provider's baseball rows? */
+  function isBaseball(channel, catNames) {
+    const where = `${channel.name || ''} ${catNames.get(String(channel.categoryId)) || ''}`;
+    return /\bMLB\b|BASEBALL/i.test(where);
+  }
+
+  /**
+   * Tie a game to a channel in the real live library.
+   *
+   * Two passes, and the first one is deliberately narrow.
+   *
+   * BY TEAMS, within baseball only. On a night when the provider carries a
+   * row per game — 'MLB 01 | Rockies x Nationals' — that row is the broadcast
+   * itself rather than the network showing it, and it is the best thing to
+   * open. But naming both teams is not rare: a scheduled PPV placeholder does
+   * it too, and so does a highlights channel. Restricting this pass to rows
+   * the provider itself files under MLB is what keeps a card pointed at a
+   * game rather than at something merely named after one.
+   *
+   * BY NETWORK, across everything. A national broadcast is on FOX or ESPN and
+   * those are not filed under baseball, so this pass cannot be narrowed the
+   * same way. Shortest match wins so 'NFL' does not answer for 'NFL NETWORK'.
+   *
+   * Dated event rows are excluded from both, everywhere.
+   */
+  function matchChannel(game, channels, categories) {
+    const catNames = new Map((categories || []).map((c) => [String(c.id), c.name || '']));
+    const live = channels.filter((c) => !DATED_EVENT.test(String(c.name || '')));
+
     const teams = (game.teamMatch || [])
       .map((t) => String(t).toUpperCase().trim()).filter(Boolean);
     if (teams.length >= 2) {
       let byTeams = null;
-      for (const channel of channels) {
+      for (const channel of live) {
+        if (!isBaseball(channel, catNames)) continue;
         const name = String(channel.name || '').toUpperCase();
         if (!teams.every((team) => name.includes(team))) continue;
         if (!byTeams || name.length < String(byTeams.name).length) byTeams = channel;
@@ -1580,7 +1620,7 @@
     const needle = String(game.channelMatch || game.channelName || '').toUpperCase().trim();
     if (!needle) return null;
     let best = null;
-    for (const channel of channels) {
+    for (const channel of live) {
       const name = String(channel.name || '').toUpperCase();
       if (!name.includes(needle)) continue;
       if (!best || name.length < String(best.name).length) best = channel;

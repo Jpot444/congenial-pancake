@@ -372,7 +372,18 @@
   place-items: center;
   width: 54px; height: 54px;
 }
-.desk .sc-mark img { max-width: 100%; max-height: 100%; object-fit: contain; }
+/* Sized outright rather than capped. Several of the league's marks are SVGs
+   with no width or height on the root element, and a percentage max- against
+   a box the image is itself sizing resolves to the SVG's own default 300x150
+   — which is how half the row ended up with badges hanging out of the card.
+   A definite width and height with object-fit is the form that cannot be
+   argued with, whatever the file says about itself. */
+.desk .sc-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
 /* The abbreviation is the fallback, not a caption: it shows only when the
    league's mark did not arrive. */
 .desk .sc-fallback { display: none; font-family: var(--display); font-size: 19px; letter-spacing: .04em; }

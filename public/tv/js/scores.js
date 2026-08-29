@@ -172,25 +172,42 @@ export const slateSource = () => ENDPOINT;
  * is not beaten by 'NFL'.
  */
 export function matchChannel(game, channels) {
+  /* Rows like "US (Peacock 023) | Marlins at Nationals (2026-08-30 12:00:00)"
+     are placeholders for a broadcast at a stated time, with nothing on them.
+     They are the best possible match by name, which is exactly the problem —
+     a card pointed at one opens a channel that is not playing. The stamped
+     time is what identifies them. */
+  const live = channels.filter((c) => !/\(\s*\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/
+    .test(String(c.name || '')));
+
   /* The game's OWN channel first. On a baseball night this provider carries a
      row per game — 'MLB 01 | Rockies x Nationals' — and that is the broadcast
      itself rather than the network that happens to be showing it, so a channel
-     naming both teams beats anything the network match could find. */
+     naming both teams beats anything the network match could find.
+
+     Restricted to the provider's baseball rows, because naming both teams is
+     not rare: a highlights channel does it, and so does a pay-per-view page. */
   const teams = (game.teamMatch || []).map((t) => String(t).toUpperCase().trim()).filter(Boolean);
   if (teams.length >= 2) {
     let byTeams = null;
-    for (const channel of channels) {
+    for (const channel of live) {
       const name = String(channel.name || '').toUpperCase();
+      if (!/\bMLB\b|BASEBALL/.test(name)) continue;
       if (!teams.every((team) => name.includes(team))) continue;
       if (!byTeams || name.length < String(byTeams.name).length) byTeams = channel;
     }
     if (byTeams) return byTeams;
   }
 
+  /* Then the network, loosely: provider names carry a country prefix and
+     quality suffixes ('US| FOX ᴴᴰ') and a feed will say 'FOX'. Not narrowed to
+     baseball, because a national broadcast is on a network channel and those
+     are not filed under it. Longest match wins so 'NFL NETWORK' is not beaten
+     by 'NFL'. */
   const needle = (game.channelMatch || game.channelName || '').toUpperCase().trim();
   if (!needle) return null;
   let best = null;
-  for (const channel of channels) {
+  for (const channel of live) {
     const name = String(channel.name || '').toUpperCase();
     if (!name.includes(needle)) continue;
     if (!best || name.length < String(best.name).length) best = channel;

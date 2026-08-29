@@ -37,14 +37,21 @@ const check = (name, ok, detail) => {
 
 const CHANNELS = [
   { kind: 'live', id: 700, num: 700, name: 'US| FOX ᴴᴰ', categoryId: 'c1', logo: '' },
-  { kind: 'live', id: 701, num: 701, name: 'US| MLB 01 | ROCKIES X NATIONALS', categoryId: 'c1', logo: '' },
+  { kind: 'live', id: 701, num: 701, name: 'US| MLB 01 | ROCKIES X NATIONALS', categoryId: 'c4', logo: '' },
   { kind: 'live', id: 702, num: 702, name: 'US| ESPN ᴴᴰ', categoryId: 'c2', logo: '' },
   { kind: 'live', id: 703, num: 703, name: 'CA| TSN', categoryId: 'c3', logo: '' },
+  /* The row that was being picked: a placeholder for a broadcast at a stated
+     time, naming both teams, with nothing on it. It sits in the MLB category
+     too, so only the stamped time tells it apart from a real game row. */
+  { kind: 'live', id: 704, num: 704,
+    name: 'US (Peacock 023) | ROCKIES at NATIONALS (2026-08-30 12:00:00)',
+    categoryId: 'c4', logo: '' },
 ];
 const CATS = [
   { id: 'c1', name: 'USA SPORTS' },
   { id: 'c2', name: 'USA NEWS' },
   { id: 'c3', name: 'CANADA' },
+  { id: 'c4', name: 'USA MLB' },
 ];
 const LIVE = { categories: CATS, items: CHANNELS, totals: { items: CHANNELS.length } };
 const FILMS = {
@@ -152,6 +159,7 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
     meta: document.querySelector('.sc-meta')?.textContent,
     cards: [...document.querySelectorAll('.sc-card')].map((c) => ({
       cls: c.className,
+      chan: c.querySelector('.sc-tune')?.title || '',
       dead: c.querySelector('.sc-tune').disabled,
       score: c.querySelector('.sc-score')?.textContent ?? null,
       half: c.querySelector('.sc-half, .sc-final')?.textContent ?? null,
@@ -193,6 +201,16 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
   check('and the count is the count', first.count === 'B2/4,S1/3,O1/3', first.count);
   check('a game with a channel is pressable',
     first.dead === false, String(first.dead));
+
+  /* The provider carries rows like "US (Peacock 023) | Marlins at Nationals
+     (2026-08-30 12:00:00)": a placeholder for a broadcast at a stated time,
+     naming both teams, with nothing playing on it. It is the best match by
+     name, which is exactly why it kept being chosen — and opening it gives a
+     channel that is not on. */
+  check('a dated event row is never what a card opens, however well it matches',
+    !/Peacock/i.test(first.chan || ''), first.chan);
+  check('the provider\'s own game row is',
+    first.chan === 'Watch on US| MLB 01 | ROCKIES X NATIONALS', first.chan);
 
   check('a game about to start shows the time, not a score',
     soon.time === '4:05 PM' && soon.score === null, JSON.stringify([soon.time, soon.score]));
@@ -338,7 +356,7 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
   console.log('   sheet:', JSON.stringify(sheet));
   check('the sheet opens', sheet.open === true, String(sheet.open));
   check('every row carries a pin, not only the pinned ones',
-    sheet.rows.length === 3 && sheet.rows.every((r) => r.pin), JSON.stringify(sheet.rows));
+    sheet.rows.length === 4 && sheet.rows.every((r) => r.pin), JSON.stringify(sheet.rows));
   check('the one already pinned leads and is marked',
     sheet.rows[0].name === 'USA SPORTS' && sheet.rows[0].pinned === true,
     JSON.stringify(sheet.rows[0]));
