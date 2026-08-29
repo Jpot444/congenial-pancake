@@ -4304,7 +4304,11 @@ const GUIDE_CATALOGUE = [
 function knownMovies() {
   const seen = new Map();
   for (const [key, entry] of libraryCache) {
-    if (!key.startsWith(`v${LIBRARY_SHAPE}:movie:`)) continue;
+    /* `movies`, plural. The tab is what the cache key is built from and the
+       tab is called 'movies' — the singular matched no key that has ever
+       existed, so this returned an empty catalogue, the recommendation came
+       back "no library", and the row vanished off the page. */
+    if (!key.startsWith(`v${LIBRARY_SHAPE}:movies:`)) continue;
     for (const item of entry.payload?.items || []) {
       if (!seen.has(String(item.id))) seen.set(String(item.id), item);
     }

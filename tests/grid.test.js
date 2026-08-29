@@ -124,7 +124,10 @@ function measure() {
     /* The browse page: one shelf opened as a grid, which is how the category
        bar opens a category and the page the design draws. No sidebar. */
     await page.evaluate(() => {
-      state.shelf = window.buildShelves('movies')[0].title;
+      /* A row with something in it, by asking rather than by taking the
+         first — For You leads the definitions and is deliberately present
+         even when it is empty, so [0] is a coincidence rather than a shelf. */
+      state.shelf = window.buildShelves('movies').find((r) => r.items.length).title;
       state.visible = 60;
       render();
     });

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '34.6';
+const VERSION = '34.8';
 
 const PAGE_SIZE = 60;
 
@@ -4520,12 +4520,21 @@ function buildShelves(tab) {
   for (const def of SHELF_DEFS[tab] || []) {
     if (def.special === 'recent') {
       const items = forYouItems(tab);
-      if (items.length) rows.push({ title: def.title, items });
-      /* Nothing to go on yet. A recommender with no signal should ask rather
-         than dress the alphabet up as a suggestion, so the row becomes the
-         question instead of disappearing. */
-      else if (tab === 'movies' && forYou.needs === 'seeds') {
-        rows.push({ title: def.title, items: [], ask: true });
+      /* On Movies this row is always here.
+       *
+       * It used to appear only when it had something, which sounds tidy and
+       * is a trap: every way of having nothing then looked identical to the
+       * feature not existing. A prefix typo made the box answer "no library",
+       * the row disappeared off the page, and with it went the only door to
+       * the picker and to the key — so the one screen that could have
+       * explained what was wrong was the screen that had been removed.
+       *
+       * A row that can vanish is worse than the row it replaced. This one
+       * says what it has, or asks, or says why it cannot. */
+      if (tab === 'movies') {
+        rows.push({ title: def.title, items, ask: !items.length, tune: items.length > 0 });
+      } else if (items.length) {
+        rows.push({ title: def.title, items });
       }
       continue;
     }
@@ -5036,12 +5045,19 @@ function renderRows() {
     if (row.ask) {
       const ask = el('button', 'foryou-ask');
       ask.type = 'button';
+      /* Three ways to have nothing, and they are not the same thing. Saying
+         "pick some films" when the library has not loaded sends somebody to
+         a picker that will be empty too. */
+      const note = forYou.needs === 'library'
+        ? 'The box has not read the film library yet. Open Movies again in a '
+          + 'moment — and meanwhile you can still set a recommendation key here.'
+        : forYou.at === 0
+          ? 'Working out what to put here…'
+          : 'Pick a few films and this row fills with things you have not seen — '
+            + 'by who made them, and by what other people reached for next.';
       ask.append(
         Object.assign(el('span', 'foryou-ask-title'), { textContent: 'Tell me what you love' }),
-        Object.assign(el('span', 'foryou-ask-note'), {
-          textContent: 'Pick a few films and this row fills with things you have not seen — '
-            + 'by who made them, and by what other people reached for next.',
-        }),
+        Object.assign(el('span', 'foryou-ask-note'), { textContent: note }),
         Object.assign(el('span', 'foryou-ask-go'), { textContent: 'Pick some films' })
       );
       ask.addEventListener('click', () => seedPicker.open());
@@ -5061,6 +5077,24 @@ function renderRows() {
         card.append(why);
       }
       track.append(card);
+    }
+    /* And a way back to the picker once the row is working. The settings for
+       this row were reachable only through the empty state, which meant they
+       stopped being reachable the moment the row started working — including
+       the field for the key that would make it better. */
+    if (row.tune) {
+      const tune = el('button', 'foryou-ask is-tune');
+      tune.type = 'button';
+      tune.append(
+        Object.assign(el('span', 'foryou-ask-title'), { textContent: 'Tune these' }),
+        Object.assign(el('span', 'foryou-ask-note'), {
+          textContent: 'Change the films these are based on, or set a key so the row '
+            + 'can use what other audiences watched next.',
+        }),
+        Object.assign(el('span', 'foryou-ask-go'), { textContent: 'Open' })
+      );
+      tune.addEventListener('click', () => seedPicker.open());
+      track.append(tune);
     }
 
     const prev = el('button', 'rail-nav prev');

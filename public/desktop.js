@@ -1034,7 +1034,11 @@
       onSort: (value) => { sortBy = value; render(); },
       onView: (v) => {
         if (v === 'grid') {
-          state.shelf = state.shelf ?? rows[0].title;
+          /* A row with something in it. For You leads the definitions and is
+             deliberately there even when it is empty, so switching to grid
+             off [0] would open an empty page. */
+          state.shelf = state.shelf
+            ?? (rows.find((r) => r.items.length) || rows[0]).title;
         } else {
           state.shelf = null;
         }
@@ -2435,7 +2439,15 @@
 
     for (const tab of ['movies', 'series']) {
       const rows = window.buildShelves(tab);
-      const row = rows[0];
+      /* By name, not by position.
+       *
+       * This took rows[0] and called it 'Recently added', which was true only
+       * as long as For You happened not to be there — it is the first row in
+       * the definitions and it used to be dropped when it had nothing to
+       * show. The moment that row stopped disappearing, the home page's
+       * newest-titles rail became an empty For You and vanished. A row taken
+       * by its place in a list is a row taken on a coincidence. */
+      const row = rows.find((r) => r.title !== 'For You');
       if (!row?.items.length) continue;
       view.append(shelfOf(
         tab === 'movies' ? 'Recently added' : 'Series, continuing',

@@ -255,6 +255,40 @@ const SERIES = {
   check('with nothing to go on the row asks instead of disappearing',
     asking && asking.ask === true && asking.items === 0, JSON.stringify(asking));
 
+  /*
+   * And it asks whatever the reason is.
+   *
+   * The row used to appear only when it had something, which sounds tidy and
+   * is a trap: every way of having nothing looked identical to the feature
+   * not existing. A prefix typo in the box made it answer "no library", the
+   * row disappeared off the page, and with it went the only door to the
+   * picker and to the key — so the one screen that could have explained what
+   * was wrong was the screen that had been removed.
+   */
+  const whatever = await page.evaluate(() => ['library', 'seeds', '', 'something-new']
+    .map((needs) => {
+      forYou.items = [];
+      forYou.needs = needs;
+      const row = buildShelves('movies').find((r) => r.title === 'For You');
+      return { needs, there: Boolean(row), ask: Boolean(row && row.ask) };
+    }));
+  console.log('   however it is empty:', JSON.stringify(whatever));
+  check('the row is on the page whatever the box came back with',
+    whatever.every((r) => r.there && r.ask), JSON.stringify(whatever));
+
+  /* The settings for this row were reachable only through the empty state,
+     which meant they stopped being reachable the moment the row worked. */
+  const working = await page.evaluate(() => {
+    const lib = state.library.movies.items;
+    forYou.items = [lib[11]];
+    forYou.needs = '';
+    const row = buildShelves('movies').find((r) => r.title === 'For You');
+    return { ask: Boolean(row.ask), tune: Boolean(row.tune) };
+  });
+  console.log('   working:', JSON.stringify(working));
+  check('and a working row still has a way back to the picker',
+    working.tune === true && working.ask === false, JSON.stringify(working));
+
   await browser.close();
   console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(', ')}` : '\nall passed');
   process.exit(fails.length ? 1 : 0);

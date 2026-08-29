@@ -5689,6 +5689,10 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   cursor: pointer;
 }
 .foryou-ask:hover { border-color: var(--brand-red); background: rgba(224, 49, 50, .06); }
+/* The same card at the far end of a working row, where it is an option
+   rather than the whole state of things — so it is quieter and narrower. */
+.foryou-ask.is-tune { width: 240px; border-style: solid; opacity: .75; }
+.foryou-ask.is-tune:hover { opacity: 1; }
 .foryou-ask-title { font-size: 15px; font-weight: 700; }
 .foryou-ask-note { font-size: 12px; line-height: 1.5; color: var(--muted); }
 .foryou-ask-go {
