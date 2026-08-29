@@ -30,7 +30,10 @@
 const FIRST_PITCH = Date.now() + 20 * 60000;
 const KICKOFF = Date.now() + 45 * 60000;
 const clockAt = (ms) =>
-  new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  /* The zone the house keeps, which is what the cards now draw in — not the
+     zone this suite happens to be run in. */
+  new Date(ms).toLocaleTimeString('en-US',
+    { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
 
 const { chromium } = require('./playwright.js');
 const BASE = 'http://127.0.0.1:8481';

@@ -350,8 +350,14 @@ function teamMark(team) {
  * instant: a game whose kickoff has not been announced has no time to say in
  * any zone.
  */
+/* The zone this house keeps. Not the television's — it has no idea where it
+   is and will happily insist on UTC — and not the box's, which is a setting
+   nobody looks at. This household is Eastern and does not travel, so a
+   kickoff means the same thing on every screen in it. */
+const HOUSE_ZONE = 'America/New_York';
 const startsAt = (game) => (game.kickoff
-  ? new Date(game.kickoff).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  ? new Date(game.kickoff).toLocaleTimeString('en-US',
+    { timeZone: HOUSE_ZONE, hour: 'numeric', minute: '2-digit' })
   : (game.clock || 'TBA'));
 
 /** Mark, score, mark — the line a scoreboard reads along. */
@@ -530,7 +536,8 @@ function kickoffNote(game) {
   const mins = Math.round((game.kickoff - Date.now()) / 60000);
   if (mins <= 0) return 'Starting now';
   if (mins < 60) return `${start} in ${mins} min`;
-  return `${start} at ${new Date(game.kickoff).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  return `${start} at ${new Date(game.kickoff).toLocaleTimeString('en-US',
+    { timeZone: HOUSE_ZONE, hour: 'numeric', minute: '2-digit' })}`;
 }
 
 /* ---------------------------------------------------------- the channels ── */

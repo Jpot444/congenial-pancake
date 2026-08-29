@@ -4353,12 +4353,27 @@ function feedAddresses(list, one, fallback) {
   return fallback;
 }
 
-/* Today, in the timezone American football is filed under. A Saturday's late
-   games run past midnight Eastern and are filed under the day they started,
-   which is the day a box in Montana has to ask for. */
+/*
+ * The zone this house keeps time in.
+ *
+ * Not the box's, and not the browser's. The box's zone is a setting nobody
+ * looks at and the browser's is wherever a laptop happens to be open, and a
+ * kickoff drawn in either is a number that changes meaning depending on
+ * which screen you read it from. This household is in the Eastern zone and
+ * does not travel, so the times are Eastern — said once, here, rather than
+ * negotiated on every screen.
+ *
+ * It is also the zone the scoreboards themselves are filed under, which is
+ * the other reason: asking for "today" means asking for the day the games
+ * are on, and that day turns over at midnight Eastern.
+ */
+const HOUSE_ZONE = 'America/New_York';
+
+/* Today, in that zone. A Saturday's late games run past midnight and are
+   filed under the day they started. */
 function easternDate(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    timeZone: HOUSE_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
   }).formatToParts(now);
   const get = (t) => (parts.find((p) => p.type === t) || {}).value || '';
   return { year: get('year'), month: get('month'), day: get('day') };
@@ -4532,7 +4547,8 @@ function nflGame(event, sport = 'nfl') {
   } else if (state === 'final') {
     clock = type.shortDetail || 'Final';
   } else if (kickoff) {
-    clock = new Date(kickoff).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    clock = new Date(kickoff).toLocaleTimeString('en-US',
+      { timeZone: HOUSE_ZONE, hour: 'numeric', minute: '2-digit' });
   }
 
   const situation = state === 'live'
@@ -4886,7 +4902,8 @@ function ncaaGame(row) {
     /* A fallback only. The screen draws this from `kickoff` itself — see the
        note on startsAt() in desktop.js — because this box is one machine in
        one timezone and the screens are wherever somebody is sitting. */
-    clock = new Date(kickoff).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    clock = new Date(kickoff).toLocaleTimeString('en-US',
+      { timeZone: HOUSE_ZONE, hour: 'numeric', minute: '2-digit' });
   } else {
     clock = 'TBA';
   }
@@ -5008,7 +5025,8 @@ function sportsdbGame(row, sport) {
   if (state === 'live') clock = String(row.strProgress || row.strStatus || '').trim();
   else if (state === 'final') clock = 'Final';
   else if (kickoff) {
-    clock = new Date(kickoff).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    clock = new Date(kickoff).toLocaleTimeString('en-US',
+      { timeZone: HOUSE_ZONE, hour: 'numeric', minute: '2-digit' });
   }
 
   let note = '';
@@ -5076,8 +5094,19 @@ const SLATE_AHEAD_MS = 16 * 3600 * 1000;
 function onTodaysSlate(game) {
   // A game being played is on now, whatever its kickoff says.
   if (game.status === 'live') return true;
-  // And one with no announced kickoff is today's answer to today's question.
-  if (!game.kickoff) return true;
+  /* A game with no announced kickoff is not on today's slate, and keeping
+   * one was a mistake that hid the day it was meant to protect.
+   *
+   * A scoreboard asked for a date it has nothing for does not answer nothing
+   * — it rolls forward and hands back the next week's fixtures, and a week
+   * out none of them has a time yet. So the three days asked either side all
+   * came back with the SAME set of undated games, and a rule that kept
+   * anything without a kickoff let every one of them through: ten cards of
+   * next Saturday reading TBA, with the actual slate nowhere among them.
+   *
+   * A game nobody has scheduled is also not a game anybody can watch, which
+   * is what this band is for. */
+  if (!game.kickoff) return false;
   return game.kickoff > Date.now() - SLATE_BACK_MS
     && game.kickoff < Date.now() + SLATE_AHEAD_MS;
 }
@@ -5392,7 +5421,8 @@ function mlbGame(event) {
   } else if (state === 'final') {
     clock = type.shortDetail || 'Final';
   } else if (first) {
-    clock = new Date(first).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    clock = new Date(first).toLocaleTimeString('en-US',
+      { timeZone: HOUSE_ZONE, hour: 'numeric', minute: '2-digit' });
   }
 
   let line = '';
@@ -5558,7 +5588,8 @@ function mlbStatsGame(game) {
   } else if (state === 'final') {
     clock = 'Final';
   } else if (first) {
-    clock = new Date(first).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    clock = new Date(first).toLocaleTimeString('en-US',
+      { timeZone: HOUSE_ZONE, hour: 'numeric', minute: '2-digit' });
   }
 
   let situation = '';

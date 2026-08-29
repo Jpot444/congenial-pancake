@@ -463,7 +463,7 @@ const NFL_NIGHT = {
 
     console.log('   college feed:', JSON.stringify(fallen));
     check('college falls past the addresses before it onto the NCAA\'s scoreboard',
-      fallen.games === 6 && String(fallen.source).includes('/ncaa'),
+      fallen.games === 5 && String(fallen.source).includes('/ncaa'),
       JSON.stringify([fallen.games, fallen.source]));
 
     /* ---- the game that was disappearing ------------------------------- */
@@ -577,17 +577,21 @@ const NFL_NIGHT = {
       soon && Math.abs(soon.kickoff - (Date.now() + 5400000)) < 120000,
       JSON.stringify(soon && [soon.kickoff, Date.now()])); 
 
+    /*
+     * And a game nobody has scheduled is off the band entirely.
+     *
+     * A scoreboard asked for a date it has nothing for does not answer
+     * nothing — it rolls forward and hands back next week's fixtures, and a
+     * week out none of them has a time yet. Three days asked either side all
+     * came back with the same undated set, and a rule that kept anything
+     * without a kickoff let every one through: ten cards of next Saturday
+     * reading TBA with the actual slate nowhere among them. A game nobody
+     * has scheduled is also not a game anybody can watch.
+     */
     const nobody = college2.find((g) => g.away.abbr === 'TXTECH');
-    console.log('   tba:', JSON.stringify(nobody
-      && [nobody.kickoff, nobody.clock, nobody.detailedState]));
-    /* The placeholder midnight is not a kickoff. Taken at face value it is a
-       card claiming twelve o'clock, sorted to the front of the day because
-       midnight is the earliest thing on it. */
-    check('a kickoff that has not been announced carries no instant at all',
-      nobody && nobody.kickoff === 0, JSON.stringify(nobody && nobody.kickoff));
-    check('and says so, rather than saying midnight',
-      nobody && nobody.clock === 'TBA' && /announced/i.test(nobody.detailedState),
-      JSON.stringify(nobody && [nobody.clock, nobody.detailedState]));
+    console.log('   undated:', JSON.stringify(nobody || null));
+    check('a game with no announced kickoff is not on the band at all',
+      !nobody, JSON.stringify(nobody && [nobody.clock, nobody.kickoff]));
     /* ncaa.com writes its start times in Eastern — '7:00 PM ET'. Printed
        under a time the card has just drawn in the viewer's own zone, that is
        two different times on one card. */
@@ -713,7 +717,7 @@ const NFL_NIGHT = {
       const night = rows.find((r) => r.url.includes('/lastnight'));
       const today = rows.find((r) => r.url.endsWith('/ncaa'));
       check('and reads every game out of each one that answers',
-        night.games === 1 && today.games === 5,
+        night.games === 1 && today.games === 4,
         JSON.stringify([night.games, today.games]));
       check('and says what each one actually answered',
         rows[0].status === 403 && rows[1].status === 400 && rows[2].status === 200,
@@ -722,7 +726,7 @@ const NFL_NIGHT = {
          with perfectly good JSON in a shape nothing here understands, and
          from the sofa that is indistinguishable from a refusal. */
       check('and how many games this box could read out of it',
-        today.games === 5, JSON.stringify(today.games));
+        today.games === 4, JSON.stringify(today.games));
 
       /* ---- and whether one particular game is anywhere ---------------- */
       /*
@@ -890,7 +894,11 @@ const NFL_NIGHT = {
    */
   console.log('\n  the clock on the card is the one where the viewer is');
   const KICK = Date.now() + 3 * 3600 * 1000;
-  const WHEN = new Date(KICK).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  /* In the zone the house keeps, not the one this test happens to run in.
+     The browser's zone is wherever a laptop is open and the television has no
+     idea where it is; this household is Eastern and does not travel. */
+  const WHEN = new Date(KICK).toLocaleTimeString('en-US',
+    { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
   const TIMED = {
     games: [
       { id: 'k1', sport: 'ncaaf', status: 'upcoming', channelMatch: 'ESPN',
@@ -936,7 +944,7 @@ const NFL_NIGHT = {
   console.log('   cards:', JSON.stringify(cards), 'expected', WHEN);
   const duke = cards.find((c) => c.mark === 'DUKE');
   const tba = cards.find((c) => c.mark === 'TXTECH');
-  check('the card says the time the instant means where the viewer is',
+  check('the card says the time the instant means in the zone this house keeps',
     duke && duke.time === WHEN, JSON.stringify([duke, WHEN]));
   check('not the string the box formatted in its own timezone',
     duke && duke.time !== '7:00 PM', duke && duke.time);

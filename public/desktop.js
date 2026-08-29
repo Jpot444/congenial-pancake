@@ -1589,20 +1589,22 @@
   }
 
   /*
-   * When a game starts, said where somebody is sitting.
+   * When a game starts, in the zone this house keeps.
    *
-   * Drawn here, from the instant, rather than taken from whatever the box
-   * formatted into `clock`. The box is one machine in one timezone and the
-   * screens are wherever anybody happens to be — a start time formatted on
-   * the server is the SERVER's evening, which is how a slate of Eastern
-   * kickoffs came to be printed as local ones on a television in Montana.
+   * Drawn here from the instant rather than taken from whatever the box
+   * formatted into `clock`, because a time formatted on the server is the
+   * SERVER's evening — which is how a slate of Eastern kickoffs came to be
+   * printed an hour or four out.
    *
-   * The box still fills `clock` in, and it is still what is used when there
-   * is no instant to draw from: a game whose kickoff has not been announced
-   * has no time to say in any zone.
+   * And drawn in a NAMED zone rather than the browser's own. The browser's
+   * is wherever a laptop happens to be open; this household is Eastern and
+   * does not travel, so a kickoff means the same thing on every screen in
+   * it, including the television, which has no idea where it is.
    */
+  const HOUSE_ZONE = 'America/New_York';
   const startsAt = (game) => (game.kickoff
-    ? new Date(game.kickoff).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    ? new Date(game.kickoff).toLocaleTimeString('en-US',
+      { timeZone: HOUSE_ZONE, hour: 'numeric', minute: '2-digit' })
     : (game.clock || 'TBA'));
 
   function middle(game) {
@@ -1805,7 +1807,7 @@
     if (mins <= 0) return 'Starting now';
     if (mins < 60) return `${start} in ${mins} min`;
     return `${start} at ${new Date(game.kickoff)
-      .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+      .toLocaleTimeString('en-US', { timeZone: HOUSE_ZONE, hour: 'numeric', minute: '2-digit' })}`;
   }
 
   /* The provider writes 'US| FOX ᴴᴰ'; a card has room for 'FOX'. */
