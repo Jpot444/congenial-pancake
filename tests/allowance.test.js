@@ -8,6 +8,7 @@
  * one can stop a single oversized film, which is the case that matters.
  */
 const fs = require('fs');
+const path = require('path');
 const PATHS = require('./paths.js');
 const SRC = PATHS.SERVER;
 const fails = [];
@@ -132,6 +133,21 @@ check('and a conversion checks before it starts',
   /diskFree\(DOWNLOAD_DIR\) < srcSize \+ SPACE_RESERVE/.test(source));
 check('the downloads folder is movable to a writable drive by env, gates and all',
   /process\.env\.DOWNLOADS_ROOT \|\| path\.join\(ROOT, 'downloads'\)/.test(source));
+/* The busiest directory the box has: a rolling window per live channel, four
+   seconds at a time, plus every film that needs converting, whole. Left on the
+   SD card it is the largest source of wear the box produces — and the archive
+   conversion cache sizes itself against whatever disk this sits on, so moving
+   it moves the allowance too. */
+check('and so is the scratch directory the live window and conversions use',
+  /process\.env\.HLS_ROOT \|\| path\.join\(ROOT, 'hls'\)/.test(source));
+/* Both are set in ecosystem.config.js rather than typed on the box, and that
+   file is only re-read by a restart THROUGH it — which is why the updater has
+   to use startOrRestart. A plain `pm2 restart <name>` deploys the file and
+   applies none of it, silently, which is exactly how DOWNLOADS_ROOT sat on
+   the box doing nothing. */
+const updater = fs.readFileSync(path.join(PATHS.ROOT, 'scripts/auto-update.sh'), 'utf8');
+check('and a pushed change to either actually reaches the running process',
+  /pm2 startOrRestart .*ecosystem\.config\.js.*--update-env/.test(updater), '');
 
 console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(', ')}` : '\nall passed');
 process.exit(fails.length ? 1 : 0);

@@ -137,13 +137,26 @@ afterwards.
    Mounted by UUID with `nofail`, so a drive that does not come up cannot hold
    the Pi at boot.
 
+### The scratch directory moved too
+
+`HLS_ROOT` points at `/mnt/store/hls`. That directory holds the live window —
+four seconds of video at a time, per channel, for as long as anybody is
+watching — and every film that needs converting, whole. It was the largest
+source of SD card wear the box produced, by a distance, and a card has a
+finite number of writes.
+
+Moving it takes the archive conversion cache with it: that cache measures free
+space where it lives, so its allowance is now bounded by the drive's 272 GB
+rather than by whatever was left on a 29 GB card.
+
+One thing to do by hand when moving it, once: the old `<repo>/hls` holds
+finished archive conversions kept as cache (`arc-*`). Nothing looks there any
+more, so they sit on the card doing nothing. Delete them, or move them across
+if a resume is worth keeping.
+
 ### What it is not, yet
 
-`HLS_DIR` is still `<repo>/hls` and is not configurable — the live window and
-every film conversion are written to the SD card. That is the largest source
-of card wear on the box and the obvious next thing to move.
-
-And there is no recording. The live DVR is a ~2 minute rolling window per
+There is no recording. The live DVR is a ~2 minute rolling window per
 channel, deleted continuously, which exists so a viewer can pause and rewind a
 little. Space makes recording possible; it does not make it exist.
 

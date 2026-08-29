@@ -43,6 +43,11 @@ module.exports = {
            cares about space follows this one path: the allowance, the
            free-space gates, the health panel. */
         DOWNLOADS_ROOT: '/mnt/store/downloads',
+        /* The live window and every film conversion. The busiest directory
+           the box has — four seconds of video at a time, per channel, for as
+           long as anyone is watching — and on the SD card it was the largest
+           source of wear by a distance. */
+        HLS_ROOT: '/mnt/store/hls',
         // Allowance for finished archive conversions kept on disk (GB).
         // Whatever this says, the cache always yields before the card's
         // free space floor — the setting caps the best case, it cannot

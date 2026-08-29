@@ -57,7 +57,23 @@ const REPORTS_PATH = path.join(ROOT, 'reports.json');
    — the provider's credits and IMDb's portraits — so it is disposable, but it
    takes a long time to build and is worth keeping across restarts. */
 const PEOPLE_PATH = path.join(ROOT, 'people.json');
-const HLS_DIR = path.join(ROOT, 'hls');
+/*
+ * Where conversions and the live window are written.
+ *
+ * This is the busiest directory on the box by a distance: every live channel
+ * publishes a rolling two-minute window into it, four seconds at a time, for
+ * as long as anybody is watching, and every film that needs converting writes
+ * its whole self here. On the SD card that is the single largest source of
+ * wear the box produces — a card has a finite number of writes and this spends
+ * them faster than everything else combined.
+ *
+ * Overridable for the same reason DOWNLOADS_ROOT is: the drive has a writable
+ * partition now (docs/archive-drive.md). Everything downstream follows —
+ * `serveRemux` reads each session's own directory, and the archive cache
+ * measures free space HERE rather than assuming the card, so moving this moves
+ * the allowance with it.
+ */
+const HLS_DIR = process.env.HLS_ROOT || path.join(ROOT, 'hls');
 /* A conversion fetched from this recently has somebody watching it, so it is
    never cleared away to make room for a new one. Comfortably longer than a
    segment, short enough that an abandoned encode stops wasting the Pi. */
