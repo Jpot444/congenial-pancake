@@ -467,6 +467,82 @@
 .desk .sc-countrow:nth-child(2) i.on { background: #f0b64a; }
 .desk .sc-countrow:nth-child(3) i.on { background: #ff6b62; }
 
+/* ---- the field ----
+ * A hundred yards, the away side's end zone at the left and the home side's
+ * at the right, so the arrow points at the end zone the offence is actually
+ * trying to reach.
+ */
+.desk .sc-field {
+  position: relative;
+  flex: 1;
+  height: 22px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 3px;
+  background: rgba(110, 190, 130, .1);
+  overflow: hidden;
+}
+.desk .sc-field.is-redzone { background: rgba(224, 49, 50, .16); border-color: rgba(224, 49, 50, .45); }
+
+.desk .sc-field .ez {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 9%;
+  background: rgba(255, 255, 255, .09);
+}
+.desk .sc-field .ez-l { left: 0; }
+.desk .sc-field .ez-r { right: 0; }
+
+.desk .sc-field .tick {
+  position: absolute;
+  top: 3px; bottom: 3px;
+  width: 1px;
+  background: rgba(255, 255, 255, .16);
+}
+.desk .sc-field .tick.mid { top: 1px; bottom: 1px; background: rgba(255, 255, 255, .28); }
+
+/* The ball, and which way it is going. The nose of the arrow is the
+   direction — a mark with no direction is half the fact. */
+.desk .sc-field .ball {
+  position: absolute;
+  top: 50%;
+  width: 9px; height: 6px;
+  margin: -3px 0 0 -4px;
+  border-radius: 50%;
+  background: #e8e2d4;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .5);
+}
+.desk .sc-field .ball::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 0; height: 0;
+  margin-top: -4px;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+}
+.desk .sc-field .ball.go-right::after {
+  left: 13px;
+  border-left: 6px solid #f0b64a;
+}
+.desk .sc-field .ball.go-left::after {
+  right: 13px;
+  border-right: 6px solid #f0b64a;
+}
+
+.desk .sc-drive {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 11px;
+  color: var(--muted-dim);
+}
+.desk .sc-drive b { font-size: 12px; font-weight: 600; color: #f0b64a; }
+
+/* The field wants the whole width, so this row stacks rather than sitting
+   side by side the way the diamond and the count do. */
+.desk .sc-card.is-nfl .sc-under { flex-direction: column; align-items: stretch; gap: 6px; }
+
 /* ---- the probables ---- */
 .desk .sc-pitchers {
   display: flex;
@@ -1112,6 +1188,11 @@
 }
 .desk .dk-ctrl:hover { color: var(--text); border-color: var(--line-hover); }
 .desk .dk-ctrl svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+/* The sport switch: two balls, no words — which is the whole of what it has
+   to say. Sits beside the listings, in the bar, on Live TV only. */
+.desk .dk-sport button { padding: 0 10px; }
+.desk .dk-sport svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+
 .desk .dk-ctrl.on {
   color: var(--text);
   border-color: rgba(224, 49, 50, .55);

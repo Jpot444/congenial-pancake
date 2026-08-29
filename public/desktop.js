@@ -64,6 +64,14 @@
        content header so moving them into the bar does not also restyle them. */
     listings: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1.5"/>'
       + '<path d="M3 9h18M9 9v11M14 9v11"/></svg>',
+    /* The two sports, as the shapes of their balls — which is the whole of
+       what the switch has to say and needs no words to say it. */
+    football: '<svg viewBox="0 0 24 24"><path d="M4.4 19.6c-1.6-4.6.3-10.6 4-14.2 3.6-3.7 9.6-5.6 '
+      + '14.2-4 1.6 4.6-.3 10.6-4 14.2-3.6 3.7-9.6 5.6-14.2 4z"/><path d="M9 15l6-6M11 12.5l1.5 '
+      + '1.5M12.5 11l1.5 1.5"/></svg>',
+    baseball: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/>'
+      + '<path d="M6.2 5.5C8.4 7.6 9.6 10.4 9.6 12s-1.2 4.4-3.4 6.5M17.8 5.5c-2.2 2.1-3.4 '
+      + '4.9-3.4 6.5s1.2 4.4 3.4 6.5"/></svg>',
   };
 
 
@@ -346,6 +354,13 @@
              them. -->
         <button type="button" class="dk-ctrl" id="dkMvBtn" hidden>${ICON.grid}Multi-view</button>
         <button type="button" class="dk-ctrl" id="dkListingsBtn" hidden>${ICON.listings}<span>Listings</span></button>
+        <!-- Which slate the head is showing. Two sports, one band: a row that
+             tried to carry both would be a dozen baseball games with two
+             football ones lost in the middle of them. -->
+        <div class="dk-seg dk-sport" id="dkSportSeg" hidden>
+          <button type="button" data-sport="nfl" title="Football" aria-label="Football">${ICON.football}</button>
+          <button type="button" data-sport="mlb" title="Baseball" aria-label="Baseball">${ICON.baseball}</button>
+        </div>
       </div>
     </div>`;
     document.querySelector('.site-header').after(catbar);
@@ -488,6 +503,11 @@
     bar.querySelector('#dkMvBtn').hidden = !live;
     const listings = bar.querySelector('#dkListingsBtn');
     listings.hidden = !live;
+    const sports = bar.querySelector('#dkSportSeg');
+    sports.hidden = !live;
+    for (const b of sports.querySelectorAll('button')) {
+      b.classList.toggle('on', b.dataset.sport === scoreSport());
+    }
 
     if (!live) {
       const sel = bar.querySelector('#dkSortSel');
@@ -738,6 +758,11 @@
     }
     if (e.target.closest('#dkListingsBtn')) {
       document.querySelector('#listingsBtn')?.click();
+      return undefined;
+    }
+    const sport = e.target.closest('#dkSportSeg button');
+    if (sport) {
+      setScoreSport(sport.dataset.sport);
       return undefined;
     }
 
@@ -1222,6 +1247,29 @@
   const SLATE_ORDER = { live: 0, upcoming: 1, final: 2 };
   const GAMES_IN_ROW = 16;
 
+  /*
+   * Which sport the band is showing.
+   *
+   * One band, one sport, chosen with the switch in the bar. Both slates come
+   * down in the same answer — the box asks both leagues either way — so this
+   * is only ever a filter, and switching costs nothing and asks nobody
+   * anything.
+   *
+   * Kept on the profile rather than in this browser: somebody who follows
+   * football in October follows it on the phone too, and a per-device setting
+   * would have to be set on each of them.
+   */
+  const SPORTS = ['nfl', 'mlb'];
+  const scoreSport = () => (SPORTS.includes(profiles.data.scoreSport)
+    ? profiles.data.scoreSport : 'mlb');
+
+  function setScoreSport(sport) {
+    if (!SPORTS.includes(sport) || sport === scoreSport()) return;
+    profiles.data.scoreSport = sport;
+    profiles.save();
+    render();
+  }
+
   /* Held across renders so the row does not blink out and back on every
      repaint of the page while the box is being asked again. */
   let slate = { games: [], at: 0, trouble: '', asked: false };
@@ -1282,7 +1330,8 @@
     /* Starred games lead, whatever they are doing — that is what starring one
        is for. Everything else falls in behind by state: what is on now, then
        what is about to start, then what is over. */
-    const games = [...slate.games]
+    const sport = scoreSport();
+    const games = slate.games.filter((g) => (g.sport || 'nfl') === sport)
       .sort((a, b) => (pinnedGame(b) - pinnedGame(a))
         || (SLATE_ORDER[a.status] ?? 3) - (SLATE_ORDER[b.status] ?? 3)
         || (a.kickoff || 0) - (b.kickoff || 0))
@@ -1304,12 +1353,17 @@
     if (!games.length) {
       const note = document.createElement('p');
       note.className = 'sc-empty';
+      const named = scoreSport() === 'nfl' ? 'football' : 'baseball';
       if (!slate.asked) note.textContent = 'Reading the slate…';
       else if (slate.trouble) {
         note.textContent = `No scores: ${slate.trouble}. `
           + `${location.origin}/api/scores shows what was asked.`;
       } else {
-        note.textContent = 'Nothing on right now — the feed answered, with an empty slate.';
+        /* Which sport is empty matters: out of season is a different fact
+           from nothing on tonight, and both are different from a feed that
+           did not answer. */
+        note.textContent = `No ${named} on right now — the feed answered, `
+          + 'with an empty slate. The other sport is one press away.';
       }
       strip.append(note);
       return;
@@ -1344,7 +1398,7 @@
    */
   function scoreCard(game, channel) {
     const card = document.createElement('div');
-    card.className = `sc-card is-${esc(game.status || 'live')}`;
+    card.className = `sc-card is-${esc(game.status || 'live')} is-${esc(game.sport || 'mlb')}`;
     if (game.warmup) card.classList.add('is-warmup');
     if (pinnedGame(game)) card.classList.add('is-pinned');
     card.dataset.game = game.id;
@@ -1435,7 +1489,7 @@
     return mid;
   }
 
-  /** The diamond and the count, under a game that is being played. */
+  /** What is happening in the game, under the score. One shape per sport. */
   function livingFoot(game, channel) {
     const foot = document.createElement('div');
     foot.className = 'sc-under';
@@ -1444,6 +1498,7 @@
         channel ? cleanChannel(channel.name) : 'No channel matched'));
       return foot;
     }
+    if (game.sport === 'nfl') return gridiron(game, foot);
 
     const on = game.onBase || {};
     const diamond = document.createElement('span');
@@ -1474,6 +1529,54 @@
   }
 
   /**
+   * The field, with the ball on it.
+   *
+   * Baseball's state is a diamond and a count; football's is one ball on one
+   * line, and the three things worth knowing about it are where it is, which
+   * way the offence is going, and what down it is. A sentence — "3rd & 7 · GB
+   * 41" — carries all three and makes you assemble the picture yourself. A
+   * hundred yards of field with a mark on it does not.
+   *
+   * Laid out the way the card is: the away side's end zone on the left, the
+   * home side's on the right, so the arrow points at the end zone the team
+   * with the ball is actually trying to reach.
+   */
+  function gridiron(game, foot) {
+    const drive = game.drive;
+    if (!drive) {
+      /* Between drives, at a timeout, or a feed that did not send a
+         situation. Better to say the game is on than to draw an empty field
+         with the ball on the goal line. */
+      foot.append(bit('span', 'sc-where', game.situation || 'Ball not spotted'));
+      return foot;
+    }
+
+    const field = document.createElement('div');
+    field.className = 'sc-field';
+    if (drive.redZone) field.classList.add('is-redzone');
+    field.append(bit('i', 'ez ez-l'), bit('i', 'ez ez-r'));
+    for (const at of [25, 50, 75]) {
+      const tick = bit('i', `tick${at === 50 ? ' mid' : ''}`);
+      tick.style.left = `${at}%`;
+      field.append(tick);
+    }
+
+    if (Number.isFinite(drive.yardLine)) {
+      const ball = bit('i', `ball${drive.driving ? ` go-${drive.driving}` : ''}`);
+      /* Kept off the very ends so the mark is never half outside the field. */
+      ball.style.left = `${Math.min(97, Math.max(3, drive.yardLine))}%`;
+      field.append(ball);
+    }
+    foot.append(field);
+
+    const line = bit('div', 'sc-drive');
+    line.append(bit('b', null, drive.text || (drive.down ? `${drive.down}` : '')));
+    line.append(bit('span', null, drive.spot || ''));
+    foot.append(line);
+    return foot;
+  }
+
+  /**
    * The two probables, as a scoreboard lists them: the club, the surname, and
    * the season line in brackets. A club that has not named its starter yet
    * gets its own row with nothing after it rather than being left out, so the
@@ -1482,6 +1585,23 @@
   function pregameFoot(game) {
     const foot = document.createElement('div');
     foot.className = 'sc-pitchers';
+
+    /* Football has no probable starters to list, so the same strip carries
+       the thing a football card would say instead: what each side's season
+       looks like going in. */
+    if (game.sport === 'nfl') {
+      for (const side of ['away', 'home']) {
+        const team = game[side];
+        if (!team) continue;
+        const row = bit('div', 'sc-pitcher');
+        row.append(bit('b', null, team.abbr || ''));
+        row.append(bit('span', null, team.record ? `${team.record}` : '—'));
+        foot.append(row);
+      }
+      if (!foot.children.length) foot.append(bit('div', 'sc-tba', 'Teams not announced'));
+      return foot;
+    }
+
     for (const side of ['away', 'home']) {
       const team = game[side];
       if (!team) continue;

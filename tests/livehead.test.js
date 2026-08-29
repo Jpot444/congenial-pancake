@@ -91,6 +91,30 @@ const SCORES = {
       away: { abbr: 'NYY', teamId: 147, logo: '', record: '75-55', score: 2 },
       home: { abbr: 'BOS2', teamId: 111, logo: '', record: '68-62', score: 7 },
       clock: 'Final' },
+
+    /* Football. The away side drives right, toward the home end zone, and the
+       ball is on the HOME team's 41 — which is 59 yards from the left end,
+       not 41. Getting that round the wrong way is the whole risk in drawing a
+       field rather than printing a sentence. */
+    { id: 'chi-gb', sport: 'nfl', status: 'live', channelMatch: 'FOX',
+      channelName: 'FOX', teamMatch: ['Bears', 'Packers'],
+      detailedState: 'In Progress',
+      away: { abbr: 'CHI', logo: 'https://a.espncdn.com/i/teamlogos/nfl/500/chi.png',
+        record: '4-6', score: 17, possession: true },
+      home: { abbr: 'GB', logo: 'https://a.espncdn.com/i/teamlogos/nfl/500/gb.png',
+        record: '8-2', score: 13, possession: false },
+      clock: 'Q2 · 4:22',
+      drive: { down: 3, distance: 7, text: '3rd & 7', spot: 'GB 41',
+        yardLine: 59, driving: 'right', redZone: false },
+      situation: '3rd & 7 · GB 41' },
+    { id: 'dal-phi', sport: 'nfl', status: 'upcoming', channelMatch: 'NBC',
+      channelName: 'NBC', teamMatch: ['Cowboys', 'Eagles'],
+      detailedState: 'Scheduled',
+      away: { abbr: 'DAL', logo: 'https://a.espncdn.com/i/teamlogos/nfl/500/dal.png',
+        record: '7-3', score: null },
+      home: { abbr: 'PHI', logo: 'https://a.espncdn.com/i/teamlogos/nfl/500/phi.png',
+        record: '8-2', score: null },
+      clock: '8:20 PM', kickoff: Date.now() + 45 * 60000 },
   ],
 };
 
@@ -188,7 +212,11 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
     head.titleShown === false, String(head.titleShown));
   check('the row says what it is', head.title === 'Live now', head.title);
   check('and how much of it is actually on', /1 game on now/.test(head.meta || ''), head.meta);
-  check('a card per game', head.cards.length === 3, String(head.cards.length));
+  /* Three baseball games on the stub slate and two football ones. One band,
+     one sport — a row carrying both would be a dozen baseball games with the
+     football lost in the middle of them. */
+  check('a card per game of the chosen sport, and nothing from the other',
+    head.cards.length === 3, String(head.cards.length));
 
   /* The claim that makes the row a way in rather than a picture: a provider
      that carries a channel per game gets THAT game's channel, not the
@@ -314,6 +342,75 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
   check('the card opens the broadcast it named', tuned.open === true, JSON.stringify(tuned));
   await page.evaluate(() => closePlayer());
   await page.waitForTimeout(600);
+
+  /* ---- the other sport ------------------------------------------------- */
+  console.log('\n  the switch, and the football slate behind it');
+  const seg = await page.evaluate(() => ({
+    there: Boolean(document.querySelector('#dkSportSeg')),
+    on: document.querySelector('#dkSportSeg button.on')?.dataset.sport,
+    options: [...document.querySelectorAll('#dkSportSeg button')].map((b) => b.dataset.sport),
+    /* Beside the listings, which is where it was asked for. */
+    after: document.querySelector('#dkSportSeg')?.previousElementSibling?.id,
+  }));
+  console.log('   switch:', JSON.stringify(seg));
+  check('there is a switch with two sports on it',
+    seg.there && seg.options.join(',') === 'nfl,mlb', JSON.stringify(seg));
+  check('it stands next to the listings', seg.after === 'dkListingsBtn', seg.after);
+  check('and says which one is showing', seg.on === 'mlb', seg.on);
+
+  await page.evaluate(() => document.querySelector('#dkSportSeg [data-sport="nfl"]').click());
+  await page.waitForTimeout(1200);
+
+  const nfl = await page.evaluate(() => ({
+    on: document.querySelector('#dkSportSeg button.on')?.dataset.sport,
+    stored: profiles.data.scoreSport,
+    cards: [...document.querySelectorAll('.sc-card')].map((c) => ({
+      cls: c.className,
+      score: c.querySelector('.sc-score')?.textContent ?? null,
+      time: c.querySelector('.sc-time')?.textContent ?? null,
+      field: Boolean(c.querySelector('.sc-field')),
+      diamond: Boolean(c.querySelector('.sc-diamond')),
+      down: c.querySelector('.sc-drive b')?.textContent ?? null,
+      spot: c.querySelector('.sc-drive span')?.textContent ?? null,
+      ballLeft: c.querySelector('.sc-field .ball')?.style.left ?? null,
+      going: [...(c.querySelector('.sc-field .ball')?.classList ?? [])]
+        .find((k) => k.startsWith('go-')) ?? null,
+      records: [...c.querySelectorAll('.sc-pitcher')].map((p) => p.textContent.trim()),
+    })),
+  }));
+  console.log('   football:', JSON.stringify(nfl, null, 1));
+
+  check('the switch moves the band to the other sport',
+    nfl.on === 'nfl' && nfl.cards.length === 2, JSON.stringify([nfl.on, nfl.cards.length]));
+  check('and the choice is kept on the profile, not in this browser',
+    nfl.stored === 'nfl', String(nfl.stored));
+
+  const [playing, kicking] = nfl.cards;
+  check('a football game gets a field, not a diamond',
+    playing.field === true && playing.diamond === false, JSON.stringify(playing));
+  check('with the down and the spot on it',
+    playing.down === '3rd & 7' && playing.spot === 'GB 41',
+    JSON.stringify([playing.down, playing.spot]));
+  /* The ball is on the HOME side's 41. The home end zone is the RIGHT one, so
+     that is 59 yards from the left end — not 41. A field drawn from the wrong
+     end is worse than the sentence it replaced. */
+  check('the ball sits on the right side of the field for whose 41 it is',
+    playing.ballLeft === '59%', playing.ballLeft);
+  check('and points at the end zone the offence is driving for',
+    playing.going === 'go-right', playing.going);
+
+  check('a football game about to start shows its kickoff time',
+    kicking.time === '8:20 PM' && kicking.score === null,
+    JSON.stringify([kicking.time, kicking.score]));
+  /* Football has no probable starters, so the strip that carries the pitchers
+     in baseball carries the thing a football card would say instead. */
+  check('and the two records where baseball puts its pitchers',
+    kicking.records.join(' | ') === 'DAL7-3 | PHI8-2', JSON.stringify(kicking.records));
+
+  await page.evaluate(() => document.querySelector('#dkSportSeg [data-sport="mlb"]').click());
+  await page.waitForTimeout(1200);
+  check('and switching back brings the baseball slate with it',
+    await page.evaluate(() => document.querySelectorAll('.sc-card').length) === 3, '');
 
   /* ---- the controls ---------------------------------------------------- */
   console.log('\n  the bar carries Live TV\'s own two controls');

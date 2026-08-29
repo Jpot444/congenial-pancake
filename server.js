@@ -4174,6 +4174,9 @@ function nflGame(event) {
     if (!c) return null;
     return {
       abbr: c.team?.abbreviation || c.team?.shortDisplayName || '',
+      /* ESPN ships the club's mark with the scoreboard, so unlike baseball
+         there is nothing to construct — the address is in the payload. */
+      logo: c.team?.logo || '',
       record: (c.records || [])[0]?.summary || '',
       score: c.score === undefined || c.score === null || c.score === ''
         ? null : Number(c.score),
@@ -4213,16 +4216,71 @@ function nflGame(event) {
     if (mins > 0 && mins < 240) note = `Kicks off in ${mins} min`;
   }
 
+  const away = side('away');
+  const home = side('home');
+
+  /*
+   * Where the ball is, as a field rather than a sentence.
+   *
+   * A card draws a field with the ball on it, so it needs a position, not
+   * "3rd & 7 · GB 41". The position is worked out from `possessionText` —
+   * the club whose half the ball is in, and the yard number — rather than
+   * from ESPN's own `yardLine`, whose zero end is not documented and would be
+   * a coin flip drawn the wrong way round half the season.
+   *
+   * The field is laid out the way the card is: the away side's goal line on
+   * the LEFT at 0, the home side's on the RIGHT at 100. So a ball on the away
+   * team's own 41 is 41 yards from the left end; the same yard number on the
+   * home team's side is 41 from the right, which is 59.
+   */
+  const spot = String(comp.situation?.possessionText || '').trim();
+  let yardLine = null;
+  const onSide = /^([A-Z]{2,4})\s+(\d{1,2})$/i.exec(spot);
+  if (onSide) {
+    const club = onSide[1].toUpperCase();
+    const yards = Number(onSide[2]);
+    if (away && club === String(away.abbr).toUpperCase()) yardLine = yards;
+    else if (home && club === String(home.abbr).toUpperCase()) yardLine = 100 - yards;
+  } else if (/midfield/i.test(spot)) {
+    yardLine = 50;
+  }
+
+  const down = Number(comp.situation?.down) || null;
+  const drive = state === 'live' && (down || yardLine !== null) ? {
+    down,
+    distance: Number(comp.situation?.distance) || null,
+    /* ESPN's own words for it — "3rd & 7", "1st & Goal" — which is the line
+       nobody should be reassembling from parts. */
+    text: comp.situation?.shortDownDistanceText || comp.situation?.downDistanceText || '',
+    spot,
+    yardLine,
+    /* Which way the offence is going, in the card's own terms: the side with
+       the ball is driving at the other side's end zone. */
+    driving: away && away.possession ? 'right' : (home && home.possession ? 'left' : ''),
+    redZone: Boolean(comp.situation?.isRedZone),
+  } : null;
+
   return {
     id: String(event.id || comp.id || ''),
+    sport: 'nfl',
     status: state,
+    /* ESPN's own description of the state — "Scheduled", "Halftime", "End of
+       3rd Quarter", "Delayed". The card prints it under the start time the
+       way baseball prints Warmup. */
+    detailedState: type.shortDetail || type.description || '',
     channelMatch: network,
     channelName: network,
+    /* Both nicknames, so a game can find the provider's row for THAT game
+       rather than the network carrying it — the same rule baseball uses. */
+    teamMatch: (comp.competitors || [])
+      .map((c) => c.team?.name || c.team?.shortDisplayName || '')
+      .filter(Boolean),
     redZone: false,
-    away: side('away'),
-    home: side('home'),
+    away,
+    home,
     clock,
     situation,
+    drive,
     kickoff,
     note,
     // Left null on purpose: where a channel matches, the real EPG start and
@@ -5419,6 +5477,7 @@ async function handleApi(req, res, pathname, query) {
           favorites: profile.favorites || [],
           pinnedCategories: profile.pinnedCategories || [],
           pinnedGames: profile.pinnedGames || [],
+          scoreSport: profile.scoreSport || 'mlb',
           pinOrder: profile.pinOrder || {},
           deletedItems: profile.deletedItems || [],
           deletedCategories: profile.deletedCategories || [],
@@ -5464,6 +5523,13 @@ async function handleApi(req, res, pathname, query) {
         }
         if (Array.isArray(incoming.pinnedCategories)) {
           profile.pinnedCategories = incoming.pinnedCategories.slice(0, 300);
+        }
+        /* Which sport the scores band shows. On the profile rather than in
+           one browser: somebody who follows football in October follows it on
+           the phone too. */
+        if (typeof incoming.scoreSport === 'string') {
+          profile.scoreSport = ['nfl', 'mlb'].includes(incoming.scoreSport)
+            ? incoming.scoreSport : 'mlb';
         }
         /* The starred games. Ids with the moment they were starred, so the
            list can be pruned by age — a game id is good for a day, and a
