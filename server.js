@@ -4162,8 +4162,22 @@ function nflStatus(state) {
   return 'upcoming';
 }
 
+/*
+ * College football, from the same ESPN shape.
+ *
+ * `groups=80` is FBS — without it the answer is whatever ESPN feels like
+ * featuring, and with the whole of Division I it is six hundred games nobody
+ * has a channel for. `limit` because the default page is small and a Saturday
+ * is not.
+ */
+const NCAAF_URL = process.env.NCAAF_URL
+  || 'https://site.api.espn.com/apis/site/v2/sports/football/college-football/'
+    + 'scoreboard?groups=80&limit=200';
+const NCAAF_TTL_MS = 30000;
+let ncaafCache = { at: 0, games: [], error: '' };
+
 /** One ESPN event as the Game shape `public/tv/js/scores.js` documents. */
-function nflGame(event) {
+function nflGame(event, sport = 'nfl') {
   const comp = (event.competitions || [])[0] || {};
   const status = comp.status || event.status || {};
   const type = status.type || {};
@@ -4262,7 +4276,7 @@ function nflGame(event) {
 
   return {
     id: String(event.id || comp.id || ''),
-    sport: 'nfl',
+    sport,
     status: state,
     /* ESPN's own description of the state — "Scheduled", "Halftime", "End of
        3rd Quarter", "Delayed". The card prints it under the start time the
@@ -4270,10 +4284,30 @@ function nflGame(event) {
     detailedState: type.shortDetail || type.description || '',
     channelMatch: network,
     channelName: network,
-    /* Both nicknames, so a game can find the provider's row for THAT game
-       rather than the network carrying it — the same rule baseball uses. */
+    /* How a game finds the provider's row for THAT game rather than the
+       network carrying it.
+     *
+     * Two spellings per side, because the provider is not consistent and
+     * college is where it shows. A pro row says 'BEARS X PACKERS'; a college
+     * row is far likelier to say 'ALABAMA X GEORGIA' than 'CRIMSON TIDE X
+     * BULLDOGS', and some rows use neither and go with 'ALA X UGA'. The
+     * school name leads because it is the common case; the nickname is tried
+     * after it rather than instead. */
     teamMatch: (comp.competitors || [])
-      .map((c) => c.team?.name || c.team?.shortDisplayName || '')
+      .map((c) => (sport === 'ncaaf'
+        ? (c.team?.location || c.team?.shortDisplayName || '')
+        : (c.team?.name || c.team?.shortDisplayName || '')))
+      .filter(Boolean),
+    teamAlt: (comp.competitors || [])
+      .map((c) => (sport === 'ncaaf'
+        ? (c.team?.name || '')
+        : (c.team?.location || '')))
+      .filter(Boolean),
+    /* The two abbreviations, which is what a cramped provider row uses and
+       what the guide sometimes carries. Short and therefore dangerous on
+       their own — the matcher only reaches for them last. */
+    teamShort: (comp.competitors || [])
+      .map((c) => c.team?.abbreviation || '')
       .filter(Boolean),
     redZone: false,
     away,
@@ -4288,6 +4322,28 @@ function nflGame(event) {
     progress: null,
     placeholder: false,
   };
+}
+
+async function ncaafScores() {
+  if (Date.now() - ncaafCache.at < NCAAF_TTL_MS) return ncaafCache;
+  try {
+    const body = await fetchJson(NCAAF_URL, SITE_HEADERS);
+    const games = (body.events || [])
+      .map((e) => nflGame(e, 'ncaaf'))
+      .filter((g) => g.id);
+    ncaafCache = { at: Date.now(), games, error: '' };
+  } catch (err) {
+    /* Keep the last good slate for a few minutes rather than emptying the
+       band because one poll was refused — a Saturday afternoon is exactly
+       when ESPN is least willing to talk to a Raspberry Pi. */
+    const stale = Date.now() - ncaafCache.at < 10 * 60 * 1000;
+    ncaafCache = {
+      at: stale ? ncaafCache.at : Date.now(),
+      games: stale ? ncaafCache.games : [],
+      error: err.message,
+    };
+  }
+  return ncaafCache;
 }
 
 async function nflScores() {
@@ -5528,7 +5584,7 @@ async function handleApi(req, res, pathname, query) {
            one browser: somebody who follows football in October follows it on
            the phone too. */
         if (typeof incoming.scoreSport === 'string') {
-          profile.scoreSport = ['nfl', 'mlb'].includes(incoming.scoreSport)
+          profile.scoreSport = ['nfl', 'mlb', 'ncaaf'].includes(incoming.scoreSport)
             ? incoming.scoreSport : 'mlb';
         }
         /* The starred games. Ids with the moment they were starred, so the
@@ -6262,15 +6318,16 @@ async function handleApi(req, res, pathname, query) {
    * cached on its own, so a sport that is out of season — or a feed that is
    * down — costs an empty list rather than the whole row. */
   if (pathname === '/api/scores') {
-    const [nfl, mlb] = await Promise.all([nflScores(), mlbScores()]);
+    const [nfl, mlb, ncaaf] = await Promise.all([nflScores(), mlbScores(), ncaafScores()]);
     const games = [
       ...nfl.games.map((g) => ({ ...g, sport: g.sport || 'nfl' })),
       ...mlb.games,
+      ...ncaaf.games,
     ];
     return json(res, 200, {
       games,
-      at: Math.max(nfl.at, mlb.at),
-      error: [nfl.error, mlb.error].filter(Boolean).join(' · ') || undefined,
+      at: Math.max(nfl.at, mlb.at, ncaaf.at),
+      error: [nfl.error, mlb.error, ncaaf.error].filter(Boolean).join(' · ') || undefined,
       /* A per-feed report, for the same reason the guide has one: an empty row
        * has several possible causes and they are indistinguishable from the
        * sofa. Opening this URL on the box answers "did it ask, who did it ask,
@@ -6278,6 +6335,11 @@ async function handleApi(req, res, pathname, query) {
        * carry no credentials, so they can be shown. */
       feeds: [
         { sport: 'nfl', url: NFL_URL, games: nfl.games.length, at: nfl.at, error: nfl.error || undefined },
+        { sport: 'ncaaf',
+          url: NCAAF_URL,
+          games: ncaaf.games.length,
+          at: ncaaf.at,
+          error: ncaaf.error || undefined },
         {
           sport: 'mlb',
           /* Two sources, asked in this order. Which one answered matters when

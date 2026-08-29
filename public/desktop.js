@@ -72,6 +72,9 @@
     baseball: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/>'
       + '<path d="M6.2 5.5C8.4 7.6 9.6 10.4 9.6 12s-1.2 4.4-3.4 6.5M17.8 5.5c-2.2 2.1-3.4 '
       + '4.9-3.4 6.5s1.2 4.4 3.4 6.5"/></svg>',
+    /* College. A cap rather than a third ball, because it is the same ball. */
+    cap: '<svg viewBox="0 0 24 24"><path d="M12 4L2 9l10 5 10-5-10-5z"/>'
+      + '<path d="M6 11.5V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-4.5M20 10v5"/></svg>',
   };
 
 
@@ -360,6 +363,8 @@
         <div class="dk-seg dk-sport" id="dkSportSeg" hidden>
           <button type="button" data-sport="nfl" title="Football" aria-label="Football">${ICON.football}</button>
           <button type="button" data-sport="mlb" title="Baseball" aria-label="Baseball">${ICON.baseball}</button>
+          <button type="button" data-sport="ncaaf" title="College football"
+                  aria-label="College football">${ICON.cap}</button>
         </div>
       </div>
     </div>`;
@@ -1246,6 +1251,9 @@
 
   const SLATE_ORDER = { live: 0, upcoming: 1, final: 2 };
   const GAMES_IN_ROW = 16;
+  /* The grid holds more because it can be read at a glance rather than
+     scrolled through, and a college Saturday needs it to. */
+  const GAMES_IN_GRID = 48;
 
   /*
    * Which sport the band is showing.
@@ -1259,7 +1267,7 @@
    * football in October follows it on the phone too, and a per-device setting
    * would have to be set on each of them.
    */
-  const SPORTS = ['nfl', 'mlb'];
+  const SPORTS = ['nfl', 'mlb', 'ncaaf'];
   const scoreSport = () => (SPORTS.includes(profiles.data.scoreSport)
     ? profiles.data.scoreSport : 'mlb');
 
@@ -1268,11 +1276,18 @@
     profiles.data.scoreSport = sport;
     profiles.save();
     render();
+    /* The guide is asked per sport — college needs it, the other two do not —
+       so switching has to go and get it rather than drawing college against
+       whatever was in hand for baseball. */
+    askGuide().then(() => {
+      const band = document.querySelector('#dkScores');
+      if (band) paintScores(band);
+    });
   }
 
   /* Held across renders so the row does not blink out and back on every
      repaint of the page while the box is being asked again. */
-  let slate = { games: [], at: 0, trouble: '', asked: false };
+  let slate = { games: [], at: 0, trouble: '', asked: false, epg: new Map() };
   let slateInFlight = null;
 
   function scoreboard() {
@@ -1305,6 +1320,7 @@
         .then((data) => {
           const rows = Array.isArray(data) ? data : (data.games || []);
           slate = {
+            ...slate,
             games: rows.filter((g) => g && g.id),
             at: Date.now(),
             asked: true,
@@ -1315,14 +1331,78 @@
           };
         })
         .catch((err) => {
-          slate = { games: [], at: Date.now(), asked: true,
+          slate = { ...slate, games: [], at: Date.now(), asked: true,
             trouble: err.message || 'the box could not be reached' };
         })
+        .then(() => askGuide())
         .finally(() => {
           slateInFlight = null;
           const still = document.querySelector('#dkScores');
           if (still) paintScores(still);
         });
+    }
+  }
+
+  /*
+   * What is actually on the sports channels right now.
+   *
+   * Asked only for college, and only because college is the case that cannot
+   * be solved any other way: on a Saturday the same channel number carries a
+   * different game in a different market, and the channel's name says 'ESPN'
+   * either way. The guide is the only thing on this box that knows which game
+   * that is.
+   *
+   * Bounded hard. Forty channels is the box's own ceiling for one of these
+   * calls, and the candidates are narrowed to the shelves this sport lives on
+   * plus whatever networks the slate actually named — so a library of twelve
+   * thousand channels is not walked over for a scoreboard. Answers the box
+   * already holds come back immediately; the rest fill in over later visits
+   * rather than queueing provider calls behind whoever is watching, which is
+   * why the accuracy of this improves the second time you look at it.
+   */
+  const GUIDE_CHANNELS = 40;
+
+  async function askGuide() {
+    if (scoreSport() !== 'ncaaf') {
+      slate.epg = new Map();
+      return;
+    }
+    const channels = (state.library.live?.items || []).filter((c) => !profiles.isDeleted(c));
+    const cats = new Map((state.library.live?.categories || [])
+      .map((c) => [String(c.id), c.name || '']));
+
+    /* Every network the slate named, so a game on a channel that is not on a
+       football shelf is still asked about. */
+    const networks = new Set(slate.games
+      .filter((g) => g.sport === 'ncaaf')
+      .map((g) => String(g.channelMatch || '').toUpperCase().trim())
+      .filter((n) => n && !NOT_A_CHANNEL.test(n)));
+
+    const wanted = channels.filter((c) => {
+      if (DATED_EVENT.test(String(c.name || ''))) return false;
+      if (onShelf(c, cats, 'ncaaf')) return true;
+      const name = String(c.name || '').toUpperCase();
+      return [...networks].some((n) => name.includes(n));
+    }).slice(0, GUIDE_CHANNELS);
+
+    if (!wanted.length) {
+      slate.epg = new Map();
+      return;
+    }
+    try {
+      const ids = wanted.map((c) => String(c.epgId || c.id));
+      const answer = await api('/api/epg/now', { ids: ids.join(',') });
+      const now = Math.floor(Date.now() / 1000);
+      const found = new Map();
+      for (const row of answer.channels || []) {
+        if (!row || !row.known) continue;
+        const on = (row.listings || []).find((l) => l.start <= now && l.stop > now);
+        if (on && on.title) found.set(String(row.id), on.title);
+      }
+      slate.epg = found;
+    } catch {
+      /* No guide is not a failure — the passes below it still run. */
+      slate.epg = new Map();
     }
   }
 
@@ -1335,7 +1415,7 @@
       .sort((a, b) => (pinnedGame(b) - pinnedGame(a))
         || (SLATE_ORDER[a.status] ?? 3) - (SLATE_ORDER[b.status] ?? 3)
         || (a.kickoff || 0) - (b.kickoff || 0))
-      .slice(0, GAMES_IN_ROW);
+      .slice(0, sport === 'ncaaf' ? GAMES_IN_GRID : GAMES_IN_ROW);
 
     const playing = games.filter((g) => g.status === 'live').length;
     band.innerHTML = `
@@ -1353,7 +1433,7 @@
     if (!games.length) {
       const note = document.createElement('p');
       note.className = 'sc-empty';
-      const named = scoreSport() === 'nfl' ? 'football' : 'baseball';
+      const named = { nfl: 'football', ncaaf: 'college football', mlb: 'baseball' }[scoreSport()];
       if (!slate.asked) note.textContent = 'Reading the slate…';
       else if (slate.trouble) {
         note.textContent = `No scores: ${slate.trouble}. `
@@ -1371,7 +1451,13 @@
 
     const channels = (state.library.live?.items || []).filter((c) => !profiles.isDeleted(c));
     const cats = state.library.live?.categories || [];
-    for (const game of games) strip.append(scoreCard(game, matchChannel(game, channels, cats)));
+    /* A Saturday is sixty games. A row you scroll along is right for a dozen
+       and useless for sixty — you cannot see what is on without dragging
+       through it, which is the opposite of what a slate is for. */
+    strip.classList.toggle('is-grid', sport === 'ncaaf');
+    for (const game of games) {
+      strip.append(scoreCard(game, matchChannel(game, channels, cats, slate.epg)));
+    }
   }
 
   /*
@@ -1498,7 +1584,7 @@
         channel ? cleanChannel(channel.name) : 'No channel matched'));
       return foot;
     }
-    if (game.sport === 'nfl') return gridiron(game, foot);
+    if (game.sport === 'nfl' || game.sport === 'ncaaf') return gridiron(game, foot);
 
     const on = game.onBase || {};
     const diamond = document.createElement('span');
@@ -1589,7 +1675,7 @@
     /* Football has no probable starters to list, so the same strip carries
        the thing a football card would say instead: what each side's season
        looks like going in. */
-    if (game.sport === 'nfl') {
+    if (game.sport === 'nfl' || game.sport === 'ncaaf') {
       for (const side of ['away', 'home']) {
         const team = game[side];
         if (!team) continue;
@@ -1695,50 +1781,105 @@
    * is a far more reliable signal than the words around it. */
   const DATED_EVENT = /\(\s*\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/;
 
-  /** Is this channel one of the provider's baseball rows? */
-  function isBaseball(channel, catNames) {
-    const where = `${channel.name || ''} ${catNames.get(String(channel.categoryId)) || ''}`;
-    return /\bMLB\b|BASEBALL/i.test(where);
+  /* Which of the provider's shelves a sport's own rows live on. */
+  const SPORT_SHELF = {
+    mlb: /\bMLB\b|BASEBALL/i,
+    nfl: /\bNFL\b|FOOTBALL/i,
+    /* College is filed under any of these depending on the panel, and the
+       college rows are often mixed in with the pro ones on a FOOTBALL shelf —
+       so this is deliberately the widest of the three. */
+    ncaaf: /NCAA|COLLEGE|\bCFB\b|FOOTBALL/i,
+  };
+
+  /** Is this channel on the shelf this sport's own rows live on? */
+  function onShelf(channel, catNames, sport) {
+    const test = SPORT_SHELF[sport] || SPORT_SHELF.mlb;
+    return test.test(`${channel.name || ''} ${catNames.get(String(channel.categoryId)) || ''}`);
   }
+
+  /* Comparing a school to a channel name.
+   *
+   * Whole words, not substrings, and this is not pedantry: 'OHIO' sits inside
+   * 'OHIO STATE', 'MIAMI' inside 'MIAMI OH', and college football has both of
+   * every such pair playing on the same afternoon. A word test does not fix
+   * that on its own — 'OHIO STATE' still contains the word OHIO — so the
+   * tie-break below prefers the shortest title, which is the one with the
+   * least else in it. */
+  const words = (text) => ` ${String(text || '').toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ').trim()} `;
+  const hasName = (haystack, name) => {
+    const needle = words(name).trim();
+    return Boolean(needle) && haystack.includes(` ${needle} `);
+  };
+
+  /** Every spelling of the two sides, best first. */
+  const namePairs = (game) => [game.teamMatch, game.teamAlt, game.teamShort]
+    .filter((pair) => Array.isArray(pair) && pair.length >= 2 && pair.every(Boolean));
 
   /**
    * Tie a game to a channel in the real live library.
    *
-   * Two passes, and the first one is deliberately narrow.
+   * Three passes, narrowest and most trustworthy first. College football is
+   * why there are three: a Saturday puts sixty games on a few dozen channels,
+   * the same channel number carries a different game in a different market,
+   * and the channel's NAME is often just 'ESPN' whichever game it is showing.
    *
-   * BY TEAMS, within baseball only. On a night when the provider carries a
-   * row per game — 'MLB 01 | Rockies x Nationals' — that row is the broadcast
-   * itself rather than the network showing it, and it is the best thing to
-   * open. But naming both teams is not rare: a scheduled PPV placeholder does
-   * it too, and so does a highlights channel. Restricting this pass to rows
-   * the provider itself files under MLB is what keeps a card pointed at a
-   * game rather than at something merely named after one.
+   *   BY WHAT IS ON. If the guide says the programme on that channel right
+   *   now names both schools, that is not a guess — it is the answer, and it
+   *   is the only pass that can tell two regional feeds of the same network
+   *   apart. Only as good as the guide's coverage, which is why it is a pass
+   *   rather than the whole thing.
    *
-   * BY NETWORK, across everything. A national broadcast is on FOX or ESPN and
-   * those are not filed under baseball, so this pass cannot be narrowed the
-   * same way. Shortest match wins so 'NFL' does not answer for 'NFL NETWORK'.
+   *   BY THE ROW. A provider that carries a row per game — 'NCAAF 07 |
+   *   ALABAMA X GEORGIA' — has already done the work. Restricted to the shelf
+   *   the sport's rows live on, because naming two schools is something a
+   *   highlights channel does too.
    *
-   * Dated event rows are excluded from both, everywhere.
+   *   BY THE NETWORK. Last, because on a college Saturday it is the weakest:
+   *   eight games can all say 'ESPN'. It is still right for the one game that
+   *   is actually on ESPN in this market, and better than nothing for the
+   *   rest, but it is the pass that produces a card pointed at the wrong
+   *   game — so a network that is not a television channel at all is refused
+   *   outright below.
+   *
+   * Dated event rows are excluded from all three.
    */
-  function matchChannel(game, channels, categories) {
+  const NOT_A_CHANNEL = /^(ESPN\+|ESPN3|PEACOCK|PARAMOUNT\+|FUBO|MAX|NETFLIX|PRIME)/i;
+
+  function matchChannel(game, channels, categories, epg) {
     const catNames = new Map((categories || []).map((c) => [String(c.id), c.name || '']));
     const live = channels.filter((c) => !DATED_EVENT.test(String(c.name || '')));
+    const sport = game.sport || 'mlb';
+    const pairs = namePairs(game);
 
-    const teams = (game.teamMatch || [])
-      .map((t) => String(t).toUpperCase().trim()).filter(Boolean);
-    if (teams.length >= 2) {
-      let byTeams = null;
+    /* ---- what is on ---- */
+    if (epg && epg.size && pairs.length) {
+      let best = null;
       for (const channel of live) {
-        if (!isBaseball(channel, catNames)) continue;
-        const name = String(channel.name || '').toUpperCase();
-        if (!teams.every((team) => name.includes(team))) continue;
-        if (!byTeams || name.length < String(byTeams.name).length) byTeams = channel;
+        const title = epg.get(String(channel.epgId || channel.id));
+        if (!title) continue;
+        const hay = words(title);
+        if (!pairs.some((pair) => pair.every((team) => hasName(hay, team)))) continue;
+        if (!best || title.length < best.title.length) best = { channel, title };
       }
-      if (byTeams) return byTeams;
+      if (best) return best.channel;
     }
 
+    /* ---- the provider's own row for this game ---- */
+    for (const pair of pairs) {
+      let best = null;
+      for (const channel of live) {
+        if (!onShelf(channel, catNames, sport)) continue;
+        const hay = words(channel.name);
+        if (!pair.every((team) => hasName(hay, team))) continue;
+        if (!best || String(channel.name).length < String(best.name).length) best = channel;
+      }
+      if (best) return best;
+    }
+
+    /* ---- the network ---- */
     const needle = String(game.channelMatch || game.channelName || '').toUpperCase().trim();
-    if (!needle) return null;
+    if (!needle || NOT_A_CHANNEL.test(needle)) return null;
     let best = null;
     for (const channel of live) {
       const name = String(channel.name || '').toUpperCase();

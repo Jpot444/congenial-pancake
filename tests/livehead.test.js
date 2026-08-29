@@ -46,12 +46,25 @@ const CHANNELS = [
   { kind: 'live', id: 704, num: 704,
     name: 'US (Peacock 023) | ROCKIES at NATIONALS (2026-08-30 12:00:00)',
     categoryId: 'c4', logo: '' },
+
+  /* College. Two regional feeds of the SAME network carrying DIFFERENT games,
+     which is the case no amount of name-reading can solve — only the guide
+     knows which is which. */
+  { kind: 'live', id: 800, num: 800, name: 'US| ESPN ᴴᴰ', categoryId: 'c5', logo: '' },
+  { kind: 'live', id: 801, num: 801, name: 'US| ESPN 2 ᴴᴰ', categoryId: 'c5', logo: '' },
+  /* And the provider's own row for one game, on the football shelf. */
+  { kind: 'live', id: 802, num: 802, name: 'US| NCAAF 07 | ALABAMA X GEORGIA',
+    categoryId: 'c5', logo: '' },
+  /* The trap: 'OHIO' is inside 'OHIO STATE', and both play the same day. */
+  { kind: 'live', id: 803, num: 803, name: 'US| NCAAF 11 | OHIO STATE X MICHIGAN',
+    categoryId: 'c5', logo: '' },
 ];
 const CATS = [
   { id: 'c1', name: 'USA SPORTS' },
   { id: 'c2', name: 'USA NEWS' },
   { id: 'c3', name: 'CANADA' },
   { id: 'c4', name: 'USA MLB' },
+  { id: 'c5', name: 'USA NCAAF' },
 ];
 const LIVE = { categories: CATS, items: CHANNELS, totals: { items: CHANNELS.length } };
 const FILMS = {
@@ -115,6 +128,60 @@ const SCORES = {
       home: { abbr: 'PHI', logo: 'https://a.espncdn.com/i/teamlogos/nfl/500/phi.png',
         record: '8-2', score: null },
       clock: '8:20 PM', kickoff: Date.now() + 45 * 60000 },
+
+    /* College football. Four games, each testing a different way of finding
+       the channel — and one that must find nothing. */
+    { id: 'ala-uga', sport: 'ncaaf', status: 'live', channelMatch: 'CBS',
+      channelName: 'CBS', teamMatch: ['Alabama', 'Georgia'],
+      teamAlt: ['Crimson Tide', 'Bulldogs'], teamShort: ['ALA', 'UGA'],
+      detailedState: 'In Progress',
+      away: { abbr: 'ALA', logo: 'https://a.espncdn.com/i/teamlogos/ncaa/500/333.png',
+        record: '9-1', score: 21, possession: false },
+      home: { abbr: 'UGA', logo: 'https://a.espncdn.com/i/teamlogos/ncaa/500/61.png',
+        record: '10-0', score: 24, possession: true },
+      clock: 'Q3 · 7:15',
+      drive: { down: 1, distance: 10, text: '1st & 10', spot: 'ALA 30',
+        yardLine: 30, driving: 'left', redZone: false } },
+    /* On ESPN in this market. Both this and the next game say a network the
+       box carries; only the guide can say which feed is which. */
+    { id: 'osu-mich', sport: 'ncaaf', status: 'live', channelMatch: 'ESPN',
+      channelName: 'ESPN', teamMatch: ['Ohio State', 'Michigan'],
+      teamAlt: ['Buckeyes', 'Wolverines'], teamShort: ['OSU', 'MICH'],
+      detailedState: 'In Progress',
+      away: { abbr: 'OSU', logo: '', record: '10-0', score: 14, possession: true },
+      home: { abbr: 'MICH', logo: '', record: '9-1', score: 10, possession: false },
+      clock: 'Q2 · 1:02',
+      drive: { down: 3, distance: 4, text: '3rd & 4', spot: 'MICH 22',
+        yardLine: 78, driving: 'right', redZone: false } },
+    /* The trap game: 'Ohio' is a substring of 'Ohio State', and both are on. */
+    { id: 'ohio-kent', sport: 'ncaaf', status: 'live', channelMatch: 'ESPN',
+      channelName: 'ESPN', teamMatch: ['Ohio', 'Kent State'],
+      teamAlt: ['Bobcats', 'Golden Flashes'], teamShort: ['OHIO', 'KENT'],
+      detailedState: 'In Progress',
+      away: { abbr: 'OHIO', logo: '', record: '6-4', score: 7, possession: false },
+      home: { abbr: 'KENT', logo: '', record: '3-7', score: 3, possession: true },
+      clock: 'Q1 · 9:30' },
+    /* Streaming only. Not a channel this box can open, and a card that
+       pretends otherwise is worse than one that says so. */
+    { id: 'utah-asu', sport: 'ncaaf', status: 'upcoming', channelMatch: 'ESPN+',
+      channelName: 'ESPN+', teamMatch: ['Utah', 'Arizona State'],
+      teamAlt: ['Utes', 'Sun Devils'], teamShort: ['UTAH', 'ASU'],
+      detailedState: 'Scheduled',
+      away: { abbr: 'UTAH', logo: '', record: '7-3', score: null },
+      home: { abbr: 'ASU', logo: '', record: '5-5', score: null },
+      clock: '10:30 PM', kickoff: Date.now() + 90 * 60000 },
+  ],
+};
+
+/* What the box says is on those channels right now. This is the only thing
+   that can tell ESPN-carrying-one-game from ESPN-carrying-another. */
+const NOW = Math.floor(Date.now() / 1000);
+const EPG = {
+  channels: [
+    { id: '800', known: true,
+      listings: [{ start: NOW - 600, stop: NOW + 3600, title: 'Ohio State at Michigan' }] },
+    { id: '801', known: true,
+      listings: [{ start: NOW - 600, stop: NOW + 3600, title: 'Ohio at Kent State' }] },
   ],
 };
 
@@ -143,8 +210,12 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
   await page.route('**/api/profiles/*/taste', (r) =>
     r.fulfill({ status: 200, contentType: 'application/json',
       body: '{"recentlyWatched":[],"categoryAffinity":[],"ratings":{}}' }));
-  await page.route('**/api/epg/**', (r) =>
-    r.fulfill({ status: 200, contentType: 'application/json', body: '{"channels":[]}' }));
+  await page.addInitScript(() => { window.__epgSeen = []; });
+  await page.route('**/api/epg/**', (r) => {
+    const url = r.request().url();
+    return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(EPG) })
+      .then(() => page.evaluate((u) => window.__epgSeen.push(u), url).catch(() => {}));
+  });
   /* The league's marks come through the box's image proxy, which cannot reach
      mlbstatic.com from a test machine — and a mark that does not load is
      removed on purpose, so without this every card would be exercising the
@@ -353,8 +424,8 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
     after: document.querySelector('#dkSportSeg')?.previousElementSibling?.id,
   }));
   console.log('   switch:', JSON.stringify(seg));
-  check('there is a switch with two sports on it',
-    seg.there && seg.options.join(',') === 'nfl,mlb', JSON.stringify(seg));
+  check('there is a switch with all three on it',
+    seg.there && seg.options.join(',') === 'nfl,mlb,ncaaf', JSON.stringify(seg));
   check('it stands next to the listings', seg.after === 'dkListingsBtn', seg.after);
   check('and says which one is showing', seg.on === 'mlb', seg.on);
 
@@ -411,6 +482,65 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
   await page.waitForTimeout(1200);
   check('and switching back brings the baseball slate with it',
     await page.evaluate(() => document.querySelectorAll('.sc-card').length) === 3, '');
+
+  /* ---- college, and the routing that is the whole difficulty ----------- */
+  console.log('\n  a college Saturday');
+  await page.evaluate(() => document.querySelector('#dkSportSeg [data-sport="ncaaf"]').click());
+  await page.waitForTimeout(1600);
+
+  const college = await page.evaluate(() => ({
+    on: document.querySelector('#dkSportSeg button.on')?.dataset.sport,
+    grid: document.querySelector('.sc-strip')?.classList.contains('is-grid'),
+    columns: getComputedStyle(document.querySelector('.sc-strip'))
+      .gridTemplateColumns.split(' ').length,
+    cards: [...document.querySelectorAll('.sc-card')].map((c) => ({
+      game: c.dataset.game,
+      chan: c.querySelector('.sc-tune')?.title || '',
+      dead: c.querySelector('.sc-tune').disabled,
+      field: Boolean(c.querySelector('.sc-field')),
+      down: c.querySelector('.sc-drive b')?.textContent ?? null,
+    })),
+  }));
+  console.log('   college:', JSON.stringify(college, null, 1));
+
+  check('the cap shows the college slate', college.on === 'ncaaf' && college.cards.length === 4,
+    JSON.stringify([college.on, college.cards.length]));
+  /* Sixty games on a Saturday. A row you scroll along is right for a dozen
+     and useless for sixty. */
+  check('laid out as a grid rather than a row you drag through',
+    college.grid === true && college.columns > 1,
+    JSON.stringify([college.grid, college.columns]));
+  check('and a college game gets the same field as a pro one',
+    college.cards[0].field === true, JSON.stringify(college.cards[0]));
+
+  const by = Object.fromEntries(college.cards.map((c) => [c.game, c]));
+
+  /* The pass that only college needs. Two feeds of the same network carrying
+     different games: the names are identical bar a digit, and only the guide
+     knows which is which. */
+  check('two regional feeds of one network are told apart by what is ON them',
+    by['osu-mich'].chan === 'Watch on US| ESPN ᴴᴰ'
+    && by['ohio-kent'].chan === 'Watch on US| ESPN 2 ᴴᴰ',
+    JSON.stringify([by['osu-mich'].chan, by['ohio-kent'].chan]));
+  /* 'OHIO' is inside 'OHIO STATE'. Without whole-word matching the Ohio game
+     would claim the Ohio State row and both cards would open the same game. */
+  check('and Ohio does not claim the Ohio State broadcast',
+    by['ohio-kent'].chan !== by['osu-mich'].chan
+    && !/OHIO STATE/.test(by['ohio-kent'].chan),
+    JSON.stringify([by['ohio-kent'].chan, by['osu-mich'].chan]));
+
+  check('a game the provider carries a row for opens that row',
+    by['ala-uga'].chan === 'Watch on US| NCAAF 07 | ALABAMA X GEORGIA',
+    by['ala-uga'].chan);
+
+  /* ESPN+ is not a channel this box can open. A card that offers it anyway is
+     a button that lies. */
+  check('a streaming-only game offers nothing rather than the wrong thing',
+    by['utah-asu'].dead === true && /No channel/.test(by['utah-asu'].chan),
+    JSON.stringify(by['utah-asu']));
+
+  const asked = await page.evaluate(() => window.__epgSeen || []);
+  console.log('   guide asked:', JSON.stringify(asked));
 
   /* ---- the controls ---------------------------------------------------- */
   console.log('\n  the bar carries Live TV\'s own two controls');
@@ -479,7 +609,7 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
   console.log('   sheet:', JSON.stringify(sheet));
   check('the sheet opens', sheet.open === true, String(sheet.open));
   check('every row carries a pin, not only the pinned ones',
-    sheet.rows.length === 4 && sheet.rows.every((r) => r.pin), JSON.stringify(sheet.rows));
+    sheet.rows.length === 5 && sheet.rows.every((r) => r.pin), JSON.stringify(sheet.rows));
   check('the one already pinned leads and is marked',
     sheet.rows[0].name === 'USA SPORTS' && sheet.rows[0].pinned === true,
     JSON.stringify(sheet.rows[0]));

@@ -182,6 +182,11 @@ const SCHEDULE = {
       MLB_STATS_URL: `http://127.0.0.1:${FEED_PORT}/stats`,
       MLB_URL: `http://127.0.0.1:${FEED_PORT}/mlb`,
       NFL_URL: `http://127.0.0.1:${FEED_PORT}/empty`,
+      /* Pointed at the same empty door as football. Left unset it reaches for
+         ESPN's real college scoreboard, which refuses this box — and the
+         out-of-season claim would then be reading a 403 rather than an empty
+         Tuesday. */
+      NCAAF_URL: `http://127.0.0.1:${FEED_PORT}/empty`,
     },
     stdio: 'ignore',
   });
@@ -266,6 +271,11 @@ const SCHEDULE = {
         MLB_STATS_URL: `http://127.0.0.1:${FEED_PORT}/refused`,
         MLB_URL: `http://127.0.0.1:${FEED_PORT}/mlb`,
         NFL_URL: `http://127.0.0.1:${FEED_PORT}/empty`,
+      /* Pointed at the same empty door as football. Left unset it reaches for
+         ESPN's real college scoreboard, which refuses this box — and the
+         out-of-season claim would then be reading a 403 rather than an empty
+         Tuesday. */
+      NCAAF_URL: `http://127.0.0.1:${FEED_PORT}/empty`,
       },
       stdio: 'ignore',
     });
