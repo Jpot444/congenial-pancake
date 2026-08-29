@@ -253,7 +253,7 @@ function gameRow(app) {
        in front of it. */
     const where = `${location.origin}${slateSource()}`;
     return rowBlock(head, el('div', 'empty', why
-      ? `No scores: ${why}. Type ${where} into a browser for the full report.`
+      ? `No scores: ${why}. Type ${where}/probe into a browser to see what every address replied.`
       : `No games on the slate right now — the feed answered, with nothing on it. ${where} shows what it was asked.`));
   }
 

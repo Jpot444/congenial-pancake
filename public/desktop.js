@@ -1458,8 +1458,12 @@
       const feed = (slate.feeds || []).find((f) => f && f.sport === sport);
       if (!slate.asked) note.textContent = 'Reading the slate…';
       else if (feed && feed.error) {
+        /* The probe rather than the plain report: /api/scores says what the
+           addresses BEFORE the winner said and nothing about the ones after,
+           which is the right report for a scoreboard and the wrong one for
+           working out why there is no scoreboard. */
         note.textContent = `No ${named}: the feed did not answer — ${feed.error}. `
-          + `${location.origin}/api/scores shows every address it tried.`;
+          + `${location.origin}/api/scores/probe asks every address and says what each replied.`;
       } else if (slate.trouble) {
         note.textContent = `No scores: ${slate.trouble}. `
           + `${location.origin}/api/scores shows what was asked.`;

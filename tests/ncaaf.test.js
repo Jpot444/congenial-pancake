@@ -51,6 +51,23 @@ const check = (name, ok, detail) => {
   if (!ok) fails.push(name);
 };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/* Every box this suite starts, killed however it ends.
+ *
+ * A `finally` only runs if the failure is caught, and an assertion that
+ * throws past one leaves a box holding its port. The next run's spawn then
+ * loses the bind and every request goes to the PREVIOUS run's code — which
+ * reads as a mysterious failure against source that is actually fine, and
+ * would read as a pass against source that is not. */
+const boxes = [];
+const start = (opts) => {
+  const child = spawn('node', [path.join(DIR, 'server.js')], opts);
+  boxes.push(child);
+  return child;
+};
+const stopAll = () => { for (const b of boxes) { try { b.kill(); } catch { /* gone */ } } };
+process.on('exit', stopAll);
+process.on('uncaughtException', (err) => { console.error(err); stopAll(); process.exit(1); });
 const get = (p) => new Promise((resolve, reject) => {
   http.get(`http://127.0.0.1:${PORT}${p}`, (res) => {
     let body = '';
@@ -118,6 +135,29 @@ const NCAA = {
   ],
 };
 
+/* And TheSportsDB's, which is a third shape again: a day's fixtures, with a
+   badge per club and a status word rather than a period and a clock. */
+const SPORTSDB = {
+  events: [
+    { idEvent: '2051001', strEvent: 'Michigan vs Ohio State',
+      strHomeTeam: 'Ohio State Buckeyes', strAwayTeam: 'Michigan Wolverines',
+      intHomeScore: '10', intAwayScore: '14',
+      strStatus: '2Q', strProgress: '2Q 4:22',
+      dateEvent: '2026-08-29', strTime: '16:00:00',
+      strTimestamp: new Date(Date.now() - 3600000).toISOString(),
+      strTVStation: 'FOX',
+      strHomeTeamBadge: 'https://r2.thesportsdb.com/osu.png',
+      strAwayTeamBadge: 'https://r2.thesportsdb.com/mich.png' },
+    { idEvent: '2051002', strEvent: 'Alabama vs Georgia',
+      strHomeTeam: 'Georgia Bulldogs', strAwayTeam: 'Alabama Crimson Tide',
+      intHomeScore: null, intAwayScore: null,
+      strStatus: 'NS', strProgress: '',
+      dateEvent: '2026-08-29', strTime: '23:30:00',
+      strTimestamp: new Date(Date.now() + 5400000).toISOString(),
+      strTVStation: 'ESPN' },
+  ],
+};
+
 (async () => {
   /* ================= the feed, and the addresses it lives at ============= */
   const feed = http.createServer((req, res) => {
@@ -132,6 +172,7 @@ const NCAA = {
     res.writeHead(200, { 'content-type': 'application/json' });
     if (req.url.includes('/core')) return res.end(JSON.stringify(NESTED));
     if (req.url.includes('/ncaa')) return res.end(JSON.stringify(NCAA));
+    if (req.url.includes('/sdb')) return res.end(JSON.stringify(SPORTSDB));
     if (req.url.includes('/empty')) return res.end(JSON.stringify({ events: [] }));
     return res.end(JSON.stringify(SLATE));
   });
@@ -151,17 +192,16 @@ const NCAA = {
   }));
 
   const at = (p) => `http://127.0.0.1:${FEED_PORT}${p}`;
-  const box = spawn('node', [path.join(DIR, 'server.js')], {
+  const box = start({
     env: {
       ...process.env,
       PORT: String(PORT),
       HOST: '127.0.0.1',
       // Two refusals of the kind actually seen, then the address that works.
-      NCAAF_URLS: [at('/400'), at('/403'), at('/core')].join(','),
-      /* Pinned at the fake one so nothing in this suite reaches out to the
-         real internet behind its own back. It must never be asked here — the
-         ESPN address before it answers. */
-      NCAA_URL: at('/ncaa'),
+      /* Every address is a fake one, so nothing in this suite reaches out to
+         the real internet behind its own back. The last two must never be
+         asked here — the one before them answers. */
+      NCAAF_URLS: [at('/400'), at('/403'), at('/core'), at('/ncaa')].join(','),
       NFL_URL: at('/empty'),
       MLB_STATS_URL: at('/403'),
       MLB_URL: at('/403'),
@@ -235,16 +275,17 @@ const NCAA = {
    */
   console.log('\n  when ESPN will not talk to this box at all');
   const DEAD_PORT = 8489;
-  const deadBox = spawn('node', [path.join(DIR, 'server.js')], {
+  const deadBox = start({
     env: {
       ...process.env,
       PORT: String(DEAD_PORT),
       HOST: '127.0.0.1',
-      NCAAF_URLS: [at('/403'), at('/400')].join(','),
-      NCAA_URL: at('/ncaa'),
-      NFL_URLS: [at('/403'), at('/400')].join(','),
-      MLB_STATS_URL: at('/403'),
-      MLB_URL: at('/403'),
+      /* Distinct paths per feed so a hit can be attributed to the feed that
+         made it — otherwise "did it ask twice" cannot be answered. */
+      NCAAF_URLS: [at('/403-col-a'), at('/400-col-b'), at('/ncaa')].join(','),
+      NFL_URLS: [at('/403-pro-a'), at('/400-pro-b')].join(','),
+      MLB_STATS_URL: at('/403-mlb'),
+      MLB_URL: at('/403-mlb2'),
     },
     stdio: 'ignore',
   });
@@ -268,7 +309,7 @@ const NCAA = {
     check('college falls past ESPN onto the NCAA\'s own scoreboard',
       fallen.games === 2 && String(fallen.source).includes('/ncaa'),
       JSON.stringify([fallen.games, fallen.source]));
-    check('having tried both ESPN addresses first, because ESPN\'s answer is better',
+    check('having tried the two before it first',
       (fallen.tried || []).length === 2, JSON.stringify(fallen.tried));
 
     const college2 = (answer.games || []).filter((g) => g.sport === 'ncaaf');
@@ -299,6 +340,102 @@ const NCAA = {
       && soon.away.score === null,
       JSON.stringify(soon && [soon.status, soon.clock, soon.away.score]));
 
+    /* ---- and a third publisher's shape again ------------------------- */
+    /*
+     * The list mixes publishers, so nothing on it can be told what shape it
+     * answers in — the box works that out from the answer. Which is also
+     * what lets an address typed in by hand, or asked by the probe, need no
+     * second setting saying what kind of thing lives there.
+     */
+    console.log('\n  a day of fixtures, from a third publisher again');
+    const sdbPort = 8490;
+    const sdbBox = start({
+      env: {
+        ...process.env,
+        PORT: String(sdbPort),
+        HOST: '127.0.0.1',
+        NCAAF_URL: at('/sdb'),
+        NFL_URL: at('/sdb'),
+        MLB_STATS_URL: at('/403-mlb'),
+        MLB_URL: at('/403-mlb2'),
+      },
+      stdio: 'ignore',
+    });
+    try {
+      let raw = '';
+      for (let i = 0; i < 40; i += 1) {
+        try {
+          raw = await new Promise((resolve, reject) => {
+            http.get(`http://127.0.0.1:${sdbPort}/api/scores`, (r) => {
+              let out = '';
+              r.on('data', (d) => { out += d; });
+              r.on('end', () => resolve(out));
+            }).on('error', reject);
+          });
+          break;
+        } catch { await wait(250); }
+      }
+      const sdb = (JSON.parse(raw || '{}').games || []).filter((g) => g.sport === 'ncaaf');
+      console.log('   mapped:', JSON.stringify(sdb.map(
+        (g) => [g.status, g.clock, g.away.abbr, g.away.score, g.channelMatch])));
+      const on2 = sdb.find((g) => g.status === 'live');
+      const soon2 = sdb.find((g) => g.status === 'upcoming');
+      check('the same list reads a shape it was never told about',
+        sdb.length === 2, String(sdb.length));
+      check('a game in progress carries its progress as the clock',
+        on2 && on2.clock === '2Q 4:22', on2 && on2.clock);
+      check('and the scores', on2 && on2.away.score === 14 && on2.home.score === 10,
+        JSON.stringify(on2 && [on2.away.score, on2.home.score]));
+      /* The one thing this publisher gives that nobody else on these lists
+         does, and the reason the cards have marks again. */
+      check('with a badge per club, which is what puts the marks back',
+        on2 && /mich\.png$/.test(on2.away.logo), on2 && on2.away.logo);
+      check('the club as it names it, and the nickname behind it for a row that uses one',
+        on2 && on2.teamMatch[0] === 'Michigan Wolverines' && on2.teamAlt[0] === 'Wolverines',
+        JSON.stringify(on2 && [on2.teamMatch, on2.teamAlt]));
+      check('the network, which is the last pass the matcher has',
+        on2 && on2.channelMatch === 'FOX', on2 && on2.channelMatch);
+      check('and NS is a game that has not started, not a game with no score',
+        soon2 && soon2.status === 'upcoming' && soon2.away.score === null,
+        JSON.stringify(soon2 && [soon2.status, soon2.away.score]));
+
+      /* ---- every address, asked ---------------------------------------- */
+      /*
+       * The ordinary report says what the addresses BEFORE the winner said
+       * and nothing about the ones after, which is the right report for a
+       * scoreboard and useless for finding out why there is no scoreboard.
+       * Three rounds were spent guessing which address was the broken one
+       * from a report that could not say.
+       */
+      console.log('\n  and every address, asked on purpose');
+      const probed = await new Promise((resolve, reject) => {
+        http.get(`http://127.0.0.1:${DEAD_PORT}/api/scores/probe?sport=ncaaf`, (r) => {
+          let out = '';
+          r.on('data', (d) => { out += d; });
+          r.on('end', () => { if (!out.startsWith('{')) console.log('   RAW:', out.slice(0, 200)); resolve(JSON.parse(out || '{}')); });
+        }).on('error', reject);
+      });
+      console.log('   probed:', JSON.stringify(probed).slice(0, 400));
+      const rows = (probed.feeds || [])[0]?.addresses || [];
+      console.log('   probe:', JSON.stringify(rows.map((r) => [r.status, r.games, r.bytes])));
+      check('it asks all of them, including the ones a poll never reaches',
+        rows.length === 3, String(rows.length));
+      check('and says what each one actually answered',
+        rows[0].status === 403 && rows[1].status === 400 && rows[2].status === 200,
+        JSON.stringify(rows.map((r) => r.status)));
+      /* The question a status code cannot answer: an address can answer 200
+         with perfectly good JSON in a shape nothing here understands, and
+         from the sofa that is indistinguishable from a refusal. */
+      check('and how many games this box could read out of it',
+        rows[2].games === 2, JSON.stringify(rows[2]));
+      check('with the start of the body, so a login wall says so',
+        typeof rows[0].head === 'string', JSON.stringify(rows[0]).slice(0, 120));
+      check('asked for one sport only when one is named',
+        (probed.feeds || []).length === 1, String((probed.feeds || []).length));
+    } finally {
+      sdbBox.kill();
+    }
+
     console.log('   nfl feed:', JSON.stringify(dead));
     check('football has no such second source, and says so rather than pretending it is Tuesday',
       dead.games === 0 && Boolean(dead.error), JSON.stringify(dead));
@@ -323,9 +460,10 @@ const NCAA = {
     feed.__hits = [];
     await ask();
     await ask();
-    console.log('   upstream hits for two more asks:', feed.__hits.length, feed.__hits);
-    check('and asking again does not walk the list again',
-      feed.__hits.length === 0, JSON.stringify(feed.__hits));
+    const again = feed.__hits.filter((u) => u.includes('col') || u.includes('pro'));
+    console.log('   football hits for two more asks:', again.length, feed.__hits);
+    check('and asking again does not walk either football list again',
+      again.length === 0, JSON.stringify(feed.__hits));
   } finally {
     deadBox.kill();
     feed.close();
