@@ -267,18 +267,38 @@ export function matchChannel(game, channels) {
     if (byTeams) return byTeams;
   }
 
-  /* Then the network, loosely: provider names carry a country prefix and
-     quality suffixes ('US| FOX ᴴᴰ') and a feed will say 'FOX'. Not narrowed to
-     baseball, because a national broadcast is on a network channel and those
-     are not filed under it. Longest match wins so 'NFL NETWORK' is not beaten
-     by 'NFL'. */
-  const needle = (game.channelMatch || game.channelName || '').toUpperCase().trim();
-  if (!needle) return null;
+  /* Then the network. Not narrowed to the sport's shelf, because a national
+     broadcast is on a network channel and those are not filed under it.
+     
+     WHOLE WORDS, and this is not pedantry: as a substring test, NBC is inside
+     CNBC — a college game on NBC matched 'US| CNBC', and the shortest-name
+     tie-break then preferred it over 'NCAAF 07 | NBC'. ESPN is inside ESPNU,
+     CBS inside CBSSN; every short network name has this problem.
+     
+     A feed also writes 'FOX / FOX ONE' in that one field, which is two
+     channels and a string no provider ever puts on a row. */
+  const said = (game.channelMatch || game.channelName || '').toUpperCase().trim();
+  if (!said) return null;
+  const networks = said.split(/\s*\/\s*/).map((n) => n.trim()).filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  const wordsIn = (text) => ` ${String(text || '').toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ').trim()} `;
+
   let best = null;
+  let bestRank = 9;
   for (const channel of live) {
-    const name = String(channel.name || '').toUpperCase();
-    if (!name.includes(needle)) continue;
-    if (!best || name.length < String(best.name).length) best = channel;
+    const hay = wordsIn(channel.name);
+    if (!networks.some((network) => hay.includes(` ${wordsIn(network).trim()} `))) continue;
+    /* The provider's own row for the sport beats the plain network feed: a
+       college game on NBC is carried on 'US| NCAAF 07 | NBC' as well as on
+       'US| NBC', and the first of those is the broadcast itself. */
+    const rank = shelf(String(channel.name || '').toUpperCase()) ? 0 : 1;
+    if (rank > bestRank) continue;
+    if (!best || rank < bestRank
+      || String(channel.name).length < String(best.name).length) {
+      best = channel;
+      bestRank = rank;
+    }
   }
   return best;
 }

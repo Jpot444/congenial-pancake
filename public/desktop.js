@@ -1987,14 +1987,43 @@
       if (best) return best;
     }
 
-    /* ---- the network ---- */
-    const needle = String(game.channelMatch || game.channelName || '').toUpperCase().trim();
-    if (!needle || NOT_A_CHANNEL.test(needle)) return null;
+    /* ---- the network ----
+     *
+     * WHOLE WORDS, and this is not pedantry: it was a substring test, and NBC
+     * is inside CNBC. A USC game on NBC matched 'US| CNBC', and then the
+     * shortest-name tie-break preferred it — CNBC is shorter than 'NCAAF 07 |
+     * NBC' — so the wrong answer won twice over. ESPN is inside ESPNU and
+     * ESPNEWS, CBS is inside CBSSN; every short network name has this
+     * problem and NBC is only the one that got noticed.
+     *
+     * A feed also writes 'FOX / FOX ONE' in that one field, which is two
+     * channels and a string no provider ever puts on a row. Split, and the
+     * longer name tried first because FOX ONE is the more specific of the
+     * two.
+     */
+    const said = String(game.channelMatch || game.channelName || '').toUpperCase().trim();
+    if (!said || NOT_A_CHANNEL.test(said)) return null;
+    const networks = said.split(/\s*\/\s*/)
+      .map((n) => n.trim())
+      .filter((n) => n && !NOT_A_CHANNEL.test(n))
+      .sort((a, b) => b.length - a.length);
+    if (!networks.length) return null;
+
     let best = null;
+    let bestRank = 9;
     for (const channel of live) {
-      const name = String(channel.name || '').toUpperCase();
-      if (!name.includes(needle)) continue;
-      if (!best || name.length < String(best.name).length) best = channel;
+      if (!networks.some((network) => hasName(words(channel.name), network))) continue;
+      /* The provider's own row for the sport beats the plain network feed.
+         A college game on NBC is carried on 'US| NCAAF 07 | NBC' as well as
+         on 'US| NBC', and the first of those is the broadcast rather than the
+         channel that happens to be showing it. */
+      const rank = onShelf(channel, catNames, sport) ? 0 : 1;
+      if (rank > bestRank) continue;
+      if (!best || rank < bestRank
+        || String(channel.name).length < String(best.name).length) {
+        best = channel;
+        bestRank = rank;
+      }
     }
     return best;
   }

@@ -72,6 +72,17 @@ const CHANNELS = [
   /* The trap: 'OHIO' is inside 'OHIO STATE', and both play the same day. */
   { kind: 'live', id: 803, num: 803, name: 'US| NCAAF 11 | OHIO STATE X MICHIGAN',
     categoryId: 'c5', logo: '' },
+  /* And the same trap one level up, in the NETWORK rather than the team.
+     'NBC' is inside 'CNBC', and CNBC is the shorter name — so a substring
+     match plus a shortest-name tie-break got the wrong answer twice over. */
+  /* Deliberately on the SAME shelf as the college rows. Preferring the
+     sport's own shelf would otherwise cover for the substring test, and the
+     shelf must not be the only thing standing between a game and a business
+     channel — a provider that files CNBC anywhere near sport puts it right
+     back in reach. */
+  { kind: 'live', id: 804, num: 804, name: 'US| CNBC', categoryId: 'c5', logo: '' },
+  { kind: 'live', id: 805, num: 805, name: 'US| NBC ᴴᴰ', categoryId: 'c1', logo: '' },
+  { kind: 'live', id: 806, num: 806, name: 'US| NCAAF 07 | NBC', categoryId: 'c5', logo: '' },
 ];
 const CATS = [
   { id: 'c1', name: 'USA SPORTS' },
@@ -167,6 +178,18 @@ const SCORES = {
       clock: 'Q2 · 1:02',
       drive: { down: 3, distance: 4, text: '3rd & 4', spot: 'MICH 22',
         yardLine: 78, driving: 'right', redZone: false } },
+    /* A game whose network name is a substring of another channel's. Its two
+       schools are on no provider row, so the network pass is the only one
+       that can answer — which is where the fault was. */
+    { id: 'usc-neb', sport: 'ncaaf', status: 'live', channelMatch: 'NBC',
+      channelName: 'NBC', teamMatch: ['USC', 'Nebraska'],
+      teamAlt: ['Trojans', 'Cornhuskers'], teamShort: ['USC', 'NEB'],
+      detailedState: 'In Progress',
+      away: { abbr: 'USC', logo: '', record: '7-2', score: 21, possession: false },
+      home: { abbr: 'NEB', logo: '', record: '5-4', score: 17, possession: true },
+      clock: 'Q3 · 8:14',
+      drive: { down: 1, distance: 10, text: '1st & 10', spot: 'NEB 30',
+        yardLine: 30, driving: 'left', redZone: false } },
     /* The trap game: 'Ohio' is a substring of 'Ohio State', and both are on. */
     { id: 'ohio-kent', sport: 'ncaaf', status: 'live', channelMatch: 'ESPN',
       channelName: 'ESPN', teamMatch: ['Ohio', 'Kent State'],
@@ -518,7 +541,7 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
   }));
   console.log('   college:', JSON.stringify(college, null, 1));
 
-  check('the cap shows the college slate', college.on === 'ncaaf' && college.cards.length === 4,
+  check('the cap shows the college slate', college.on === 'ncaaf' && college.cards.length === 5,
     JSON.stringify([college.on, college.cards.length]));
   /* Sixty games on a Saturday. A row you scroll along is right for a dozen
      and useless for sixty. */
@@ -537,6 +560,21 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
     by['osu-mich'].chan === 'Watch on US| ESPN ᴴᴰ'
     && by['ohio-kent'].chan === 'Watch on US| ESPN 2 ᴴᴰ',
     JSON.stringify([by['osu-mich'].chan, by['ohio-kent'].chan]));
+  /* The same trap one level up, in the NETWORK rather than in the team.
+   *
+   * 'NBC' is inside 'CNBC', and CNBC is the SHORTER name — so a substring
+   * test plus a shortest-name tie-break got it wrong twice over, and a USC
+   * game opened a business channel. ESPN is inside ESPNU, CBS inside CBSSN;
+   * every short network name has this and NBC is only the one that got
+   * noticed. */
+  check('a game on NBC does not open CNBC',
+    !/CNBC/.test(by['usc-neb'].chan), by['usc-neb'].chan);
+  /* And of the two rows that DO carry NBC, the provider's own row for the
+     sport is the broadcast; the network feed is the channel that happens to
+     be showing it. */
+  check('it opens the provider\'s own row for the game, not the network feed',
+    by['usc-neb'].chan === 'Watch on US| NCAAF 07 | NBC', by['usc-neb'].chan);
+
   /* 'OHIO' is inside 'OHIO STATE'. Without whole-word matching the Ohio game
      would claim the Ohio State row and both cards would open the same game. */
   check('and Ohio does not claim the Ohio State broadcast',
