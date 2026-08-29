@@ -4478,11 +4478,34 @@ const sportsdbDay = (league, leagueId) => {
 const ncaaDay = ({ year, month, day }) =>
   `https://ncaa-api.henrygd.me/scoreboard/football/fbs/${year}/${month}/${day}/all-conf`;
 
+/*
+ * ESPN, on a host this box has never asked.
+ *
+ * Every refusal so far has come from site.api.espn.com, with an empty body
+ * from cdn.espn.com — and those are two of at least five addresses ESPN
+ * serves this data from. site.web.api.espn.com carries the same paths as the
+ * one that refuses us, right down to `apis/site/v2/sports/football/...`, so
+ * whatever comes back needs no new reader: it is the shape nflGame() has
+ * understood all along.
+ *
+ * First on both lists, because it is the only source anywhere on them that
+ * publishes the DOWN, THE DISTANCE AND THE SPOT — which is the ball on the
+ * field, the thing the card was built to draw and has had nothing to draw
+ * with since ESPN stopped answering. It also gives an exact kickoff and a
+ * running game clock, where a fixtures list gives a scheduled time and lags.
+ *
+ * Costs one request per poll when it is refused, and the list falls straight
+ * through to what is working now.
+ */
+const espnWeb = (league, query) =>
+  `https://site.web.api.espn.com/apis/site/v2/sports/football/${league}/scoreboard${query || ''}`;
+
 function collegeAddresses() {
   const today = easternDate();
   const yesterday = easternDate(new Date(Date.now() - 24 * 3600 * 1000));
   const tomorrow = easternDate(new Date(Date.now() + 24 * 3600 * 1000));
   return [
+    espnWeb('college-football', '?groups=80&limit=100'),
     [ncaaDay(yesterday), ncaaDay(today), ncaaDay(tomorrow)],
     // No league NAME: this publisher does not know 'NCAA Football' as one.
     ...sportsdbDay(null, '4479'),
@@ -4492,7 +4515,7 @@ function collegeAddresses() {
 function proAddresses() {
   /* 4391 is the NFL on TheSportsDB. A league id that has changed costs one
      address answering nothing, which the list walks straight past. */
-  return sportsdbDay('NFL', '4391');
+  return [espnWeb('nfl'), ...sportsdbDay('NFL', '4391')];
 }
 
 /** The addresses this feed will knock on, resolved for today. */
@@ -5204,8 +5227,13 @@ function footballGames(body, sport) {
   if (!events.length) return [];
   // Both ESPN and TheSportsDB call the list `events`; only one of them puts a
   // competition inside each row.
-  if (events[0] && (events[0].competitions || events[0].competitors)) {
-    return events.map((e) => nflGame(e, sport)).filter((g) => g.id);
+  /* `competitions` and nothing looser. ESPN serves a second, lighter
+     scoreboard whose events carry `competitors` at the top level and no
+     competition at all — handed to nflGame() that reads as a game with an id
+     and nothing else, which is a row of blank cards rather than an answer the
+     list can walk past. */
+  if (events[0] && events[0].competitions) {
+    return events.map((e) => nflGame(e, sport)).filter((g) => g.id).filter(onTodaysSlate);
   }
   if (events[0] && (events[0].idEvent || events[0].strHomeTeam)) {
     /* An address asked by sport rather than by league answers with both
@@ -7537,6 +7565,28 @@ async function handleApi(req, res, pathname, query) {
        the band is either not in what the address sent, or is in it and this
        box dropped it, and those are different bugs with the same symptom. */
     const find = String(query.get('find') || '').slice(0, 40);
+
+    /* An address that is not on any list yet.
+     *
+     * Finding out whether somebody's server will talk to THIS box has meant
+     * shipping a version to ask it, which is a deploy and a wait per guess.
+     * `?url=` asks whatever you hand it and reports the same four things —
+     * status, size, the start of the body, and how many games came out of
+     * the mapping. Guarded like every other endpoint here that fetches an
+     * address somebody typed: the box will not be talked into knocking on
+     * its own network's doors.
+     */
+    const one = String(query.get('url') || '').trim();
+    if (one) {
+      const bad = privateAddress(one);
+      if (bad) return json(res, 400, { error: bad });
+      const sport = only === 'nfl' ? 'nfl' : 'ncaaf';
+      return json(res, 200, {
+        at: Date.now(),
+        feeds: [{ sport, find: find || undefined, addresses: await probeFootball(sport, [one], find) }],
+      });
+    }
+
     const lists = [
       ['ncaaf', ncaafUrls()],
       ['nfl', nflUrls()],

@@ -921,6 +921,59 @@ const NFL_NIGHT = {
             loose.length === 0, JSON.stringify(loose));
           check('they are asked alongside a day, and merged with it',
             grouped.length > 0, String(grouped.length));
+
+          /* ESPN, on a host this box has never asked.
+           *
+           * Every refusal so far came from site.api.espn.com, with an empty
+           * body from cdn.espn.com — two of at least five addresses ESPN
+           * serves this from. site.web.api.espn.com carries the same paths,
+           * so it needs no new reader, and it is the only source anywhere on
+           * these lists that publishes the down, the distance and the spot.
+           * First on both, because a list that falls through on failure
+           * always settles on the best address that answers. */
+          const heads = lists.map((f) => (f.url || [])[0]);
+          console.log('   first on each list:', JSON.stringify(heads));
+          check('the one source that carries the ball on the field leads both lists',
+            heads.length === 2 && heads.every((u) => typeof u === 'string'
+              && u.includes('site.web.api.espn.com')), JSON.stringify(heads));
+
+          /* And an address nobody has shipped yet.
+           *
+           * Finding out whether somebody's server will talk to THIS box has
+           * meant shipping a version to ask it — a deploy and a wait per
+           * guess. Guarded, because it fetches an address somebody typed. */
+          /* Deliberately an address out on the internet that cannot answer,
+             rather than this suite's own feed — which lives on 127.0.0.1 and
+             is exactly what the guard below refuses. What is being checked
+             is that the address is REACHED and reported on, not what it
+             said. */
+          const asked = await new Promise((resolve, reject) => {
+            http.get(`http://127.0.0.1:${plainPort}/api/scores/probe`
+              + '?sport=nfl&url=https%3A%2F%2Fnothing.invalid%2Fscoreboard', (r) => {
+              let b = '';
+              r.on('data', (d) => { b += d; });
+              r.on('end', () => resolve(JSON.parse(b || '{}')));
+            }).on('error', reject);
+          });
+          const row = ((asked.feeds || [])[0]?.addresses || [])[0] || {};
+          console.log('   asked by hand:', JSON.stringify(row));
+          check('the probe will ask an address that is on no list at all',
+            row.url === 'https://nothing.invalid/scoreboard' && 'error' in row,
+            JSON.stringify(row));
+
+          const refused = await new Promise((resolve, reject) => {
+            http.get(`http://127.0.0.1:${plainPort}/api/scores/probe`
+              + '?url=http%3A%2F%2F192.168.1.18%2Fsecret', (r) => {
+              let b = '';
+              r.on('data', (d) => { b += d; });
+              r.on('end', () => resolve(JSON.parse(b || '{}')));
+            }).on('error', reject);
+          });
+          console.log('   inside the network:', JSON.stringify(refused));
+          /* The box must not be talked into knocking on its own network's
+             doors by anybody who can reach this page. */
+          check('but not one on this box\'s own network',
+            /internet/i.test(refused.error || ''), JSON.stringify(refused));
         } finally {
           plainBox.kill();
         }
