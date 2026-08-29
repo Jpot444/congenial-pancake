@@ -48,6 +48,10 @@ module.exports = {
            long as anyone is watching — and on the SD card it was the largest
            source of wear by a distance. */
         HLS_ROOT: '/mnt/store/hls',
+        /* Kept programmes. Whole files, so this wants the drive for the same
+           reason downloads do — and unlike the scratch directory these are
+           not disposable. */
+        RECORDINGS_ROOT: '/mnt/store/recordings',
         // Allowance for finished archive conversions kept on disk (GB).
         // Whatever this says, the cache always yields before the card's
         // free space floor — the setting caps the best case, it cannot

@@ -92,7 +92,7 @@ function boxFor(accounts) {
   fs.rmSync(DIR, { recursive: true, force: true });
   fs.mkdirSync(path.join(DIR, 'store'), { recursive: true });
   fs.cpSync(path.join(ROOT, 'public'), path.join(DIR, 'public'), { recursive: true });
-  for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js', 'providers.js']) {
+  for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js', 'providers.js', 'recordings.js']) {
     fs.copyFileSync(path.join(ROOT, f), path.join(DIR, f));
   }
   fs.writeFileSync(path.join(DIR, 'config.json'), JSON.stringify({

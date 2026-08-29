@@ -74,6 +74,9 @@ const PEOPLE_PATH = path.join(ROOT, 'people.json');
  * the allowance with it.
  */
 const HLS_DIR = process.env.HLS_ROOT || path.join(ROOT, 'hls');
+/* Kept programmes. Whole files rather than a rolling window, so this wants the
+   drive for the same reason downloads do. */
+const RECORDINGS_DIR = process.env.RECORDINGS_ROOT || path.join(ROOT, 'recordings');
 /* A conversion fetched from this recently has somebody watching it, so it is
    never cleared away to make room for a new one. Comfortably longer than a
    segment, short enough that an abandoned encode stops wasting the Pi. */
@@ -95,6 +98,7 @@ const archive = require('./local-library');
 const guide = require('./epg-guide');
 const people = require('./people');
 const providers = require('./providers');
+const recordings = require('./recordings');
 const ARCHIVE_ROOT = process.env.ARCHIVE_ROOT || '/mnt/archive';
 const ARCHIVE_INDEX = path.join(ROOT, 'library-index.ndjson');
 
@@ -3432,6 +3436,131 @@ function liveDvrArgs(input, dir, resumed = false, low = false) {
   ];
 }
 
+/* ============================================================= recordings ==
+ *
+ * Keeping a programme, whole, because somebody asked for it before it aired.
+ *
+ * The video comes from one of two places and which one decides whether this
+ * costs a provider connection at all — see the head of recordings.js. When
+ * the channel is already being ingested for somebody watching, the recorder
+ * reads the box's OWN published window: a second reader of one stream, no
+ * second connection, and its fetching keeps the ingest alive after the viewer
+ * has gone. Otherwise it takes a slot from the pool and holds it.
+ */
+
+/** ffmpeg's arguments for keeping a programme, whichever source it came from. */
+function recordArgs(input, out, local) {
+  return [
+    '-v', 'error', '-nostats', '-hide_banner', '-y',
+    ...(local ? [] : [
+      '-user_agent', UA,
+      '-reconnect', '1', '-reconnect_streamed', '1',
+      '-reconnect_at_eof', '1', '-reconnect_on_network_error', '1',
+      '-reconnect_delay_max', '5',
+      '-m3u8_hold_counters', '120',
+      /* From the live edge. A recording that opens a minute before the
+         listing does not want the provider's backlog on top of that — the
+         lead is the padding, not an accident of how deep their playlist is. */
+      '-live_start_index', '-1',
+    ]),
+    '-i', input,
+    '-map', '0:v:0', '-map', '0:a:0?',
+    /* Copied, not encoded. A Pi cannot encode HD video in realtime for three
+       hours, and a recording that falls behind its own feed never catches up.
+       The audio is re-encoded for the same reason live is: HE-AAC reaching a
+       decoder as bare AAC plays an octave low, and a recording nobody watches
+       for a week is the worst place to discover that. */
+    '-c:v', 'copy',
+    '-c:a', 'aac', '-profile:a', 'aac_low', '-ac', '2', '-ar', '48000', '-b:a', '160k',
+    /* Written so the file plays even if the process never gets to finish it:
+       a power cut two hours in should cost the last few seconds, not the
+       whole programme. */
+    '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
+    '-f', 'mp4',
+    out,
+  ];
+}
+
+/**
+ * Open the file and start writing to it.
+ *
+ * The choice of source is the whole of the connection story. A live session
+ * already running for this channel means the box is ALREADY pulling it, so
+ * the recorder reads the local playlist and inherits that ingest — it costs
+ * nothing, and because the reaper watches lastAccess, the recorder's own
+ * fetching is what keeps the window alive once the viewer leaves.
+ */
+function beginRecording(row) {
+  if (!hasFfmpeg()) {
+    recordings.noteFailure(row, 'ffmpeg is not installed on this box.');
+    return;
+  }
+  const cfg = readConfig();
+  if (!cfg || cfg.mode !== 'xtream') {
+    recordings.noteFailure(row, 'No provider is connected.');
+    return;
+  }
+
+  const out = path.join(recordings.dir(), row.file);
+  try {
+    fs.mkdirSync(recordings.dir(), { recursive: true });
+  } catch (err) {
+    recordings.noteFailure(row, `Could not write to the recordings folder: ${err.message}`);
+    return;
+  }
+
+  /* Enough room for the programme at a generous bitrate, plus the floor the
+     rest of the box keeps. Refusing now with a reason beats filling the disk
+     at two in the morning. */
+  const minutes = Math.max(1, (recordings.closesAt(row) - recordings.opensAt(row)) / 60000);
+  const need = minutes * 60 * 1024 * 1024 * (6 / 8);
+  const free = diskFree(recordings.dir());
+  if (Number.isFinite(free) && free < need + SPACE_RESERVE) {
+    recordings.noteFailure(row,
+      `Not enough room — this needs about ${Math.round(need / 1024 ** 3)} GB.`);
+    return;
+  }
+
+  const existing = remuxSessions.get(`live-${row.channelId}`);
+  const local = Boolean(existing && !existing.exited);
+  let release = null;
+  let input;
+
+  if (local) {
+    /* The box's own window, on the loopback. Nothing leaves the machine and
+       no slot is taken: this ingest is already paid for. */
+    input = `http://127.0.0.1:${PORT}/hls/${existing.id}/index.m3u8`;
+    existing.lastAccess = Date.now();
+  } else {
+    const account = providers.pick(cfg);
+    /* No free slot and nothing already ingesting this channel. The recording
+       still goes ahead on whichever login is least busy — it was asked for in
+       advance, and a provider that refuses is a better answer than a box that
+       refused on its behalf. */
+    const chosen = account || providers.accounts(cfg)[0] || cfg;
+    input = buildStreamUrl(chosen, 'live', row.channelId, 'm3u8');
+    if (chosen && chosen.id) release = providers.take(chosen.id);
+  }
+
+  const proc = spawn('ffmpeg', recordArgs(input, out, local),
+    { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  proc.stderr.on('data', (d) => { stderr = (stderr + d.toString()).slice(-1000); });
+  proc.on('exit', (code) => {
+    const row2 = recordings.get(row.id);
+    if (row2 && code && !row2.error) row2.error = stderr.split('\n').filter(Boolean).pop() || '';
+    recordings.ended(row.id, code);
+  });
+  proc.on('error', (err) => {
+    if (release) release();
+    recordings.noteFailure(row, err.message);
+  });
+
+  recordings.began(row, { proc, release, source: local ? 'box window' : 'provider' });
+  console.log(`  recording: ${row.title} on ${row.channelName || row.channelId} `
+    + `(${local ? 'sharing the live window' : 'own connection'})`);
+}
+
 /*
  * A live channel's own black box.
  *
@@ -5347,6 +5476,96 @@ async function handleApi(req, res, pathname, query) {
     return json(res, 405, { error: 'Method not allowed' });
   }
 
+  /* ---- Recordings ----
+   *
+   * A promise the box made in advance. The list is everything it has been
+   * asked to keep, whatever state it reached; scheduling takes a listing's
+   * own start and stop, because that is what the viewer pressed record on.
+   */
+  if (pathname === '/api/recordings') {
+    if (req.method === 'GET') {
+      /* The size of a recording in progress read from the file itself rather
+         than from the last scheduler pass. The scheduler runs every twenty
+         seconds, which is the right cadence for deciding things and the wrong
+         one for a number somebody is watching climb. */
+      const live = new Set(recordings.active().map((r) => r.id));
+      const items = recordings.all().map((row) => (live.has(row.id)
+        ? { ...row, bytes: recordings.fileSize(path.join(RECORDINGS_DIR, row.file)) }
+        : row));
+      return json(res, 200, {
+        items,
+        active: [...live],
+        free: providers.free(cfg),
+        capacity: providers.capacity(cfg),
+        /* So the screen can say how much room is left for more of them, in
+           the same terms the downloads page uses. */
+        freeBytes: Number.isFinite(diskFree(RECORDINGS_DIR)) ? diskFree(RECORDINGS_DIR) : null,
+      });
+    }
+
+    if (req.method === 'POST') {
+      let incoming;
+      try {
+        incoming = JSON.parse(await collectRequestBody(req));
+      } catch {
+        return json(res, 400, { error: 'Invalid JSON' });
+      }
+      const row = recordings.schedule({
+        channelId: incoming.channelId,
+        channelName: incoming.channelName,
+        title: incoming.title,
+        subtitle: incoming.subtitle,
+        description: incoming.description,
+        startsAt: Number(incoming.startsAt),
+        endsAt: Number(incoming.endsAt),
+        profileId: incoming.profileId,
+      });
+      if (!row) {
+        return json(res, 400, { error: 'A channel and a start and end time are required.' });
+      }
+      /* Already in progress by the time somebody pressed record — a
+         programme half over is still worth the rest of it. */
+      recordings.tick(Date.now(), { begin: beginRecording });
+      return json(res, 200, { recording: recordings.get(row.id) });
+    }
+
+    return json(res, 405, { error: 'Method not allowed' });
+  }
+
+  const recMatch = /^\/api\/recordings\/([\w-]+)(\/file|\/save)?$/.exec(pathname);
+  if (recMatch) {
+    const id = recMatch[1];
+    const row = recordings.get(id);
+    if (!row) return json(res, 404, { error: 'No such recording' });
+
+    /* Watching one, or saving it to a phone. A recording still in progress is
+       playable — it is a fragmented mp4 written so that what exists on disk
+       plays — which is what makes "start watching the game from the beginning
+       while it is still on" work at all. */
+    if (recMatch[2]) {
+      if (!row.file || !recordings.fileSize(path.join(RECORDINGS_DIR, row.file))) {
+        return json(res, 409, { error: 'Nothing has been recorded yet' });
+      }
+      localPlaybackAt = Date.now();
+      return serveLocalFile(req, res, path.join(RECORDINGS_DIR, row.file), {
+        attachmentName: recMatch[2] === '/save' ? `${row.title}.mp4` : null,
+      });
+    }
+
+    /* Stopping and deleting are different things and the difference matters:
+       a viewer taking the connection back mid-programme keeps the half that
+       was written. Only DELETE throws the file away. */
+    if (req.method === 'POST') {
+      recordings.cancel(id, { reason: 'Stopped to free the connection.' });
+      return json(res, 200, { recording: recordings.get(id) });
+    }
+    if (req.method === 'DELETE') {
+      recordings.remove(id);
+      return json(res, 200, { removed: true });
+    }
+    return json(res, 405, { error: 'Method not allowed' });
+  }
+
   /* ---- The logins, and what the provider says about each ----
    *
    * The panel behind "Manage providers". Everything here is the provider's own
@@ -7067,8 +7286,26 @@ async function handleApi(req, res, pathname, query) {
          because the URL is built here and the pipe opens in the NEXT request:
          without it, two things started together would both be told to use the
          same free account and one of them would be refused. */
-      const chosen = providers.pick(cfg, { reserve: true }) || cfg;
-      const direct = buildStreamUrl(chosen, kind, id, ext);
+      const chosen = providers.pick(cfg, { reserve: true });
+      /* Option B, and the only place it is visible.
+       *
+       * A box with nothing free is the ordinary state of a single-login
+       * account and always has been — the request goes out anyway and the
+       * provider decides. The one case worth REFUSING is a recording holding
+       * the last connection, because that is the only thing taking it that
+       * nobody in the room started and nobody can see. So say what is
+       * running, until when, and hand back its id: the screen turns that into
+       * one press that stops it. */
+      if (!chosen) {
+        const held = recordings.blocking();
+        if (held) {
+          return json(res, 503, {
+            error: `Recording ${held.title} on ${held.channelName}.`,
+            recording: held,
+          });
+        }
+      }
+      const direct = buildStreamUrl(chosen || cfg, kind, id, ext);
       let url = proxyPath(direct);
 
       // How an MPEG-TS channel is opened. One setting, not a choice.
@@ -7299,6 +7536,22 @@ loadLibraryCache();
 archive.configure({ root: ARCHIVE_ROOT, indexPath: ARCHIVE_INDEX });
 guide.configure({ dir: ROOT, log: (line) => console.log(`  ${line}`) });
 people.load(PEOPLE_PATH, (line) => console.log(`  ${line}`));
+recordings.load(RECORDINGS_DIR, (line) => console.log(`  ${line}`));
+
+/* The scheduler.
+ *
+ * Everything it does is decided from the clock and the rows rather than from
+ * a timer having fired at the right moment — so a box that was asleep, or
+ * restarting, or busy, catches up on the next pass instead of silently
+ * missing a programme. A recording that is genuinely too late to start says
+ * so rather than sitting as "scheduled" for ever. */
+setInterval(() => {
+  try {
+    recordings.tick(Date.now(), { begin: beginRecording });
+  } catch (err) {
+    console.error(`  recordings: scheduler stumbled — ${err.message}`);
+  }
+}, recordings.TICK_MS).unref?.();
 
 /* Filling in who is in what, slowly, while nobody is using the connection.
    Five minutes after boot so the library is cached first — there is nothing

@@ -154,9 +154,14 @@ finished archive conversions kept as cache (`arc-*`). Nothing looks there any
 more, so they sit on the card doing nothing. Delete them, or move them across
 if a resume is worth keeping.
 
-### What it is not, yet
+### And recordings
 
-There is no recording. The live DVR is a ~2 minute rolling window per
-channel, deleted continuously, which exists so a viewer can pause and rewind a
-little. Space makes recording possible; it does not make it exist.
+`RECORDINGS_ROOT` is `/mnt/store/recordings`. These are the one thing on that
+partition that is not disposable: a download can be fetched again and a
+conversion can be redone, but a programme that was on at nine o'clock cannot.
+
+Roughly 3 GB an hour at this provider's bitrate, so 265 GB is somewhere near
+eighty hours before anything has to be pruned — and nothing prunes them
+automatically, on purpose. The box will refuse to START one it does not have
+room for rather than filling the disk at two in the morning.
 
