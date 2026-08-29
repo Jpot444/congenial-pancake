@@ -270,6 +270,26 @@
   </div>
 </div>
 
+<!-- a programme in the schedule: watch the channel, or keep the programme.
+     Every field here is filled from the listing that was pressed. -->
+<div class="modal" id="progModal" hidden>
+  <div class="modal-card prog-card">
+    <h2 id="progTitle"></h2>
+    <p class="prog-when" id="progWhen"></p>
+    <p class="prog-chan" id="progChan"></p>
+    <p class="health-note" id="progNote" hidden></p>
+
+    <p class="form-error" id="progError" hidden></p>
+
+    <div class="modal-actions">
+      <button type="button" class="btn btn-primary btn-sm" id="progRecord">Record</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="progWatch">Watch</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-ghost" id="progClose">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- add / edit profile -->
 <div class="modal" id="profileModal" hidden>
   <form class="modal-card" id="profileForm" autocomplete="off">

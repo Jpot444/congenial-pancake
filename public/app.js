@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '32.9';
+const VERSION = '33.0';
 
 const PAGE_SIZE = 60;
 
@@ -82,6 +82,10 @@ const state = {
   /** An episode Continue watching asked for, waiting on the list that can
       turn its number into an index. `{ seriesId, season, episode }`. */
   resumeEpisode: null,
+  /** What the box is recording or has recorded, so a guide slab can say so.
+      Fetched when the schedule is drawn; it is a small list and the box
+      answers it without touching the provider. */
+  recordings: [],
 };
 
 /* ------------------------------------------------------- prefs (server) */
@@ -5506,6 +5510,21 @@ const LISTINGS_MAX = 40;
 /** How many times to go back for rows the box had not fetched yet. */
 const GUIDE_PASSES = 8;
 const GUIDE_PASS_MS = 1200;
+/* How far the window moves when somebody asks what is on later, and how far
+ * forward it will go at all.
+ *
+ * Two hours rather than four so the window overlaps itself: pressing Later
+ * carries half of what was on screen with it, which reads as scrolling
+ * rather than as being handed a fresh unrelated page. Eight is where it
+ * stops because the box's own answer stops there — /api/epg/now returns a
+ * twelve-hour window, and a ninth hour would be a grid of empty rows. */
+const GUIDE_STEP = 2;
+const GUIDE_MAX_AHEAD = 8;
+
+/** How far into the window the listings view is looking, in hours. */
+let guideOffset = 0;
+/** What that offset belongs to, so a different list starts at now again. */
+let guideScope = '';
 
 /**
  * "What's on" — now and next, for the channels somebody favourited.
@@ -5526,6 +5545,22 @@ const GUIDE_PASS_MS = 1200;
 async function paintGuide(section, channels, opts = {}) {
   section.innerHTML = '';
 
+  /* The window the grid covers: whole hours, starting with this one — or
+   * with a later one, if somebody has asked what is on then.
+   *
+   * Whole hours because the axis has to read as a clock — "8:00, 9:00,
+   * 10:00" — and a grid that started at 8:47 would be a truthful axis nobody
+   * can scan. Four of them is what fits before the columns are too narrow to
+   * hold a programme title. */
+  const offsetHours = Math.max(0, Math.min(GUIDE_MAX_AHEAD, Number(opts.offsetHours) || 0));
+  const from = new Date();
+  from.setMinutes(0, 0, 0);
+  const startAt = from.getTime() / 1000 + offsetHours * 3600;
+  const endAt = startAt + GUIDE_HOURS * 3600;
+  const span = endAt - startAt;
+  /** Where a moment falls across the window, 0 to 1. */
+  const across = (at) => Math.min(1, Math.max(0, (at - startAt) / span));
+
   /* The redesign's own section heading — the crimson rule, the Bebas caps,
      the count. A section that invents its own heading beside them reads as
      something bolted on. */
@@ -5536,21 +5571,38 @@ async function paintGuide(section, channels, opts = {}) {
   count.textContent = opts.count
     || `${channels.length} favorite channel${channels.length === 1 ? '' : 's'}`;
   head.append(label, count);
-  section.append(head);
 
-  /* The window the grid covers: whole hours, starting with this one.
-   *
-   * Whole hours because the axis has to read as a clock — "8:00, 9:00,
-   * 10:00" — and a grid that started at 8:47 would be a truthful axis nobody
-   * can scan. Four of them is what fits before the columns are too narrow to
-   * hold a programme title. */
-  const from = new Date();
-  from.setMinutes(0, 0, 0);
-  const startAt = from.getTime() / 1000;
-  const endAt = startAt + GUIDE_HOURS * 3600;
-  const span = endAt - startAt;
-  /** Where a moment falls across the window, 0 to 1. */
-  const across = (at) => Math.min(1, Math.max(0, (at - startAt) / span));
+  /* Later, and back. Only where the page can redraw itself — the landing
+     page's guide is a glance at what is on now and has nowhere to put a
+     second state. */
+  if (opts.onOffset) {
+    const nav = el('div', 'guide-nav');
+
+    const back = el('button', 'guide-nav-btn');
+    back.type = 'button';
+    back.textContent = '‹ Earlier';
+    back.disabled = offsetHours <= 0;
+    back.addEventListener('click', () => opts.onOffset(offsetHours - GUIDE_STEP));
+
+    /* Says where the window is, and takes you back to now when it is not
+       there — which is the only way out that does not need counting presses. */
+    const when = el('button', 'guide-nav-when');
+    when.type = 'button';
+    when.textContent = offsetHours === 0 ? 'On now' : guideWhen(startAt);
+    when.disabled = offsetHours === 0;
+    when.title = offsetHours === 0 ? '' : 'Back to now';
+    when.addEventListener('click', () => opts.onOffset(0));
+
+    const on = el('button', 'guide-nav-btn');
+    on.type = 'button';
+    on.textContent = 'Later ›';
+    on.disabled = offsetHours >= GUIDE_MAX_AHEAD;
+    on.addEventListener('click', () => opts.onOffset(offsetHours + GUIDE_STEP));
+
+    nav.append(back, when, on);
+    head.append(nav);
+  }
+  section.append(head);
 
   section.dataset.from = String(startAt);
   section.dataset.span = String(span);
@@ -5606,17 +5658,24 @@ async function paintGuide(section, channels, opts = {}) {
 
   /* The line at now, and the dot on top of it. It is the one thing on the
      grid that says which of these is happening, and it is why the whole
-     thing is worth drawing as a timeline rather than a list. */
-  const line = el('div', 'guide-now-line');
-  /* A unitless fraction, not a percentage. The line sits at
-   *   calc(channel-column + --at * (100% - channel-column))
-   * and calc() will multiply a NUMBER by a length-percentage but not a
-   * percentage by one — written as `4%` the whole expression is invalid, the
-   * declaration is dropped, and the line silently parks itself at the very
-   * left edge of the panel looking like a border. */
-  line.style.setProperty('--at', String(across(Date.now() / 1000)));
-  line.append(el('i'));
-  body.append(line);
+     thing is worth drawing as a timeline rather than a list.
+
+     Only when now is actually in the window: scrolled forward to eight
+     o'clock, a line pinned to the left edge would be claiming the whole
+     window is still ahead of itself. */
+  const at = Date.now() / 1000;
+  if (at >= startAt && at < endAt) {
+    const line = el('div', 'guide-now-line');
+    /* A unitless fraction, not a percentage. The line sits at
+     *   calc(channel-column + --at * (100% - channel-column))
+     * and calc() will multiply a NUMBER by a length-percentage but not a
+     * percentage by one — written as `4%` the whole expression is invalid, the
+     * declaration is dropped, and the line silently parks itself at the very
+     * left edge of the panel looking like a border. */
+    line.style.setProperty('--at', String(across(at)));
+    line.append(el('i'));
+    body.append(line);
+  }
 
   section.append(grid);
 
@@ -5705,6 +5764,7 @@ async function fillGuide(tracks, waiting, section) {
       const right = across(listing.stop);
       const slab = el('button', 'guide-prog');
       if (listing.start <= now && now < listing.stop) slab.classList.add('is-now');
+      if (listing.stop <= now) slab.classList.add('is-past');
       slab.style.left = `${left * 100}%`;
       slab.style.width = `${Math.max(0.5, (right - left) * 100)}%`;
       slab.append(
@@ -5714,12 +5774,252 @@ async function fillGuide(tracks, waiting, section) {
         })
       );
       slab.title = `${listing.title}  ${clockFromTimestamp(listing.start)}`;
-      slab.addEventListener('click', () => openPlayer(held.channel));
+      /* What the slab is, in the two numbers the recording store keys on, so
+         a slab drawn on one pass can be re-marked when a booking lands on
+         another without redrawing the grid. */
+      slab.dataset.chan = String(held.channel.id);
+      slab.dataset.start = String(listing.start * 1000);
+      slab.dataset.stop = String(listing.stop * 1000);
+      stampRecording(slab);
+      slab.addEventListener('click', () => programmePanel.open(held.channel, listing));
       held.track.append(slab);
     }
   }
   return filled;
 }
+
+/* ------------------------------------------------ recording from the guide
+ *
+ * The schedule already knows what is on and when it ends, which is every
+ * argument a recording needs. So pressing a programme asks the question the
+ * slab is standing there posing — watch it, or keep it — rather than doing
+ * one of the two silently.
+ *
+ * The box's side of this has been there since the store went in: POST a
+ * channel and two timestamps and the scheduler does the rest, opening the
+ * file a minute early and closing it three minutes late so a programme that
+ * runs over is still whole. Nothing on any screen had ever pressed it.
+ */
+
+/** Which day and hour a window begins, said the way somebody would say it. */
+function guideWhen(startAt) {
+  const start = new Date(startAt * 1000);
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const day = new Date(start);
+  day.setHours(0, 0, 0, 0);
+  const days = Math.round((day - midnight) / 86400000);
+  const name = days <= 0 ? '' : days === 1 ? 'Tomorrow '
+    : `${start.toLocaleDateString([], { weekday: 'short' })} `;
+  return `${name}${clockFromTimestamp(startAt)}`;
+}
+
+/**
+ * The recording for a programme, if there is one.
+ *
+ * Matched on the channel and the start rather than on a title: the same
+ * programme name comes round every week, and the guide and the store agree
+ * on nothing except the clock. A minute of slack because an EPG start and
+ * the number that was posted for it can round differently.
+ */
+function recordingFor(channelId, startMs) {
+  return (state.recordings || []).find((row) =>
+    String(row.channelId) === String(channelId)
+    && Math.abs(Number(row.startsAt) - Number(startMs)) < 60_000
+    && row.status !== 'cancelled'
+    && row.status !== 'failed'
+    && row.status !== 'missed');
+}
+
+/** Mark one slab with what the box intends to do about it. */
+function stampRecording(slab) {
+  if (!slab.dataset.chan) return;
+  const row = recordingFor(slab.dataset.chan, slab.dataset.start);
+  slab.classList.toggle('is-rec', Boolean(row) && row.status !== 'done');
+  slab.classList.toggle('is-kept', row?.status === 'done');
+  let dot = slab.querySelector('.guide-prog-rec');
+  if (row && !dot) {
+    dot = el('i', 'guide-prog-rec');
+    slab.prepend(dot);
+  } else if (!row && dot) {
+    dot.remove();
+  }
+}
+
+/** Re-mark every slab on the page, after a booking or a cancellation. */
+function restampGuide() {
+  document.querySelectorAll('.guide-prog[data-chan]').forEach(stampRecording);
+}
+
+/**
+ * What the box is recording. Cheap and local — no provider is touched — so
+ * it is simply asked again rather than kept in step by hand.
+ */
+async function loadRecordings() {
+  try {
+    const data = await api('/api/recordings');
+    state.recordings = data.items || [];
+  } catch {
+    // A guide that cannot say which rows are being kept is still a guide.
+    state.recordings = state.recordings || [];
+  }
+  restampGuide();
+}
+
+/**
+ * Pressing a programme.
+ *
+ * Two things somebody could mean and no way to tell them apart from the
+ * press, so it asks: watch the channel now, or keep this programme. The
+ * second is the only place in the product that starts a recording, which is
+ * why it is also the place that says what recording costs — the box has a
+ * fixed number of provider connections and one of them goes to the file for
+ * as long as the programme runs.
+ */
+const programmePanel = {
+  channel: null,
+  listing: null,
+
+  open(channel, listing) {
+    this.channel = channel;
+    this.listing = listing;
+    $('#progError').hidden = true;
+    $('#progModal').hidden = false;
+    this.paint();
+    // Asked every time it opens: the answer changes when the scheduler runs,
+    // and this is the one moment somebody is looking at it.
+    loadRecordings().then(() => { if (!$('#progModal').hidden) this.paint(); });
+  },
+
+  close() {
+    $('#progModal').hidden = true;
+    this.channel = null;
+    this.listing = null;
+  },
+
+  /** The booking for what is open, or undefined. */
+  booked() {
+    if (!this.channel || !this.listing) return undefined;
+    return recordingFor(this.channel.id, this.listing.start * 1000);
+  },
+
+  paint() {
+    const { channel, listing } = this;
+    if (!channel || !listing) return;
+    const row = this.booked();
+    const now = Date.now() / 1000;
+    const over = listing.stop <= now;
+    const on = listing.start <= now && !over;
+
+    $('#progTitle').textContent = listing.title || cleanCatName(trimTag(channel.name));
+    $('#progWhen').textContent = [
+      guideWhen(listing.start),
+      '–',
+      clockFromTimestamp(listing.stop),
+      on ? '· on now' : '',
+    ].filter(Boolean).join(' ');
+    $('#progChan').textContent = cleanCatName(trimTag(channel.name));
+
+    const note = $('#progNote');
+    if (row && row.status === 'recording') {
+      note.textContent = 'Recording now. It is holding one of the box’s connections '
+        + 'until the programme ends.';
+    } else if (row && row.status === 'scheduled') {
+      note.textContent = 'Set to record. The box starts a minute early and stops three '
+        + 'minutes late, so an overrun is still whole.';
+    } else if (row && row.status === 'done') {
+      note.textContent = 'Recorded. It is on the box.';
+    } else if (over) {
+      note.textContent = 'This has already finished.';
+    } else {
+      note.textContent = 'Recording spends one provider connection for as long as the '
+        + 'programme runs.';
+    }
+    note.hidden = false;
+
+    const record = $('#progRecord');
+    record.hidden = over && !row;
+    record.textContent = !row ? (on ? 'Record the rest' : 'Record')
+      : row.status === 'recording' ? 'Stop recording'
+      : row.status === 'done' ? 'Delete the recording'
+      : 'Don’t record';
+    record.classList.toggle('btn-primary', !row);
+    record.classList.toggle('btn-ghost', Boolean(row));
+
+    $('#progWatch').textContent = `Watch ${cleanCatName(trimTag(channel.name))}`;
+  },
+
+  watch() {
+    const channel = this.channel;
+    this.close();
+    if (channel) openPlayer(channel);
+  },
+
+  /** The one button that means four things, depending on what is already set. */
+  async press() {
+    const { channel, listing } = this;
+    if (!channel || !listing) return;
+    const row = this.booked();
+    const error = $('#progError');
+    error.hidden = true;
+    const button = $('#progRecord');
+    button.disabled = true;
+    try {
+      if (!row) {
+        await this.send('/api/recordings', 'POST', {
+          channelId: channel.id,
+          channelName: channel.name,
+          title: listing.title || cleanCatName(trimTag(channel.name)),
+          subtitle: listing.subtitle || '',
+          description: listing.description || '',
+          startsAt: listing.start * 1000,
+          endsAt: listing.stop * 1000,
+          profileId: profiles.current?.id || '',
+        });
+        toast(listing.start * 1000 <= Date.now()
+          ? 'Recording now.'
+          : `Set to record at ${clockFromTimestamp(listing.start)}.`);
+      } else if (row.status === 'done') {
+        await this.send(`/api/recordings/${row.id}`, 'DELETE');
+        toast('Deleted.');
+      } else if (row.status === 'recording') {
+        // Stopped, not thrown away: the half that was written is still worth
+        // having, and DELETE is the only thing here that loses a file.
+        await this.send(`/api/recordings/${row.id}`, 'POST');
+        toast('Stopped. What was recorded is kept.');
+      } else {
+        await this.send(`/api/recordings/${row.id}`, 'DELETE');
+        toast('Not recording it.');
+      }
+      await loadRecordings();
+      this.paint();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    } finally {
+      button.disabled = false;
+    }
+  },
+
+  /** api() takes query parameters, not a method and a body. */
+  async send(url, method, body) {
+    const res = await fetch(url, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `the box answered ${res.status}`);
+    return data;
+  },
+};
+
+$('#progClose').addEventListener('click', () => programmePanel.close());
+$('#progWatch').addEventListener('click', () => programmePanel.watch());
+$('#progRecord').addEventListener('click', () => programmePanel.press());
+$('#progModal').addEventListener('click', (e) => {
+  if (e.target.id === 'progModal') programmePanel.close();
+});
 
 /**
  * Forget that a title was watched, without touching the title.
@@ -5966,14 +6266,42 @@ function renderListings() {
   }
 
   const shown = channels.slice(0, LISTINGS_MAX);
-  const section = el('section', 'home-guide listings-guide');
-  grid.append(section);
-  paintGuide(section, shown, {
-    title: scope === 'favourites' ? "What's on your channels" : "What's on",
-    count: shown.length < channels.length
-      ? `first ${shown.length} of ${channels.length.toLocaleString()}`
-      : `${shown.length} channel${shown.length === 1 ? '' : 's'}`,
-  });
+
+  /* Where the window was left. Kept across a redraw of the same list — the
+     grid repaints for all sorts of reasons and losing your place every time
+     would make scrolling forward useless — and reset when the list itself
+     changes, because "two hours into the sports category" means nothing once
+     the category is football. */
+  const key = `${scope}:${state.category ?? ''}`;
+  if (guideScope !== key) {
+    guideScope = key;
+    guideOffset = 0;
+  }
+
+  /* Each window is a new section rather than the same one repainted. The
+     fill runs in passes over a second or so, and a pass checks whether its
+     section is still on the page before it does anything with the answer —
+     so replacing the element is what stops the outgoing window's requests
+     from landing in the incoming one. */
+  let current = null;
+  const draw = (offset) => {
+    guideOffset = Math.max(0, Math.min(GUIDE_MAX_AHEAD, offset));
+    const next = el('section', 'home-guide listings-guide');
+    if (current) current.replaceWith(next);
+    else grid.append(next);
+    current = next;
+    paintGuide(next, shown, {
+      title: scope === 'favourites' ? "What's on your channels" : "What's on",
+      count: shown.length < channels.length
+        ? `first ${shown.length} of ${channels.length.toLocaleString()}`
+        : `${shown.length} channel${shown.length === 1 ? '' : 's'}`,
+      offsetHours: guideOffset,
+      onOffset: draw,
+    });
+  };
+  draw(guideOffset);
+  // What is already being kept, so the slabs can say so as they are drawn.
+  loadRecordings();
 
   $('#contentMeta').textContent = shown.length < channels.length
     ? `Showing ${shown.length} of ${channels.length.toLocaleString()} channels`
@@ -13156,6 +13484,7 @@ $('#playerOverlay').addEventListener('click', (event) => {
 document.addEventListener('keydown', (event) => {
   // Providers sits on top of health, so it is the one Escape closes first.
   if (event.key === 'Escape' && !$('#providerModal').hidden) return providerPanel.close();
+  if (event.key === 'Escape' && !$('#progModal').hidden) return programmePanel.close();
   if (event.key === 'Escape' && !$('#healthModal').hidden) return health.close();
   if (event.key === 'Escape' && !$('#deviceModal').hidden) {
     $('#deviceModal').hidden = true;

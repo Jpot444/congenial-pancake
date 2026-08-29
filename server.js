@@ -4218,10 +4218,15 @@ const epgCache = new Map();
  * hour without a refetch; a single answer only ever needs what is on now and
  * what follows it. Sending the lot would be a megabyte of JSON per poll.
  */
+/* Thirty-two rather than sixteen because the schedule can now be scrolled
+   forward. Sixteen was one screen's worth from now, which is all the guide
+   ever drew; asking what is on in eight hours means the answer has to still
+   be in the list by then, and half-hour programmes run out of sixteen before
+   nine o'clock. */
 function windowOf(listings, now) {
   const from = Math.floor(now / 1000) - 3600;
   const to = Math.floor(now / 1000) + 12 * 3600;
-  return listings.filter((l) => l.stop > from && l.start < to).slice(0, 16);
+  return listings.filter((l) => l.stop > from && l.start < to).slice(0, 32);
 }
 
 const libraryCache = new Map();
@@ -6447,7 +6452,9 @@ async function handleApi(req, res, pathname, query) {
         try {
           // eslint-disable-next-line no-await-in-loop
           const upstream = await request(xtreamApiUrl(providers.forMeta(cfg) || cfg, {
-            action: 'get_short_epg', stream_id: id, limit: 10,
+            // Twenty, not ten: still one call to the provider, and it is what
+            // the schedule needs to be able to scroll forward at all.
+            action: 'get_short_epg', stream_id: id, limit: 20,
           }));
           // eslint-disable-next-line no-await-in-loop
           const body = (await readBody(upstream)).toString('utf8');

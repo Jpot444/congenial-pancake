@@ -5459,6 +5459,40 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 }
 .home-guide .shelf-count { font-size: 12px; color: var(--muted-dim); }
 
+/* ---- later, and back ----
+   Sits at the right end of the heading rather than under the grid: it is the
+   heading that says what window this is, so the controls that move it belong
+   beside those words. */
+.guide-nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.guide-nav-btn,
+.guide-nav-when {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.guide-nav-when { min-width: 88px; text-align: center; }
+.guide-nav-btn:hover:not(:disabled),
+.guide-nav-when:hover:not(:disabled) {
+  border-color: var(--line-hover);
+  color: var(--text);
+}
+/* Disabled is the end of the road, not a broken button: it stays legible,
+   which is how "On now" doubles as the label for where the window is. */
+.guide-nav-btn:disabled,
+.guide-nav-when:disabled { opacity: .45; cursor: default; }
+
 .guide-grid {
   max-width: 1240px;
   border: 1px solid var(--line);
@@ -5544,6 +5578,44 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   border-color: rgba(224, 49, 50, .5);
 }
 .guide-prog.is-blank { background: transparent; cursor: pointer; }
+/* Scrolled back over a window that has partly gone by. Still pressable —
+   the channel is still there — but plainly finished. */
+.guide-prog.is-past { opacity: .5; }
+
+/* ---- set to record ----
+   A ring rather than a fill, because a recorded slab has to stay readable as
+   a programme; the mark is the dot, and the ring is what makes the dot look
+   deliberate rather than like a speck. */
+.guide-prog.is-rec {
+  border-color: rgba(224, 49, 50, .85);
+  background: rgba(224, 49, 50, .09);
+}
+.guide-prog.is-kept { border-color: rgba(255, 255, 255, .28); }
+.guide-prog-rec {
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--brand-red);
+}
+.guide-prog.is-kept .guide-prog-rec { background: rgba(255, 255, 255, .5); }
+
+/* ---- a programme, opened ---- */
+.prog-card { max-width: 460px; }
+.prog-when {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.prog-chan {
+  margin: 2px 0 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
 
 .guide-prog-title {
   font-size: 12.5px;
