@@ -310,13 +310,15 @@
       <summary>Better suggestions <span id="seedKeyState"></span></summary>
       <p class="health-note">
         The Movie Database answers what its users actually watched next, which
-        is the question this row is asking. A free key at
-        <strong>themoviedb.org/settings/api</strong> turns it on. It stays on
-        this box — it is never sent to a browser or put in a link.
+        is the question this row is asking. A free credential at
+        <strong>themoviedb.org/settings/api</strong> turns it on — either the
+        API key or the longer read access token; paste whichever, the box can
+        tell them apart. It stays on this box, and the read token never even
+        goes in a link.
       </p>
       <div class="seed-key-row">
         <input id="seedKey" type="password" spellcheck="false" autocomplete="off"
-               placeholder="Paste the API key" />
+               placeholder="Paste the key or the read token" />
         <button type="button" class="btn btn-ghost btn-sm" id="seedKeySave">Save it</button>
       </div>
     </details>

@@ -219,6 +219,31 @@ function tasteOf(profile, seeds) {
  * page wrapping a language model, with no address a box can call and nothing
  * to call it with. A page a person uses is not an interface a program has.
  */
+/**
+ * How a TMDB credential is presented, which depends on which one it is.
+ *
+ * That service issues two, and they are not interchangeable. The v4 READ
+ * TOKEN is a JWT — three dot-separated parts, a couple of hundred characters
+ * — and belongs in an Authorization header. The v3 API KEY is thirty-two hex
+ * characters and goes in the query string.
+ *
+ * Told apart by shape rather than by asking, because somebody pasting a
+ * credential should not also have to know which of the two it was.
+ *
+ * The header is the better half of the pair and is preferred wherever it
+ * fits: a secret in a URL is a secret in every log, proxy and error message
+ * that URL ever passes through, and this box's own redaction only ever
+ * catches the ones it knows to look for.
+ */
+function tmdbAuth(key) {
+  const said = String(key || '').trim();
+  if (!said) return null;
+  if (/^ey[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(said)) {
+    return { headers: { authorization: `Bearer ${said}` }, query: '' };
+  }
+  return { headers: {}, query: `api_key=${encodeURIComponent(said)}` };
+}
+
 /** The titles out of a TasteDive answer, whichever spelling it uses. */
 function similarTitles(body) {
   const block = body?.Similar || body?.similar || {};
@@ -236,16 +261,20 @@ const SOURCES = [
        Both answers are cached under the film's title, so a seed costs this
        pair once a week rather than once a page. */
     async titles(title, { fetchJson, key }) {
-      const found = await fetchJson('https://api.themoviedb.org/3/search/movie'
-        + `?api_key=${encodeURIComponent(key)}&include_adult=false`
-        + `&query=${encodeURIComponent(title)}`);
+      const auth = tmdbAuth(key);
+      if (!auth) return [];
+      const at = (path, extra) => `https://api.themoviedb.org/3/${path}`
+        + (auth.query || extra ? `?${[auth.query, extra].filter(Boolean).join('&')}` : '');
+
+      const found = await fetchJson(
+        at('search/movie', `include_adult=false&query=${encodeURIComponent(title)}`),
+        auth.headers);
       const first = (found?.results || [])[0];
       if (!first || !first.id) return [];
       const out = [];
       for (const kind of ['recommendations', 'similar']) {
         // eslint-disable-next-line no-await-in-loop
-        const list = await fetchJson(`https://api.themoviedb.org/3/movie/${first.id}/${kind}`
-          + `?api_key=${encodeURIComponent(key)}`);
+        const list = await fetchJson(at(`movie/${first.id}/${kind}`), auth.headers);
         for (const row of list?.results || []) {
           const name = String(row?.title || row?.original_title || '').trim();
           if (name) out.push(name);
@@ -502,4 +531,6 @@ function worthAsking(movies, taste, want = 40) {
   return out;
 }
 
-module.exports = { forYou, foldTitle, yearOf, worthAsking, tasteOf, similarTitles, SOURCES };
+module.exports = {
+  forYou, foldTitle, yearOf, worthAsking, tasteOf, similarTitles, tmdbAuth, SOURCES,
+};

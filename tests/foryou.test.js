@@ -171,6 +171,7 @@ const watchedHeat = (extra = {}) => ({
    * only when there is one.
    */
   const seenUrls = [];
+  const seenHeaders = [];
   const tmdb = await recommend.forYou({
     profile,
     movies: MOVIES,
@@ -179,8 +180,9 @@ const watchedHeat = (extra = {}) => ({
     seeds: [],
     cache: new Map(),
     tmdbKey: 'a-key-that-is-long-enough',
-    fetchJson: async (url) => {
+    fetchJson: async (url, headers) => {
       seenUrls.push(url);
+      seenHeaders.push(headers || {});
       if (url.includes('/search/movie')) return { results: [{ id: 949, title: 'Heat' }] };
       if (url.includes('/recommendations')) {
         return { results: [{ title: 'Nobody Knows This' }] };
@@ -202,6 +204,57 @@ const watchedHeat = (extra = {}) => ({
   check('and the key is not in anything the box reports',
     !JSON.stringify(tmdb).includes('a-key-that-is-long-enough'),
     'the key appears in the answer');
+
+  /* ---- and it takes either of the two credentials ---------------------- */
+  /*
+   * That service issues two and they are not interchangeable: a v4 READ
+   * TOKEN, which is a JWT of a couple of hundred characters and belongs in an
+   * Authorization header, and a v3 API KEY of thirty-two hex characters that
+   * goes in the query string. Somebody pasting one should not also have to
+   * know which it was.
+   */
+  console.log('\n  either credential, told apart by its shape');
+  const TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJ3aGF0ZXZlciJ9.c2lnbmF0dXJlLWhlcmU';
+  const KEY32 = '00000000000000000000000000000000';
+  const asToken = recommend.tmdbAuth(TOKEN);
+  const asKey = recommend.tmdbAuth(KEY32);
+  console.log('   token:', JSON.stringify(Object.keys(asToken.headers)), 'query:', asToken.query);
+  console.log('   key:  ', JSON.stringify(Object.keys(asKey.headers)), 'query:', asKey.query);
+  check('a read token is carried in a header', /^Bearer /.test(asToken.headers.authorization),
+    JSON.stringify(asToken.headers));
+  /* A secret in a URL is a secret in every log, proxy and error message that
+     URL passes through. The header form never puts it there at all. */
+  check('and never in the query string', asToken.query === '', asToken.query);
+  check('an api key goes in the query string, where that one has to',
+    asKey.query.startsWith('api_key='), asKey.query);
+  check('and carries no header of its own',
+    Object.keys(asKey.headers).length === 0, JSON.stringify(asKey.headers));
+  check('nothing at all is nothing at all', recommend.tmdbAuth('') === null);
+
+  /* The header has to actually reach the fetch, or the token is carried
+     nowhere and the service answers 401 about a credential that is fine. */
+  const tokenUrls = [];
+  const tokenHeaders = [];
+  await recommend.forYou({
+    profile,
+    movies: MOVIES,
+    categoryAffinity: AFFINITY,
+    people,
+    seeds: [],
+    cache: new Map(),
+    tmdbKey: TOKEN,
+    fetchJson: async (url, headers) => {
+      tokenUrls.push(url);
+      tokenHeaders.push(headers || {});
+      return { results: [{ id: 949, title: 'Heat' }] };
+    },
+  });
+  console.log('   asked with:', JSON.stringify(tokenHeaders[0]).slice(0, 40) + '…');
+  check('the header reaches the request',
+    /^Bearer ey/.test((tokenHeaders[0] || {}).authorization || ''),
+    JSON.stringify(tokenHeaders[0]));
+  check('and the token is in no address the box builds',
+    tokenUrls.every((u) => !u.includes('ey')), JSON.stringify(tokenUrls[0]));
 
   console.log('\n  and without a key it says so rather than blaming the server');
   const keyless = await recommend.forYou({

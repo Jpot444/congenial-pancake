@@ -6594,8 +6594,12 @@ async function handleApi(req, res, pathname, query) {
         return json(res, 400, { error: 'Invalid JSON' });
       }
       const key = String(incoming.key || '').trim();
-      if (key && !/^[A-Za-z0-9._-]{16,120}$/.test(key)) {
-        return json(res, 400, { error: 'That does not look like a key.' });
+      /* Long enough for a v4 read token, which is a JWT of a couple of
+         hundred characters — the first shape of this check topped out at a
+         hundred and twenty and would have refused the better credential of
+         the two. Dots are part of it, not a typo. */
+      if (key && !/^[A-Za-z0-9._-]{16,800}$/.test(key)) {
+        return json(res, 400, { error: 'That does not look like a key or a read token.' });
       }
       writeConfig({ ...cfg, tmdbKey: key });
       /* Whatever was remembered was remembered without it, or with the old
@@ -7054,7 +7058,11 @@ async function handleApi(req, res, pathname, query) {
         cache: similarCache,
         /* Somebody else's server, so it is asked the way every other outside
            address here is asked, and it is allowed to fail. */
-        fetchJson: (url) => fetchJson(url, SITE_HEADERS),
+        /* Headers passed through, because one of the recommendation services
+           takes its credential in an Authorization header rather than in the
+           query string — which is the better half of the pair, since a
+           secret in a URL is a secret in every log it passes through. */
+        fetchJson: (url, headers) => fetchJson(url, { ...SITE_HEADERS, ...(headers || {}) }),
         log: (line) => console.log(line),
         /* Read here rather than passed around: it lives in config.json with
            the provider password, 0600, and it must not travel to a browser

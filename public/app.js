@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '34.5';
+const VERSION = '34.6';
 
 const PAGE_SIZE = 60;
 
@@ -6172,8 +6172,8 @@ const seedPicker = {
       $('#seedKeyState').textContent = data.set ? '· on' : '· off';
       $('#seedKeyBox').classList.toggle('on', Boolean(data.set));
       $('#seedKey').placeholder = data.set
-        ? 'A key is saved — paste a new one to replace it'
-        : 'Paste the API key';
+        ? 'Saved — paste another to replace it'
+        : 'Paste the key or the read token';
     } catch {
       $('#seedKeyState').textContent = '';
     }
