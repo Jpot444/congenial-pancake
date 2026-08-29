@@ -183,6 +183,48 @@ const NCAA = {
   ],
 };
 
+/* The file for the day BEFORE today, which is where a ten-thirty kickoff on
+   the east coast still lives at half past one the next morning — by which
+   time "today" is a different file with that game nowhere in it.
+
+   Its state word is one nothing used to recognise, which is the second half
+   of the same disappearance: four exact words were matched and everything
+   else filed as 'upcoming', where LIVE NOW is the top of the page and the
+   rest is below the fold. */
+const LAST_NIGHT = {
+  updated_at: new Date().toISOString(),
+  games: [
+    { game: {
+      gameID: '6309999',
+      gameState: 'in progress',
+      currentPeriod: '3rd',
+      contestClock: '11:42',
+      startTime: '10:30PM ET',
+      startTimeEpoch: String(Math.floor(Date.now() / 1000) - 7200),
+      network: 'ESPN',
+      away: { score: '17', description: '(1-0)',
+        names: { char6: 'UNC', short: 'North Carolina', seo: 'north-carolina' } },
+      home: { score: '14', description: '(0-1)',
+        names: { char6: 'TCU', short: 'TCU', seo: 'tcu' } },
+    } },
+    /* And a game from that day that finished long ago. Merging a whole extra
+       day must not drag last night's results onto a band headed LIVE NOW. */
+    { game: {
+      gameID: '6309998',
+      gameState: 'final',
+      currentPeriod: 'FINAL',
+      contestClock: '0:00',
+      startTime: '12:00PM ET',
+      startTimeEpoch: String(Math.floor(Date.now() / 1000) - 20 * 3600),
+      network: 'FOX',
+      away: { score: '10', description: '(0-1)',
+        names: { char6: 'OLDGME', short: 'Long Over', seo: 'long-over' } },
+      home: { score: '31', description: '(1-0)',
+        names: { char6: 'OLDGM2', short: 'Also Over', seo: 'also-over' } },
+    } },
+  ],
+};
+
 /* And TheSportsDB's, which is a third shape again: a day's fixtures, with a
    badge per club and a status word rather than a period and a clock. */
 const SPORTSDB = {
@@ -229,6 +271,8 @@ const SPORTSDB = {
     }
     res.writeHead(200, { 'content-type': 'application/json' });
     if (req.url.includes('/core')) return res.end(JSON.stringify(NESTED));
+    // Yesterday's file, holding the late game that is still being played.
+    if (req.url.includes('/lastnight')) return res.end(JSON.stringify(LAST_NIGHT));
     if (req.url.includes('/ncaa')) return res.end(JSON.stringify(NCAA));
     if (req.url.includes('/sdb')) return res.end(JSON.stringify(SPORTSDB));
     if (req.url.includes('/empty')) return res.end(JSON.stringify({ events: [] }));
@@ -354,7 +398,11 @@ const SPORTSDB = {
       HOST: '127.0.0.1',
       /* Distinct paths per feed so a hit can be attributed to the feed that
          made it — otherwise "did it ask twice" cannot be answered. */
-      NCAAF_URLS: [at('/403-col-a'), at('/400-col-b'), at('/ncaa')].join(','),
+      /* The last entry is a GROUP: yesterday's file and today's, fetched
+         together and merged, because a college Saturday does not fit inside
+         a calendar day. Written with a '+' the way the box takes a group. */
+      NCAAF_URLS: [at('/403-col-a'), at('/400-col-b'),
+        `${at('/lastnight')}+${at('/ncaa')}`].join(','),
       NFL_URLS: [at('/403-pro-a'), at('/400-pro-b')].join(','),
       MLB_STATS_URL: at('/403-mlb'),
       MLB_URL: at('/403-mlb2'),
@@ -380,15 +428,47 @@ const SPORTSDB = {
 
     console.log('   college feed:', JSON.stringify(fallen));
     check('college falls past the addresses before it onto the NCAA\'s scoreboard',
-      fallen.games === 5 && String(fallen.source).includes('/ncaa'),
+      fallen.games === 6 && String(fallen.source).includes('/ncaa'),
       JSON.stringify([fallen.games, fallen.source]));
+
+    /* ---- the game that was disappearing ------------------------------- */
+    /*
+     * "There is only one active game right now on ESPN between UNC and TCU,
+     *  but the live grid doesnt have it."
+     *
+     * Two faults, and either one on its own loses the game. The NCAA files a
+     * game under the day it KICKED OFF, and a ten-thirty kickoff on the east
+     * coast is still being played at half past one the next morning — by
+     * which time "today" is a different file with that game nowhere in it. So
+     * the day either side is asked too, and merged.
+     *
+     * And its state word was 'in progress', which was not one of the four
+     * exact words being matched, so it would have been filed as 'upcoming' —
+     * below every live game and below the fold on a grid that holds
+     * forty-eight.
+     */
+    const late = (answer.games || []).find((g) => g.away && g.away.abbr === 'UNC');
+    console.log('   the late game:', JSON.stringify(late
+      && [late.status, late.clock, late.away.abbr, late.home.abbr]));
+    check('a game still being played from last night\'s file is on the slate',
+      Boolean(late), JSON.stringify((answer.games || []).map((g) => g.away && g.away.abbr)));
+    check('and it is live, though its state word was one nothing used to know',
+      late && late.status === 'live', late && late.status);
+    check('with the period and the clock a broadcast would show',
+      late && late.clock === '3rd · 11:42', late && late.clock);
+    /* Merging a whole extra day must not drag last night's results onto a
+       band headed LIVE NOW. */
+    const over = (answer.games || []).find((g) => g.away && g.away.abbr === 'OLDGME');
+    check('but last night\'s finished games do not come with it',
+      !over, JSON.stringify(over && [over.status, over.clock]));
     check('having tried the two before it first',
       (fallen.tried || []).length === 2, JSON.stringify(fallen.tried));
 
     const college2 = (answer.games || []).filter((g) => g.sport === 'ncaaf');
     console.log('   mapped:', JSON.stringify(college2.map(
       (g) => [g.status, g.clock, g.away.abbr, g.away.score, g.home.abbr, g.home.score])));
-    const on = college2.find((g) => g.status === 'live');
+    /* By name, not by status: the merged day has more than one live game. */
+    const on = college2.find((g) => g.away.abbr === 'MICH');
     // By name, not by status: two of these are upcoming now.
     const soon = college2.find((g) => g.away.abbr === 'ALA');
     check('a game in progress carries the period and the clock the way a broadcast says it',
@@ -569,10 +649,15 @@ const SPORTSDB = {
       console.log('   probed:', JSON.stringify(probed).slice(0, 400));
       const rows = (probed.feeds || [])[0]?.addresses || [];
       console.log('   probe:', JSON.stringify(rows.map((r) => [r.status, r.games, r.bytes])));
+      /* Four addresses, not three: the last entry on that list is a group
+         of two days, and the probe asks each member of it. */
       check('it asks all of them, including the ones a poll never reaches',
-        rows.length === 3, String(rows.length));
-      check('and reads every game out of the one that answers',
-        rows[2].games === 5, JSON.stringify(rows[2].games));
+        rows.length === 4, String(rows.length));
+      const night = rows.find((r) => r.url.includes('/lastnight'));
+      const today = rows.find((r) => r.url.endsWith('/ncaa'));
+      check('and reads every game out of each one that answers',
+        night.games === 1 && today.games === 5,
+        JSON.stringify([night.games, today.games]));
       check('and says what each one actually answered',
         rows[0].status === 403 && rows[1].status === 400 && rows[2].status === 200,
         JSON.stringify(rows.map((r) => r.status)));
@@ -580,7 +665,32 @@ const SPORTSDB = {
          with perfectly good JSON in a shape nothing here understands, and
          from the sofa that is indistinguishable from a refusal. */
       check('and how many games this box could read out of it',
-        rows[2].games === 5, JSON.stringify(rows[2]));
+        today.games === 5, JSON.stringify(today.games));
+
+      /* ---- and whether one particular game is anywhere ---------------- */
+      /*
+       * "Some games are being missed" is two entirely different problems
+       * wearing the same face: the address does not carry the game, or it
+       * carries it and this box drops it. A games COUNT cannot tell them
+       * apart. Two lines can.
+       */
+      const hunted = await new Promise((resolve, reject) => {
+        http.get(`http://127.0.0.1:${DEAD_PORT}/api/scores/probe?sport=ncaaf&find=TCU`, (r) => {
+          let out = '';
+          r.on('data', (d) => { out += d; });
+          r.on('end', () => resolve(JSON.parse(out || '{}')));
+        }).on('error', reject);
+      });
+      const hunt = ((hunted.feeds || [])[0]?.addresses || []);
+      const hasIt = hunt.find((r) => r.url.includes('/lastnight'));
+      const hasNot = hunt.find((r) => r.url.endsWith('/ncaa'));
+      console.log('   found:', JSON.stringify(hunt.map((r) => [r.url.slice(-12), r.found])));
+      check('the address that carries the game says so, in the body and in the mapping',
+        hasIt && hasIt.found && hasIt.found.inBody === true && hasIt.found.inGames === true,
+        JSON.stringify(hasIt && hasIt.found));
+      check('and the one that does not carry it says that instead',
+        hasNot && hasNot.found && hasNot.found.inBody === false,
+        JSON.stringify(hasNot && hasNot.found));
       check('with the start of the body, so a login wall says so',
         typeof rows[0].head === 'string', JSON.stringify(rows[0]).slice(0, 120));
       check('asked for one sport only when one is named',

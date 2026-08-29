@@ -4337,7 +4337,17 @@ function knownLiveChannels() {
  * looking at rather than being told.
  */
 function feedAddresses(list, one, fallback) {
-  const given = String(list || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const given = String(list || '')
+    .split(',')
+    .map((entry) => {
+      /* A '+' joins addresses into a GROUP — fetched together and merged
+         rather than one after the other. It is how the built-in college list
+         asks a day either side of today, and an override has to be able to
+         say the same thing or it cannot stand in for the list it replaces. */
+      const parts = entry.split('+').map((u) => u.trim()).filter(Boolean);
+      return parts.length > 1 ? parts : (parts[0] || '');
+    })
+    .filter((entry) => (Array.isArray(entry) ? entry.length : entry));
   if (given.length) return given;
   if (one) return [one];
   return fallback;
@@ -4418,10 +4428,29 @@ const sportsdbDay = (league, leagueId) => {
   ];
 };
 
+/* A day either side of today, asked together and merged.
+ *
+ * The NCAA files a game under the day it KICKED OFF, and a college Saturday
+ * does not fit inside a calendar day: a ten-thirty kickoff on the east coast
+ * is still being played at half past one the next morning, by which time
+ * "today" is a different file with that game nowhere in it. Whether the
+ * boundary is Eastern or UTC decides which hours are affected and this box
+ * cannot see which — so it asks either side and stops needing to know.
+ *
+ * A GROUP, not three more entries on the list. Three separate addresses
+ * would stop at the first that answered, which is the same single day again;
+ * these are fetched together, merged and de-duplicated, and the group as a
+ * whole is one answer. What is out of date drops out at the window below. */
+const ncaaDay = ({ year, month, day }) =>
+  `https://data.ncaa.com/casablanca/scoreboard/football/fbs/${year}/${month}/${day}/all-conf/scoreboard.json`;
+
 function collegeAddresses() {
-  const { year, month, day } = easternDate();
+  const today = easternDate();
+  const yesterday = easternDate(new Date(Date.now() - 24 * 3600 * 1000));
+  const tomorrow = easternDate(new Date(Date.now() + 24 * 3600 * 1000));
+  const { year, month, day } = today;
   return [
-    `https://data.ncaa.com/casablanca/scoreboard/football/fbs/${year}/${month}/${day}/all-conf/scoreboard.json`,
+    [ncaaDay(yesterday), ncaaDay(today), ncaaDay(tomorrow)],
     `https://data.ncaa.com/casablanca/scoreboard/football/fbs/${year}/${month}/${day}/scoreboard.json`,
     `https://ncaa-api.henrygd.me/scoreboard/football/fbs/${year}/${month}/${day}/all-conf`,
     ...sportsdbDay('NCAA Football', '4479'),
@@ -4783,18 +4812,35 @@ const collegeMarks = (() => {
   };
 })();
 
-/** ncaa.com's state words, in the three the rest of this file speaks. */
-function ncaaStatus(state) {
-  const word = String(state || '').toLowerCase();
-  if (word === 'live' || word === 'in') return 'live';
-  if (word === 'final' || word === 'post') return 'final';
+/**
+ * ncaa.com's state words, in the three the rest of this file speaks.
+ *
+ * Read loosely, and with the clock as a second opinion. Matching four exact
+ * words and calling everything else 'upcoming' means one unfamiliar spelling
+ * — 'in progress', 'I', 'Final/OT' — quietly files a game in the wrong third
+ * of the grid, where LIVE NOW is the first thing on the page and the rest is
+ * below the fold. A period and a running clock are a game in progress
+ * whatever the state word says about it.
+ */
+function ncaaStatus(game) {
+  const word = String(game.gameState || game || '').toLowerCase();
+  if (/final|post|complete|cancel|postpon/.test(word)) return 'final';
+  if (/live|progress|halftime|\bin\b/.test(word)) return 'live';
+
+  const period = String(game.currentPeriod || '').trim();
+  const clock = String(game.contestClock || '').trim();
+  if (/final/i.test(period)) return 'final';
+  /* A period that names a quarter, or a clock with time left on it. Either is
+     a game that has started, whatever the state word was called. */
+  if (/\d|half|ot|overtime/i.test(period) && !/^pre/i.test(period)) return 'live';
+  if (clock && clock !== '0:00' && clock !== '00:00') return 'live';
   return 'upcoming';
 }
 
 /** One ncaa.com game as the Game shape `public/tv/js/scores.js` documents. */
 function ncaaGame(row) {
   const game = row?.game || row || {};
-  const state = ncaaStatus(game.gameState);
+  const state = ncaaStatus(game);
   /* A game whose kickoff has not been set carries a placeholder instant —
      midnight — beside a startTime that says TBA. Taken at face value that is
      a card claiming a twelve o'clock kickoff, sorted to the front of the day
@@ -4980,9 +5026,32 @@ function sportsdbGame(row, sport) {
  * in by hand — an override, a probe — needs no second setting saying what
  * kind of thing lives there.
  */
+/* What counts as today's slate, whichever day somebody filed it under.
+ *
+ * The lists now reach either side of the calendar day and, in one case, at a
+ * league's next fifteen fixtures — which is what makes them robust about the
+ * day boundary and what would otherwise put Thursday week on a band headed
+ * LIVE NOW. Fourteen hours back covers a college Saturday from the noon
+ * kickoffs to the finals of the late game; sixteen forward covers tonight
+ * without reaching tomorrow afternoon. */
+const SLATE_BACK_MS = 14 * 3600 * 1000;
+const SLATE_AHEAD_MS = 16 * 3600 * 1000;
+
+/** Is this game part of what is on today? */
+function onTodaysSlate(game) {
+  // A game being played is on now, whatever its kickoff says.
+  if (game.status === 'live') return true;
+  // And one with no announced kickoff is today's answer to today's question.
+  if (!game.kickoff) return true;
+  return game.kickoff > Date.now() - SLATE_BACK_MS
+    && game.kickoff < Date.now() + SLATE_AHEAD_MS;
+}
+
 function footballGames(body, sport) {
   // ncaa.com: a list of { game: {...} }.
-  if (Array.isArray(body?.games)) return ncaaGames(body).filter((g) => g.id);
+  if (Array.isArray(body?.games)) {
+    return ncaaGames(body).filter((g) => g.id).filter(onTodaysSlate);
+  }
 
   const events = espnEvents(body);
   if (!events.length) return [];
@@ -4997,21 +5066,11 @@ function footballGames(body, sport) {
        worse than an empty one. A row that does not say which league it is in
        is kept: the address was asked for this sport either way. */
     const belongs = sport === 'nfl' ? /\bNFL\b/i : /NCAA|COLLEGE/i;
-    /* And a window, because one of these addresses is the league's NEXT
-       fixtures rather than a day's — which is exactly what makes it immune to
-       being asked for the wrong day, and exactly what would otherwise put
-       next Thursday's game on a band headed LIVE NOW. Wide enough to keep
-       this evening's games whichever day somebody filed them under, and to
-       keep this afternoon's after they finish. */
-    const from = Date.now() - 8 * 3600 * 1000;
-    const to = Date.now() + 16 * 3600 * 1000;
     return events
       .filter((e) => !e.strLeague || belongs.test(String(e.strLeague)))
       .map((e) => sportsdbGame(e, sport))
       .filter((g) => g.id)
-      // A row with no time on it at all is kept: it is today's answer to a
-      // question asked about today.
-      .filter((g) => !g.kickoff || (g.kickoff > from && g.kickoff < to));
+      .filter(onTodaysSlate);
   }
   return [];
 }
@@ -5028,14 +5087,45 @@ function footballGames(body, sport) {
  * because "the band is empty" has several causes and they are
  * indistinguishable from the sofa.
  */
-async function footballSlate(urls, sport, cache) {
-  const tried = [];
-  let answeredEmpty = '';
+/**
+ * One entry on a chain, which may be several addresses fetched together.
+ *
+ * A group is for a source filed by something the box has to guess at — the
+ * day a game is filed under, when the day boundary falls in the middle of the
+ * games. Asking them in sequence would stop at the first that answered and
+ * learn nothing; asked together and merged, the guess stops mattering.
+ *
+ * A group fails only if every address in it failed. One member refusing while
+ * another answers is not a failure, it is a day with nothing on it.
+ */
+async function fetchGroup(entry, sport) {
+  const urls = Array.isArray(entry) ? entry : [entry];
+  const seen = new Map();
+  const failures = [];
   for (const url of urls) {
     try {
       // eslint-disable-next-line no-await-in-loop
       const body = await fetchJson(url, SITE_HEADERS);
-      const games = footballGames(body, sport);
+      // Same game from two days' files is one game.
+      for (const game of footballGames(body, sport)) {
+        if (!seen.has(game.id)) seen.set(game.id, game);
+      }
+    } catch (err) {
+      failures.push(err.message);
+    }
+  }
+  if (failures.length === urls.length) throw new Error(failures[0]);
+  return [...seen.values()];
+}
+
+async function footballSlate(urls, sport, cache) {
+  const tried = [];
+  let answeredEmpty = '';
+  for (const entry of urls) {
+    const url = Array.isArray(entry) ? entry.join(' + ') : entry;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const games = await fetchGroup(entry, sport);
       if (games.length) {
         const now = Date.now();
         return { at: now, goodAt: now, games, error: '', source: url, tried };
@@ -5164,9 +5254,11 @@ async function nflScores() {
  *
  * Never on the ordinary poll. It is a page somebody opens.
  */
-async function probeFootball(sport, urls) {
+async function probeFootball(sport, urls, find) {
   const rows = [];
-  for (const url of urls) {
+  const wanted = String(find || '').trim().toUpperCase();
+  for (const entry of urls) {
+    for (const url of (Array.isArray(entry) ? entry : [entry])) {
     const began = Date.now();
     try {
       // eslint-disable-next-line no-await-in-loop
@@ -5185,13 +5277,29 @@ async function probeFootball(sport, urls) {
         head: raw.slice(0, 160).replace(/\s+/g, ' '),
       };
       try {
-        row.games = footballGames(JSON.parse(raw), sport).length;
+        const games = footballGames(JSON.parse(raw), sport);
+        row.games = games.length;
+        /* "Some games are being missed" is two entirely different problems wearing
+           the same face: the address does not carry the game, or it carries
+           it and this box drops it. Nothing visible from the sofa tells them
+           apart, and the answer is in two lines — is the name anywhere in
+           what came back, and did a game come out of the mapping with it. */
+        if (wanted) {
+          row.found = {
+            inBody: raw.toUpperCase().includes(wanted),
+            inGames: games.some((g) => [g.away?.abbr, g.home?.abbr,
+              ...(g.teamMatch || []), ...(g.teamShort || [])]
+              .some((n) => String(n || '').toUpperCase().includes(wanted))),
+          };
+        }
       } catch (err) {
         row.unreadable = err.message;
+        if (wanted) row.found = { inBody: raw.toUpperCase().includes(wanted), inGames: false };
       }
       rows.push(row);
     } catch (err) {
       rows.push({ url, status: 0, error: err.message, ms: Date.now() - began });
+    }
     }
   }
   return rows;
@@ -7252,6 +7360,10 @@ async function handleApi(req, res, pathname, query) {
    */
   if (pathname === '/api/scores/probe') {
     const only = String(query.get('sport') || '').toLowerCase();
+    /* `find` answers the question a games COUNT cannot: a game that is not on
+       the band is either not in what the address sent, or is in it and this
+       box dropped it, and those are different bugs with the same symptom. */
+    const find = String(query.get('find') || '').slice(0, 40);
     const lists = [
       ['ncaaf', ncaafUrls()],
       ['nfl', nflUrls()],
@@ -7259,7 +7371,7 @@ async function handleApi(req, res, pathname, query) {
     const feeds = [];
     for (const [sport, urls] of lists) {
       // eslint-disable-next-line no-await-in-loop
-      feeds.push({ sport, addresses: await probeFootball(sport, urls) });
+      feeds.push({ sport, find: find || undefined, addresses: await probeFootball(sport, urls, find) });
     }
     /* And one club mark, actually fetched. The addresses are ESPN's image
        CDN, which is a different service from the API that refuses this box —
@@ -7305,7 +7417,7 @@ async function handleApi(req, res, pathname, query) {
        * carry no credentials, so they can be shown. */
       feeds: [
         { sport: 'nfl',
-          url: nflUrls(),
+          url: nflUrls().flat(),
           source: nfl.source || undefined,
           games: nfl.games.length,
           at: nfl.at,
@@ -7318,7 +7430,7 @@ async function handleApi(req, res, pathname, query) {
              several causes and this is the line that tells them apart. */
           tried: nfl.tried?.length ? nfl.tried : undefined },
         { sport: 'ncaaf',
-          url: ncaafUrls(),
+          url: ncaafUrls().flat(),
           source: ncaaf.source || undefined,
           games: ncaaf.games.length,
           at: ncaaf.at,
