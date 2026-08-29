@@ -165,6 +165,16 @@ const SPORTSDB = {
       strTVStation: 'FOX',
       strHomeTeamBadge: 'https://r2.thesportsdb.com/osu.png',
       strAwayTeamBadge: 'https://r2.thesportsdb.com/mich.png' },
+    /* The league's NEXT fixtures carry no date in the address, which is what
+       makes that address immune to being asked for the wrong day — and what
+       would otherwise put next Thursday's game on a band headed LIVE NOW. */
+    { idEvent: '2051009', strEvent: 'Next Week vs Later',
+      strHomeTeam: 'Later Bears', strAwayTeam: 'Next Week Lions',
+      intHomeScore: null, intAwayScore: null,
+      strStatus: 'NS', strProgress: '',
+      dateEvent: '2026-09-05', strTime: '20:00:00',
+      strTimestamp: new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString(),
+      strTVStation: 'NBC' },
     { idEvent: '2051002', strEvent: 'Alabama vs Georgia',
       strHomeTeam: 'Georgia Bulldogs', strAwayTeam: 'Alabama Crimson Tide',
       intHomeScore: null, intAwayScore: null,
@@ -191,6 +201,7 @@ const SPORTSDB = {
     if (req.url.includes('/ncaa')) return res.end(JSON.stringify(NCAA));
     if (req.url.includes('/sdb')) return res.end(JSON.stringify(SPORTSDB));
     if (req.url.includes('/empty')) return res.end(JSON.stringify({ events: [] }));
+    if (req.url.includes('/null')) return res.end(JSON.stringify({ events: null }));
     return res.end(JSON.stringify(SLATE));
   });
   feed.__hits = [];
@@ -219,7 +230,7 @@ const SPORTSDB = {
          the real internet behind its own back. The last two must never be
          asked here — the one before them answers. */
       NCAAF_URLS: [at('/400'), at('/403'), at('/core'), at('/ncaa')].join(','),
-      NFL_URL: at('/empty'),
+      NFL_URLS: [at('/empty'), at('/empty2')].join(','),
       MLB_STATS_URL: at('/403'),
       MLB_URL: at('/403'),
     },
@@ -268,13 +279,26 @@ const SPORTSDB = {
       games[0] && games[0].teamMatch.join(',') === 'Alabama,Georgia',
       JSON.stringify(games[0] && games[0].teamMatch));
 
-    console.log('\n  an empty answer is an answer, and is not asked twice');
-    /* Falling through on empty would mean three requests to somebody else's
-       server every thirty seconds all through a quiet Tuesday. */
+    console.log('\n  an empty answer is a reason to keep asking, not a reason to stop');
+    /*
+     * It used to end the list, on the reasoning that a source which answered
+     * has answered. That does not survive a scoreboard filed BY DAY: ask for
+     * the wrong day and the reply is a polite empty list, indistinguishable
+     * from a Tuesday. A game at eight in the evening Eastern is filed under
+     * tomorrow by anybody keeping dates in UTC — and the band said there was
+     * no football on while two games were about to kick off.
+     *
+     * So every address is asked. All of them answering empty is the answer,
+     * it is not an error, and it says how many were asked before deciding.
+     */
     const nfl = (report.feeds || []).find((f) => f.sport === 'nfl') || {};
     console.log('   nfl feed:', JSON.stringify(nfl));
-    check('no games, no error, and no second address tried',
-      nfl.games === 0 && !nfl.error && !nfl.tried, JSON.stringify(nfl));
+    check('every address is asked, not just the first that answers',
+      (nfl.tried || []).length === 2, JSON.stringify(nfl.tried));
+    check('and all of them answering nothing is a quiet day, not a fault',
+      nfl.games === 0 && !nfl.error, JSON.stringify(nfl));
+    check('which says how many were asked before deciding it',
+      nfl.quiet === 2, String(nfl.quiet));
   } finally {
     box.kill();
   }
@@ -396,7 +420,9 @@ const SPORTSDB = {
         ...process.env,
         PORT: String(sdbPort),
         HOST: '127.0.0.1',
-        NCAAF_URL: at('/sdb'),
+        /* The first answers politely with nothing, the way a day-filed
+           scoreboard does when it is asked for the wrong day. */
+        NCAAF_URLS: [at('/null'), at('/sdb')].join(','),
         NFL_URL: at('/sdb'),
         MLB_STATS_URL: at('/403-mlb'),
         MLB_URL: at('/403-mlb2'),
@@ -422,8 +448,18 @@ const SPORTSDB = {
         (g) => [g.status, g.clock, g.away.abbr, g.away.score, g.channelMatch])));
       const on2 = sdb.find((g) => g.status === 'live');
       const soon2 = sdb.find((g) => g.status === 'upcoming');
-      check('the same list reads a shape it was never told about',
+      /* The bug this replaced: an empty answer used to end the list. A game
+         at eight in the evening Eastern is filed under tomorrow by anybody
+         keeping dates in UTC, so the first address answers nothing and the
+         band said there was no football on while two games were kicking
+         off. */
+      check('an empty answer is walked past, not taken as the answer',
         sdb.length === 2, String(sdb.length));
+      /* And the price of a date-free address is that it answers with the
+         league's next fifteen fixtures, not today's. */
+      check('and next week is not on a band headed LIVE NOW',
+        !sdb.some((g) => g.away.abbr === 'Next Week Lions'),
+        JSON.stringify(sdb.map((g) => g.away.abbr)));
       check('a game in progress carries its progress as the clock',
         on2 && on2.clock === '2Q 4:22', on2 && on2.clock);
       check('and the scores', on2 && on2.away.score === 14 && on2.home.score === 10,

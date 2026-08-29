@@ -4382,17 +4382,39 @@ function easternDate(now = new Date()) {
  * other published free one, in case the first has been retired.
  */
 const SPORTSDB_KEYS = ['3', '123'];
-const sportsdbDay = (league) => {
-  const { year, month, day } = easternDate();
-  const at = (key, query) =>
-    `https://www.thesportsdb.com/api/v1/json/${key}/eventsday.php?d=${year}-${month}-${day}&${query}`;
+const stamp = ({ year, month, day }) => `${year}-${month}-${day}`;
+
+/*
+ * TheSportsDB's addresses, in the order they are worth asking.
+ *
+ * Filed by day, which is the whole difficulty: whose day? A game at eight in
+ * the evening Eastern is the small hours of tomorrow in UTC, and a source
+ * keeping its dates in UTC files it under tomorrow. Asked for today, it
+ * answers a perfectly polite empty list — which is what put "no football on
+ * right now" over a band with two games about to kick off.
+ *
+ * So: today, then tomorrow, then by sport rather than by league in case the
+ * league is not spelled the way this list spells it, then the league's own
+ * next fixtures, which carry no date in the address at all and are therefore
+ * the one form that cannot be asked for the wrong day.
+ */
+const sportsdbDay = (league, leagueId) => {
+  const today = stamp(easternDate());
+  const tomorrow = stamp(easternDate(new Date(Date.now() + 24 * 3600 * 1000)));
+  const day = (key, date, query) =>
+    `https://www.thesportsdb.com/api/v1/json/${key}/eventsday.php?d=${date}&${query}`;
+  const named = `l=${encodeURIComponent(league)}`;
   return [
-    ...SPORTSDB_KEYS.map((key) => at(key, `l=${encodeURIComponent(league)}`)),
-    /* By sport rather than by league, for the day the league name is not
-       spelled the way this list spells it. That answers both American
-       codes at once, so footballGames() keeps only the rows belonging to
-       the one being asked for. */
-    ...SPORTSDB_KEYS.map((key) => at(key, 's=American%20Football')),
+    day(SPORTSDB_KEYS[0], today, named),
+    day(SPORTSDB_KEYS[0], tomorrow, named),
+    /* By sport, which answers both American codes at once — footballGames()
+       keeps only the rows belonging to the one being asked for. */
+    day(SPORTSDB_KEYS[0], today, 's=American%20Football'),
+    ...(leagueId
+      ? [`https://www.thesportsdb.com/api/v1/json/${SPORTSDB_KEYS[0]}/eventsnextleague.php?id=${leagueId}`]
+      : []),
+    // And the other published free key, for the day the first one is retired.
+    day(SPORTSDB_KEYS[1], today, named),
   ];
 };
 
@@ -4402,12 +4424,14 @@ function collegeAddresses() {
     `https://data.ncaa.com/casablanca/scoreboard/football/fbs/${year}/${month}/${day}/all-conf/scoreboard.json`,
     `https://data.ncaa.com/casablanca/scoreboard/football/fbs/${year}/${month}/${day}/scoreboard.json`,
     `https://ncaa-api.henrygd.me/scoreboard/football/fbs/${year}/${month}/${day}/all-conf`,
-    ...sportsdbDay('NCAA Football'),
+    ...sportsdbDay('NCAA Football', '4479'),
   ];
 }
 
 function proAddresses() {
-  return sportsdbDay('NFL');
+  /* 4391 is the NFL on TheSportsDB. A league id that has changed costs one
+     address answering nothing, which the list walks straight past. */
+  return sportsdbDay('NFL', '4391');
 }
 
 /** The addresses this feed will knock on, resolved for today. */
@@ -4810,10 +4834,21 @@ function footballGames(body, sport) {
        worse than an empty one. A row that does not say which league it is in
        is kept: the address was asked for this sport either way. */
     const belongs = sport === 'nfl' ? /\bNFL\b/i : /NCAA|COLLEGE/i;
+    /* And a window, because one of these addresses is the league's NEXT
+       fixtures rather than a day's — which is exactly what makes it immune to
+       being asked for the wrong day, and exactly what would otherwise put
+       next Thursday's game on a band headed LIVE NOW. Wide enough to keep
+       this evening's games whichever day somebody filed them under, and to
+       keep this afternoon's after they finish. */
+    const from = Date.now() - 8 * 3600 * 1000;
+    const to = Date.now() + 16 * 3600 * 1000;
     return events
       .filter((e) => !e.strLeague || belongs.test(String(e.strLeague)))
       .map((e) => sportsdbGame(e, sport))
-      .filter((g) => g.id);
+      .filter((g) => g.id)
+      // A row with no time on it at all is kept: it is today's answer to a
+      // question asked about today.
+      .filter((g) => !g.kickoff || (g.kickoff > from && g.kickoff < to));
   }
   return [];
 }
@@ -4832,15 +4867,51 @@ function footballGames(body, sport) {
  */
 async function footballSlate(urls, sport, cache) {
   const tried = [];
+  let answeredEmpty = '';
   for (const url of urls) {
     try {
       // eslint-disable-next-line no-await-in-loop
       const body = await fetchJson(url, SITE_HEADERS);
-      const now = Date.now();
-      return { at: now, goodAt: now, games: footballGames(body, sport), error: '', source: url, tried };
+      const games = footballGames(body, sport);
+      if (games.length) {
+        const now = Date.now();
+        return { at: now, goodAt: now, games, error: '', source: url, tried };
+      }
+      /* An empty answer used to end the list, on the reasoning that a source
+       * which answered has answered. That reasoning does not survive contact
+       * with a scoreboard filed BY DAY: ask for the wrong day and the reply
+       * is a perfectly polite empty list, indistinguishable from a Tuesday.
+       * A game at eight in the evening Eastern is filed under tomorrow by
+       * anybody keeping their dates in UTC, and the band said there was no
+       * football on while two games were about to kick off.
+       *
+       * So an empty answer is now a reason to keep asking, and the list
+       * carries the neighbouring day and a date-free address behind the
+       * obvious ones. The whole list coming back empty IS the answer — and
+       * costs a longer rest before anybody asks again, which is what stops
+       * seven addresses being walked every thirty seconds all through an
+       * out-of-season month. */
+      tried.push({ url, error: 'no games' });
+      answeredEmpty = answeredEmpty || url;
     } catch (err) {
       tried.push({ url, error: err.message });
     }
+  }
+
+  /* Everybody answered and nobody had a game. That is a quiet day, not a
+     fault, and saying otherwise would put a red error under a band that is
+     empty for the most ordinary reason there is. */
+  const refused = tried.filter((t) => t.error !== 'no games');
+  if (!refused.length) {
+    return {
+      at: Date.now(),
+      goodAt: 0,
+      games: [],
+      error: '',
+      quiet: tried.length,
+      source: answeredEmpty,
+      tried,
+    };
   }
   /* Every address refused. Keep the last good slate for a few minutes rather
      than emptying the band over one bad poll — a Saturday afternoon is
@@ -4859,7 +4930,7 @@ async function footballSlate(urls, sport, cache) {
      truncated body reads as one confusing sentence without the count — and
      the count is what says "this was a list, and all of it failed" rather
      than "the feed is down", which are different problems. */
-  const why = [...new Set(tried.map((t) => t.error))].join(' · ');
+  const why = [...new Set(refused.map((t) => t.error))].join(' · ');
   return {
     at: Date.now(),
     goodAt: holding ? heldSince : 0,
@@ -4878,11 +4949,26 @@ async function footballSlate(urls, sport, cache) {
  * rather than intermittently. A feed that is down is still down two minutes
  * later, and a slate is not worth a stampede. */
 const FEED_FAIL_TTL_MS = 120000;
+/* And how long after every address answered with nothing.
+ *
+ * Longer than a refusal, because a quiet day is a settled fact rather than a
+ * fault that might clear: the NFL is out of season for five months and
+ * walking seven addresses every two minutes through all of it is a way to
+ * get this box refused by the people still willing to talk to it. Ten
+ * minutes is well inside the notice anybody needs of a kickoff. */
+const FEED_QUIET_TTL_MS = 600000;
 
-/** Is the last answer still good enough not to ask again? */
+/**
+ * Is the last answer still good enough not to ask again?
+ *
+ * Three answers and three cadences: a slate with games in it moves on every
+ * play and is worth the short one; a list that refused is worth retrying
+ * before long; a day with nothing on it is worth leaving alone.
+ */
 function feedFresh(cache, ttl) {
   const age = Date.now() - cache.at;
-  return age < (cache.error && !cache.games.length ? FEED_FAIL_TTL_MS : ttl);
+  if (cache.games.length) return age < ttl;
+  return age < (cache.error ? FEED_FAIL_TTL_MS : FEED_QUIET_TTL_MS);
 }
 
 async function ncaafScores() {
@@ -7038,6 +7124,10 @@ async function handleApi(req, res, pathname, query) {
           games: nfl.games.length,
           at: nfl.at,
           error: nfl.error || undefined,
+          /* How many addresses answered and had nothing. An empty band with
+             no error behind it is a quiet day, and the number is what says
+             the box asked properly before deciding that. */
+          quiet: nfl.quiet || undefined,
           /* Which addresses were asked and what each said. An empty band has
              several causes and this is the line that tells them apart. */
           tried: nfl.tried?.length ? nfl.tried : undefined },
@@ -7047,6 +7137,7 @@ async function handleApi(req, res, pathname, query) {
           games: ncaaf.games.length,
           at: ncaaf.at,
           error: ncaaf.error || undefined,
+          quiet: ncaaf.quiet || undefined,
           tried: ncaaf.tried?.length ? ncaaf.tried : undefined },
         {
           sport: 'mlb',

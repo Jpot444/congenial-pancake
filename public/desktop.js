@@ -1470,6 +1470,14 @@
       } else if (slate.trouble) {
         note.textContent = `No scores: ${slate.trouble}. `
           + `${location.origin}/api/scores shows what was asked.`;
+      } else if (feed && feed.quiet) {
+        /* "The feed answered" was true and useless: it said one address had
+           replied, not that the box had looked properly. The number is the
+           claim worth making — and if it is wrong, the probe says which
+           address answered with what. */
+        note.textContent = `No ${named} on right now — ${feed.quiet} `
+          + `address${feed.quiet === 1 ? '' : 'es'} answered and none of them had a game. `
+          + `${location.origin}/api/scores/probe shows what each replied.`;
       } else {
         /* Which sport is empty matters: out of season is a different fact
            from nothing on tonight, and both are different from a feed that
