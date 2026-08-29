@@ -5666,3 +5666,96 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .grid.is-listings { display: block; }
 .listings-guide { margin-top: 0; }
 .listings-guide .guide-grid { max-width: none; }
+
+
+/* ---- For you: the ask, the reason, and the picker --------------------------
+ *
+ * The ask stands where the posters would be, because that is where somebody
+ * is already looking when the row is empty. It is a card, not a banner: the
+ * rail scrolls and a banner would scroll out of the row it belongs to.
+ */
+.foryou-ask {
+  flex: 0 0 auto;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px;
+  border: 1px dashed var(--line-hover);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .02);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.foryou-ask:hover { border-color: var(--brand-red); background: rgba(224, 49, 50, .06); }
+.foryou-ask-title { font-size: 15px; font-weight: 700; }
+.foryou-ask-note { font-size: 12px; line-height: 1.5; color: var(--muted); }
+.foryou-ask-go {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--brand-red);
+}
+
+/* Why a film is being recommended, under its poster. A recommendation nobody
+   understands is a recommendation nobody trusts. */
+.card-why {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted-dim);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* ---- the picker ---- */
+.seed-card { max-width: 720px; }
+.seed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 10px;
+  max-height: 52vh;
+  overflow-y: auto;
+  margin: 14px 0 4px;
+  padding-right: 4px;
+}
+.seed-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  overflow: hidden;
+}
+.seed-tile img {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+  display: block;
+}
+.seed-name {
+  font-size: 11px;
+  line-height: 1.3;
+  padding: 0 2px 4px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+/* Chosen is a state somebody has to be able to see across a wall of covers,
+   so it is the brand colour and a lift rather than a subtle outline. */
+.seed-tile.on { border-color: var(--brand-red); color: var(--text); }
+.seed-tile.on img { opacity: 1; }
+.seed-tile:not(.on) img { opacity: .72; }
+.seed-tile:hover img { opacity: 1; }

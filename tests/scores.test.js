@@ -166,7 +166,7 @@ const SCHEDULE = {
   /* ---- a box pointed at it ---------------------------------------------- */
   fs.rmSync(DIR, { recursive: true, force: true });
   fs.mkdirSync(DIR, { recursive: true });
-  for (const file of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js', 'providers.js', 'recordings.js']) {
+  for (const file of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js', 'providers.js', 'recordings.js', 'recommend.js']) {
     fs.copyFileSync(path.join(ROOT, file), path.join(DIR, file));
   }
   fs.cpSync(path.join(ROOT, 'public'), path.join(DIR, 'public'), { recursive: true });

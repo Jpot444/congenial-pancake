@@ -57,7 +57,7 @@ const get = (p, headers = {}) => new Promise((resolve, reject) => {
   fs.mkdirSync(path.join(DIR, 'drive', '2024'), { recursive: true });
   fs.mkdirSync(path.join(DIR, 'drive', '2023'), { recursive: true });
   fs.cpSync(path.join(ROOT, 'public'), path.join(DIR, 'public'), { recursive: true });
-  for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js', 'providers.js', 'recordings.js']) {
+  for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js', 'providers.js', 'recordings.js', 'recommend.js']) {
     fs.copyFileSync(path.join(ROOT, f), path.join(DIR, f));
   }
   fs.writeFileSync(path.join(DIR, 'profiles.json'), JSON.stringify({
@@ -186,7 +186,7 @@ const get = (p, headers = {}) => new Promise((resolve, reject) => {
   fs.mkdirSync(path.join(DIR2, 'fakebin'), { recursive: true });
   fs.mkdirSync(path.join(DIR2, 'drive'), { recursive: true });
   fs.cpSync(path.join(ROOT, 'public'), path.join(DIR2, 'public'), { recursive: true });
-  for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js', 'providers.js', 'recordings.js']) {
+  for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js', 'providers.js', 'recordings.js', 'recommend.js']) {
     fs.copyFileSync(path.join(ROOT, f), path.join(DIR2, f));
   }
   fs.writeFileSync(path.join(DIR2, 'profiles.json'), JSON.stringify({
@@ -265,7 +265,7 @@ exit 0
   fs.mkdirSync(path.join(DIR3, 'fakebin'), { recursive: true });
   fs.mkdirSync(path.join(DIR3, 'drive'), { recursive: true });
   fs.cpSync(path.join(ROOT, 'public'), path.join(DIR3, 'public'), { recursive: true });
-  for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js', 'providers.js', 'recordings.js']) {
+  for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js', 'providers.js', 'recordings.js', 'recommend.js']) {
     fs.copyFileSync(path.join(ROOT, f), path.join(DIR3, f));
   }
   fs.writeFileSync(path.join(DIR3, 'profiles.json'), JSON.stringify({
@@ -449,7 +449,7 @@ exit 0
   fs.mkdirSync(path.join(DIR5, 'fakebin'), { recursive: true });
   fs.mkdirSync(path.join(DIR5, 'drive'), { recursive: true });
   fs.cpSync(path.join(ROOT, 'public'), path.join(DIR5, 'public'), { recursive: true });
-  for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js', 'providers.js', 'recordings.js']) {
+  for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js', 'providers.js', 'recordings.js', 'recommend.js']) {
     fs.copyFileSync(path.join(ROOT, f), path.join(DIR5, f));
   }
   fs.writeFileSync(path.join(DIR5, 'profiles.json'), JSON.stringify({

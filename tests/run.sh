@@ -39,7 +39,7 @@ fi
 rm -rf "$DIR"
 mkdir -p "$DIR/downloads"
 cp -R "$ROOT/public" "$DIR/public"
-cp "$ROOT/server.js" "$ROOT/local-library.js" "$ROOT/epg-guide.js" "$ROOT/people.js" "$ROOT/providers.js" "$ROOT/recordings.js" "$DIR/"
+cp "$ROOT/server.js" "$ROOT/local-library.js" "$ROOT/epg-guide.js" "$ROOT/people.js" "$ROOT/providers.js" "$ROOT/recordings.js" "$ROOT/recommend.js" "$DIR/"
 # Data the box reads at boot, not code — but it is required like code, and a
 # box without it draws college cards with no club marks on them.
 cp "$ROOT/college-teams.json" "$DIR/"

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '34.3';
+const VERSION = '34.4';
 
 const PAGE_SIZE = 60;
 
@@ -4395,8 +4395,29 @@ const SERIES_ROWS = [
 
 const SHELF_DEFS = { movies: MOVIE_ROWS, series: SERIES_ROWS };
 
-/** Recently watched, resolved back to full library items so they can play. */
+/*
+ * For you.
+ *
+ * This row was a list of what had already been watched, which is a useful row
+ * and this app has one — Continue watching, on the landing page. As a
+ * RECOMMENDATION it is the opposite of the job: the question is what to put
+ * on next, and the one thing that certainly answers it is something nobody
+ * here has seen.
+ *
+ * The reckoning is on the box, in recommend.js, because it needs the credits
+ * index and it needs to ask somebody else's server what an audience reached
+ * for after a film — neither of which belongs in a browser. What comes back
+ * is library items with a line saying why each one is there.
+ *
+ * Films only, for now. A series recommendation wants the same credits index
+ * built for shows, and the box does not have one yet — so the series row is
+ * still the old one and still honest about being recent rather than new.
+ */
+const forYou = { items: [], needs: '', picks: [], similar: null, at: 0, asking: null };
+
 function forYouItems(tab) {
+  if (tab === 'movies') return forYou.items;
+
   const lib = state.library[tab];
   if (!lib) return [];
   const byId = new Map(
@@ -4407,9 +4428,8 @@ function forYouItems(tab) {
 
   for (const row of state.recentlyWatched || []) {
     // Series history rows are per-episode; seriesId points at the show.
-    const wantKind = tab === 'series' ? 'series' : 'movie';
-    if (row.kind !== wantKind) continue;
-    const key = String(tab === 'series' ? row.seriesId ?? row.id : row.id);
+    const key = String(row.seriesId ?? row.id);
+    if (row.kind !== 'series') continue;
     if (seen.has(key)) continue;
     seen.add(key);
     // Prefer the library record — it carries ext and artwork.
@@ -4417,6 +4437,39 @@ function forYouItems(tab) {
     if (item) out.push(item);
   }
   return out.slice(0, 24);
+}
+
+/**
+ * Ask the box what to recommend.
+ *
+ * Asked once and then left alone: the answer moves when somebody rates
+ * something or finishes a film, not while they are looking at the page. The
+ * hidden titles are taken out here rather than on the box, which does not
+ * know about this profile's deletions.
+ */
+async function loadForYou({ force = false } = {}) {
+  if (forYou.asking) return forYou.asking;
+  if (!force && forYou.at && Date.now() - forYou.at < 5 * 60 * 1000) return null;
+  if (!profiles.current) return null;
+  forYou.asking = (async () => {
+    try {
+      const data = await api(`/api/profiles/${profiles.current.id}/foryou`);
+      forYou.items = (data.items || []).filter((i) => !profiles.isDeleted(i));
+      forYou.needs = data.needs || '';
+      forYou.picks = (data.picks || []).filter((i) => !profiles.isDeleted(i));
+      forYou.similar = data.similar || null;
+      forYou.at = Date.now();
+      if (state.tab === 'movies') render();
+    } catch {
+      /* A row that cannot be built is a row that is not there. Everything
+         else on the page is unaffected, and it is asked again on the next
+         visit. */
+      forYou.at = Date.now();
+    } finally {
+      forYou.asking = null;
+    }
+  })();
+  return forYou.asking;
 }
 
 /**
@@ -4468,6 +4521,12 @@ function buildShelves(tab) {
     if (def.special === 'recent') {
       const items = forYouItems(tab);
       if (items.length) rows.push({ title: def.title, items });
+      /* Nothing to go on yet. A recommender with no signal should ask rather
+         than dress the alphabet up as a suggestion, so the row becomes the
+         question instead of disappearing. */
+      else if (tab === 'movies' && forYou.needs === 'seeds') {
+        rows.push({ title: def.title, items: [], ask: true });
+      }
       continue;
     }
 
@@ -4972,10 +5031,35 @@ function renderRows() {
 
     const rail = el('div', 'rail');
     const track = el('div', 'rail-track');
+    /* The row that has nothing to go on yet asks instead. Where the posters
+       would be, because that is where somebody is already looking. */
+    if (row.ask) {
+      const ask = el('button', 'foryou-ask');
+      ask.type = 'button';
+      ask.append(
+        Object.assign(el('span', 'foryou-ask-title'), { textContent: 'Tell me what you love' }),
+        Object.assign(el('span', 'foryou-ask-note'), {
+          textContent: 'Pick a few films and this row fills with things you have not seen — '
+            + 'by who made them, and by what other people reached for next.',
+        }),
+        Object.assign(el('span', 'foryou-ask-go'), { textContent: 'Pick some films' })
+      );
+      ask.addEventListener('click', () => seedPicker.open());
+      track.append(ask);
+    }
     // Cap each shelf; the full category is still reachable through search.
     for (const item of row.items.slice(0, 40)) {
       const card = cardFor(item);
       card.classList.add('rail-card');
+      if (item.why && item.why.length) {
+        /* Why this one, in the row rather than behind a hover: a
+           recommendation nobody understands is a recommendation nobody
+           trusts, and 'Directed by the person who made the last thing you
+           liked' is the whole argument in five words. */
+        const why = el('p', 'card-why');
+        why.textContent = item.why[0];
+        card.append(why);
+      }
       track.append(card);
     }
 
@@ -6013,6 +6097,108 @@ const programmePanel = {
     return data;
   },
 };
+
+/**
+ * Tell me what you love.
+ *
+ * The one part of For You anybody has to do by hand, and only ever once: a
+ * new profile has no history and no ratings, and a recommender with no signal
+ * has nothing to be clever with. The films offered come from the box — a
+ * spread across shelves rather than forty off one, because a picker showing
+ * forty horror films teaches it that this house likes horror.
+ */
+const seedPicker = {
+  chosen: new Set(),
+
+  open() {
+    this.chosen = new Set();
+    $('#seedError').hidden = true;
+    $('#seedModal').hidden = false;
+    this.paint();
+    // The picks come with the recommendation, so a row that has never been
+    // asked for has none to show yet.
+    if (!forYou.picks.length) loadForYou({ force: true }).then(() => this.paint());
+  },
+
+  close() {
+    $('#seedModal').hidden = true;
+  },
+
+  paint() {
+    const grid = $('#seedGrid');
+    grid.innerHTML = '';
+    if (!forYou.picks.length) {
+      grid.append(Object.assign(el('p', 'health-note'), { textContent: 'Asking the box…' }));
+      return;
+    }
+    for (const film of forYou.picks) {
+      const tile = el('button', 'seed-tile');
+      tile.type = 'button';
+      if (this.chosen.has(String(film.id))) tile.classList.add('on');
+      if (film.logo) {
+        const art = el('img');
+        art.loading = 'lazy';
+        art.alt = '';
+        art.src = `/img?u=${encodeURIComponent(film.logo)}`;
+        art.addEventListener('error', () => art.remove());
+        tile.append(art);
+      }
+      tile.append(Object.assign(el('span', 'seed-name'), { textContent: film.name || '' }));
+      tile.addEventListener('click', () => {
+        const id = String(film.id);
+        if (this.chosen.has(id)) this.chosen.delete(id);
+        else this.chosen.add(id);
+        tile.classList.toggle('on', this.chosen.has(id));
+        this.paintCount();
+      });
+      grid.append(tile);
+    }
+    this.paintCount();
+  },
+
+  paintCount() {
+    const n = this.chosen.size;
+    $('#seedSave').disabled = n < 3;
+    $('#seedSave').textContent = n < 3
+      ? `Pick ${3 - n} more`
+      : `Use these ${n}`;
+  },
+
+  async save() {
+    const seeds = forYou.picks
+      .filter((film) => this.chosen.has(String(film.id)))
+      .map((film) => ({ id: String(film.id), name: film.name || '' }));
+    if (seeds.length < 3) return;
+    const error = $('#seedError');
+    error.hidden = true;
+    $('#seedSave').disabled = true;
+    try {
+      const res = await fetch(`/api/profiles/${profiles.current.id}/seeds`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seeds }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `the box answered ${res.status}`);
+      }
+      this.close();
+      toast('Thanks — working out what you might like.');
+      await loadForYou({ force: true });
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    } finally {
+      $('#seedSave').disabled = false;
+    }
+  },
+};
+
+$('#seedClose').addEventListener('click', () => seedPicker.close());
+$('#seedSave').addEventListener('click', () => seedPicker.save());
+$('#seedModal').addEventListener('click', (e) => {
+  if (e.target.id === 'seedModal') seedPicker.close();
+});
 
 $('#progClose').addEventListener('click', () => programmePanel.close());
 $('#progWatch').addEventListener('click', () => programmePanel.watch());
@@ -7189,8 +7375,12 @@ function filmCard(item) {
     if (value) state.ratings[key] = value; else delete state.ratings[key];
     paintThumbs();
     await saveRating(key, value);
-    toast(value > 0 ? 'Thumbs up — weighs double in For You.'
-      : value < 0 ? 'Thumbs down noted.' : 'Rating cleared.');
+    /* A thumb is the strongest thing anybody says to this box, so For You is
+       worked out again rather than waiting out its five minutes. */
+    loadForYou({ force: true });
+    toast(value > 0 ? 'Thumbs up — For You will lean on this.'
+      : value < 0 ? 'Thumbs down — and nothing like it either.'
+        : 'Rating cleared.');
   };
   up.addEventListener('click', () => rate(1));
   down.addEventListener('click', () => rate(-1));
@@ -8054,6 +8244,10 @@ function render() {
     .classList.toggle('no-sidebar', isFavorites || rowsMode || liveCatsMode);
 
   if (rowsMode && state.library[state.tab]) {
+    /* Asked for once the film library is actually here, since the box builds
+       its answer out of the same catalogue. It re-renders when it lands, and
+       does nothing at all for five minutes afterwards. */
+    if (state.tab === 'movies') loadForYou();
     return state.shelf ? renderShelf() : renderRows();
   }
   if (liveCatsMode && state.library.live) return renderLiveCategories();
@@ -13485,6 +13679,7 @@ document.addEventListener('keydown', (event) => {
   // Providers sits on top of health, so it is the one Escape closes first.
   if (event.key === 'Escape' && !$('#providerModal').hidden) return providerPanel.close();
   if (event.key === 'Escape' && !$('#progModal').hidden) return programmePanel.close();
+  if (event.key === 'Escape' && !$('#seedModal').hidden) return seedPicker.close();
   if (event.key === 'Escape' && !$('#healthModal').hidden) return health.close();
   if (event.key === 'Escape' && !$('#deviceModal').hidden) {
     $('#deviceModal').hidden = true;

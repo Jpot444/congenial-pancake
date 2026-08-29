@@ -184,6 +184,20 @@ function known(id) {
   return Boolean(entry) && Date.now() - (entry.at || 0) < CREDIT_TTL_MS;
 }
 
+/**
+ * Who is in one film, for a caller that has an id and wants the names.
+ *
+ * `filmsWith` answers the other direction — everything a person is in — which
+ * is what the people pages ask. A recommender asks this way round: it starts
+ * from a film somebody liked and wants to know what to look for elsewhere.
+ * A copy, because the index is not the caller's to edit.
+ */
+function creditsFor(id) {
+  const entry = store.films.get(String(id));
+  if (!entry) return null;
+  return { cast: [...(entry.c || [])], directors: [...(entry.d || [])] };
+}
+
 function status() {
   return {
     films: store.films.size,
@@ -299,6 +313,7 @@ module.exports = {
   load,
   note,
   filmsWith,
+  creditsFor,
   directed,
   known,
   status,

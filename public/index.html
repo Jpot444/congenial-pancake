@@ -290,6 +290,28 @@
   </div>
 </div>
 
+<!-- "tell me what you love": the seed picker for For You. Filled from the
+     box's own suggestion of films worth having an opinion about. -->
+<div class="modal" id="seedModal" hidden>
+  <div class="modal-card seed-card">
+    <h2>What do you love?</h2>
+    <p class="health-note" id="seedLead">
+      Pick a few films you would happily watch again. Nothing here is watched
+      or recorded — they are only used to work out what to put in front of you.
+    </p>
+
+    <div class="seed-grid" id="seedGrid"></div>
+
+    <p class="form-error" id="seedError" hidden></p>
+
+    <div class="modal-actions">
+      <button type="button" class="btn btn-primary btn-sm" id="seedSave">Use these</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-ghost" id="seedClose">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- add / edit profile -->
 <div class="modal" id="profileModal" hidden>
   <form class="modal-card" id="profileForm" autocomplete="off">

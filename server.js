@@ -99,6 +99,7 @@ const guide = require('./epg-guide');
 const people = require('./people');
 const providers = require('./providers');
 const recordings = require('./recordings');
+const recommend = require('./recommend');
 const ARCHIVE_ROOT = process.env.ARCHIVE_ROOT || '/mnt/archive';
 const ARCHIVE_INDEX = path.join(ROOT, 'library-index.ndjson');
 
@@ -4291,6 +4292,29 @@ const GUIDE_CATALOGUE = [
  * fetched. If the cache is cold the refresh simply waits for the next tick,
  * by which time somebody will have opened Live TV and filled it.
  */
+/**
+ * Every film the box has a listing for, out of whatever it has cached.
+ *
+ * The same trick knownLiveChannels() uses next door: the library is fetched
+ * per category and per filter, so there is no one list to point at — but the
+ * cache holds every page that has been asked for, and folding them together
+ * is the closest thing to a catalogue this box has without going back to the
+ * provider for one.
+ */
+function knownMovies() {
+  const seen = new Map();
+  for (const [key, entry] of libraryCache) {
+    if (!key.startsWith(`v${LIBRARY_SHAPE}:movie:`)) continue;
+    for (const item of entry.payload?.items || []) {
+      if (!seen.has(String(item.id))) seen.set(String(item.id), item);
+    }
+  }
+  return [...seen.values()];
+}
+
+/** What an audience reached for, remembered across restarts of this process. */
+const similarCache = new Map();
+
 function knownLiveChannels() {
   const seen = new Map();
   for (const [key, entry] of libraryCache) {
@@ -6751,7 +6775,7 @@ async function handleApi(req, res, pathname, query) {
   }
 
   const profileMatch =
-    /^\/api\/profiles\/([\w-]+)(\/prefs|\/history|\/rating|\/taste|\/progress)?$/.exec(pathname);
+    /^\/api\/profiles\/([\w-]+)(\/prefs|\/history|\/rating|\/taste|\/progress|\/foryou|\/seeds)?$/.exec(pathname);
   if (profileMatch) {
     const data = readProfiles();
     const profile = findProfile(data, profileMatch[1]);
@@ -6964,6 +6988,59 @@ async function handleApi(req, res, pathname, query) {
     /* aggregated signals for the personalization layer */
     if (suffix === '/taste' && req.method === 'GET') {
       return json(res, 200, tasteProfile(profile));
+    }
+
+    /*
+     * For you — films this house has NOT seen.
+     *
+     * The reckoning is in recommend.js, which is handed the catalogue, the
+     * credits index and a way to reach the internet, and knows nothing about
+     * HTTP or about this file. What it hands back is library items, because
+     * a recommendation for a film that cannot be played here is not one.
+     */
+    if (suffix === '/foryou' && req.method === 'GET') {
+      const movies = knownMovies();
+      if (!movies.length) {
+        return json(res, 200, {
+          items: [], needs: 'library', picks: [], similar: { asked: 0, answered: 0 },
+        });
+      }
+      const answer = await recommend.forYou({
+        profile,
+        movies: movies.filter((m) => !m.adult),
+        categoryAffinity: tasteProfile(profile).categoryAffinity,
+        people,
+        seeds: profile.tasteSeeds || [],
+        cache: similarCache,
+        /* Somebody else's server, so it is asked the way every other outside
+           address here is asked, and it is allowed to fail. */
+        fetchJson: (url) => fetchJson(url, SITE_HEADERS),
+        log: (line) => console.log(line),
+      });
+      return json(res, 200, answer);
+    }
+
+    /*
+     * The films somebody picked when asked what they love.
+     *
+     * Stored on the profile beside the ratings, because that is what they
+     * are: a thumbs-up given before there was anything to give one to. Kept
+     * small — this is a seed, not a second favourites list.
+     */
+    if (suffix === '/seeds' && req.method === 'PUT') {
+      let incoming;
+      try {
+        incoming = JSON.parse(await collectRequestBody(req));
+      } catch {
+        return json(res, 400, { error: 'Invalid JSON' });
+      }
+      const rows = Array.isArray(incoming.seeds) ? incoming.seeds : [];
+      profile.tasteSeeds = rows.slice(0, 12).map((row) => ({
+        id: String(row.id || ''),
+        name: String(row.name || '').slice(0, 200),
+      })).filter((row) => row.id);
+      writeProfiles(data);
+      return json(res, 200, { seeds: profile.tasteSeeds });
     }
 
     /* rename / restyle — open, like editing a profile on a TV app */

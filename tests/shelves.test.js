@@ -214,22 +214,46 @@ const SERIES = {
   check('while New Releases is the same order it always was',
     stillNewest.join() === [30, 29, 28, 27, 26].join(), JSON.stringify(stillNewest));
 
-  // --- For You is left alone ------------------------------------------------
+  /* --- For You is not a list of what you have already watched -------------
+   *
+   * It used to be exactly that, and as a recommendation that is the opposite
+   * of the job: the question is what to put on NEXT. The reckoning is on the
+   * box now — it needs the credits index and it needs to ask somebody else's
+   * server what an audience reached for — so this row draws what came back
+   * and nothing else. What the box decides is recommend.js's business and
+   * has its own suite; what is checked here is that the row shows THAT and
+   * not the history.
+   */
   console.log('\n  For You');
-  const forYou = await page.evaluate(() => {
+  const suggested = await page.evaluate(() => {
     state.recentlyWatched = [
       { kind: 'movie', id: 7, name: 'Film 7' },
       { kind: 'movie', id: 3, name: 'Film 3' },
       { kind: 'movie', id: 51, name: 'Film 51' },
     ];
+    const lib = state.library.movies.items;
+    forYou.items = [lib[11], lib[12]].map((i) => ({ ...i, why: ['Directed by Someone'] }));
+    forYou.needs = '';
     const row = buildShelves('movies').find((r) => r.title === 'For You');
     return row ? row.items.map((i) => i.id) : null;
   });
-  console.log('   for you:', JSON.stringify(forYou));
-  check('it is built at all', Array.isArray(forYou) && forYou.length === 3,
-    JSON.stringify(forYou));
-  check('and left in the order things were watched, not shuffled',
-    forYou.join() === [7, 3, 51].join(), JSON.stringify(forYou));
+  console.log('   for you:', JSON.stringify(suggested));
+  check('the row is what the box recommends',
+    Array.isArray(suggested) && suggested.length === 2, JSON.stringify(suggested));
+  check('and not one thing that was watched is in it',
+    !suggested.some((id) => [7, 3, 51].includes(Number(id))), JSON.stringify(suggested));
+
+  /* And a viewer who has said nothing yet gets a question rather than a
+     shelf of whatever happened to be first. */
+  const asking = await page.evaluate(() => {
+    forYou.items = [];
+    forYou.needs = 'seeds';
+    const row = buildShelves('movies').find((r) => r.title === 'For You');
+    return row ? { ask: Boolean(row.ask), items: row.items.length } : null;
+  });
+  console.log('   asking:', JSON.stringify(asking));
+  check('with nothing to go on the row asks instead of disappearing',
+    asking && asking.ask === true && asking.items === 0, JSON.stringify(asking));
 
   await browser.close();
   console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(', ')}` : '\nall passed');
