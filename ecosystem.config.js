@@ -28,11 +28,12 @@ module.exports = {
         HOST: '0.0.0.0',
         // Where the archive drive mounts. Must match the fstab entry.
         ARCHIVE_ROOT: '/mnt/archive',
-        // Uncomment to move downloads onto a writable partition once one
-        // exists (docs/archive-drive.md, "Using the drive for downloads").
-        // Copy the old downloads folder there first, then restart with
-        // --update-env. Everything follows this path automatically.
-        // DOWNLOADS_ROOT: '/mnt/downloads',
+        /* Downloads live on the drive's own writable partition, not on the
+           SD card. That partition was carved out of the archive drive in
+           August 2026 — see docs/archive-drive.md — and everything that
+           cares about space follows this one path: the allowance, the
+           free-space gates, the health panel. */
+        DOWNLOADS_ROOT: '/mnt/store/downloads',
         // Allowance for finished archive conversions kept on disk (GB).
         // Whatever this says, the cache always yields before the card's
         // free space floor — the setting caps the best case, it cannot

@@ -85,91 +85,65 @@ Archive: 5853 files indexed at /mnt/archive (mounted) — 519 direct, 3573 remux
 `NOT MOUNTED` there means the drive isn't visible; the Archive tab will say so
 too rather than showing an empty grid.
 
-## Using the drive for downloads
+## The writable partition
 
-**This part is not done, and it needs a decision from you.**
+Done, August 2026. The drive is two partitions now.
 
-The drive is read-only on the Pi, so downloads cannot go to it as things
-stand. Making that work means adding a second, Linux-native partition — and
-that means repartitioning a drive holding 1.4 TB of material that is, in
-several cases, genuinely hard to re-source. So it's left for you to trigger.
+```
+sda1  1.7 TB   hfs+   Hunters Harddrive   ro   /mnt/archive
+sda2  275 GB   ext4   store               rw   /mnt/store
+```
 
-The operation is non-destructive in principle: macOS shrinks HFS+ volumes
-without touching the data, and this drive has 473 GB free at the end. But
-"non-destructive in principle" and "a partition table rewrite on your only
-copy" belong in the same sentence, so:
+The archive keeps 162 GB of headroom inside it; the new partition has 272 GB
+free. `DOWNLOADS_ROOT` in `ecosystem.config.js` points at
+`/mnt/store/downloads`, and every space gate, the per-profile allowance and
+the health panel follow it.
 
-1. **Have a copy of anything irreplaceable first.** Not negotiable.
-2. On the Mac, with the drive attached and `diskutil list` confirming the disk
-   number is still `disk4`:
+### How it was done
+
+macOS is the only thing that can shrink HFS+ — Linux has read-only support and
+no working `resize_hfs`, which is the same reason the archive is mounted `ro`
+in the first place. So the drive came off the Pi for the resize and went back
+afterwards.
+
+1. On the Pi, with the portal stopped: `umount /mnt/archive`, then
+   `systemctl stop mnt-archive.automount`. The mount is `x-systemd.automount`,
+   so anything touching the path brings it straight back — including the
+   portal's own health panel reading free space.
+
+   `pm2 stop iptv-updater` does NOT hold: it carries `--cron-restart */2`, so
+   it returns within two minutes and restarts the portal. It has to be
+   `pm2 delete iptv-updater` for the duration, and put back afterwards.
+
+2. On the Mac: `diskutil verifyVolume` first and do not continue past a bad
+   report — a resize over a damaged catalog is the specific way this loses
+   1.4 TB. Then `diskutil resizeVolume /dev/disk4s1 limits` to read the floor,
+   which came back at 1.53 TB, and
+   `caffeinate -i diskutil resizeVolume /dev/disk4s1 1.7T`.
+
+   `caffeinate` because a Mac that sleeps partway through a partition-map
+   rewrite is the one avoidable way to lose the drive.
+
+3. Back on the Pi:
 
    ```bash
-   diskutil resizeVolume disk4s1 1.7T
+   parted -a optimal /dev/sda mkpart primary ext4 1700GB 100%
+   mkfs.ext4 -m 1 -L store /dev/sda2
    ```
 
-   Leaves ~300 GB of free space after the HFS+ volume, and ~170 GB of
-   headroom inside it.
-3. On the Pi, create and format the new partition in that free space (ext4),
-   mount it read-write with an fstab entry, copy the existing downloads
-   folder onto it, then set `DOWNLOADS_ROOT` in `ecosystem.config.js` (a
-   commented-out line is already there) and
-   `pm2 restart iptv-portal --update-env`. Every space gate, the allowance,
-   and the health panel follow the new location automatically.
+   `-m 1` rather than the default 5% reserved blocks: that reservation exists
+   to keep a root filesystem usable when full and is worth 12 GB here.
 
-If you'd rather not touch the partition table at all, the alternative is to
-leave downloads on the Pi's own storage. The portal already guards against
-filling the disk (`SPACE_RESERVE`, 2 GB) and the health panel shows free space,
-so this is a perfectly reasonable place to stop.
+   Mounted by UUID with `nofail`, so a drive that does not come up cannot hold
+   the Pi at boot.
 
-## Re-scanning
+### What it is not, yet
 
-The index is a snapshot. Add or remove files on the drive and it goes stale —
-missing files return a clear error rather than a broken player, but new files
-won't appear until you re-scan.
+`HLS_DIR` is still `<repo>/hls` and is not configurable — the live window and
+every film conversion are written to the SD card. That is the largest source
+of card wear on the box and the obvious next thing to move.
 
-From the Mac, with the drive attached:
+And there is no recording. The live DVR is a ~2 minute rolling window per
+channel, deleted continuously, which exists so a viewer can pause and rewind a
+little. Space makes recording possible; it does not make it exist.
 
-```bash
-node scripts/scan-library.js --root "/Volumes/Hunters Harddrive" --out library-index.ndjson
-```
-
-Resumable: it skips anything already indexed, so an interrupted run costs
-nothing. A full cold scan of 5,853 files takes roughly 25 minutes over USB.
-
-To re-derive titles and dates from filenames without re-probing — after
-improving the filename parser, for instance:
-
-```bash
-node scripts/scan-library.js --out library-index.ndjson --reparse
-```
-
-Then `./deploy.sh` to push the index to the Pi.
-
-## Filename parsing
-
-Titles and dates come from the filenames, which are consistent enough to parse:
-`1994.06.20 Eric Roberts (E!).avi` → date `1994-06-20`, title `Eric Roberts`,
-tag `E!`.
-
-Handled: plain `YYYY.MM.DD`, multi-date forms like `1994.10.14+18` and
-`1995.01.27+02-10` (first date wins, extra fragments dropped from the title),
-`YYYY.MM`, `1994.xx.xx`, and bare years.
-
-**5,739 files get an exact date, 5,764 get at least a year, 89 get neither**
-and sort by title at the end of their folder. Those 89 are files whose names
-never carried a date.
-
-## Known rough edges
-
-- `HTVOD By Year/1997`, `2007`, `2008` and `2010` each contain a *second*
-  folder of the same name, so browsing them takes an extra click. The counts on
-  the folder chips are recursive and correct; only the navigation is awkward.
-  Fixing it means renaming folders on the drive.
-- One viewer at a time. `startRemux` kills any existing session before starting
-  a new one, which is the pre-existing behaviour for provider streams — the
-  account allows a single connection. It applies to archive playback too, where
-  the constraint doesn't technically exist. Two people on two devices will
-  interrupt each other.
-- Playback position is saved per profile for archive files, keyed
-  `archive:<relative path>`. Rename a file on the drive and its resume point is
-  orphaned.
