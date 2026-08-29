@@ -4413,10 +4413,20 @@ const sportsdbDay = (league, leagueId) => {
   const tomorrow = stamp(easternDate(new Date(Date.now() + 24 * 3600 * 1000)));
   const day = (key, date, query) =>
     `https://www.thesportsdb.com/api/v1/json/${key}/eventsday.php?d=${date}&${query}`;
+  const yesterday = stamp(easternDate(new Date(Date.now() - 24 * 3600 * 1000)));
   const named = `l=${encodeURIComponent(league)}`;
   return [
-    day(SPORTSDB_KEYS[0], today, named),
-    day(SPORTSDB_KEYS[0], tomorrow, named),
+    /* Three days as one answer, not three answers in a row.
+     *
+     * A list stops at the first address that ANSWERS, and a day with one
+     * game on it is an answer — so an afternoon game found under today ended
+     * the search and the night game filed under tomorrow was never asked
+     * for. Two NFL games, one card. Fetched together and merged, the day
+     * boundary stops mattering; the window in footballGames() throws back
+     * whatever that drags in from either side. */
+    [day(SPORTSDB_KEYS[0], yesterday, named),
+      day(SPORTSDB_KEYS[0], today, named),
+      day(SPORTSDB_KEYS[0], tomorrow, named)],
     /* By sport, which answers both American codes at once — footballGames()
        keeps only the rows belonging to the one being asked for. */
     day(SPORTSDB_KEYS[0], today, 's=American%20Football'),
@@ -4952,10 +4962,31 @@ function sportsdbStatus(row) {
   return 'live';
 }
 
+/*
+ * A TheSportsDB time, as the instant it means.
+ *
+ * This publisher writes its times in UTC and says so nowhere in the string:
+ * `strTimestamp` is '2026-08-29T17:00:00', and by the language's own rules a
+ * date-time with no offset on it is LOCAL time. Parsed that way, a one
+ * o'clock kickoff on the east coast came out as five — which is precisely
+ * the four hours between the two, and precisely what the card was showing.
+ *
+ * The fallback built from `dateEvent` and `strTime` had the Z on it all
+ * along, which is why this only ever went wrong on rows that carried a
+ * timestamp — that is to say, on nearly all of them.
+ */
+function sportsdbInstant(text) {
+  const said = String(text || '').trim();
+  if (!said) return 0;
+  // A string that names its own zone is left alone.
+  if (/[Zz]$|[+-]\d{2}:?\d{2}$/.test(said)) return Date.parse(said) || 0;
+  return Date.parse(`${said.replace(' ', 'T')}Z`) || 0;
+}
+
 function sportsdbGame(row, sport) {
   const state = sportsdbStatus(row);
-  const kickoff = Date.parse(row.strTimestamp
-    || `${row.dateEvent || ''}T${row.strTime || '00:00:00'}Z`) || 0;
+  const kickoff = sportsdbInstant(row.strTimestamp)
+    || sportsdbInstant(`${row.dateEvent || ''}T${row.strTime || '00:00:00'}`);
 
   const side = (team, score, badge) => ({
     /* No abbreviation is published, so the card gets the name it has. The
@@ -4993,7 +5024,11 @@ function sportsdbGame(row, sport) {
     id: String(row.idEvent || ''),
     sport,
     status: state,
-    detailedState: String(row.strStatus || '').trim(),
+    /* 'NS' is this publisher's way of writing 'has not started', which is
+       what a start time on a card already says. Printed underneath it, it is
+       two characters of noise where the caption tells you something. */
+    detailedState: /^(NS|NOT STARTED|)$/i.test(String(row.strStatus || '').trim())
+      ? '' : String(row.strStatus || '').trim(),
     channelMatch: String(row.strTVStation || '').trim(),
     channelName: String(row.strTVStation || '').trim(),
     /* The club as this source names it — 'Michigan Wolverines', 'Green Bay

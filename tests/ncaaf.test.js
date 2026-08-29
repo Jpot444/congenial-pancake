@@ -258,6 +258,39 @@ const SPORTSDB = {
   ],
 };
 
+/* A professional Sunday, filed across two days.
+ *
+ * The afternoon game is written the way this publisher actually writes one:
+ * the time in UTC with nothing in the string that says so. By the language's
+ * own rules a date-time with no offset is LOCAL, and parsed that way a one
+ * o'clock kickoff on the east coast comes out as five.
+ *
+ * The night game is the second half of the same story. Eight-twenty Eastern
+ * is twenty past midnight UTC, so it is filed under TOMORROW — and a list
+ * that stops at the first address to ANSWER never asks for tomorrow, because
+ * today had a game on it. Two games, one card. */
+const NFL_DAY = {
+  events: [
+    { idEvent: '3001', strEvent: 'Lions at Colts', strLeague: 'NFL',
+      strHomeTeam: 'Indianapolis Colts', strAwayTeam: 'Detroit Lions',
+      intHomeScore: null, intAwayScore: null,
+      strStatus: 'NS', strProgress: '',
+      dateEvent: '2026-08-29', strTime: '17:00:00',
+      strTimestamp: '2026-08-29T17:00:00', strTVStation: 'FOX' },
+  ],
+};
+const NFL_NIGHT = {
+  events: [
+    { idEvent: '3002', strEvent: 'Bears at Titans', strLeague: 'NFL',
+      strHomeTeam: 'Tennessee Titans', strAwayTeam: 'Chicago Bears',
+      intHomeScore: null, intAwayScore: null,
+      strStatus: 'NS', strProgress: '',
+      dateEvent: '2026-08-30', strTime: '00:20:00',
+      strTimestamp: new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
+      strTVStation: 'NBC' },
+  ],
+};
+
 (async () => {
   /* ================= the feed, and the addresses it lives at ============= */
   const feed = http.createServer((req, res) => {
@@ -274,6 +307,8 @@ const SPORTSDB = {
     // Yesterday's file, holding the late game that is still being played.
     if (req.url.includes('/lastnight')) return res.end(JSON.stringify(LAST_NIGHT));
     if (req.url.includes('/ncaa')) return res.end(JSON.stringify(NCAA));
+    if (req.url.includes('/nflday')) return res.end(JSON.stringify(NFL_DAY));
+    if (req.url.includes('/nflnight')) return res.end(JSON.stringify(NFL_NIGHT));
     if (req.url.includes('/sdb')) return res.end(JSON.stringify(SPORTSDB));
     if (req.url.includes('/empty')) return res.end(JSON.stringify({ events: [] }));
     if (req.url.includes('/null')) return res.end(JSON.stringify({ events: null }));
@@ -576,7 +611,8 @@ const SPORTSDB = {
         /* The first answers politely with nothing, the way a day-filed
            scoreboard does when it is asked for the wrong day. */
         NCAAF_URLS: [at('/null'), at('/sdb')].join(','),
-        NFL_URL: at('/sdb'),
+        // Two days as one answer — the '+' is how the box takes a group.
+        NFL_URLS: `${at('/nflday')}+${at('/nflnight')}`,
         MLB_STATS_URL: at('/403-mlb'),
         MLB_URL: at('/403-mlb2'),
       },
@@ -629,6 +665,27 @@ const SPORTSDB = {
       check('and NS is a game that has not started, not a game with no score',
         soon2 && soon2.status === 'upcoming' && soon2.away.score === null,
         JSON.stringify(soon2 && [soon2.status, soon2.away.score]));
+      /* 'NS' is this publisher's way of writing 'has not started', which is
+         what a start time on a card already says. */
+
+
+      /* ---- and the professional games, filed across two days ---------- */
+      const pros = (JSON.parse(raw || '{}').games || []).filter((g) => g.sport === 'nfl');
+      console.log('   pro:', JSON.stringify(pros.map(
+        (g) => [g.away.abbr, g.clock, new Date(g.kickoff).toISOString(), g.detailedState])));
+      /* The afternoon game is under today and the night game under tomorrow,
+         because twenty past midnight UTC is a different date. A list that
+         stops at the first address to ANSWER never asks for tomorrow. */
+      check('both games arrive, though they are filed under different days',
+        pros.length === 2, JSON.stringify(pros.map((g) => g.away.abbr)));
+      /* The four hours between UTC and the east coast, which is what was
+         being added silently to every kickoff this publisher gave. */
+      const pro = pros.find((g) => g.away.abbr === 'Detroit Lions');
+      check('a time written in UTC with nothing saying so is read as UTC',
+        pro && new Date(pro.kickoff).toISOString().startsWith('2026-08-29T17:00:00'),
+        JSON.stringify(pro && new Date(pro.kickoff).toISOString()));
+      check('and NS is not printed under the start time as a caption',
+        pro && pro.detailedState === '', JSON.stringify(pro && pro.detailedState));
 
       /* ---- every address, asked ---------------------------------------- */
       /*
