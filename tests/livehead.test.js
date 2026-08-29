@@ -125,11 +125,15 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
      mlbstatic.com from a test machine — and a mark that does not load is
      removed on purpose, so without this every card would be exercising the
      fallback instead of the badge. */
+  /* Deliberately an SVG with NO width or height on the root, only a viewBox —
+     which is how several of the league's own marks are authored, and the
+     reason they hung out of the cards. A well-behaved stub sizes itself
+     politely and proves nothing. */
   await page.route('**/img?u=**', (r) => r.fulfill({
     status: 200,
     contentType: 'image/svg+xml',
-    body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect '
-      + 'width="40" height="40" fill="#456"/></svg>',
+    body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 150">'
+      + '<rect width="300" height="150" fill="#456"/></svg>',
   }));
   page.__scoreCalls = 0;
   await page.route('**/api/scores**', (r) => {
@@ -201,6 +205,28 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
   check('and the count is the count', first.count === 'B2/4,S1/3,O1/3', first.count);
   check('a game with a channel is pressable',
     first.dead === false, String(first.dead));
+
+  /* Measured, not asserted about the stylesheet: a mark that does not fit is
+     the thing being prevented, and only the layout knows whether it fits. */
+  const fit = await page.evaluate(() => {
+    const card = document.querySelector('.sc-card');
+    const box = card.getBoundingClientRect();
+    return [...card.querySelectorAll('.sc-mark')].map((mark) => {
+      const slot = mark.getBoundingClientRect();
+      const img = mark.querySelector('img').getBoundingClientRect();
+      return {
+        slot: [Math.round(slot.width), Math.round(slot.height)],
+        img: [Math.round(img.width), Math.round(img.height)],
+        insideSlot: img.width <= slot.width + 1 && img.height <= slot.height + 1,
+        insideCard: img.top >= box.top - 1 && img.bottom <= box.bottom + 1,
+      };
+    });
+  });
+  console.log('   marks:', JSON.stringify(fit));
+  check('a mark stays inside the box it was given',
+    fit.every((m) => m.insideSlot), JSON.stringify(fit));
+  check('and inside the card, whatever the file says about its own size',
+    fit.every((m) => m.insideCard), JSON.stringify(fit));
 
   /* The provider carries rows like "US (Peacock 023) | Marlins at Nationals
      (2026-08-30 12:00:00)": a placeholder for a broadcast at a stated time,

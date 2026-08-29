@@ -366,21 +366,35 @@
 /* ---- the marks and the middle ---- */
 .desk .sc-line { display: flex; align-items: center; gap: var(--space-3); }
 
+/* Three separate guards on one small thing, because the marks are somebody
+   else's files and this has now been wrong twice.
+   1. A fixed box.
+   2. The image sized in PIXELS, not percentages — see below.
+   3. overflow:hidden, so a browser that ignores both still cannot let a badge
+      out of its box and over the score. */
 .desk .sc-mark {
   flex: none;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 54px; height: 54px;
+  overflow: hidden;
 }
-/* Sized outright rather than capped. Several of the league's marks are SVGs
-   with no width or height on the root element, and a percentage max- against
-   a box the image is itself sizing resolves to the SVG's own default 300x150
-   — which is how half the row ended up with badges hanging out of the card.
-   A definite width and height with object-fit is the form that cannot be
-   argued with, whatever the file says about itself. */
+/* Absolute lengths, not percentages.
+ *
+ * Several of the league's marks are SVGs with no width or height on the root
+ * element, only a viewBox. Capping those with max-width/max-height at 100%
+ * failed first, because a percentage measured against a box the image is
+ * itself sizing falls back to the SVG default of 300x150. Setting width and
+ * height to 100% fixed it in Chromium and did NOT fix it in Safari, which
+ * resolves a percentage against a dimensionless SVG differently again.
+ *
+ * A pixel length has nothing to resolve against and no room to disagree. It
+ * is repeated in the phone block below rather than inherited, which is the
+ * cost of not using a percentage and is worth paying twice. */
 .desk .sc-mark img {
-  width: 100%;
-  height: 100%;
+  width: 54px;
+  height: 54px;
   object-fit: contain;
   display: block;
 }
@@ -482,6 +496,7 @@
 .desk body.has-tabbar .sc-title { font-size: 20px; }
 .desk body.has-tabbar .sc-card { width: 232px; }
 .desk body.has-tabbar .sc-mark { width: 44px; height: 44px; }
+.desk body.has-tabbar .sc-mark img { width: 44px; height: 44px; }
 .desk body.has-tabbar .sc-score { font-size: 28px; }
 
 .desk .content-meta {
