@@ -4432,17 +4432,25 @@ const sportsdbDay = (league, leagueId) => {
   const day = (key, date, query) =>
     `https://www.thesportsdb.com/api/v1/json/${key}/eventsday.php?d=${date}&${query}`;
   const days = (query) => [yesterday, today, tomorrow].map((d) => day(SPORTSDB_KEYS[0], d, query));
+  /* The league's own next fixtures. No date in the address, so it is the one
+   * form that cannot be asked for the wrong day.
+   *
+   * INSIDE the group, never as an entry of its own. It lists what has not
+   * started yet — by definition it cannot contain a game being played — so
+   * standing alone on the chain it is a source that makes live games
+   * disappear: any hiccup in the addresses above it and the list falls
+   * through to an answer that can only hold the future. A one o'clock game
+   * went missing at half past five while the six o'clock one stayed. As part
+   * of the group it merges with the day and can only ever add. */
+  const next = leagueId
+    ? [`https://www.thesportsdb.com/api/v1/json/${SPORTSDB_KEYS[0]}/eventsnextleague.php?id=${leagueId}`]
+    : [];
   return [
-    ...(league ? [days(`l=${encodeURIComponent(league)}`)] : []),
+    ...(league ? [[...days(`l=${encodeURIComponent(league)}`), ...next]] : []),
     /* By sport, which answers every American code at once — the Canadian one
        included, so footballGames() keeps only the rows belonging to the code
        being asked for. */
-    days('s=American%20Football'),
-    /* The league's own next fixtures. No date in the address, so it is the
-       one form that cannot be asked for the wrong day. */
-    ...(leagueId
-      ? [`https://www.thesportsdb.com/api/v1/json/${SPORTSDB_KEYS[0]}/eventsnextleague.php?id=${leagueId}`]
-      : []),
+    [...days('s=American%20Football'), ...next],
     // And the other published free key, for the day the first one is retired.
     ...(league ? [day(SPORTSDB_KEYS[1], today, `l=${encodeURIComponent(league)}`)] : []),
   ];
@@ -5245,16 +5253,30 @@ async function fetchGroup(entry, sport) {
     try {
       // eslint-disable-next-line no-await-in-loop
       const body = await fetchJson(url, SITE_HEADERS);
+      const games = footballGames(body, sport);
+      /* A two hundred that is really a complaint.
+       *
+       * TheSportsDB answers an address it does not like with a 200 and
+       * `{"events":[],"Message":"Invalid League ID passed"}` — and something
+       * that reads only the status code cannot tell that from a Tuesday.
+       * Whatever the message is, an answer that says nothing and complains
+       * is a failure, and the chain and the report should both hear it. */
+      const complaint = String((body && body.Message) || '').trim();
+      if (complaint && !games.length) throw new Error(complaint);
       // Same game from two days' files is one game.
-      for (const game of footballGames(body, sport)) {
+      for (const game of games) {
         if (!seen.has(game.id)) seen.set(game.id, game);
       }
     } catch (err) {
-      failures.push(err.message);
+      failures.push({ url, error: err.message });
     }
   }
-  if (failures.length === urls.length) throw new Error(failures[0]);
-  return [...seen.values()];
+  if (failures.length === urls.length) throw new Error(failures[0].error);
+  /* The failures come back even when the group succeeded. One member refusing
+     while another answers is not a failure of the group — but it is still a
+     thing that happened, and a report that hides it is a report that cannot
+     explain why the slate is thinner than it should be. */
+  return { games: [...seen.values()], failures };
 }
 
 async function footballSlate(urls, sport, cache) {
@@ -5264,7 +5286,9 @@ async function footballSlate(urls, sport, cache) {
     const url = Array.isArray(entry) ? entry.join(' + ') : entry;
     try {
       // eslint-disable-next-line no-await-in-loop
-      const games = await fetchGroup(entry, sport);
+      const got = await fetchGroup(entry, sport);
+      const { games } = got;
+      for (const failed of got.failures) tried.push(failed);
       if (games.length) {
         const now = Date.now();
         return { at: now, goodAt: now, games, error: '', source: url, tried };
@@ -5359,7 +5383,15 @@ const FEED_QUIET_TTL_MS = 600000;
  */
 function feedFresh(cache, ttl) {
   const age = Date.now() - cache.at;
-  if (cache.games.length) return age < ttl;
+  if (cache.games.length) {
+    /* A fixtures list is not a scoreboard, and asking one every thirty
+       seconds is both pointless and the way to get a free key throttled —
+       which is not a quiet failure but a source that starts answering with
+       nothing while the games are on. Asked at the rate its data actually
+       moves. */
+    const slow = /thesportsdb\.com/.test(String(cache.source || ''));
+    return age < (slow ? Math.max(ttl, FEED_FAIL_TTL_MS) : ttl);
+  }
   return age < (cache.error ? FEED_FAIL_TTL_MS : FEED_QUIET_TTL_MS);
 }
 
@@ -7558,7 +7590,12 @@ async function handleApi(req, res, pathname, query) {
        * carry no credentials, so they can be shown. */
       feeds: [
         { sport: 'nfl',
-          url: nflUrls().flat(),
+          /* Groups kept as groups. An address nested inside an array is
+             one this feed asks TOGETHER with its siblings and merges, which
+             is a different thing from one it falls back to — and the
+             difference is the whole reason a live game stopped
+             disappearing. Flattened, the report could not show it. */
+          url: nflUrls(),
           source: nfl.source || undefined,
           games: nfl.games.length,
           at: nfl.at,
@@ -7571,7 +7608,7 @@ async function handleApi(req, res, pathname, query) {
              several causes and this is the line that tells them apart. */
           tried: nfl.tried?.length ? nfl.tried : undefined },
         { sport: 'ncaaf',
-          url: ncaafUrls().flat(),
+          url: ncaafUrls(),
           source: ncaaf.source || undefined,
           games: ncaaf.games.length,
           at: ncaaf.at,

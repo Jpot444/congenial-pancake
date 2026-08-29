@@ -334,6 +334,27 @@ const NFL_DAY = {
       strTimestamp: '2026-08-29T17:00:00', strTVStation: 'FOX' },
   ],
 };
+/* A league's NEXT fixtures, which is what eventsnextleague answers: only what
+   has not started. The afternoon game is not in it and cannot be — that is
+   the whole point of the address, and the whole hazard of letting it stand on
+   the chain by itself. */
+const NFL_NEXT = {
+  events: [
+    { idEvent: '3002', strEvent: 'Bears at Titans', strLeague: 'NFL',
+      strHomeTeam: 'Tennessee Titans', strAwayTeam: 'Chicago Bears',
+      intHomeScore: null, intAwayScore: null,
+      strStatus: 'NS', strProgress: '',
+      dateEvent: '2026-08-30', strTime: '00:20:00',
+      strTimestamp: new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
+      strTVStation: 'NBC' },
+  ],
+};
+
+/* And what this publisher says when it does not like an address: a two
+   hundred, an empty list, and a complaint. Read by anything that only checks
+   the status code, that is a quiet Tuesday. */
+const SDB_COMPLAINT = { events: [], Message: 'Invalid League ID passed' };
+
 const NFL_NIGHT = {
   events: [
     { idEvent: '3002', strEvent: 'Bears at Titans', strLeague: 'NFL',
@@ -367,6 +388,8 @@ const NFL_NIGHT = {
     if (req.url.includes('/ncaa')) return res.end(JSON.stringify(NCAA));
     if (req.url.includes('/nflday')) return res.end(JSON.stringify(NFL_DAY));
     if (req.url.includes('/nflnight')) return res.end(JSON.stringify(NFL_NIGHT));
+    if (req.url.includes('/nflnext')) return res.end(JSON.stringify(NFL_NEXT));
+    if (req.url.includes('/complaint')) return res.end(JSON.stringify(SDB_COMPLAINT));
     if (req.url.includes('/sdb')) return res.end(JSON.stringify(SPORTSDB));
     if (req.url.includes('/empty')) return res.end(JSON.stringify({ events: [] }));
     if (req.url.includes('/null')) return res.end(JSON.stringify({ events: null }));
@@ -809,6 +832,101 @@ const NFL_NIGHT = {
         JSON.stringify(pro && new Date(pro.kickoff).toISOString()));
       check('and NS is not printed under the start time as a caption',
         pro && pro.detailedState === '', JSON.stringify(pro && pro.detailedState));
+
+      /* ---- the address that can only hold the future ------------------ */
+      /*
+       * "The 1PM Lions Colts game is gone. It should be there with the live
+       *  score." The six o'clock game stayed and the one being played went.
+       *
+       * A league's NEXT fixtures lists what has not started, so it cannot
+       * contain a game in progress. Standing on the chain as an entry of its
+       * own it is a source that makes live games disappear: any hiccup in
+       * the addresses above and the list falls through to an answer that can
+       * only hold the future. It belongs inside the group, where it merges
+       * with the day and can only ever add.
+       */
+      console.log('\n  a live game outlives a hiccup in the day addresses');
+      const livePort = 8493;
+      const liveBox = start({
+        env: {
+          ...process.env,
+          PORT: String(livePort),
+          HOST: '127.0.0.1',
+          /* The day address complains — a two hundred, an empty list and a
+             message — and the next-fixtures address answers beside it. */
+          NFL_URLS: `${at('/complaint')}+${at('/nflnext')}`,
+          NCAAF_URL: at('/null'),
+          MLB_STATS_URL: at('/403-mlb'),
+          MLB_URL: at('/403-mlb2'),
+        },
+        stdio: 'ignore',
+      });
+      try {
+        let out = '';
+        for (let i = 0; i < 40; i += 1) {
+          try {
+            out = await new Promise((resolve, reject) => {
+              http.get(`http://127.0.0.1:${livePort}/api/scores`, (r) => {
+                let b = '';
+                r.on('data', (d) => { b += d; });
+                r.on('end', () => resolve(b));
+              }).on('error', reject);
+            });
+            break;
+          } catch { await wait(250); }
+        }
+        const answered = JSON.parse(out || '{}');
+        const feed = (answered.feeds || []).find((f) => f.sport === 'nfl') || {};
+        console.log('   complaint:', JSON.stringify(feed.tried));
+        /* A two hundred that says nothing and complains is a failure, not a
+           quiet day, and the chain and the report should both hear it. */
+        check('a two hundred carrying a complaint is read as one',
+          (feed.tried || []).some((t) => /Invalid League ID/.test(t.error || '')),
+          JSON.stringify(feed.tried));
+        check('and the next fixtures beside it still answer, rather than instead of it',
+          (answered.games || []).some((g) => g.away && g.away.abbr === 'Chicago Bears'),
+          JSON.stringify((answered.games || []).map((g) => g.away && g.away.abbr)));
+
+        /* And the built-in list, not just the one this test hands it. The
+           claim is structural: an address that can only hold the future must
+           never stand on the chain by itself, because a hiccup above it
+           would then answer for the whole feed. */
+        const plainPort = 8494;
+        const plainBox = start({
+          env: { ...process.env, PORT: String(plainPort), HOST: '127.0.0.1' },
+          stdio: 'ignore',
+        });
+        try {
+          let shape = '';
+          for (let i = 0; i < 40; i += 1) {
+            try {
+              shape = await new Promise((resolve, reject) => {
+                http.get(`http://127.0.0.1:${plainPort}/api/scores`, (r) => {
+                  let b = '';
+                  r.on('data', (d) => { b += d; });
+                  r.on('end', () => resolve(b));
+                }).on('error', reject);
+              });
+              break;
+            } catch { await wait(250); }
+          }
+          const lists = (JSON.parse(shape || '{}').feeds || [])
+            .filter((f) => f.sport !== 'mlb');
+          const loose = lists.flatMap((f) => (f.url || [])
+            .filter((u) => typeof u === 'string' && u.includes('eventsnextleague')));
+          const grouped = lists.flatMap((f) => (f.url || [])
+            .filter((u) => Array.isArray(u) && u.some((x) => x.includes('eventsnextleague'))));
+          console.log('   loose:', loose.length, 'grouped:', grouped.length);
+          check('next fixtures never stand alone on a chain',
+            loose.length === 0, JSON.stringify(loose));
+          check('they are asked alongside a day, and merged with it',
+            grouped.length > 0, String(grouped.length));
+        } finally {
+          plainBox.kill();
+        }
+      } finally {
+        liveBox.kill();
+      }
 
       /* ---- every address, asked ---------------------------------------- */
       /*
