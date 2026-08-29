@@ -12,7 +12,16 @@
  *   pm2 start ecosystem.config.js
  *   pm2 save
  *
- * After that, deploy.sh's `pm2 restart iptv-portal` keeps the env.
+ * AND NOTE, because it cost an afternoon: `pm2 restart iptv-portal` does NOT
+ * re-read this file. It restarts the process with the environment pm2 captured
+ * when the app was first started, so a CHANGE here deploys the file and
+ * applies nothing — silently, with no error to find. Anything that restarts
+ * the portal after editing this has to go through the file itself:
+ *
+ *   pm2 startOrRestart ecosystem.config.js --update-env
+ *
+ * scripts/auto-update.sh does that now, so a pushed change to this file does
+ * take effect unattended.
  */
 
 module.exports = {

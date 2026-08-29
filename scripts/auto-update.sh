@@ -168,7 +168,25 @@ fi
 git reset --hard --quiet "origin/$BRANCH"
 log "updated ${local_sha:0:7} -> ${remote_sha:0:7}  $(git log -1 --pretty=%s)"
 
-pm2 restart "$PM2_APP" >/dev/null
+# Restarted THROUGH the ecosystem file, not by app name, and the difference
+# matters more than it looks.
+#
+# `pm2 restart iptv-portal` restarts the process with the environment pm2
+# captured when the app was first started. A change to ecosystem.config.js —
+# which is where ARCHIVE_ROOT and DOWNLOADS_ROOT live, precisely so they
+# deploy with the code — pulls down and then does nothing, for ever, with no
+# error anywhere. That is exactly what happened when downloads were moved onto
+# the drive's writable partition in August 2026: the setting landed on the box
+# and the box kept writing to the SD card.
+#
+# `startOrRestart <file>` re-reads the file. It also starts the app if it is
+# not running, which is the right behaviour for an unattended updater.
+if [[ "$PM2_APP" == "iptv-portal" && -f "$REPO_DIR/ecosystem.config.js" ]]; then
+  pm2 startOrRestart "$REPO_DIR/ecosystem.config.js" --update-env >/dev/null
+else
+  # An overridden app name is not described by this repo's ecosystem file.
+  pm2 restart "$PM2_APP" >/dev/null
+fi
 log "restarted $PM2_APP"
 write_state applied "${remote_sha:0:7}" "${remote_sha:0:7}" 0
 
