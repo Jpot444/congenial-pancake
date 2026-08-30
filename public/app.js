@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '35.1';
+const VERSION = '35.2';
 
 const PAGE_SIZE = 60;
 
@@ -1796,6 +1796,13 @@ const multiview = {
       });
     }
 
+    /* A copy on the box needs no catalogue — see savedCopy(). */
+    const onTheBox = savedCopy(row);
+    if (onTheBox) {
+      this.closePicker();
+      return this.start(index, onTheBox);
+    }
+
     const tab = row.kind === 'series' ? 'series' : row.kind === 'live' ? 'live' : 'movies';
     this.closePicker();
 
@@ -1821,7 +1828,7 @@ const multiview = {
       return giveUp(`Couldn't load ${tab}: ${err.message}`);
     }
 
-    if (!item) return giveUp('That title is no longer in the library.');
+    if (!item) return giveUp(missingWhy(tab));
     if (item.kind !== 'series') return this.start(index, item);
 
     // The episode list is the only thing that can turn "season 2, episode 5"
@@ -4292,15 +4299,69 @@ async function loadTab(tab, { quiet = false, all = false } = {}) {
       loader.set(1, `${(data.items || []).length.toLocaleString()} titles`);
     }
 
-    store[tab] = {
+    const view = {
       categories: data.categories || [],
       items: (data.items || []).map((row) => ({ ...row, logo: img(row.logo) })),
       totals: data.totals,
     };
-    return store[tab];
+
+    /* An empty answer is never written down as the library.
+     *
+     * The box already refuses to cache one, for the reason spelled out beside
+     * its own cache: a provider that answers 200 with nothing — busy,
+     * rate-limiting, between updates — is not a provider with nothing. This
+     * side did write it down, and then never asked again, because the first
+     * line of this function returns whatever is stored. One bad answer became
+     * a session in which EVERYTHING was missing: a film sitting in downloads,
+     * a channel out of Continue watching, all of them told they were no
+     * longer in the library when the library was simply not there.
+     *
+     * Not stored means asked again on the next press, which is the whole
+     * repair. */
+    if (view.items.length) store[tab] = view;
+    return store[tab] || view;
   } finally {
     if (!quiet) loader.hide();
   }
+}
+
+/**
+ * The finished download behind a history row, as something playable.
+ *
+ * Built from the row itself rather than from the library, which is the whole
+ * point: a file on the drive is playable whether or not the provider is
+ * still selling it, and whether or not the catalogue happens to be loaded.
+ * Only films — an episode still needs its show to know which episode it is.
+ */
+function savedCopy(row) {
+  if (!row || row.kind !== 'movie') return null;
+  const job = downloadJobFor('movie', row.id);
+  if (!job || job.status !== 'done') return null;
+  return {
+    kind: 'movie',
+    id: row.id,
+    name: row.name || job.name || '',
+    ext: job.ext || 'mp4',
+    logo: row.poster || '',
+    resumeKey: row.key || `movie:${row.id}`,
+  };
+}
+
+/**
+ * Why a title could not be found, which is two different things.
+ *
+ * "No longer in the library" is a strong claim — it says the provider has
+ * stopped carrying something — and for a while it was being made whenever
+ * the library had not loaded, which is a completely different fact with a
+ * completely different remedy. Somebody told their film is gone deletes it;
+ * somebody told the library did not load presses again.
+ */
+function missingWhy(tab) {
+  const held = state.library[tab];
+  if (!held || !(held.items || []).length) {
+    return 'The library has not loaded yet — try that again in a moment.';
+  }
+  return 'That title is no longer in the library.';
 }
 
 /**
@@ -5575,6 +5636,17 @@ async function playFromHistory(row) {
   }
   const tab = row.kind === 'series' ? 'series' : row.kind === 'live' ? 'live' : 'movies';
   const wantId = String(row.kind === 'series' ? row.seriesId ?? row.id : row.id);
+
+  /* A copy on the box needs no catalogue.
+   *
+   * The file is downloaded and sitting on the drive; whether the provider
+   * still lists it is beside the point, and asking is how a film somebody
+   * owns came to be reported as gone. Same reasoning as the archive branch
+   * above, which was written for the same complaint and stopped one case
+   * short of this one. */
+  const saved = savedCopy(row);
+  if (saved) return openPlayer(saved);
+
   let item;
   try {
     item = await findTitle(tab, wantId);
@@ -5584,7 +5656,7 @@ async function playFromHistory(row) {
     loader.hide();
   }
 
-  if (!item) return toast('That title is no longer in the library.');
+  if (!item) return toast(missingWhy(tab));
   if (item.kind !== 'series') return openPlayer(item);
 
   // A show resumes into the episode itself. Landing on the show's page and
