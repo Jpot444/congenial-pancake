@@ -291,12 +291,14 @@
 </div>
 
 <!-- "tell me what you love": the seed picker for For You. Filled from the
-     box's own suggestion of films worth having an opinion about. -->
+     box's own suggestion of titles worth having an opinion about — films or
+     shows, depending on which row was being tuned, which is why the heading
+     is set from script rather than written here. -->
 <div class="modal" id="seedModal" hidden>
   <div class="modal-card seed-card">
-    <h2>What do you love?</h2>
+    <h2 id="seedTitle">What do you love?</h2>
     <p class="health-note" id="seedLead">
-      Pick a few films you would happily watch again. Nothing here is watched
+      Pick a few you would happily watch again. Nothing here is watched
       or recorded — they are only used to work out what to put in front of you.
     </p>
 

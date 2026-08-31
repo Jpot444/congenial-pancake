@@ -223,6 +223,12 @@ const SERIES = {
    * and nothing else. What the box decides is recommend.js's business and
    * has its own suite; what is checked here is that the row shows THAT and
    * not the history.
+   *
+   * `forYou` is keyed by tab below. Films and shows are two catalogues
+   * carrying two different sets of facts — a show has a genre line and no
+   * credits, a film has credits and no genre — so they are asked for and held
+   * separately, and one shared object would mean whichever tab was opened last
+   * won both rows.
    */
   console.log('\n  For You');
   const suggested = await page.evaluate(() => {
@@ -232,8 +238,8 @@ const SERIES = {
       { kind: 'movie', id: 51, name: 'Film 51' },
     ];
     const lib = state.library.movies.items;
-    forYou.items = [lib[11], lib[12]].map((i) => ({ ...i, why: ['Directed by Someone'] }));
-    forYou.needs = '';
+    forYou.movies.items = [lib[11], lib[12]].map((i) => ({ ...i, why: ['Directed by Someone'] }));
+    forYou.movies.needs = '';
     const row = buildShelves('movies').find((r) => r.title === 'For You');
     return row ? row.items.map((i) => i.id) : null;
   });
@@ -246,8 +252,8 @@ const SERIES = {
   /* And a viewer who has said nothing yet gets a question rather than a
      shelf of whatever happened to be first. */
   const asking = await page.evaluate(() => {
-    forYou.items = [];
-    forYou.needs = 'seeds';
+    forYou.movies.items = [];
+    forYou.movies.needs = 'seeds';
     const row = buildShelves('movies').find((r) => r.title === 'For You');
     return row ? { ask: Boolean(row.ask), items: row.items.length } : null;
   });
@@ -267,8 +273,8 @@ const SERIES = {
    */
   const whatever = await page.evaluate(() => ['library', 'seeds', '', 'something-new']
     .map((needs) => {
-      forYou.items = [];
-      forYou.needs = needs;
+      forYou.movies.items = [];
+      forYou.movies.needs = needs;
       const row = buildShelves('movies').find((r) => r.title === 'For You');
       return { needs, there: Boolean(row), ask: Boolean(row && row.ask) };
     }));
@@ -280,8 +286,8 @@ const SERIES = {
      which meant they stopped being reachable the moment the row worked. */
   const working = await page.evaluate(() => {
     const lib = state.library.movies.items;
-    forYou.items = [lib[11]];
-    forYou.needs = '';
+    forYou.movies.items = [lib[11]];
+    forYou.movies.needs = '';
     const row = buildShelves('movies').find((r) => r.title === 'For You');
     return { ask: Boolean(row.ask), tune: Boolean(row.tune) };
   });

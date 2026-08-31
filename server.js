@@ -4293,22 +4293,23 @@ const GUIDE_CATALOGUE = [
  * by which time somebody will have opened Live TV and filled it.
  */
 /**
- * Every film the box has a listing for, out of whatever it has cached.
+ * Everything the box has a listing for on a tab, out of whatever it has cached.
  *
  * The same trick knownLiveChannels() uses next door: the library is fetched
  * per category and per filter, so there is no one list to point at — but the
  * cache holds every page that has been asked for, and folding them together
  * is the closest thing to a catalogue this box has without going back to the
  * provider for one.
+ *
+ * `tab` is the TAB NAME, because that is what the cache key is built from —
+ * 'movies', plural, not 'movie'. The singular matched no key that has ever
+ * existed, which returned an empty catalogue, made the recommendation come
+ * back "no library", and took the whole row off the page.
  */
-function knownMovies() {
+function knownCatalogue(tab) {
   const seen = new Map();
   for (const [key, entry] of libraryCache) {
-    /* `movies`, plural. The tab is what the cache key is built from and the
-       tab is called 'movies' — the singular matched no key that has ever
-       existed, so this returned an empty catalogue, the recommendation came
-       back "no library", and the row vanished off the page. */
-    if (!key.startsWith(`v${LIBRARY_SHAPE}:movies:`)) continue;
+    if (!key.startsWith(`v${LIBRARY_SHAPE}:${tab}:`)) continue;
     for (const item of entry.payload?.items || []) {
       if (!seen.has(String(item.id))) seen.set(String(item.id), item);
     }
@@ -4316,8 +4317,40 @@ function knownMovies() {
   return [...seen.values()];
 }
 
+/** Every film the box has a listing for. */
+function knownMovies() {
+  return knownCatalogue('movies');
+}
+
+/** Every show the box has a listing for. Same trick, other tab. */
+function knownSeries() {
+  return knownCatalogue('series');
+}
+
 /** What an audience reached for, remembered across restarts of this process. */
 const similarCache = new Map();
+
+/*
+ * "Not that one" — said about a SUGGESTION, not about a title.
+ *
+ * The bin on a shelf card hides a title from the library: it is how somebody
+ * gets rid of the eleven copies of a film they will never watch, and it is
+ * meant to be permanent and everywhere. The bin on a For You card is a
+ * different sentence entirely — "stop offering me this" — and paying for it
+ * with the title itself would be a trap: the row is full of things nobody has
+ * seen, so the only way to find out whether you want one is to open it, and
+ * dismissing the ones you don't should not quietly delete them out of search
+ * and off every other shelf.
+ *
+ * So it is stored separately, per profile and per kind, and read by exactly
+ * one thing: the recommender.
+ */
+function notInterestedIds(profile, kind) {
+  const want = kind === 'series' ? 'series' : 'movie';
+  return (profile.notInterested || [])
+    .filter((key) => String(key).startsWith(`${want}:`))
+    .map((key) => String(key).slice(want.length + 1));
+}
 
 function knownLiveChannels() {
   const seen = new Map();
@@ -6851,7 +6884,7 @@ async function handleApi(req, res, pathname, query) {
   }
 
   const profileMatch =
-    /^\/api\/profiles\/([\w-]+)(\/prefs|\/history|\/rating|\/taste|\/progress|\/foryou|\/seeds)?$/.exec(pathname);
+    /^\/api\/profiles\/([\w-]+)(\/prefs|\/history|\/rating|\/taste|\/progress|\/foryou|\/seeds|\/notinterested)?$/.exec(pathname);
   if (profileMatch) {
     const data = readProfiles();
     const profile = findProfile(data, profileMatch[1]);
@@ -7075,18 +7108,25 @@ async function handleApi(req, res, pathname, query) {
      * a recommendation for a film that cannot be played here is not one.
      */
     if (suffix === '/foryou' && req.method === 'GET') {
-      const movies = knownMovies();
-      if (!movies.length) {
+      /* Films or shows. The same reckoning either way — what somebody liked,
+         who made it, what an audience reached for next — asked of the other
+         half of the catalogue. */
+      const kind = query.get('kind') === 'series' ? 'series' : 'movie';
+      const catalogue = kind === 'series' ? knownSeries() : knownMovies();
+      if (!catalogue.length) {
         return json(res, 200, {
           items: [], needs: 'library', picks: [], similar: { asked: 0, answered: 0 },
         });
       }
       const answer = await recommend.forYou({
         profile,
-        movies: movies.filter((m) => !m.adult),
+        kind,
+        catalogue: catalogue.filter((m) => !m.adult),
         categoryAffinity: tasteProfile(profile).categoryAffinity,
         people,
-        seeds: profile.tasteSeeds || [],
+        seeds: (profile.tasteSeeds || []).filter(
+          (row) => (row.kind || 'movie') === kind),
+        notInterested: notInterestedIds(profile, kind),
         cache: similarCache,
         /* Somebody else's server, so it is asked the way every other outside
            address here is asked, and it is allowed to fail. */
@@ -7119,12 +7159,61 @@ async function handleApi(req, res, pathname, query) {
         return json(res, 400, { error: 'Invalid JSON' });
       }
       const rows = Array.isArray(incoming.seeds) ? incoming.seeds : [];
-      profile.tasteSeeds = rows.slice(0, 12).map((row) => ({
+      /* Kept per kind: answering the film picker must not wipe the show
+         picker, and a show id and a film id can be the same number. Seeds
+         saved before this carried no kind and are films, which is what
+         `|| 'movie'` says on the way back out. */
+      const kind = incoming.kind === 'series' ? 'series' : 'movie';
+      const held = (profile.tasteSeeds || []).filter(
+        (row) => (row.kind || 'movie') !== kind);
+      const fresh = rows.slice(0, 12).map((row) => ({
+        kind,
         id: String(row.id || ''),
         name: String(row.name || '').slice(0, 200),
       })).filter((row) => row.id);
+      profile.tasteSeeds = [...held, ...fresh];
       writeProfiles(data);
-      return json(res, 200, { seeds: profile.tasteSeeds });
+      return json(res, 200, {
+        seeds: profile.tasteSeeds.filter((row) => (row.kind || 'movie') === kind),
+      });
+    }
+
+    /*
+     * Suggestions somebody has answered.
+     *
+     * A list of `kind:id`, and nothing else reads it — see notInterestedIds
+     * above for why this is not the same thing as the library bin. Capped,
+     * because it grows one press at a time and nothing ever prunes it; the
+     * oldest answers are the ones worth forgetting, since a row that has been
+     * refused two hundred times has bigger problems than its bookkeeping.
+     */
+    if (suffix === '/notinterested') {
+      if (req.method === 'GET') {
+        return json(res, 200, { notInterested: profile.notInterested || [] });
+      }
+      if (req.method === 'PUT') {
+        let incoming;
+        try {
+          incoming = JSON.parse(await collectRequestBody(req));
+        } catch {
+          return json(res, 400, { error: 'Invalid JSON' });
+        }
+        const kind = incoming.kind === 'series' ? 'series' : 'movie';
+        const id = String(incoming.id || '').slice(0, 64);
+        if (!id) return json(res, 400, { error: 'Which one?' });
+        const key = `${kind}:${id}`;
+        const held = (profile.notInterested || []).filter((row) => row !== key);
+        /* `on` absent means "bin it", which is the press that has a button on
+           it today. `on: false` takes it back — nothing in the app sends that
+           yet, and it is here because a list somebody can only ever add to is
+           a list somebody eventually wants undone, and the endpoint that
+           wrote it is the obvious place to ask. */
+        if (incoming.on === false) profile.notInterested = held;
+        else profile.notInterested = [...held, key].slice(-500);
+        writeProfiles(data);
+        return json(res, 200, { notInterested: profile.notInterested });
+      }
+      return json(res, 405, { error: 'Method not allowed' });
     }
 
     /* rename / restyle — open, like editing a profile on a TV app */

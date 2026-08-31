@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '35.2';
+const VERSION = '36.0';
 
 const PAGE_SIZE = 60;
 
@@ -4470,37 +4470,30 @@ const SHELF_DEFS = { movies: MOVIE_ROWS, series: SERIES_ROWS };
  * for after a film — neither of which belongs in a browser. What comes back
  * is library items with a line saying why each one is there.
  *
- * Films only, for now. A series recommendation wants the same credits index
- * built for shows, and the box does not have one yet — so the series row is
- * still the old one and still honest about being recent rather than new.
+ * Films and shows both. They are two catalogues and two sets of signals — a
+ * show has a genre line and no credits, a film has credits and no genre — so
+ * they are asked for separately and held separately. One shared object would
+ * mean opening the series tab wiped the film row, and the answer that came
+ * back last would win whichever page you were looking at.
  */
-const forYou = { items: [], needs: '', picks: [], similar: null, at: 0, asking: null };
+const forYou = {
+  movies: { items: [], needs: '', picks: [], similar: null, at: 0, asking: null },
+  series: { items: [], needs: '', picks: [], similar: null, at: 0, asking: null },
+};
+
+/** The For You state for a tab, or a blank one for a tab that has none. */
+function forYouFor(tab) {
+  return forYou[tab] || { items: [], needs: '', picks: [], similar: null, at: 0, asking: null };
+}
+
+/** Which half of the catalogue a tab is asking about. */
+const forYouKind = (tab) => (tab === 'series' ? 'series' : 'movie');
 
 function forYouItems(tab) {
-  /* Grouped like every other row of films. The box recommends out of the
-     whole catalogue, which holds every copy, so without this a row of
-     twenty-four could be eight films wearing three faces each. */
-  if (tab === 'movies') return groupVariants(forYou.items);
-
-  const lib = state.library[tab];
-  if (!lib) return [];
-  const byId = new Map(
-    lib.items.filter((i) => !profiles.isDeleted(i)).map((i) => [String(i.id), i])
-  );
-  const seen = new Set();
-  const out = [];
-
-  for (const row of state.recentlyWatched || []) {
-    // Series history rows are per-episode; seriesId points at the show.
-    const key = String(row.seriesId ?? row.id);
-    if (row.kind !== 'series') continue;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    // Prefer the library record — it carries ext and artwork.
-    const item = byId.get(key);
-    if (item) out.push(item);
-  }
-  return out.slice(0, 24);
+  /* Grouped like every other row. The box recommends out of the whole
+     catalogue, which holds every copy, so without this a row of twenty-four
+     could be eight titles wearing three faces each. */
+  return groupVariants(forYouFor(tab).items);
 }
 
 /**
@@ -4510,31 +4503,80 @@ function forYouItems(tab) {
  * something or finishes a film, not while they are looking at the page. The
  * hidden titles are taken out here rather than on the box, which does not
  * know about this profile's deletions.
+ *
+ * Which is a different list from the one the For You bin writes: that one
+ * lives on the box, is read only by the recommender, and does not hide
+ * anything from anywhere else. See `notInterested` below.
  */
-async function loadForYou({ force = false } = {}) {
-  if (forYou.asking) return forYou.asking;
-  if (!force && forYou.at && Date.now() - forYou.at < 5 * 60 * 1000) return null;
+async function loadForYou({ force = false, tab = 'movies' } = {}) {
+  const held = forYou[tab === 'series' ? 'series' : 'movies'];
+  if (held.asking) return held.asking;
+  if (!force && held.at && Date.now() - held.at < 5 * 60 * 1000) return null;
   if (!profiles.current) return null;
-  forYou.asking = (async () => {
+  held.asking = (async () => {
     try {
-      const data = await api(`/api/profiles/${profiles.current.id}/foryou`);
-      forYou.items = (data.items || []).filter((i) => !profiles.isDeleted(i));
-      forYou.needs = data.needs || '';
-      forYou.picks = (data.picks || []).filter((i) => !profiles.isDeleted(i));
-      forYou.similar = data.similar || null;
-      forYou.at = Date.now();
-      if (state.tab === 'movies') render();
+      const data = await api(`/api/profiles/${profiles.current.id}/foryou`,
+        { kind: forYouKind(tab) });
+      held.items = (data.items || []).filter((i) => !profiles.isDeleted(i));
+      held.needs = data.needs || '';
+      held.picks = (data.picks || []).filter((i) => !profiles.isDeleted(i));
+      held.similar = data.similar || null;
+      held.at = Date.now();
+      if (state.tab === 'movies' || state.tab === 'series') render();
     } catch {
       /* A row that cannot be built is a row that is not there. Everything
          else on the page is unaffected, and it is asked again on the next
          visit. */
-      forYou.at = Date.now();
+      held.at = Date.now();
     } finally {
-      forYou.asking = null;
+      held.asking = null;
     }
   })();
-  return forYou.asking;
+  return held.asking;
 }
+
+/**
+ * "Not that one" — about a suggestion, not about a title.
+ *
+ * The bin on an ordinary card hides a title from the library: every shelf,
+ * search, everywhere, on purpose. The bin inside For You says something much
+ * smaller — stop offering me this — and it must not cost the title, because
+ * this row is made entirely of things nobody here has seen and opening one is
+ * the only way to find out whether you want it.
+ *
+ * So it removes the card from the row now and tells the box, which keeps the
+ * list beside the ratings and hands it to nothing but the recommender.
+ */
+const notInterested = {
+  async add(item, tab) {
+    if (!profiles.current || !item) return;
+    const kind = forYouKind(tab);
+    const id = String(item.id);
+    const held = forYou[tab === 'series' ? 'series' : 'movies'];
+    /* Taken off the row before the round trip. The box is on the other side
+       of a Tailscale link and the press has to land now. A grouped card
+       carries its copies with it, and every one of them is the same
+       suggestion — so all of them go. */
+    const ids = new Set([id, ...(item.variants || []).map((v) => String(v.id))]);
+    held.items = held.items.filter((row) => !ids.has(String(row.id)));
+    held.picks = held.picks.filter((row) => !ids.has(String(row.id)));
+    render();
+    try {
+      for (const one of ids) {
+        // eslint-disable-next-line no-await-in-loop
+        await fetch(`/api/profiles/${profiles.current.id}/notinterested`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ kind, id: one }),
+        });
+      }
+    } catch {
+      /* Said and not written down. The row is right until the page is
+         reloaded, and the press can be made again. */
+    }
+    toast(`Won't suggest ${item.name} again — it's still in your library.`);
+  },
+};
 
 /**
  * A different forty every time you come back.
@@ -4584,7 +4626,7 @@ function buildShelves(tab) {
   for (const def of SHELF_DEFS[tab] || []) {
     if (def.special === 'recent') {
       const items = forYouItems(tab);
-      /* On Movies this row is always here.
+      /* On Movies and Series this row is always here.
        *
        * It used to appear only when it had something, which sounds tidy and
        * is a trap: every way of having nothing then looked identical to the
@@ -4595,8 +4637,16 @@ function buildShelves(tab) {
        *
        * A row that can vanish is worse than the row it replaced. This one
        * says what it has, or asks, or says why it cannot. */
-      if (tab === 'movies') {
-        rows.push({ title: def.title, items, ask: !items.length, tune: items.length > 0 });
+      if (tab === 'movies' || tab === 'series') {
+        rows.push({
+          title: def.title,
+          items,
+          ask: !items.length,
+          tune: items.length > 0,
+          /* Marked, so the cards on it get the bin that answers a
+             suggestion rather than the one that hides a title. */
+          forYou: true,
+        });
       } else if (items.length) {
         rows.push({ title: def.title, items });
       }
@@ -5121,24 +5171,28 @@ function renderRows() {
       /* Three ways to have nothing, and they are not the same thing. Saying
          "pick some films" when the library has not loaded sends somebody to
          a picker that will be empty too. */
-      const note = forYou.needs === 'library'
-        ? 'The box has not read the film library yet. Open Movies again in a '
-          + 'moment — and meanwhile you can still set a recommendation key here.'
-        : forYou.at === 0
+      const shows = state.tab === 'series';
+      const these = shows ? 'shows' : 'films';
+      const held = forYouFor(state.tab);
+      const note = held.needs === 'library'
+        ? `The box has not read the ${shows ? 'series' : 'film'} library yet. Open `
+          + `${shows ? 'Series' : 'Movies'} again in a moment — and meanwhile you can `
+          + 'still set a recommendation key here.'
+        : held.at === 0
           ? 'Working out what to put here…'
-          : 'Pick a few films and this row fills with things you have not seen — '
+          : `Pick a few ${these} and this row fills with things you have not seen — `
             + 'by who made them, and by what other people reached for next.';
       ask.append(
         Object.assign(el('span', 'foryou-ask-title'), { textContent: 'Tell me what you love' }),
         Object.assign(el('span', 'foryou-ask-note'), { textContent: note }),
-        Object.assign(el('span', 'foryou-ask-go'), { textContent: 'Pick some films' })
+        Object.assign(el('span', 'foryou-ask-go'), { textContent: `Pick some ${these}` })
       );
-      ask.addEventListener('click', () => seedPicker.open());
+      ask.addEventListener('click', () => seedPicker.open(state.tab));
       track.append(ask);
     }
     // Cap each shelf; the full category is still reachable through search.
     for (const item of row.items.slice(0, 40)) {
-      const card = cardFor(item);
+      const card = cardFor(item, { forYou: row.forYou ? state.tab : '' });
       card.classList.add('rail-card');
       if (item.why && item.why.length) {
         /* Why this one, in the row rather than behind a hover: a
@@ -5161,12 +5215,12 @@ function renderRows() {
       tune.append(
         Object.assign(el('span', 'foryou-ask-title'), { textContent: 'Tune these' }),
         Object.assign(el('span', 'foryou-ask-note'), {
-          textContent: 'Change the films these are based on, or set a key so the row '
-            + 'can use what other audiences watched next.',
+          textContent: `Change the ${state.tab === 'series' ? 'shows' : 'films'} these are `
+            + 'based on, or set a key so the row can use what other audiences watched next.',
         }),
         Object.assign(el('span', 'foryou-ask-go'), { textContent: 'Open' })
       );
-      tune.addEventListener('click', () => seedPicker.open());
+      tune.addEventListener('click', () => seedPicker.open(state.tab));
       track.append(tune);
     }
 
@@ -5257,7 +5311,11 @@ function renderShelf() {
   state.filtered = row.items;
 
   const frag = document.createDocumentFragment();
-  for (const item of slice) frag.append(cardFor(item));
+  /* The full page of a row is the same row, so a card on it is the same card
+     — including which bin it carries. Opening For You in full and finding the
+     library bin there would mean the same poster meant two different things
+     depending on how much of the row was on screen. */
+  for (const item of slice) frag.append(cardFor(item, { forYou: row.forYou ? state.tab : '' }));
   grid.append(frag);
 
   $('#emptyState').hidden = true;
@@ -5499,7 +5557,14 @@ const DELETED_CATEGORY = '__deleted__';
 const DELETED_CATS = '__deletedcats__';
 const canDelete = (tab) => tab === 'movies' || tab === 'series' || tab === 'live';
 
-function cardFor(item) {
+/**
+ * A poster.
+ *
+ * `opts.forYou` is the tab whose recommendation row this card is on, or ''
+ * for every other card in the app. It changes exactly one thing — which bin
+ * the card gets — and the difference matters: see below.
+ */
+function cardFor(item, opts = {}) {
   const card = el('button', 'card');
 
   const art = el('div', 'card-art');
@@ -5552,11 +5617,38 @@ function cardFor(item) {
     art.append(bar);
   }
 
-  // Hide a title you never want to see again, or put it back from the bin.
-  // Revealed on hover so it is not sitting on every poster; in the bin it is
-  // always there, since that is the only way back and hover is not a thing on
-  // a phone.
-  if (canDelete(state.tab)) {
+  /* On For You, the bin answers the SUGGESTION.
+   *
+   * Everywhere else this icon hides a title from the library — every shelf,
+   * every search, permanently, which is what somebody wants for the eleven
+   * copies of a film they will never watch. On a recommendation row that
+   * would be a trap. The whole row is things nobody here has seen, so the
+   * only way to know whether you want one is to open it, and saying "not
+   * this" about a guess should not delete a title out of a library you have
+   * not looked at yet.
+   *
+   * Same icon, because it means the same thing to a hand: make this go away.
+   * Different sentence, because the thing being made to go away is different.
+   * Always visible rather than on hover — this is the one place the press is
+   * part of using the row rather than housekeeping, and hover is not a thing
+   * on a phone. */
+  if (opts.forYou) {
+    const bin = el('button', 'icon-btn card-bin is-foryou');
+    bin.title = 'Not interested — stop suggesting this, keep it in the library';
+    bin.setAttribute('aria-label', bin.title);
+    bin.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/>'
+      + '<path d="M10 11v6M14 11v6"/></svg>';
+    bin.addEventListener('click', (event) => {
+      // The poster underneath opens the player.
+      event.stopPropagation();
+      notInterested.add(item, opts.forYou);
+    });
+    art.append(bin);
+  } else if (canDelete(state.tab)) {
+    // Hide a title you never want to see again, or put it back from the bin.
+    // Revealed on hover so it is not sitting on every poster; in the bin it is
+    // always there, since that is the only way back and hover is not a thing on
+    // a phone.
     const gone = profiles.isDeleted(item);
     const bin = el('button', `icon-btn card-bin${gone ? ' is-restore' : ''}`);
     bin.title = gone ? 'Put back' : 'Hide this — it stops showing in lists and search';
@@ -6227,16 +6319,24 @@ const programmePanel = {
  */
 const seedPicker = {
   chosen: new Set(),
+  /* Which row was being tuned. Films and shows are separate questions with
+     separate answers, and saving one must not wipe the other. */
+  tab: 'movies',
 
-  open() {
+  open(tab) {
+    this.tab = tab === 'series' ? 'series' : 'movies';
     this.chosen = new Set();
     $('#seedError').hidden = true;
     $('#seedModal').hidden = false;
+    $('#seedTitle').textContent = this.tab === 'series'
+      ? 'Which shows do you love?' : 'Which films do you love?';
     this.paint();
     this.paintKey();
     // The picks come with the recommendation, so a row that has never been
     // asked for has none to show yet.
-    if (!forYou.picks.length) loadForYou({ force: true }).then(() => this.paint());
+    if (!forYouFor(this.tab).picks.length) {
+      loadForYou({ force: true, tab: this.tab }).then(() => this.paint());
+    }
   },
 
   close() {
@@ -6245,12 +6345,13 @@ const seedPicker = {
 
   paint() {
     const grid = $('#seedGrid');
+    const picks = forYouFor(this.tab).picks;
     grid.innerHTML = '';
-    if (!forYou.picks.length) {
+    if (!picks.length) {
       grid.append(Object.assign(el('p', 'health-note'), { textContent: 'Asking the box…' }));
       return;
     }
-    for (const film of groupVariants(forYou.picks)) {
+    for (const film of groupVariants(picks)) {
       const tile = el('button', 'seed-tile');
       tile.type = 'button';
       if (this.chosen.has(String(film.id))) tile.classList.add('on');
@@ -6313,7 +6414,11 @@ const seedPicker = {
       field.value = '';
       await this.paintKey();
       toast(data.set ? 'Saved. Suggestions will use it.' : 'Key removed.');
-      await loadForYou({ force: true });
+      // Both rows lean on it, so both are worked out again.
+      await Promise.all([
+        loadForYou({ force: true, tab: 'movies' }),
+        loadForYou({ force: true, tab: 'series' }),
+      ]);
     } catch (err) {
       error.textContent = err.message;
       error.hidden = false;
@@ -6321,7 +6426,7 @@ const seedPicker = {
   },
 
   async save() {
-    const seeds = forYou.picks
+    const seeds = forYouFor(this.tab).picks
       .filter((film) => this.chosen.has(String(film.id)))
       .map((film) => ({ id: String(film.id), name: film.name || '' }));
     if (seeds.length < 3) return;
@@ -6332,7 +6437,7 @@ const seedPicker = {
       const res = await fetch(`/api/profiles/${profiles.current.id}/seeds`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seeds }),
+        body: JSON.stringify({ seeds, kind: forYouKind(this.tab) }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -6340,7 +6445,7 @@ const seedPicker = {
       }
       this.close();
       toast('Thanks — working out what you might like.');
-      await loadForYou({ force: true });
+      await loadForYou({ force: true, tab: this.tab });
     } catch (err) {
       error.textContent = err.message;
       error.hidden = false;
@@ -7564,8 +7669,9 @@ function filmCard(item) {
     paintThumbs();
     await saveRating(key, value);
     /* A thumb is the strongest thing anybody says to this box, so For You is
-       worked out again rather than waiting out its five minutes. */
-    loadForYou({ force: true });
+       worked out again rather than waiting out its five minutes — the row for
+       whichever half of the catalogue was just rated. */
+    loadForYou({ force: true, tab: item.kind === 'series' ? 'series' : 'movies' });
     toast(value > 0 ? 'Thumbs up — For You will lean on this.'
       : value < 0 ? 'Thumbs down — and nothing like it either.'
         : 'Rating cleared.');
@@ -8435,7 +8541,7 @@ function render() {
     /* Asked for once the film library is actually here, since the box builds
        its answer out of the same catalogue. It re-renders when it lands, and
        does nothing at all for five minutes afterwards. */
-    if (state.tab === 'movies') loadForYou();
+    if (state.tab === 'movies' || state.tab === 'series') loadForYou({ tab: state.tab });
     return state.shelf ? renderShelf() : renderRows();
   }
   if (liveCatsMode && state.library.live) return renderLiveCategories();

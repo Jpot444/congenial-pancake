@@ -424,6 +424,238 @@ const watchedHeat = (extra = {}) => ({
   check('and the answer says the asking did not work',
     /403/.test(bare.similar.error || ''), JSON.stringify(bare.similar));
 
+  /* ---- and the same row for shows -------------------------------------- */
+  /*
+   * "I want to add the same recommendation 'for you' section to the series tab
+   *  so I can be recommended new series to watch based on my ratings and
+   *  viewing history."
+   *
+   * The same reckoning, asked of the other half of the catalogue — but the two
+   * halves do not carry the same facts, and pretending they do is how a
+   * generalisation quietly breaks.
+   *
+   *   HISTORY IS PER EPISODE, and a viewer never rates one. The thumb on a
+   *   show card is filed under `series:<show>`; the episode rows are filed
+   *   under `series:<show>:s1e4`. Reading `ratings[row.key]` — which is what
+   *   the film half does and is right about — finds nothing at all for a show.
+   *
+   *   CREDITS ARE FOR FILMS. people.js is built out of get_vod_info, which the
+   *   provider answers about films. Asking it about a series id gets nothing
+   *   back, or worse, gets a film that happens to share the number.
+   *
+   *   BUT SHOWS CARRY A GENRE and films do not. So the show half has a local
+   *   signal of its own, and it is the one that has to do the work when there
+   *   is no credits index to lean on.
+   */
+  console.log('\n  and the same row for shows');
+  const SHOWS = [
+    { kind: 'series', id: '10', name: 'The Wire', genre: 'Crime, Drama',
+      categoryId: 'hbo', rating: '9.3', logo: 'w.jpg' },
+    { kind: 'series', id: '11', name: 'The Sopranos', genre: 'Crime, Drama',
+      categoryId: 'hbo', rating: '9.2', logo: 's.jpg' },
+    { kind: 'series', id: '12', name: 'Bluey', genre: 'Kids, Animation',
+      categoryId: 'kids', rating: '9.4', logo: 'b.jpg' },
+    { kind: 'series', id: '13', name: 'Nobody Knows This Show', genre: 'Talk',
+      categoryId: 'misc', rating: '6.1', logo: 'n.jpg' },
+  ];
+
+  /* Four episodes of one show, the way the app actually writes them: named
+     per episode, keyed per episode, pointed at the show by seriesId. */
+  const watchedTheWire = {
+    ratings: {},
+    history: [1, 2, 3, 4].map((n) => ({
+      kind: 'series', id: '10', seriesId: '10',
+      key: `series:10:s1e${n}`, name: `The Wire — S1E${n}`,
+      categoryId: 'hbo', completed: true, duration: 3600, position: 3600,
+    })),
+  };
+
+  const shows = await recommend.forYou({
+    profile: watchedTheWire,
+    kind: 'series',
+    catalogue: SHOWS,
+    categoryAffinity: [{ kind: 'series', categoryId: 'hbo', score: 10 }],
+    people,
+    seeds: [],
+    cache: new Map(),
+    fetchJson: null,
+  });
+  const showIds = shows.items.map((i) => i.id);
+  console.log('   recommended:', JSON.stringify(shows.items.map((i) => [i.name, i.why])));
+  check('a show that was watched is not recommended back',
+    !showIds.includes('10'), JSON.stringify(showIds));
+  /* The genre line is the show half's answer to the credits index. Without it
+     there is no local signal at all and the row is empty whatever anybody
+     watched. */
+  check('another show in the same genres is',
+    showIds.includes('11'), JSON.stringify(showIds));
+  const sopranos = shows.items.find((i) => i.id === '11');
+  check('and it says which genres, because that is a reason you can disagree with',
+    sopranos && /crime|drama/i.test((sopranos.why || []).join(' ')),
+    JSON.stringify(sopranos && sopranos.why));
+  /* Bluey is the best-rated thing in that list and shares nothing. A rating is
+     a tiebreak, never a reason. */
+  check('and an unrelated show is not, however well rated',
+    !showIds.includes('12'), JSON.stringify(showIds));
+
+  console.log('\n  a thumb on a show is filed on the show, not on an episode');
+  const thumbedDown = await recommend.forYou({
+    profile: {
+      // Where the show card actually writes it. The episode rows are elsewhere.
+      ratings: { 'series:10': -1 },
+      history: watchedTheWire.history,
+    },
+    kind: 'series',
+    catalogue: SHOWS,
+    categoryAffinity: [],
+    people,
+    seeds: [],
+    cache: new Map(),
+    fetchJson: null,
+  });
+  console.log('   after a thumb down:', JSON.stringify(thumbedDown.items.map((i) => i.name)));
+  /* Read from the episode key this would be no signal at all, the four
+     finished episodes would still read as a like, and The Sopranos would be
+     recommended off the back of a show that was actively disliked. */
+  check('so a disliked show pushes its genres down rather than up',
+    !thumbedDown.items.some((i) => i.id === '11'),
+    JSON.stringify(thumbedDown.items.map((i) => i.id)));
+  /* And that it was READ, not merely lost. With the one show in the history
+     disliked there is nothing left to guess from, and the honest answer is to
+     ask — which is a different state from a row that came out empty. */
+  check('and with nothing else said, the row asks instead of sitting blank',
+    thumbedDown.needs === 'seeds' && thumbedDown.picks.length > 0,
+    JSON.stringify({ needs: thumbedDown.needs, picks: thumbedDown.picks.length }));
+
+  /* A thumb down has to be able to push something OFF a row it would
+     otherwise be on. With only the loathed column filled there is nothing
+     'loved' to compare against, and reading the penalty only when there is
+     would make a lone thumb down the one gesture that does nothing. */
+  const mixed = await recommend.forYou({
+    profile: {
+      ratings: { 'series:10': -1, 'series:12': 1 },
+      history: [
+        ...watchedTheWire.history,
+        { kind: 'series', id: '12', seriesId: '12', key: 'series:12:s1e1',
+          name: 'Bluey — S1E1', completed: true, duration: 600, position: 600 },
+      ],
+    },
+    kind: 'series',
+    catalogue: [...SHOWS,
+      // Kids AND crime: liked for one word, loathed for the other.
+      { kind: 'series', id: '14', name: 'Awkward Crossover', genre: 'Kids, Crime',
+        categoryId: 'kids', rating: '7.0', logo: 'x.jpg' }],
+    categoryAffinity: [{ kind: 'series', categoryId: 'kids', score: 10 }],
+    people,
+    seeds: [],
+    cache: new Map(),
+    fetchJson: null,
+  });
+  const mixedIds = mixed.items.map((i) => i.id);
+  console.log('   with a like and a dislike:',
+    JSON.stringify(mixed.items.map((i) => [i.name, i.why])));
+  check('a liked genre still recommends',
+    mixedIds.includes('14'), JSON.stringify(mixedIds));
+  /* The Sopranos is nothing but the disliked show's two genres. */
+  check('and a disliked one keeps its shows off the row',
+    !mixedIds.includes('11'), JSON.stringify(mixedIds));
+  const crossover = mixed.items.find((i) => i.id === '14');
+  check('with the reason naming the word that was liked, not the one that was not',
+    crossover && /kids/i.test((crossover.why || []).join(' '))
+    && !/crime/i.test((crossover.why || []).join(' ')),
+    JSON.stringify(crossover && crossover.why));
+
+  console.log('\n  and the service is asked about shows, not about films');
+  const showUrls = [];
+  await recommend.forYou({
+    profile: watchedTheWire,
+    kind: 'series',
+    catalogue: SHOWS,
+    categoryAffinity: [],
+    people,
+    seeds: [],
+    cache: new Map(),
+    tmdbKey: '00000000000000000000000000000000',
+    fetchJson: async (url) => {
+      showUrls.push(url);
+      if (url.includes('/search/tv')) return { results: [{ id: 1438, name: 'The Wire' }] };
+      // A show is `name` where a film is `title`. Reading only one of them is
+      // how the whole show half comes back empty.
+      if (url.includes('/recommendations')) return { results: [{ name: 'Nobody Knows This Show' }] };
+      return { results: [] };
+    },
+  });
+  console.log('   asked:', JSON.stringify(showUrls.map((u) => u.split('?')[0])));
+  /* That service keeps films and shows in separate halves under different
+     words, and answers about neither if asked the wrong way. */
+  check('the tv half of the service is what gets asked',
+    showUrls.some((u) => u.includes('/search/tv'))
+    && !showUrls.some((u) => u.includes('/search/movie')),
+    JSON.stringify(showUrls.map((u) => u.split('?')[0])));
+  /* History is written per episode and named for one — 'The Wire — S1E4'. The
+     thing to ask an audience about is the show. */
+  check('and about the show rather than about one episode of it',
+    showUrls[0] && /query=The%20Wire(&|$)/.test(showUrls[0])
+    && !/S1E/i.test(showUrls[0]), showUrls[0]);
+
+  console.log('\n  and a film and a show that share a title are two questions');
+  /* Fargo is a film and Fargo is a show. One cache keyed on the title alone
+     would answer the second with the first's audience. */
+  const shared = new Map();
+  const sharedUrls = [];
+  const ask = async (kind) => recommend.forYou({
+    profile: {
+      ratings: {},
+      history: [{ kind: kind === 'series' ? 'series' : 'movie', id: '1', seriesId: '1',
+        key: 'x', name: 'Fargo', completed: true, duration: 10, position: 10 }],
+    },
+    kind,
+    catalogue: [],
+    categoryAffinity: [],
+    people,
+    seeds: [],
+    cache: shared,
+    fetchJson: async (url) => { sharedUrls.push(url); return { Similar: { Results: [] } }; },
+  });
+  await ask('movie');
+  const afterFilm = sharedUrls.length;
+  await ask('series');
+  console.log('   asks:', afterFilm, '->', sharedUrls.length);
+  check('asking about the show is not answered out of the film\'s cache',
+    sharedUrls.length > afterFilm, String(sharedUrls.length));
+
+  /* ---- not that one ---------------------------------------------------- */
+  /*
+   * "Only inside of the For You page on both tabs I want the trash can icon to
+   *  remove it out of my recommendation page, but not hide it from the library
+   *  like it does on other pages."
+   *
+   * Two different sentences wearing the same icon. The library bin means "I
+   * never want to see this title"; the For You bin means "stop offering me
+   * this guess". Paying for the second with the first would be a trap: this
+   * row is made entirely of things nobody here has seen, so the only way to
+   * find out whether you want one is to open it.
+   */
+  console.log('\n  and a suggestion that was answered');
+  const refusedOne = await recommend.forYou({
+    profile,
+    movies: MOVIES,
+    categoryAffinity: AFFINITY,
+    people,
+    seeds: [],
+    notInterested: ['2'],
+    cache: new Map(),
+    fetchJson: null,
+  });
+  const leftIds = refusedOne.items.map((i) => i.id);
+  console.log('   after binning The Insider:', JSON.stringify(leftIds));
+  check('it stops being suggested', !leftIds.includes('2'), JSON.stringify(leftIds));
+  /* And the row is still a row. Binning the one thing at the top of it must
+     not empty it — the next-best answer moves up, which is the whole point of
+     being able to say no to one. */
+  check('and the row keeps going with the next best',
+    leftIds.length > 0 && leftIds[0] === '4', JSON.stringify(leftIds));
+
   console.log(`\n  ${fails.length ? `FAILED: ${fails.join(', ')}` : 'all good'}`);
   process.exit(fails.length ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

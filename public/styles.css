@@ -1081,6 +1081,13 @@ svg {
 .card .card-bin.is-restore { opacity: 1; }
 .card .card-bin.is-restore:hover { color: #7FD4A0; border-color: #7FD4A0; }
 
+/* On For You the same applies for a different reason: answering a suggestion
+   is part of using the row rather than housekeeping, so it is not a secret. A
+   little quieter than the restore arrow until it is pointed at, since it sits
+   on every poster of the row rather than only on the bin's. */
+.card .card-bin.is-foryou { opacity: .62; }
+.card:hover .card-bin.is-foryou { opacity: 1; }
+
 /* Left of the bin, same plate. Stays on once it is on: a pin you cannot see
    is a setting you forget you made, and the order of the grid then looks
    arbitrary rather than chosen. */

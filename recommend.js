@@ -60,6 +60,11 @@ const WEIGHT = {
   /* The shelf a film sits on, weighted by how much of this profile's
      watching happened there. */
   category: 3,
+  /* A genre word shared with something that was liked. Shows carry one and
+     films do not, so this is the show half's answer to the credits index —
+     weaker than a director, because 'Drama' is half the catalogue. */
+  genre: 2,
+  genreCap: 3,
   /* The provider's own rating, as a tiebreak between things that are
      otherwise equally likely. Never enough to recommend something on its
      own — that is a chart, not a recommendation. */
@@ -112,6 +117,21 @@ function foldTitle(name) {
     .trim();
 }
 
+/**
+ * The genre words on a listing, as a set of comparable things.
+ *
+ * Providers write this line every way there is — 'Crime, Drama', 'Crime &
+ * Drama', 'Action/Adventure' — so it is split on all of them and lowered.
+ * 'Sci-Fi' keeps its hyphen; a slash is a separator and a hyphen is a word.
+ */
+function genreWords(line) {
+  return String(line || '')
+    .toLowerCase()
+    .split(/[,/|&;]+|\band\b/)
+    .map((word) => word.replace(/\s+/g, ' ').trim())
+    .filter((word) => word.length > 2 && word.length < 30);
+}
+
 /** The year in a title, when it carries one. */
 function yearOf(name) {
   const found = /\b(19|20)\d{2}\b/.exec(String(name || ''));
@@ -121,53 +141,91 @@ function yearOf(name) {
 /* ------------------------------------------------------------- the taste ── */
 
 /**
+ * A history row's title, with the episode marker taken back off.
+ *
+ * Series rows are written per episode and named for one: 'The Wire — S1E4'.
+ * The thing to ask an audience about is the show.
+ */
+function showTitle(name) {
+  return String(name || '').replace(/\s+[—-]\s+S\d+E\d+\s*$/i, '').trim();
+}
+
+/**
  * What this profile has said it likes, strongest first.
  *
- * Three kinds of saying so, and they are not equal: a thumb is a sentence, a
- * film watched to the end is a strong hint, and a film half watched is a
- * weak one. A thumb DOWN is not a weak like — it is the one signal here that
+ * Three kinds of saying so, and they are not equal: a thumb is a sentence,
+ * something watched to the end is a strong hint, and something half watched is
+ * a weak one. A thumb DOWN is not a weak like — it is the one signal here that
  * subtracts, and anything sharing its credits is pushed down rather than up.
+ *
+ * ── AND A SHOW IS NOT A FILM ─────────────────────────────────────────────
+ * History is written per EPISODE, and a viewer never rates one: the thumb on
+ * a show card is filed under `series:<show>` while the episode rows are filed
+ * under `series:<show>:s1e4`. So the rows are gathered up under the show
+ * before any of this is asked, and the thumb is looked for where it actually
+ * lives. Finishing one episode of a thirteen-part show is also a much weaker
+ * statement than finishing a film — but finishing three is a stronger one, so
+ * episodes count and a show somebody has stayed with is treated as a like.
  */
-function tasteOf(profile, seeds) {
+function tasteOf(profile, seeds, kind = 'movie') {
   const ratings = profile.ratings || {};
   const history = profile.history || [];
+  const shows = kind === 'series';
 
   const liked = new Map();
   const disliked = new Set();
   const seen = new Set();
 
-  const add = (key, id, name, weight) => {
+  const add = (id, name, weight) => {
     if (!id) return;
     const held = liked.get(String(id));
-    if (held) held.weight = Math.max(held.weight, weight);
-    else liked.set(String(id), { id: String(id), name: name || '', weight });
+    if (held) {
+      held.weight = Math.max(held.weight, weight);
+      if (!held.name && name) held.name = name;
+    } else liked.set(String(id), { id: String(id), name: name || '', weight });
   };
 
+  /* Gathered under the thing being recommended: one film is one row, one show
+     is however many episodes were opened. */
+  const held = new Map();
   for (const row of history) {
-    if (row.kind !== 'movie') continue;
-    seen.add(String(row.id));
-    const thumb = ratings[row.key] || 0;
+    if ((row.kind || '') !== kind) continue;
+    const id = String(shows ? (row.seriesId ?? row.id) : row.id);
+    if (!id || id === 'undefined') continue;
+    seen.add(id);
+    const at = held.get(id) || { id, name: '', finished: 0, most: 0 };
+    if (!at.name) at.name = shows ? showTitle(row.name) : row.name || '';
+    if (row.completed) at.finished += 1;
+    else {
+      const ratio = row.duration ? (row.position || 0) / row.duration : 0;
+      if (ratio > 0.4) at.most += 1;
+    }
+    held.set(id, at);
+  }
+
+  for (const row of held.values()) {
+    // Where the viewer's thumb actually is: the card's key, not an episode's.
+    const thumb = ratings[`${kind}:${row.id}`] || 0;
     if (thumb < 0) {
-      disliked.add(String(row.id));
+      disliked.add(row.id);
       continue;
     }
     if (thumb > 0) {
-      add(row.key, row.id, row.name, LIKED.thumbUp);
+      add(row.id, row.name, LIKED.thumbUp);
       continue;
     }
-    if (row.completed) {
-      add(row.key, row.id, row.name, LIKED.completed);
-      continue;
-    }
-    const ratio = row.duration ? (row.position || 0) / row.duration : 0;
-    if (ratio > 0.4) add(row.key, row.id, row.name, LIKED.most);
+    /* Staying with a show across several episodes says as much as a thumb.
+       For a film there is only ever one, so this reads as it always did. */
+    if (row.finished >= 3) add(row.id, row.name, LIKED.thumbUp);
+    else if (row.finished) add(row.id, row.name, LIKED.completed);
+    else if (row.most) add(row.id, row.name, LIKED.most);
   }
 
-  /* The films somebody picked by hand when asked. Worth a thumbs-up, because
+  /* The titles somebody picked by hand when asked. Worth a thumbs-up, because
      that is exactly what the question asked for — and NOT added to `seen`,
      since picking a favourite is not watching it here. */
   for (const seed of seeds || []) {
-    add(`movie:${seed.id}`, seed.id, seed.name, LIKED.seed);
+    add(seed.id, seed.name, LIKED.seed);
   }
 
   return {
@@ -260,24 +318,31 @@ const SOURCES = [
     /* Two steps: find the film, then ask what its audience went on to watch.
        Both answers are cached under the film's title, so a seed costs this
        pair once a week rather than once a page. */
-    async titles(title, { fetchJson, key }) {
+    async titles(title, { fetchJson, key, kind }) {
       const auth = tmdbAuth(key);
       if (!auth) return [];
+      // That service keeps films and shows in separate halves, under
+      // different words, and answers about neither if asked the wrong way.
+      const half = kind === 'series' ? 'tv' : 'movie';
       const at = (path, extra) => `https://api.themoviedb.org/3/${path}`
         + (auth.query || extra ? `?${[auth.query, extra].filter(Boolean).join('&')}` : '');
 
       const found = await fetchJson(
-        at('search/movie', `include_adult=false&query=${encodeURIComponent(title)}`),
+        at(`search/${half}`, `include_adult=false&query=${encodeURIComponent(title)}`),
         auth.headers);
       const first = (found?.results || [])[0];
       if (!first || !first.id) return [];
       const out = [];
-      for (const kind of ['recommendations', 'similar']) {
+      for (const list of ['recommendations', 'similar']) {
         // eslint-disable-next-line no-await-in-loop
-        const list = await fetchJson(at(`movie/${first.id}/${kind}`), auth.headers);
-        for (const row of list?.results || []) {
-          const name = String(row?.title || row?.original_title || '').trim();
-          if (name) out.push(name);
+        const near = await fetchJson(at(`${half}/${first.id}/${list}`), auth.headers);
+        for (const row of near?.results || []) {
+          /* A film is `title` and a show is `name`. Same field, different
+             word, and reading only one of them is how the whole show half
+             comes back empty. */
+          const named = String(row?.title || row?.name
+            || row?.original_title || row?.original_name || '').trim();
+          if (named) out.push(named);
         }
         // The audience answer on its own is enough when there is one.
         if (out.length >= 10) break;
@@ -287,14 +352,15 @@ const SOURCES = [
   },
   {
     name: 'taste.io',
-    async titles(title, { fetchJson }) {
-      const found = await fetchJson('https://www.taste.io/api/items?type=movie&limit=1'
+    async titles(title, { fetchJson, kind }) {
+      const type = kind === 'series' ? 'tv' : 'movie';
+      const found = await fetchJson(`https://www.taste.io/api/items?type=${type}&limit=1`
         + `&q=${encodeURIComponent(title)}`);
       const first = (found?.items || found?.data || [])[0];
       const slug = first?.slug || first?.id;
       if (!slug) return [];
       const near = await fetchJson(
-        `https://www.taste.io/api/items/${encodeURIComponent(slug)}/related?type=movie`);
+        `https://www.taste.io/api/items/${encodeURIComponent(slug)}/related?type=${type}`);
       return (near?.items || near?.data || [])
         .map((row) => String(row?.name || row?.title || '').trim())
         .filter(Boolean);
@@ -302,8 +368,9 @@ const SOURCES = [
   },
   {
     name: 'tastedive',
-    async titles(title, { fetchJson }) {
-      const body = await fetchJson('https://tastedive.com/api/similar?type=movie&limit=20'
+    async titles(title, { fetchJson, kind }) {
+      const type = kind === 'series' ? 'show' : 'movie';
+      const body = await fetchJson(`https://tastedive.com/api/similar?type=${type}&limit=20`
         + `&q=${encodeURIComponent(title)}`);
       return similarTitles(body);
     },
@@ -317,9 +384,10 @@ const SOURCES = [
  * is simply not reachable from this box is asked again for every seed on
  * every visit, for ever.
  */
-async function alsoEnjoyed(title, cache, fetchJson, log, tmdbKey) {
-  const key = foldTitle(title);
-  if (!key) return { titles: [], source: '', error: '' };
+async function alsoEnjoyed(title, cache, fetchJson, log, tmdbKey, kind) {
+  // Keyed by kind as well: a film and a show can share a title exactly.
+  const key = `${kind || 'movie'}:${foldTitle(title)}`;
+  if (!foldTitle(title)) return { titles: [], source: '', error: '' };
   const held = cache.get(key);
   if (held && Date.now() - held.at < (held.error ? 60 * 60 * 1000 : SIMILAR_TTL_MS)) {
     return { titles: held.titles || [], source: held.source || '', error: held.error || '' };
@@ -336,7 +404,7 @@ async function alsoEnjoyed(title, cache, fetchJson, log, tmdbKey) {
     }
     try {
       // eslint-disable-next-line no-await-in-loop
-      const titles = await source.titles(title, { fetchJson, key: tmdbKey });
+      const titles = await source.titles(title, { fetchJson, key: tmdbKey, kind });
       if (titles.length) {
         cache.set(key, { at: Date.now(), titles, source: source.name });
         return { titles, source: source.name, error: '' };
@@ -362,10 +430,15 @@ async function alsoEnjoyed(title, cache, fetchJson, log, tmdbKey) {
  * talks to the internet; passing it in keeps this file testable and keeps it
  * from knowing anything about HTTP.
  */
-async function forYou({ profile, movies, categoryAffinity, people, seeds, cache,
+async function forYou({ profile, movies, catalogue: given, kind = 'movie',
+  categoryAffinity, people, seeds, notInterested, cache,
   fetchJson, log, tmdbKey }) {
-  const taste = tasteOf(profile, seeds);
-  const catalogue = movies || [];
+  const taste = tasteOf(profile, seeds, kind);
+  const catalogue = given || movies || [];
+  /* Titles somebody binned off this row. Not deleted, not hidden anywhere
+     else — just answered. "Not that one" is a perfectly clear thing to say
+     about a suggestion and it should not cost you the title. */
+  const refused = new Set([...(notInterested || [])].map(String));
 
   /* Not enough said yet to guess with. Ask, rather than dressing the
      alphabet up as a suggestion. */
@@ -380,11 +453,16 @@ async function forYou({ profile, movies, categoryAffinity, people, seeds, cache,
   }
 
   /* The people in the films that were liked, and the ones in the films that
-     were not. A name in both is no signal at all. */
+     were not. A name in both is no signal at all.
+     Films only: people.js is built out of get_vod_info, which the provider
+     answers for films and not for shows, so asking it about a series id gets
+     nothing back and — worse — could get somebody else's film back. */
   const loved = new Map();
   const loathed = new Set();
+  const creditsFor = (id) => (kind === 'movie' && people && people.creditsFor
+    ? people.creditsFor(id) : null);
   for (const film of taste.liked.slice(0, 12)) {
-    const credits = people.creditsFor ? people.creditsFor(film.id) : null;
+    const credits = creditsFor(film.id);
     if (!credits) continue;
     for (const name of credits.directors || []) {
       loved.set(`d:${name}`, Math.max(loved.get(`d:${name}`) || 0, film.weight));
@@ -394,9 +472,28 @@ async function forYou({ profile, movies, categoryAffinity, people, seeds, cache,
     }
   }
   for (const id of taste.disliked) {
-    const credits = people.creditsFor ? people.creditsFor(id) : null;
+    const credits = creditsFor(id);
     if (!credits) continue;
     for (const name of [...(credits.directors || []), ...(credits.cast || [])]) loathed.add(name);
+  }
+
+  /* And the show half's local signal, which is the one thing the series
+     listing carries that the film listing does not: a genre line. Read off
+     the shows that were liked, and off the ones that were not — a word in
+     both columns says nothing, exactly as a name in both does. */
+  const genreLoved = new Map();
+  const genreLoathed = new Set();
+  if (kind === 'series') {
+    const byId = new Map(catalogue.map((row) => [String(row.id), row]));
+    for (const show of taste.liked.slice(0, 12)) {
+      for (const word of genreWords(byId.get(String(show.id))?.genre)) {
+        genreLoved.set(word, Math.max(genreLoved.get(word) || 0, show.weight));
+      }
+    }
+    for (const id of taste.disliked) {
+      for (const word of genreWords(byId.get(String(id))?.genre)) genreLoathed.add(word);
+    }
+    for (const word of genreLoathed) genreLoved.delete(word);
   }
 
   /* And what other people reached for. Only the strongest few seeds are
@@ -408,7 +505,7 @@ async function forYou({ profile, movies, categoryAffinity, people, seeds, cache,
     for (const film of taste.liked.slice(0, 5)) {
       report.asked += 1;
       // eslint-disable-next-line no-await-in-loop
-      const answer = await alsoEnjoyed(film.name, cache, fetchJson, log, tmdbKey);
+      const answer = await alsoEnjoyed(film.name, cache, fetchJson, log, tmdbKey, kind);
       if (answer.source) {
         report.answered += 1;
         report.source = report.source || answer.source;
@@ -428,7 +525,7 @@ async function forYou({ profile, movies, categoryAffinity, people, seeds, cache,
   const affinity = new Map();
   let topAffinity = 0;
   for (const row of categoryAffinity || []) {
-    if (row.kind !== 'movie') continue;
+    if (row.kind !== kind) continue;
     affinity.set(String(row.categoryId), row.score);
     topAffinity = Math.max(topAffinity, row.score);
   }
@@ -445,11 +542,14 @@ async function forYou({ profile, movies, categoryAffinity, people, seeds, cache,
     // Never recommend what has already been watched — that is the whole
     // complaint this replaces — nor what was thumbed down or picked.
     if (known.has(id)) continue;
+    // Nor what was binned off this row. Still in the library, still on every
+    // other shelf, still searchable: just not offered here again.
+    if (refused.has(id)) continue;
 
     let score = 0;
     const why = [];
 
-    const credits = people.creditsFor ? people.creditsFor(id) : null;
+    const credits = creditsFor(id);
     if (credits) {
       for (const name of credits.directors || []) {
         if (loathed.has(name)) score -= WEIGHT.director;
@@ -467,6 +567,25 @@ async function forYou({ profile, movies, categoryAffinity, people, seeds, cache,
           if (why.length < 2) why.push(`With ${name}`);
         }
       }
+    }
+
+    /* Gated on the kind, not on there being something loved: a profile whose
+       only statement so far is a thumb DOWN has an empty loved column and a
+       full loathed one, and that is precisely when the penalty matters. */
+    if (kind === 'series') {
+      let hits = 0;
+      const shared = [];
+      for (const word of genreWords(film.genre)) {
+        if (genreLoathed.has(word)) score -= WEIGHT.genre;
+        else if (genreLoved.has(word) && hits < WEIGHT.genreCap) {
+          hits += 1;
+          score += WEIGHT.genre * (genreLoved.get(word) / LIKED.thumbUp);
+          shared.push(word);
+        }
+      }
+      /* Named, because 'Because you watch crime dramas' is a reason somebody
+         can agree or disagree with, and a bare score is not. */
+      if (shared.length && why.length < 2) why.push(`More ${shared.slice(0, 2).join(' and ')}`);
     }
 
     const co = wanted.get(foldTitle(film.name));
@@ -621,7 +740,7 @@ function oncePerTitle(scored) {
 }
 
 /**
- * Films worth putting in a picker.
+ * Titles worth putting in a picker — films or shows, whichever was asked for.
  *
  * Asked when there is nothing to go on, so it cannot be personal — it has to
  * be a spread of things somebody is likely to have an opinion about. The
@@ -629,8 +748,8 @@ function oncePerTitle(scored) {
  * poster is required: a picker is a wall of covers and a title with no cover
  * is a grey box nobody picks.
  */
-function worthAsking(movies, taste, want = 40) {
-  const pool = (movies || [])
+function worthAsking(catalogue, taste, want = 40) {
+  const pool = (catalogue || [])
     .filter((film) => film.logo && !taste.seen.has(String(film.id)))
     .filter((film) => (Number(film.rating) || 0) >= 6)
     .sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0));
@@ -652,6 +771,6 @@ function worthAsking(movies, taste, want = 40) {
 }
 
 module.exports = {
-  forYou, similarTo, foldTitle, yearOf, worthAsking, tasteOf, similarTitles,
-  tmdbAuth, SOURCES,
+  forYou, similarTo, foldTitle, genreWords, showTitle, yearOf, worthAsking,
+  tasteOf, similarTitles, tmdbAuth, SOURCES,
 };
