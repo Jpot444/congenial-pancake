@@ -1291,8 +1291,13 @@
 
   /* Held across renders so the row does not blink out and back on every
      repaint of the page while the box is being asked again. */
-  let slate = { games: [], at: 0, trouble: '', asked: false, epg: new Map(), feeds: [] };
+  let slate = { games: [], at: 0, trouble: '', asked: false, epg: new Map(), feeds: [],
+    since: 0, slow: false };
   let slateInFlight = null;
+  /* How long an ask may go unremarked before the band says it is still
+     waiting. Short enough that nobody decides it is broken, long enough that
+     an ordinary ask never trips it. */
+  const SLATE_SLOW_MS = 6000;
 
   function scoreboard() {
     const head = document.querySelector('.content-head');
@@ -1319,6 +1324,34 @@
        a page redraw happens on — and every ask is a call the box has to make
        out to a league. */
     if (!slateInFlight && Date.now() - slate.at > 60000) {
+      /* When this ask started, so the band can say how long it has been
+         waiting instead of saying "Reading the slate…" for ever.
+         The box can genuinely take a minute and a half: each sport walks a
+         chain of addresses one at a time and every one of them is allowed
+         twenty-five seconds to time out. That is slow, not broken — so this
+         is a NOTICE, not a deadline, and the ask is never cancelled. A box
+         that needs ninety seconds should show its scores at ninety seconds;
+         what it must not do is leave somebody staring at a loading word with
+         no idea whether anything is still happening. */
+      slate = { ...slate, since: Date.now(), slow: false };
+      const mine = slate.since;
+      /* Repeated, not once: the message carries how long it has been waiting,
+         and a count that froze at six seconds while the wait ran to ninety
+         would be its own small lie. */
+      const nudge = setInterval(() => {
+        // Only while this same ask is still the one outstanding.
+        if (slate.since !== mine || !slateInFlight) return clearInterval(nudge);
+        slate = { ...slate, slow: true };
+        const still = document.querySelector('#dkScores');
+        if (still) paintScores(still);
+        return undefined;
+      }, SLATE_SLOW_MS);
+
+      const paint = () => {
+        const still = document.querySelector('#dkScores');
+        if (still) paintScores(still);
+      };
+
       slateInFlight = fetch('/api/scores', { headers: { accept: 'application/json' } })
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`the box answered ${r.status}`))))
         .then((data) => {
@@ -1328,6 +1361,7 @@
             games: rows.filter((g) => g && g.id),
             at: Date.now(),
             asked: true,
+            slow: false,
             /* An empty slate is an ANSWER, not a failure — it is Tuesday.
                An empty slate the BOX is unhappy about is a different thing,
                and it travels back in `error`. */
@@ -1341,14 +1375,22 @@
           };
         })
         .catch((err) => {
-          slate = { ...slate, games: [], at: Date.now(), asked: true, feeds: [],
-            trouble: err.message || 'the box could not be reached' };
+          slate = { ...slate, games: [], at: Date.now(), asked: true, slow: false,
+            feeds: [], trouble: err.message || 'the box could not be reached' };
         })
+        /* Drawn HERE, before the guide is asked.
+         *
+         * The guide lookup used to sit in this chain ahead of the repaint, so
+         * a wedged EPG held up a scoreboard that had already arrived — the
+         * answer was in the page and the page was still saying "Reading".
+         * What the guide adds is which game is on which channel, which is an
+         * improvement to a band that is already correct without it. */
+        .then(() => { clearInterval(nudge); paint(); })
         .then(() => askGuide())
         .finally(() => {
+          clearInterval(nudge);
           slateInFlight = null;
-          const still = document.querySelector('#dkScores');
-          if (still) paintScores(still);
+          paint();
         });
     }
   }
@@ -1463,7 +1505,20 @@
       const named = { nfl: 'football', ncaaf: 'college football', mlb: 'baseball' }[scoreSport()];
       /* This sport's own feed, which is the only one this band is about. */
       const feed = (slate.feeds || []).find((f) => f && f.sport === sport);
-      if (!slate.asked) note.textContent = 'Reading the slate…';
+      if (!slate.asked) {
+        /* A loading state has to end. This one could not: `fetch` has no
+           deadline of its own, the ask is only started when none is
+           outstanding, and the box can legitimately spend a minute and a half
+           walking its address chains — so these four words were what somebody
+           looked at for as long as that took, with nothing said about whether
+           anything was still happening. */
+        note.textContent = slate.slow
+          ? `Still asking the box — ${Math.round((Date.now() - (slate.since || Date.now())) / 1000)}s `
+            + 'so far. Each sport tries its addresses one at a time and waits out '
+            + 'the slow ones, so this can take a minute. '
+            + `${location.origin}/api/scores says what it is waiting on.`
+          : 'Reading the slate…';
+      }
       else if (feed && feed.error) {
         /* The probe rather than the plain report: /api/scores says what the
            addresses BEFORE the winner said and nothing about the ones after,

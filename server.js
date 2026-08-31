@@ -5484,15 +5484,46 @@ function feedFresh(cache, ttl) {
   return age < (cache.error ? FEED_FAIL_TTL_MS : FEED_QUIET_TTL_MS);
 }
 
+/*
+ * A walk already in progress is a thing to wait on, not to start again.
+ *
+ * Each sport walks its addresses ONE AT A TIME, falling through on a refusal
+ * and on an empty answer alike, and every address is allowed twenty-five
+ * seconds to time out — so a single ask can legitimately run for a minute or
+ * more when an upstream is wedged. The cache is what stops that being paid
+ * twice, but the cache is only written when a walk FINISHES. Nothing was
+ * watching for one in progress.
+ *
+ * So every ask that arrived during those ninety seconds started its own walk.
+ * A phone, a laptop and a television on the same slow minute meant three full
+ * walks of every address: slower for all three, and three times the traffic
+ * to somebody else's server, for one answer all of them wanted. Worse on a
+ * bad minute than on a good one, which is the wrong way round.
+ *
+ * The first ask does the work and the rest hold its promise. Cleared in a
+ * `finally` so a walk that throws cannot wedge the sport for ever — the next
+ * ask starts a fresh one.
+ */
+const walking = new Map();
+
+function oncePerWalk(key, run) {
+  const held = walking.get(key);
+  if (held) return held;
+  const doing = (async () => run())().finally(() => walking.delete(key));
+  walking.set(key, doing);
+  return doing;
+}
+
 async function ncaafScores() {
   if (feedFresh(ncaafCache, NCAAF_TTL_MS)) return ncaafCache;
-  ncaafCache = await footballSlate(ncaafUrls(), 'ncaaf', ncaafCache);
+  ncaafCache = await oncePerWalk('ncaaf',
+    () => footballSlate(ncaafUrls(), 'ncaaf', ncaafCache));
   return ncaafCache;
 }
 
 async function nflScores() {
   if (feedFresh(nflCache, NFL_TTL_MS)) return nflCache;
-  nflCache = await footballSlate(nflUrls(), 'nfl', nflCache);
+  nflCache = await oncePerWalk('nfl', () => footballSlate(nflUrls(), 'nfl', nflCache));
   return nflCache;
 }
 
@@ -5892,7 +5923,11 @@ const SITE_HEADERS = {
 
 async function mlbScores() {
   if (feedFresh(mlbCache, MLB_TTL_MS)) return mlbCache;
+  // One walk, however many are asking — see oncePerWalk above.
+  return oncePerWalk('mlb', walkMlb);
+}
 
+async function walkMlb() {
   const tried = [];
   const fromStats = async (url) => {
     const body = await fetchJson(url, { accept: 'application/json' });
