@@ -5295,6 +5295,12 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 .show-dl.is-saved { color: #4caf7d; border-color: rgba(76, 175, 125, .4); }
 
+/* The same pair of thumbs the film page carries, standing in a row of buttons
+   instead of filling a sidebar panel — so they size to their words rather
+   than stretching, and they wrap with everything else on a narrow screen. */
+.show-actions .film-thumbs.is-inline { display: flex; gap: 9px; }
+.show-actions .film-thumbs.is-inline .film-thumb { flex: 0 0 auto; padding: 0 14px; }
+
 /* One press wakes every paused download; spans the grid rather than posing
    as a card. */
 .resume-all {

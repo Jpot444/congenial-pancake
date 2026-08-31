@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '36.1';
+const VERSION = '36.2';
 
 const PAGE_SIZE = 60;
 
@@ -6965,6 +6965,21 @@ function detailCard(item, backHash, backLabel) {
   const actions = el('div', 'show-actions');
   actions.append(fav);
 
+  /* Like and not-for-me, on the show's page as well as the film's.
+   *
+   * A show could be watched, favourited and finished and never tell the box
+   * whether it was any good: the thumbs were built into the film page and
+   * nowhere else, so half the library had no way to say the one thing For You
+   * is made of.
+   *
+   * Beside Add to favorites because that is the row of things you do to a
+   * title WITHOUT playing it, which is exactly what this is — a favourite
+   * says "keep this where I can find it", a thumb says "more like this", and
+   * neither of them starts anything. */
+  const rating = ratingButtons(item);
+  rating.classList.add('is-inline');
+  actions.append(rating);
+
   // Films get a download beside it. Shows manage theirs per episode and per
   // season down in the list, and the archive is already on the box.
   if (item.kind === 'movie' && !item.archivePath && !item.localOnly) {
@@ -7648,40 +7663,7 @@ function filmCard(item) {
       + 'opening something.'
     : 'Completion weighs far above opening something.';
 
-  const thumbs = el('div', 'film-thumbs');
-  const key = resumeKeyFor(item);
-  const up = el('button', 'film-thumb is-up');
-  up.type = 'button';
-  up.textContent = 'Good';
-  const down = el('button', 'film-thumb is-down');
-  down.type = 'button';
-  down.textContent = 'Not for me';
-  const paintThumbs = () => {
-    const value = state.ratings[key] || 0;
-    up.classList.toggle('on', value > 0);
-    down.classList.toggle('on', value < 0);
-  };
-  const rate = async (wanted) => {
-    const value = state.ratings[key] === wanted ? 0 : wanted;
-    // Painted first. The box is on the other side of a Tailscale link and the
-    // press has to land now, not when the round trip does.
-    if (value) state.ratings[key] = value; else delete state.ratings[key];
-    paintThumbs();
-    await saveRating(key, value);
-    /* A thumb is the strongest thing anybody says to this box, so For You is
-       worked out again rather than waiting out its five minutes — the row for
-       whichever half of the catalogue was just rated. */
-    loadForYou({ force: true, tab: item.kind === 'series' ? 'series' : 'movies' });
-    toast(value > 0 ? 'Thumbs up — For You will lean on this.'
-      : value < 0 ? 'Thumbs down — and nothing like it either.'
-        : 'Rating cleared.');
-  };
-  up.addEventListener('click', () => rate(1));
-  down.addEventListener('click', () => rate(-1));
-  paintThumbs();
-  thumbs.append(up, down);
-
-  seen.body.append(seenLine, seenNote, thumbs);
+  seen.body.append(seenLine, seenNote, ratingButtons(item));
   side.append(seen.panel);
 
   /* ---- somewhere else to read about it ---- */
@@ -13121,6 +13103,65 @@ async function fetchProgress(key) {
  * to land now rather than when a round trip over Tailscale does — and a rating
  * that fails to save is worth a line in the console and nothing louder.
  */
+/**
+ * Like or not-for-me, for tuning what gets suggested.
+ *
+ * One pair of buttons, built here rather than twice, because a film's page
+ * and a show's page have to mean exactly the same thing by them. They were
+ * on the film page only; a show could be watched, favourited and finished
+ * and never told the box whether it was any good.
+ *
+ * A RATING IS NOT A WATCH, and that is the point of it. "Sometimes I have
+ * already watched a show or movie and want to use it as an example of
+ * something I like, but dont want to watch it again right now" — so pressing
+ * this writes a rating and nothing else. It does not begin a history row, it
+ * does not put the title in Continue watching, and it does not mark it seen.
+ * What it does is take the title out of the suggestions (a row answering
+ * "you like this thing you told me you like" has answered nothing) and lean
+ * the rest of the row toward or away from what it is made of.
+ */
+function ratingButtons(item) {
+  const thumbs = el('div', 'film-thumbs');
+  const key = resumeKeyFor(item);
+  const shows = item.kind === 'series';
+  const up = el('button', 'film-thumb is-up');
+  up.type = 'button';
+  up.textContent = 'Good';
+  up.title = `Use this as an example of what you like. It won't be marked watched.`;
+  const down = el('button', 'film-thumb is-down');
+  down.type = 'button';
+  down.textContent = 'Not for me';
+  down.title = `Steer suggestions away from ${shows ? 'shows' : 'films'} like this.`;
+  const paintThumbs = () => {
+    const value = state.ratings[key] || 0;
+    up.classList.toggle('on', value > 0);
+    down.classList.toggle('on', value < 0);
+  };
+  const rate = async (wanted) => {
+    const value = state.ratings[key] === wanted ? 0 : wanted;
+    // Painted first. The box is on the other side of a Tailscale link and the
+    // press has to land now, not when the round trip does.
+    if (value) state.ratings[key] = value; else delete state.ratings[key];
+    paintThumbs();
+    await saveRating(key, value);
+    /* A thumb is the strongest thing anybody says to this box, so For You is
+       worked out again rather than waiting out its five minutes — the row for
+       whichever half of the catalogue was just rated. */
+    loadForYou({ force: true, tab: shows ? 'series' : 'movies' });
+    /* Said out loud, because the whole worry this answers is that marking
+       something as liked is the same as queueing it up. */
+    toast(value > 0
+      ? `Noted — more like this. Nothing was marked as watched.`
+      : value < 0 ? 'Noted — and nothing like it either.'
+        : 'Rating cleared.');
+  };
+  up.addEventListener('click', () => rate(1));
+  down.addEventListener('click', () => rate(-1));
+  paintThumbs();
+  thumbs.append(up, down);
+  return thumbs;
+}
+
 async function saveRating(key, value) {
   if (!profiles.current || !key) return;
   try {

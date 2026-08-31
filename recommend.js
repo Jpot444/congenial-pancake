@@ -167,10 +167,14 @@ function showTitle(name) {
  * statement than finishing a film — but finishing three is a stronger one, so
  * episodes count and a show somebody has stayed with is treated as a like.
  */
-function tasteOf(profile, seeds, kind = 'movie') {
+function tasteOf(profile, seeds, kind = 'movie', catalogue = []) {
   const ratings = profile.ratings || {};
   const history = profile.history || [];
   const shows = kind === 'series';
+  /* What the library calls each id. A rating is stored as `series:10` and
+     carries no title — and a title is the one thing an audience can be asked
+     about, so it is looked up rather than left blank. */
+  const named = new Map((catalogue || []).map((row) => [String(row.id), row.name || '']));
 
   const liked = new Map();
   const disliked = new Set();
@@ -201,6 +205,35 @@ function tasteOf(profile, seeds, kind = 'movie') {
       if (ratio > 0.4) at.most += 1;
     }
     held.set(id, at);
+  }
+
+  /*
+   * And every title with a thumb on it, whether or not it was ever played.
+   *
+   * This used to be an annotation on the history: gather what was watched,
+   * then ask what the thumb on each of those said. So a thumb on something
+   * this box has never played — a show somebody watched years ago somewhere
+   * else and wants to hold up as an example of what they like — matched no
+   * row and was never read. The press lit up and nothing happened.
+   *
+   * A rating is a statement in its own right. It is also NOT a watch: these
+   * ids are deliberately not added to `seen`, because saying you liked
+   * something is not saying you have just watched it here and it must not
+   * turn into "carry on where you left off".
+   *
+   * `[^:]+` matters. History is keyed per episode — `series:10:s1e4` — while
+   * the show's own thumb is `series:10`. Matching loosely would invent a show
+   * whose id is "10:s1e4": in no catalogue, with no name, asked about by that
+   * name.
+   */
+  const wanted = new RegExp(`^${kind}:([^:]+)$`);
+  for (const key of Object.keys(ratings)) {
+    if (!ratings[key]) continue;
+    const found = wanted.exec(key);
+    if (!found) continue;
+    const id = found[1];
+    if (held.has(id)) continue;
+    held.set(id, { id, name: named.get(id) || '', finished: 0, most: 0 });
   }
 
   for (const row of held.values()) {
@@ -433,8 +466,10 @@ async function alsoEnjoyed(title, cache, fetchJson, log, tmdbKey, kind) {
 async function forYou({ profile, movies, catalogue: given, kind = 'movie',
   categoryAffinity, people, seeds, notInterested, cache,
   fetchJson, log, tmdbKey }) {
-  const taste = tasteOf(profile, seeds, kind);
   const catalogue = given || movies || [];
+  /* The catalogue goes in so a rating can be turned into a title: a thumb is
+     stored as `series:10` and what an audience is asked about is a name. */
+  const taste = tasteOf(profile, seeds, kind, catalogue);
   /* Titles somebody binned off this row. Not deleted, not hidden anywhere
      else — just answered. "Not that one" is a perfectly clear thing to say
      about a suggestion and it should not cost you the title. */
@@ -476,6 +511,17 @@ async function forYou({ profile, movies, catalogue: given, kind = 'movie',
     if (!credits) continue;
     for (const name of [...(credits.directors || []), ...(credits.cast || [])]) loathed.add(name);
   }
+  /* And a name in both columns is no signal, which this said and did not do:
+     it subtracted for the loathed side regardless. An actor who is in one
+     film somebody loved and one they hated tells you nothing about a third,
+     and counting them against it is worse than ignoring them. */
+  for (const name of [...loathed]) {
+    if (loved.has(`d:${name}`) || loved.has(`c:${name}`)) {
+      loved.delete(`d:${name}`);
+      loved.delete(`c:${name}`);
+      loathed.delete(name);
+    }
+  }
 
   /* And the show half's local signal, which is the one thing the series
      listing carries that the film listing does not: a genre line. Read off
@@ -493,7 +539,16 @@ async function forYou({ profile, movies, catalogue: given, kind = 'movie',
     for (const id of taste.disliked) {
       for (const word of genreWords(byId.get(String(id))?.genre)) genreLoathed.add(word);
     }
-    for (const word of genreLoathed) genreLoved.delete(word);
+    /* A word in BOTH columns says nothing, and has to stop counting in both
+       directions — not merely stop counting as a like. Somebody who likes The
+       Wire and dislikes Poirot has not told you anything about crime; they
+       have told you something about drama and mystery. Dropping 'crime' from
+       the loved side while still subtracting for it left the two cancelling
+       out, and a crime drama — the one thing the pair actually points at —
+       scored zero and fell off the row. */
+    for (const word of [...genreLoathed]) {
+      if (genreLoved.has(word)) { genreLoved.delete(word); genreLoathed.delete(word); }
+    }
   }
 
   /* And what other people reached for. Only the strongest few seeds are
@@ -502,7 +557,11 @@ async function forYou({ profile, movies, catalogue: given, kind = 'movie',
   const wanted = new Map();
   const report = { asked: 0, answered: 0, source: '', error: '' };
   if (fetchJson) {
-    for (const film of taste.liked.slice(0, 5)) {
+    /* Only the ones this box can name. A rating whose title has left the
+       library is still a perfectly good exclusion, but it is not a question
+       anybody can be asked — and letting it take one of the five slots would
+       cost a seed that could have been asked properly. */
+    for (const film of taste.liked.filter((f) => f.name).slice(0, 5)) {
       report.asked += 1;
       // eslint-disable-next-line no-await-in-loop
       const answer = await alsoEnjoyed(film.name, cache, fetchJson, log, tmdbKey, kind);

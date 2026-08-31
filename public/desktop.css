@@ -2967,6 +2967,11 @@ body.is-reordering .cht { transition: none; }
 
 .desk .film-thumb:hover { color: var(--text); border-color: var(--line-hover-warm); }
 
+/* On a show's page the pair sits in the action row beside Add to favorites,
+   where a button sizes to its words. The sidebar panel is the case that wants
+   them stretched across it; this one is not. */
+.desk .show-actions .film-thumbs.is-inline .film-thumb { flex: 0 0 auto; padding: 0 14px; }
+
 .desk .film-thumb.is-up.on {
   color: var(--ok-soft);
   background: rgba(87, 200, 139, .12);
