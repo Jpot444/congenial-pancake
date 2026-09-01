@@ -188,6 +188,25 @@ check('cfg.mode is read through a null-safe alias, so a missing config cannot th
       imgFile.status === 400 || imgFile.status === 404,
       `${imgFile.status} ${imgFile.body.slice(0, 80)}`);
 
+    /*
+     * But the box asking ITSELF is not SSRF.
+     *
+     * `/img?u=http://127.0.0.1:<port>/bison.png` is a public asset of this
+     * very process. Refusing it is the guard mistaking the thing it protects
+     * for a target, and it turned every club mark on the TV slate into a pair
+     * of initials — two suites went red on exactly that.
+     */
+    const own = await call(`/img?u=${encodeURIComponent(`http://127.0.0.1:${PORT}/bison.png`)}`);
+    check('the box may fetch an asset it serves itself',
+      own.status === 200, `${own.status} ${own.body.slice(0, 60)}`);
+    const ownName = await call(`/img?u=${encodeURIComponent(`http://localhost:${PORT}/bison.png`)}`);
+    check('by name as well as by number', ownName.status === 200, String(ownName.status));
+    /* Narrow on purpose: the same host on a DIFFERENT port is the printer,
+       the database, the thing this guard exists for. */
+    const neighbour = await call(`/img?u=${encodeURIComponent('http://127.0.0.1:9/secret')}`);
+    check('while another service on loopback is still refused',
+      neighbour.status === 400, `${neighbour.status} ${neighbour.body.slice(0, 60)}`);
+
     const before = panelHits.length;
     const ok = await call(streamPath(`http://127.0.0.1:${PANEL}/live/u/p/1.ts`));
     check('a URL on the configured provider host is still fetched',

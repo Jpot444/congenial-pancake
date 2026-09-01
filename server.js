@@ -6177,6 +6177,25 @@ function configuredOrigins(cfg) {
   return out;
 }
 
+/**
+ * This box, asking itself for something it already serves.
+ *
+ * Not SSRF, and refusing it is the guard mistaking what it protects for a
+ * target: `/img?u=http://127.0.0.1:<port>/bison.png` is a public asset of
+ * this very process, and blocking it turned every club mark on the TV slate
+ * into a pair of initials.
+ *
+ * Narrow on purpose. Loopback AND this box's own port, so a different service
+ * listening on 127.0.0.1 — the printer's admin page, a database, the thing
+ * the guard exists for — is still refused.
+ */
+function ownOrigin(u) {
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+  if (host !== '127.0.0.1' && host !== '::1' && host !== 'localhost') return false;
+  const port = u.port || (u.protocol === 'https:' ? '443' : '80');
+  return String(port) === String(PORT);
+}
+
 function proxyAllowed(target) {
   let u;
   try {
@@ -6187,6 +6206,7 @@ function proxyAllowed(target) {
   if (!/^https?:$/.test(u.protocol)) return 'Only http and https URLs can be fetched.';
   const privateErr = privateAddress(target);
   if (!privateErr) return '';
+  if (ownOrigin(u)) return '';
   try {
     if (configuredOrigins(readConfig()).has(originKey(u))) return '';
   } catch {
