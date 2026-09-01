@@ -211,7 +211,8 @@ check('cfg.mode is read through a null-safe alias, so a missing config cannot th
     panel.close();
   }
 
-  /* Unconfigured: /api/play used to throw on cfg.mode and answer 500. */
+  /* Unconfigured. /api/play already sat behind the 409 gate. /api/similar
+     and GET /api/tmdb sit in front of it and used to throw on cfg.tmdbKey. */
   console.log('\n  an unconfigured box');
   const DIR2 = '/tmp/portal-proxy-empty';
   fs.rmSync(DIR2, { recursive: true, force: true });
@@ -245,6 +246,13 @@ check('cfg.mode is read through a null-safe alias, so a missing config cannot th
     const xtream = await emptyGet('/api/xtream?action=get_live_streams');
     check('and so is /api/xtream',
       xtream.status === 409, `${xtream.status} ${xtream.body.slice(0, 80)}`);
+    const tmdb = await emptyGet('/api/tmdb');
+    check('GET /api/tmdb does not throw on a missing config',
+      tmdb.status === 200 && JSON.parse(tmdb.body).set === false,
+      `${tmdb.status} ${tmdb.body.slice(0, 80)}`);
+    const similar = await emptyGet('/api/similar?id=1&name=Test');
+    check('GET /api/similar does not throw either',
+      similar.status === 200, `${similar.status} ${similar.body.slice(0, 120)}`);
   } finally {
     empty.kill('SIGKILL');
   }
