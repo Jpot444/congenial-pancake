@@ -127,8 +127,8 @@ const get = (p) => new Promise((resolve, reject) => {
   check('the ingest reads the provider playlist, not the realtime push feed',
     /buildStreamUrl\([^)]+, 'live', channelId, 'm3u8'\)/.test(SERVER)
     && !/buildStreamUrl\([^)]+, 'live', channelId, 'ts'\)/.test(SERVER));
-  check('and a new ingest refuses rather than opening ffmpeg on an uncounted login',
-    /if \(!account\) throw new Error\('No free provider connection for live ingest'\)/.test(SERVER));
+  check('and a new ingest still starts when the pool is full, but it is counted',
+    /providers\.pick\(cfg, \{ reserve: true \}\) \|\| providers\.accounts\(cfg\)\[0\]/.test(SERVER));
   check('and banks a published run of it rather than trickling in from the edge',
     /'-live_start_index', resumed \? '-1' : `-\$\{COLD_START_SEGMENTS\}`,\s*'-i', input/
       .test(SERVER));

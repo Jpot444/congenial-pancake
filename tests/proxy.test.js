@@ -122,7 +122,7 @@ check('/stream and /img both go through proxyAllowed',
   /proxyAllowed\(target\)/.test(SERVER) && /proxyAllowed\(src\)/.test(SERVER));
 check('saving an EPG source is guarded the same way probing one is',
   /privateAddress\(u\)/.test(SERVER.slice(SERVER.indexOf("pathname === '/api/epg/sources'"))));
-check('an unconfigured box does not throw on /api/play',
+check('cfg.mode is read through a null-safe alias, so a missing config cannot throw later',
   /const mode = cfg && cfg\.mode/.test(SERVER));
 
 /* ═══ 5. against a real box ══════════════════════════════════════════════ */
@@ -239,12 +239,12 @@ check('an unconfigured box does not throw on /api/play',
   }
   try {
     const play = await emptyGet('/api/play?kind=live&id=1');
-    check('/api/play on an unconfigured box is 400, not a 500 throw',
-      play.status === 400 && /not in xtream/i.test(play.body),
+    check('/api/play on an unconfigured box is 409, not a throw',
+      play.status === 409 && /not configured/i.test(play.body),
       `${play.status} ${play.body.slice(0, 120)}`);
     const xtream = await emptyGet('/api/xtream?action=get_live_streams');
     check('and so is /api/xtream',
-      xtream.status === 400, `${xtream.status} ${xtream.body.slice(0, 80)}`);
+      xtream.status === 409, `${xtream.status} ${xtream.body.slice(0, 80)}`);
   } finally {
     empty.kill('SIGKILL');
   }
