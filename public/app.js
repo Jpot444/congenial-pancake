@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '36.9';
+const VERSION = '37.0';
 
 const PAGE_SIZE = 60;
 
@@ -9646,6 +9646,15 @@ function recordingWords(row) {
     case 'missed':
       return row.error || 'Nothing was recorded';
     case 'failed':
+      /* "Failed" on its own reads as the box having given up, and while the
+         programme is still on air it has not: a start that wrote nothing is
+         tried again, backing off, for as long as the window lasts. An
+         overnight booking is exactly the case that cannot ask anybody to
+         press retry, so the difference is worth spelling out. */
+      if (!row.bytes && !row.byHand && Date.now() < Number(row.endsAt)) {
+        return `Couldn't start — trying again${row.tries > 1 ? ` (${row.tries} so far)` : ''}`
+          + `${row.error ? ` · ${row.error}` : ''}`;
+      }
       return row.error || 'Failed';
     case 'cancelled':
       return 'Cancelled';
