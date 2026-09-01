@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '37.0';
+const VERSION = '37.1';
 
 const PAGE_SIZE = 60;
 
@@ -2911,7 +2911,8 @@ const health = {
   /** Surface trouble on the header button so it's seen without opening. */
   markBadge(data) {
     const dot = $('#healthDot');
-    const bad = data.disk.low || data.network.level === 'poor' || (data.power && !data.power.ok);
+    const bad = data.disk.low || data.network.level === 'poor' || (data.power && !data.power.ok)
+      || (data.files && data.files.low);
     const warn = data.network.level === 'fair' || (data.cpu.tempC || 0) >= 70 ||
       (data.disk.total && data.disk.free / data.disk.total < 0.1);
     dot.hidden = !(bad || warn);
@@ -3012,6 +3013,24 @@ const health = {
       sub: `${memPct.toFixed(0)}% of ${gb(m.total)} used`,
       pill: memPct > 92 ? ['bad', 'Tight'] : memPct > 80 ? ['warn', 'Busy'] : ['ok', 'Fine'],
     }));
+
+    /* Open files, and only when there is something to say about them.
+     *
+     * A box doing its job sits well under a hundred, and a row that always
+     * reads "everything is fine" is a row costing a line of a panel that is
+     * meant to fit without scrolling. This one appears when the count starts
+     * climbing — which is the only time anybody would want it, because running
+     * out is a fault that looks like nothing else here: disk fine, memory
+     * fine, temperature fine, and the box unable to open a socket or start
+     * ffmpeg. It creeps up over hours, so seeing it at all is enough. */
+    const files = d.files;
+    if (files && (files.low || files.open > 200)) {
+      rows.push(row('Open files', {
+        value: String(files.open),
+        sub: files.limit ? `of ${files.limit} allowed` : '',
+        pill: files.low ? ['bad', 'Climbing'] : ['warn', 'Busy'],
+      }));
+    }
 
     /* ---- downloads ---- */
     const dl = d.downloads;

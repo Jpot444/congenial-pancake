@@ -928,7 +928,7 @@ async function prepareForBrowser(job) {
   const ok = await new Promise((resolve) => {
     const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
     let err = '';
-    proc.stderr.on('data', (d) => (err = (err + d).slice(-800)));
+    onStderr(proc, (d) => { err = (err + d).slice(-800); });
     proc.on('close', (code) => {
       if (code !== 0) job.prepareError = err.split('\n').filter(Boolean).pop() || `exit ${code}`;
       resolve(code === 0);
@@ -1161,6 +1161,39 @@ function memory() {
 }
 
 /**
+ * How many file descriptors this process is holding, against its ceiling.
+ *
+ * Reported because running out of them is a failure that looks like nothing
+ * else the panel shows: the disk is fine, the memory is fine, the temperature
+ * is fine, and the box stops being able to open a socket or spawn ffmpeg.
+ * It is a slow leak by nature — the count climbs over hours, so a number that
+ * is merely visible is enough to catch it long before it bites.
+ *
+ * A recording is the case that makes this worth watching: it holds a window
+ * open all night, each respawn of the ingest is another child with another
+ * pipe, and the recorder reading the box's own playlist is another socket
+ * every few seconds. Nobody is awake to notice.
+ */
+function descriptors() {
+  let open = null;
+  try {
+    open = fs.readdirSync('/proc/self/fd').length;
+  } catch {
+    return null; // not Linux, or /proc is not mounted
+  }
+  let limit = null;
+  const m = /^Max open files\s+(\d+)/m.exec(readProc('/proc/self/limits') || '');
+  if (m) limit = Number(m[1]);
+  return {
+    open,
+    limit,
+    /* Two thirds of the way up is early enough to act on and high enough not
+       to cry wolf at a box that is simply busy. */
+    low: Boolean(limit) && open > limit * 0.66,
+  };
+}
+
+/**
  * Pi throttling flags. Under-voltage is the one that matters — a marginal
  * power supply produces stalls and I/O errors that read like a bad network.
  */
@@ -1255,6 +1288,7 @@ async function readHealth() {
       cores: os.cpus().length || 1,
     },
     memory: memory(),
+    files: descriptors(),
     power: decodeThrottled(throttleRaw),
     /* What killed it last time, if anything did. Reported rather than left in
        a file nobody can reach: "the portal went down and I do not know why"
@@ -1499,7 +1533,7 @@ async function runArchiveJob(job) {
   activeRequest = { destroy: () => { try { proc.kill('SIGKILL'); } catch { /* gone */ } } };
 
   let stderr = '';
-  proc.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
+  onStderr(proc, (d) => { stderr = (stderr + d).slice(-2000); });
 
   /* How far through it is, in the only unit that means anything here.
    *
@@ -2105,6 +2139,51 @@ function hasFfmpeg() {
     ffmpegAvailable = !probe.error && probe.status === 0;
   }
   return ffmpegAvailable;
+}
+
+/**
+ * Watch a child's stderr without betting the whole box on the pipe existing.
+ *
+ * There are two ways `proc.stderr.on('data', …)` takes the portal down, and
+ * both of them are likelier on a Pi at two in the morning than anywhere else:
+ *
+ *   THE PIPE WAS NEVER MADE. When the box has run out of file descriptors,
+ *   spawn still hands back a child object — but its `stderr` is `undefined`,
+ *   and reading `.on` off that throws a TypeError on the spot. Measured rather
+ *   than assumed: under a low `ulimit -n` with the descriptors used up, the
+ *   child reports EMFILE on its 'error' event and the stdio streams are simply
+ *   not there.
+ *
+ *   THE PIPE BROKE. A stream that emits 'error' with nobody listening throws,
+ *   by Node's design, and not one of these sites was listening.
+ *
+ * Either one, inside a bare timer callback — and the live ingest respawns
+ * itself from one — is an uncaught exception: a portal that stops answering
+ * with the television still on, which is exactly the report that started this.
+ * Nothing is lost by declining to read a pipe that is not there; the child's
+ * own 'error' event still fires, and it is the one carrying the reason.
+ */
+function onStderr(proc, take) {
+  const pipe = proc && proc.stderr;
+  if (!pipe) return;
+  pipe.on('data', take);
+  pipe.on('error', () => {});
+}
+
+/**
+ * Run a child's exit or error handler without letting it kill the box.
+ *
+ * These run on callbacks, so no try/catch upstream covers them: a throw while
+ * tidying up after one dead ffmpeg would take down every other stream in the
+ * house. Written down the same way a crash is, because a handler that fails
+ * silently is how bookkeeping drifts out of step with reality.
+ */
+function safely(what, run) {
+  try {
+    run();
+  } catch (err) {
+    noteCrash(`handler: ${what}`, err);
+  }
 }
 
 /** sessionId → { dir, proc, lastAccess, fromProvider } */
@@ -3128,7 +3207,7 @@ async function startRemux(input, opts) {
 
   let stderr = '';
   let stderrHead = '';
-  proc.stderr.on('data', (d) => {
+  onStderr(proc, (d) => {
     const text = d.toString();
     // Head and tail both: the header describes the input, the tail carries
     // whatever went wrong. Keeping only one loses the half that matters.
@@ -3631,16 +3710,16 @@ function beginRecording(row) {
   const proc = spawn('ffmpeg', recordArgs(input, out, local),
     { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
-  proc.stderr.on('data', (d) => { stderr = (stderr + d.toString()).slice(-1000); });
-  proc.on('exit', (code) => {
+  onStderr(proc, (d) => { stderr = (stderr + d.toString()).slice(-1000); });
+  proc.on('exit', (code) => safely('recording ended', () => {
     const row2 = recordings.get(row.id);
     if (row2 && code && !row2.error) row2.error = stderr.split('\n').filter(Boolean).pop() || '';
     recordings.ended(row.id, code);
-  });
-  proc.on('error', (err) => {
+  }));
+  proc.on('error', (err) => safely('recording could not start', () => {
     if (release) release();
     recordings.noteFailure(row, err.message);
-  });
+  }));
 
   recordings.began(row, { proc, release, source: local ? 'box window' : 'provider' });
   console.log(`  recording: ${row.title} on ${row.channelName || row.channelId} `
@@ -3728,12 +3807,12 @@ function spawnLiveDvr(session, input, resumed = false) {
   session.exited = false;
   session.exitCode = undefined;
   session.args = redactUrl(args.join(' '));
-  proc.stderr.on('data', (d) => {
+  onStderr(proc, (d) => {
     const text = d.toString();
     if (session._stderrHead.length < 6000) session._stderrHead += text;
     session._stderr = (session._stderr + text).slice(-2000);
   });
-  proc.on('exit', (code) => {
+  proc.on('exit', (code) => safely('live ingest exited', () => {
     session.exited = true;
     session.exitCode = code;
     liveNote(session, 'ingest-exited', {
@@ -3751,12 +3830,17 @@ function spawnLiveDvr(session, input, resumed = false) {
     if (Date.now() - session.lastAccess > LIVE_DVR.restartWindowMs) return;
     session.restarts = (session.restarts || 0) + 1;
     if (session.restarts > 30) return; // a feed this dead is an ending
-    setTimeout(() => {
+    /* A bare timer callback: nothing upstream can catch a throw in here, so a
+       respawn that cannot get a pipe would end the whole process rather than
+       one channel. This is the exact shape that leaves a portal not
+       responding, and it is armed all night whenever a recording is holding a
+       window open. */
+    setTimeout(() => safely('live ingest respawn', () => {
       if (remuxSessions.get(session.id) !== session) return;
       if (Date.now() - session.lastAccess > LIVE_DVR.restartWindowMs) return;
       spawnLiveDvr(session, input, true);
-    }, 2000).unref();
-  });
+    }), 2000).unref();
+  }));
 }
 
 /**
@@ -3881,7 +3965,7 @@ function makeArchiveThumb(rel, abs, item, outFile) {
         tmp,
       ], { stdio: ['ignore', 'ignore', 'pipe'] });
       let stderr = '';
-      proc.stderr.on('data', (d) => { stderr = (stderr + d).slice(-500); });
+      onStderr(proc, (d) => { stderr = (stderr + d).slice(-500); });
       // A hung read off a failing drive must not wedge the queue.
       const timer = setTimeout(() => proc.kill('SIGKILL'), 20000);
       proc.on('exit', (code) => {
