@@ -324,14 +324,23 @@ const SPORTSDB = {
  * is twenty past midnight UTC, so it is filed under TOMORROW — and a list
  * that stops at the first address to ANSWER never asks for tomorrow, because
  * today had a game on it. Two games, one card. */
+/* An hour ago, written the way this publisher writes it: no zone marker at
+ * all. That missing Z is the whole subject of the check below — read as local
+ * it silently adds four hours to every kickoff — and the instant has to be
+ * RELATIVE, because the box only builds a slate out of games near today. A
+ * frozen date passed on the afternoon it was written and has failed every day
+ * since: three days later that fixture is an old game, dropped before any of
+ * this is reached, and all three checks below failed for a reason that had
+ * nothing to do with what they test. */
+const NFL_NAIVE = new Date(Date.now() - 3600 * 1000).toISOString().slice(0, 19);
 const NFL_DAY = {
   events: [
     { idEvent: '3001', strEvent: 'Lions at Colts', strLeague: 'NFL',
       strHomeTeam: 'Indianapolis Colts', strAwayTeam: 'Detroit Lions',
       intHomeScore: null, intAwayScore: null,
       strStatus: 'NS', strProgress: '',
-      dateEvent: '2026-08-29', strTime: '17:00:00',
-      strTimestamp: '2026-08-29T17:00:00', strTVStation: 'FOX' },
+      dateEvent: NFL_NAIVE.slice(0, 10), strTime: `${NFL_NAIVE.slice(11)}`,
+      strTimestamp: NFL_NAIVE, strTVStation: 'FOX' },
   ],
 };
 /* A league's NEXT fixtures, which is what eventsnextleague answers: only what
@@ -827,9 +836,12 @@ const NFL_NIGHT = {
       /* The four hours between UTC and the east coast, which is what was
          being added silently to every kickoff this publisher gave. */
       const pro = pros.find((g) => g.away.abbr === 'Detroit Lions');
+      /* The four hours between UTC and the east coast, which is what was being
+         added silently to every kickoff this publisher gave: the timestamp
+         carries no Z, and read as local time it lands four hours late. */
       check('a time written in UTC with nothing saying so is read as UTC',
-        pro && new Date(pro.kickoff).toISOString().startsWith('2026-08-29T17:00:00'),
-        JSON.stringify(pro && new Date(pro.kickoff).toISOString()));
+        pro && new Date(pro.kickoff).toISOString().startsWith(NFL_NAIVE),
+        JSON.stringify(pro && [new Date(pro.kickoff).toISOString(), NFL_NAIVE]));
       check('and NS is not printed under the start time as a caption',
         pro && pro.detailedState === '', JSON.stringify(pro && pro.detailedState));
 
