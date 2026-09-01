@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '36.4';
+const VERSION = '36.5';
 
 const PAGE_SIZE = 60;
 
@@ -8652,7 +8652,25 @@ async function refreshDownloads({ rerender = false } = {}) {
   // Only rebuild the grid when the data actually moved. The 2s poll used to
   // recreate every card each tick — flickering posters and yanking buttons
   // out from under a click even when nothing was downloading.
-  const sig = JSON.stringify(state.downloads.items);
+  /* Recordings are refreshed alongside, but only while their page is open.
+   *
+   * They live on this page now, and a progress bar that only moves when
+   * something else happens to change is not progress. It is a cheap local
+   * read — the box counts bytes off a file it already has open — and asking
+   * for it anywhere else would be a request a minute for nothing. */
+  if (state.tab === 'downloads') {
+    try {
+      const data = await api('/api/recordings');
+      state.recordings = data.items || [];
+    } catch {
+      /* The downloads half of the page is unaffected. */
+    }
+  }
+
+  /* The signature covers both halves, or a recording growing by a megabyte
+     would not count as a change and the bar would sit still. */
+  const sig = JSON.stringify([state.downloads.items,
+    (state.recordings || []).map((r) => [r.id, r.status, r.bytes])]);
   const changed = sig !== refreshDownloads._sig;
   refreshDownloads._sig = sig;
   if (rerender && changed && state.tab === 'downloads') renderDownloads();
@@ -9260,8 +9278,16 @@ function renderDownloads() {
 
   const items = state.downloads.items || [];
   const empty = $('#emptyState');
+  /* Recordings belong on this page.
+   *
+   * They were only ever visible in the guide, on the slab of the programme
+   * they came from — so a finished recording lived at a spot in a grid of
+   * times that had already scrolled out of the week, and nothing in the
+   * product answered "what have I recorded" or "is it recording right now".
+   * Cancelled ones are left out: they are a decision already acted on. */
+  const recs = (state.recordings || []).filter((r) => r.status !== 'cancelled');
 
-  if (!items.length) {
+  if (!items.length && !recs.length) {
     empty.hidden = false;
     empty.textContent =
       'Nothing saved yet. Open a movie or episode and press the download arrow.';
@@ -9314,9 +9340,32 @@ function renderDownloads() {
     }
   }
 
+  /* Recordings first, and whatever is being written now at the top of them:
+     it is the only thing on this page that is happening rather than sitting
+     there, and it is the thing somebody came to check. */
+  if (recs.length) {
+    const rank = { recording: 0, scheduled: 1, done: 2, partial: 3 };
+    const order = [...recs].sort((a, b) => (rank[a.status] ?? 4) - (rank[b.status] ?? 4)
+      || Number(b.startsAt) - Number(a.startsAt));
+    const writing = order.filter((r) => r.status === 'recording').length;
+    const head = el('div', 'dl-section');
+    head.append(Object.assign(el('h2'), { textContent: 'Recordings' }));
+    head.append(Object.assign(el('span', 'dl-section-note'), {
+      textContent: writing
+        ? `${writing} recording now · ${order.length} in all`
+        : `${order.length} kept`,
+    }));
+    grid.append(head);
+    for (const row of order) grid.append(recordingCard(row));
+    const between = el('div', 'dl-section');
+    between.append(Object.assign(el('h2'), { textContent: 'Downloads' }));
+    grid.append(between);
+  }
+
   const done = items.filter((j) => j.status === 'done').length;
   $('#contentMeta').textContent =
-    `${done} ready${state.downloads.queued ? ` · ${state.downloads.queued} queued` : ''}`;
+    `${done} ready${state.downloads.queued ? ` · ${state.downloads.queued} queued` : ''}`
+    + `${recs.some((r) => r.status === 'recording') ? ' · recording now' : ''}`;
 
   // Paused work gets one button back to running, not a hunt through the
   // cards. Paused only: failed jobs have a Retry of their own, and sweeping
@@ -9514,6 +9563,166 @@ function seriesFolderCard(key, episodes) {
 
 /** Which show's episode list is open, or null at the top level. */
 let openSeriesFolder = null;
+
+/* How far through the programme a recording has got, 0–1.
+ *
+ * By the CLOCK, not by bytes: nothing knows how many bytes a programme is
+ * going to be, so a byte count can say how much has been written and never
+ * how much is left. The clock knows both. */
+function recordingProgress(row) {
+  const from = Number(row.startsAt) || 0;
+  const to = Number(row.endsAt) || 0;
+  if (!(to > from)) return 0;
+  return Math.max(0, Math.min(1, (Date.now() - from) / (to - from)));
+}
+
+/** What this recording is doing, in the words a person would use. */
+function recordingWords(row) {
+  const size = row.bytes ? formatBytes(row.bytes) : '';
+  switch (row.status) {
+    case 'recording': {
+      const left = Math.max(0, Math.round((Number(row.endsAt) - Date.now()) / 60000));
+      return `Recording — ${left} min to go${size ? ` · ${size} so far` : ''}`;
+    }
+    case 'scheduled':
+      return `Starts ${clockFromTimestamp(Math.floor(Number(row.startsAt) / 1000))}`;
+    case 'done':
+      return size || 'Recorded';
+    /* The state this box has been quietly producing. Say what happened and
+       that the part before it is still here, rather than showing a stub with
+       no explanation. */
+    case 'partial':
+      return `Cut short${size ? ` at ${size}` : ''} — ${row.error || 'the box stopped'}`;
+    case 'missed':
+      return row.error || 'Nothing was recorded';
+    case 'failed':
+      return row.error || 'Failed';
+    case 'cancelled':
+      return 'Cancelled';
+    default:
+      return row.status || '';
+  }
+}
+
+/**
+ * A recording, on the same page as the downloads.
+ *
+ * They were only ever visible in the guide, on the slab of the programme they
+ * came from — so a finished recording lived at a place in a grid of times
+ * that had already scrolled out of the week, and there was no page in the
+ * product that answered "what have I recorded". This is that page, because it
+ * is already the page for "what is on the box".
+ */
+function recordingCard(row) {
+  const live = row.status === 'recording';
+  const playable = (row.status === 'done' || row.status === 'partial' || live)
+    && Number(row.bytes) > 0;
+  const card = el('div', `card dl-card rec-card dl-${row.status}`);
+
+  const art = el('div', 'card-art');
+  const fb = el('div', 'fallback');
+  fb.textContent = row.title || row.channelName || 'Recording';
+  art.append(fb);
+
+  const badge = el('div', 'badge dl-badge');
+  badge.textContent = live ? 'RECORDING'
+    : row.status === 'done' ? 'SAVED'
+      : row.status === 'scheduled' ? 'BOOKED'
+        : row.status === 'partial' ? 'PARTIAL'
+          : String(row.status || '').toUpperCase();
+  if (live) badge.classList.add('is-live');
+  art.append(badge);
+
+  /* The bar moves while it is being written, which is the whole of what was
+     asked for: something on this page that shows it is happening. */
+  if (live) {
+    const bar = el('div', 'dl-artbar');
+    const fill = el('div', 'dl-artfill');
+    fill.style.width = `${Math.max(2, recordingProgress(row) * 100).toFixed(1)}%`;
+    bar.append(fill);
+    art.append(bar);
+  }
+
+  if (playable) {
+    art.style.cursor = 'pointer';
+    art.addEventListener('click', () => playRecording(row));
+  }
+
+  const title = el('h3', 'card-title');
+  title.textContent = row.title || 'Recording';
+
+  const sub = el('p', 'card-sub');
+  sub.textContent = [row.channelName, recordingWords(row)].filter(Boolean).join(' · ');
+
+  const actions = el('div', 'dl-actions');
+  if (playable) {
+    const play = el('button', 'btn btn-ghost btn-sm');
+    /* A recording in progress is a fragmented mp4 written so that what is on
+       disk plays — which is what makes watching a game from the start while
+       it is still on work at all. */
+    play.textContent = live ? 'Watch from the start' : 'Play';
+    play.addEventListener('click', () => playRecording(row));
+    actions.append(play);
+  }
+  if (live) {
+    const stop = el('button', 'btn btn-ghost btn-sm');
+    stop.textContent = 'Stop';
+    stop.addEventListener('click', async () => {
+      stop.disabled = true;
+      await fetch(`/api/recordings/${row.id}`, { method: 'POST' });
+      await loadRecordings();
+      renderDownloads();
+      toast('Stopped. What was recorded is kept.');
+    });
+    actions.append(stop);
+  }
+  if (!live && row.status !== 'scheduled') {
+    const bin = el('button', 'btn btn-ghost btn-sm');
+    bin.textContent = 'Delete';
+    bin.addEventListener('click', async () => {
+      bin.disabled = true;
+      await fetch(`/api/recordings/${row.id}`, { method: 'DELETE' });
+      await loadRecordings();
+      renderDownloads();
+      toast('Deleted.');
+    });
+    actions.append(bin);
+  }
+  if (row.status === 'scheduled') {
+    const drop = el('button', 'btn btn-ghost btn-sm');
+    drop.textContent = 'Cancel';
+    drop.addEventListener('click', async () => {
+      drop.disabled = true;
+      await fetch(`/api/recordings/${row.id}`, { method: 'DELETE' });
+      await loadRecordings();
+      renderDownloads();
+      toast('Not recording it.');
+    });
+    actions.append(drop);
+  }
+
+  card.append(art, title, sub, actions);
+  return card;
+}
+
+/**
+ * Play what has been written, straight off the box.
+ *
+ * `localOnly` on purpose: this is a file on the drive and no provider
+ * connection is involved, which is also what makes it safe to watch a game
+ * from the beginning while the rest of it is still being written next to you.
+ */
+function playRecording(row) {
+  return openPlayer({
+    kind: 'movie',
+    id: `rec-${row.id}`,
+    name: row.title || row.channelName || 'Recording',
+    directUrl: `/api/recordings/${row.id}/file`,
+    sourceUrl: 'x.mp4',
+    localOnly: true,
+    resumeKey: `recording:${row.id}`,
+  });
+}
 
 function downloadCard(job) {
   {

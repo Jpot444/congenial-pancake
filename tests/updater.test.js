@@ -73,12 +73,16 @@ echo "$@" >> "${DIR}/pm2-calls.log"
 exit 0
 `, { mode: 0o755 });
 
-  // A portal that answers /api/activity, and can be told to look busy.
+  // A portal that answers /api/activity, and can be told to look busy — or
+  // to be part way through writing a recording, which is a different kind of
+  // busy with an end it can name.
   let busy = false;
+  let recordingUntil = null;
   const portal = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ busy, streaming: busy, watching: false,
-      downloading: false, playingLocal: false }));
+    res.end(JSON.stringify({ busy, streaming: busy && !recordingUntil, watching: false,
+      downloading: false, playingLocal: false,
+      recording: Boolean(recordingUntil), recordingUntil }));
   });
   await new Promise((r) => portal.listen(PORT, '127.0.0.1', r));
 
@@ -185,12 +189,52 @@ exit 0
       JSON.stringify(state()));
     busy = false;
 
+    /* ---- a recording is a different kind of busy ------------------------ */
+    /*
+     * Ten minutes is right for "somebody is watching": nobody can say when a
+     * film ends, and a busy flag that never clears must not park deploys for
+     * ever. It is fatal for a RECORDING. A restart does not interrupt a
+     * recording, it destroys it — ffmpeg dies with the portal and the row
+     * comes back as `partial` — and a ball game is three hours, so the very
+     * mechanism meant to protect it cut off every recording this box has
+     * been asked to make, ten minutes in.
+     *
+     * A recording is the one kind of busy that knows when it ends, so it says
+     * so, and the hold lasts that long instead.
+     */
+    console.log('\n  a push while something is being recorded');
+    publish('version three and a half\n', 'third-and-a-half');
+    busy = true;
+    recordingUntil = Date.now() + 40 * 60_000;
+    // HOLD_LIMIT zero: an ordinary busy box would be updated on the spot.
+    out = await runUpdate({ HOLD_LIMIT: '0' });
+    check('the ordinary ten-minute limit does not cut a recording off',
+      onBox() === 'version three', onBox());
+    check('and it is still reported as waiting', state()?.state === 'held',
+      JSON.stringify(state()));
+
+    /* But not for ever, and not on the box's say-so alone: the updater keeps
+       its own ceiling over whatever the portal claims. A recording wedged in
+       `recording` must not park updates permanently either. */
+    console.log('\n  and the ceiling over that');
+    out = await runUpdate({ HOLD_LIMIT: '0', REC_HOLD_LIMIT: '0' });
+    check('a recording cannot hold a deploy back indefinitely',
+      onBox() === 'version three and a half', onBox());
+    recordingUntil = null;
+    busy = false;
+
     /* ---- the default limit is the one that ships ------------------------ */
     const shipped = fs.readFileSync(path.join(ROOT, 'scripts', 'auto-update.sh'), 'utf8');
     const limit = /HOLD_LIMIT="\$\{HOLD_LIMIT:-(\d+)\}"/.exec(shipped);
-    console.log(`\n  the shipped hold limit is ${limit?.[1]}s`);
-    check('the box never sits on an update for more than ten minutes',
+    const recLimit = /REC_HOLD_LIMIT="\$\{REC_HOLD_LIMIT:-(\d+)\}"/.exec(shipped);
+    console.log(`\n  the shipped limits are ${limit?.[1]}s, ${recLimit?.[1]}s while recording`);
+    check('an ordinary busy box waits ten minutes at most',
       Number(limit?.[1]) <= 600, limit?.[1]);
+    /* Long enough for a game and its overtime, and bounded — the point of a
+       ceiling is that there is one, not that it is short. */
+    check('a recording buys longer, and still not for ever',
+      Number(recLimit?.[1]) >= 3 * 3600 && Number(recLimit?.[1]) <= 8 * 3600,
+      recLimit?.[1]);
 
     /* ---- local edits are not silently destroyed ------------------------- */
     console.log('\n  an edit made directly on the box');

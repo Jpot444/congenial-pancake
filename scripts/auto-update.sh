@@ -31,6 +31,10 @@ FORCE="${FORCE:-0}"
 # that long buys very little and made deploys feel like they were never
 # arriving. Ten minutes still covers the gap between episodes.
 HOLD_LIMIT="${HOLD_LIMIT:-600}"
+# The most a RECORDING may hold a deploy back. Long enough for a ball game and
+# its overtime; short enough that a recording wedged in `recording` for ever
+# cannot park updates permanently.
+REC_HOLD_LIMIT="${REC_HOLD_LIMIT:-18000}"
 
 cd "$(dirname "$0")/.."
 REPO_DIR="$PWD"
@@ -128,6 +132,35 @@ portal_busy() {
   '
 }
 
+# Seconds until the box finishes what it is WRITING, or 0.
+#
+# The ten-minute cap below exists so a busy flag that never clears cannot
+# stall deploys for ever, and that is right for "somebody is watching" —
+# nobody can say when a film ends. A recording is different: it has a start
+# and an end that were both written down when it was booked, so it can say
+# how long it needs, and a restart in the middle of it destroys the whole
+# thing rather than interrupting it. Ten minutes into a ball game is exactly
+# how every recording on this box came to be `partial`.
+#
+# Still capped, on this side, by REC_HOLD_LIMIT: a number from the portal is
+# a number from a program that might be wrong about it.
+recording_seconds_left() {
+  local body
+  body=$(curl -fsS --max-time 5 "http://127.0.0.1:$PORT/api/activity" 2>/dev/null) || return 0
+  printf '%s' "$body" | node -e '
+    let raw = "";
+    process.stdin.on("data", (c) => (raw += c));
+    process.stdin.on("end", () => {
+      let left = 0;
+      try {
+        const at = JSON.parse(raw).recordingUntil;
+        if (at) left = Math.ceil((Number(at) - Date.now()) / 1000);
+      } catch { left = 0; }
+      process.stdout.write(String(left > 0 ? left : 0));
+    });
+  '
+}
+
 HELD_FLAG="$REPO_DIR/.auto-update-held"
 
 # Deferring exists to avoid cutting off a film, not to defer for ever. Any busy
@@ -147,12 +180,26 @@ if [[ "$FORCE" != "1" ]] && portal_busy; then
     exit 0
   fi
 
-  if (( now - since < HOLD_LIMIT )); then
+  # A recording buys the time it actually needs, up to this side's own ceiling.
+  rec_left=$(recording_seconds_left)
+  limit="$HOLD_LIMIT"
+  if [[ -n "${rec_left:-}" ]] && (( rec_left > 0 )); then
+    wanted=$(( now - since + rec_left + 60 ))   # a minute of slack past the tail
+    if (( wanted > limit )); then limit="$wanted"; fi
+    if (( limit > REC_HOLD_LIMIT )); then limit="$REC_HOLD_LIMIT"; fi
+  fi
+
+  if (( now - since < limit )); then
     write_state held "${local_sha:0:7}" "${remote_sha:0:7}" "$since"
     exit 0
   fi
 
-  log "held ${remote_sha:0:7} for $(( (now - since) / 60 ))m — applying anyway"
+  if [[ -n "${rec_left:-}" ]] && (( rec_left > 0 )); then
+    log "held ${remote_sha:0:7} for $(( (now - since) / 60 ))m — a recording is still" \
+      "running with $(( rec_left / 60 ))m to go, but the ceiling is up; applying anyway"
+  else
+    log "held ${remote_sha:0:7} for $(( (now - since) / 60 ))m — applying anyway"
+  fi
 fi
 rm -f "$HELD_FLAG"
 

@@ -3001,6 +3001,39 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 /* ---- what the two download steps are for ---- */
 
+/* A heading inside the downloads grid, so recordings and downloads can share
+   the page without being one undifferentiated wall of cards. */
+.dl-section {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 14px 0 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.dl-section:first-of-type { border-top: 0; padding-top: 0; margin-top: 4px; }
+.dl-section h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: .04em;
+}
+.dl-section-note { font-size: 12.5px; color: var(--muted-dim); }
+
+/* The badge on something being written right now. It pulses because this is
+   the one card on the page that is changing while you look at it. */
+.rec-card .dl-badge.is-live {
+  color: var(--live);
+  border-color: rgba(255, 107, 94, .45);
+  animation: rec-pulse 2s var(--ease) infinite;
+}
+@keyframes rec-pulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) {
+  .rec-card .dl-badge.is-live { animation: none; }
+}
+
 .dl-explain {
   position: relative;
   grid-column: 1 / -1;

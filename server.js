@@ -7444,12 +7444,46 @@ async function handleApi(req, res, pathname, query) {
     // it chews through what it already has, and a false idle here costs someone
     // their film.
     const playingLocal = Date.now() - localPlaybackAt < 90_000;
+    /*
+     * A RECORDING IS THE BUSIEST THE BOX EVER IS, and it counted for nothing.
+     *
+     * beginRecording spawns ffmpeg itself; it never touches providerStreams,
+     * opens no remux session and starts no download — so a box quietly
+     * writing a two-hour programme set every flag here to false and told the
+     * auto-updater it was idle. The updater pulled, restarted the portal, the
+     * ffmpeg went with it, and the row came back as `partial` or `missed`
+     * with "The box restarted while this was recording."
+     *
+     * Which is precisely the way to lose every recording you ever asked for
+     * and have nothing to blame but a deploy. Nobody is in the room when this
+     * happens, which is the whole point of recording, and it is exactly why
+     * an unattended job has to say so louder than a watched one.
+     */
+    const live = recordings.active();
+    const recording = live.length > 0;
+    /*
+     * And WHEN it will be done, because "busy" alone is not enough here.
+     *
+     * The updater holds for ten minutes and then goes anyway — deliberately,
+     * so a busy flag that never clears cannot stall every deploy for ever. A
+     * ball game is three hours, so a recording would be cut off at the ten
+     * minute mark by the very mechanism meant to protect it.
+     *
+     * A recording is the one kind of busy with a KNOWN END, so it can say
+     * when: hold until this moment, not indefinitely. The updater keeps its
+     * own ceiling on top of this — a number from the box is still a number
+     * from a program that might be wrong.
+     */
+    const recordingUntil = live.reduce(
+      (latest, row) => Math.max(latest, recordings.closesAt(row)), 0);
     return json(res, 200, {
-      busy: streaming || watching || downloading || playingLocal,
+      busy: streaming || watching || downloading || playingLocal || recording,
       streaming,
       watching,
       downloading,
       playingLocal,
+      recording,
+      recordingUntil: recordingUntil || null,
     });
   }
 
