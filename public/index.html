@@ -79,6 +79,13 @@
       <p class="health-loading">Reading the box…</p>
     </div>
 
+    <!-- Everything below the numbers, laid out two across on a screen with the
+         room for it. Stacked one under another this card ran to fifteen
+         hundred pixels in a nine-hundred pixel window: the top of it was the
+         eight numbers somebody opens it for, and the rest was a column of
+         machinery you had to scroll past to reach the Close button. -->
+    <div class="health-panels">
+
     <!-- Reads the watchdog rather than the player, because how fast the media
          clock actually moves is the number that says what is wrong. Survives
          the player closing, since this panel cannot be reached from inside it. -->
@@ -110,8 +117,8 @@
         <span class="low-mode-words">
           <strong>Low bandwidth mode</strong>
           <small>
-            The box shrinks everything to about 1 Mbit/s before sending it, so
-            it keeps playing on weak Wi-Fi. The picture is softer, and it works.
+            Everything is shrunk to about 1 Mbit/s before it is sent. Softer
+            picture, keeps playing on weak Wi-Fi.
           </small>
         </span>
       </label>
@@ -129,22 +136,29 @@
       </h3>
       <p class="gsrc-note" id="guideNote">Checking…</p>
 
+      <!-- The coverage line above is the answer; everything below it is the
+           machinery for changing that answer, and it was six hundred pixels of
+           a card that had to be scrolled past every time. Folded away, because
+           "did it work" is what this is opened to ask and picking feeds is a
+           thing done once. -->
+      <details class="gsrc-more">
+      <summary>Sources and troubleshooting</summary>
+
       <label class="gsrc-row">
         <input type="checkbox" id="guideProvider" />
         <span class="gsrc-words">
           <strong>The provider's own guide</strong>
           <small>
-            One request for the whole account instead of one per channel. Free
-            to use and already paid for — but only read while a connection is
-            free, since it comes down the same ones the streams do.
+            One request for the whole account instead of one per channel —
+            but only read while a connection is free, since it comes down the
+            same ones the streams do.
           </small>
         </span>
       </label>
 
       <p class="gsrc-lead">
-        Open guides. These cover the channels the provider left blank. They are
-        somebody else's server, so pick the ones you actually watch — each one
-        is a few hundred megabytes to read through.
+        Open guides, for the channels the provider left blank. Somebody else's
+        server, and a few hundred megabytes each — so pick the ones you watch.
       </p>
       <div class="gsrc-picks" id="guidePicks"></div>
 
@@ -185,6 +199,7 @@
         </label>
         <div class="gsrc-why-out" id="guideWhyOut" hidden></div>
       </div>
+      </details>
     </div>
 
     <!-- What everyone else has sent in. Sits outside #healthBody for the same
@@ -202,6 +217,8 @@
         Send one yourself
       </button>
     </div>
+
+    </div><!-- /.health-panels -->
 
     <!-- Lives here rather than in the header: the destructive thing is behind
          it, and a gear sitting between the controls you use every day is an

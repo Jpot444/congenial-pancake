@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '36.2';
+const VERSION = '36.3';
 
 const PAGE_SIZE = 60;
 
@@ -2905,22 +2905,22 @@ const health = {
     /* ---- the archive drive, when there is one ---- */
     if (d.archive) {
       if (!d.archive.mounted) {
-        rows.push(row('Archive drive', {
+        rows.push(row('Archive', {
           value: 'Not plugged in',
-          sub: 'The library still browses; nothing will play until it is back.',
+          sub: 'Browsable; nothing plays until it is back.',
           pill: ['warn', 'Unplugged'],
         }));
       } else if (d.archive.free != null) {
         const total = d.archive.total || 0;
         const usedPct = total ? Math.min(100, ((total - d.archive.free) / total) * 100) : 0;
-        rows.push(row('Archive drive', {
+        rows.push(row('Archive', {
           value: `${gb(d.archive.free)} free`,
           sub: total ? `${gb(total - d.archive.free)} used of ${gb(total)}` : '',
           pill: ['ok', 'Mounted'],
           bar: ['ok', usedPct],
         }));
       } else {
-        rows.push(row('Archive drive', { value: 'Mounted', pill: ['ok', 'Mounted'] }));
+        rows.push(row('Archive', { value: 'Mounted', pill: ['ok', 'Mounted'] }));
       }
     }
 
@@ -2936,7 +2936,7 @@ const health = {
         pill: [tone, n.level === 'good' ? 'Strong' : n.level === 'fair' ? 'Fair' : 'Weak'],
       }));
     } else {
-      rows.push(row('Network', { value: 'Wired', sub: 'Ethernet — no signal to worry about', pill: ['ok', 'Strong'] }));
+      rows.push(row('Network', { value: 'Wired', sub: 'Ethernet', pill: ['ok', 'Strong'] }));
     }
 
     /* ---- provider throughput: what actually decides if a stream plays ---- */
@@ -2946,13 +2946,13 @@ const health = {
       const tone = ratio >= 1.6 ? 'ok' : ratio >= 1.05 ? 'warn' : 'bad';
       rows.push(row('Provider', {
         value: `${(p.bytesPerSec / 1048576).toFixed(2)} MB/s`,
-        sub: `${ratio.toFixed(1)}× what a 1080p stream needs`,
+        sub: `${ratio.toFixed(1)}× a 1080p stream`,
         pill: [tone, tone === 'ok' ? 'Comfortable' : tone === 'warn' ? 'Marginal' : 'Too slow'],
       }));
     } else {
       rows.push(row('Provider', {
         value: p.streaming ? 'Streaming' : 'Idle',
-        sub: p.streaming ? 'Measuring…' : 'Speed shows while something is playing or downloading',
+        sub: p.streaming ? 'Measuring…' : 'Shown while something is playing',
         pill: [p.streaming ? 'ok' : 'neutral', p.streaming ? 'Active' : 'Idle'],
       }));
     }
@@ -2963,7 +2963,7 @@ const health = {
       const tone = t < 65 ? 'ok' : t < 78 ? 'warn' : 'bad';
       rows.push(row('CPU', {
         value: `${t.toFixed(0)}°C`,
-        sub: `load ${d.cpu.load1.toFixed(2)} across ${d.cpu.cores} core${d.cpu.cores === 1 ? '' : 's'}`,
+        sub: `load ${d.cpu.load1.toFixed(2)} · ${d.cpu.cores} cores`,
         pill: [tone, tone === 'ok' ? 'Cool' : tone === 'warn' ? 'Warm' : 'Hot'],
       }));
     } else {
@@ -2977,7 +2977,7 @@ const health = {
     const memPct = m.total ? (m.used / m.total) * 100 : 0;
     rows.push(row('Memory', {
       value: `${gb(m.available)} free`,
-      sub: `${memPct.toFixed(0)}% of ${gb(m.total)} in use`,
+      sub: `${memPct.toFixed(0)}% of ${gb(m.total)} used`,
       pill: memPct > 92 ? ['bad', 'Tight'] : memPct > 80 ? ['warn', 'Busy'] : ['ok', 'Fine'],
     }));
 
@@ -2996,7 +2996,7 @@ const health = {
 
     rows.push(row('Uptime', {
       value: duration(d.uptime.host),
-      sub: `portal running ${duration(d.uptime.server)}`,
+      sub: `portal ${duration(d.uptime.server)}`,
     }));
 
     /* ---- where a pushed update has got to ----
@@ -3017,20 +3017,23 @@ const health = {
         // It runs every two minutes; ten quiet ones means it is not running.
         rows.push(row('Updates', {
           value: 'Updater is not checking in',
-          sub: `last heard from it ${since} min ago — new versions will not arrive`,
+          sub: `last seen ${since} min ago — nothing new can arrive`,
           pill: ['bad', 'Stalled'],
         }));
       } else if (u.state === 'blocked') {
         rows.push(row('Updates', {
           value: 'Blocked',
-          sub: 'the box cannot reach the repository — nothing new can arrive',
+          sub: 'cannot reach the repository',
           pill: ['bad', 'Blocked'],
         }));
       } else if (u.state === 'held') {
         const waited = u.heldSince ? mins(Date.now() - u.heldSince) : 0;
         rows.push(row('Updates', {
           value: `A new version is waiting${waited ? ` — ${waited} min` : ''}`,
-          sub: 'held back while somebody is watching; it installs itself once the box is idle',
+          /* Keeps the REASON. "Installs once the box is idle" is shorter and
+             says nothing about why it is waiting, which is the one thing
+             that stops an amber row reading as a fault. */
+          sub: 'held while somebody is watching — installs when idle',
           pill: ['warn', 'Waiting'],
         }));
       } else {

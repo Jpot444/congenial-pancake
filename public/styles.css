@@ -4572,9 +4572,67 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 /* ============================================================ health === */
 
 /* Status colours read at a glance from across the room: green is fine,
-   amber is worth knowing, red is why the thing is buffering. */
-.health-card { width: min(520px, 100%); }
+   amber is worth knowing, red is why the thing is buffering.
+ *
+ * WIDE AND SHORT rather than narrow and endless.
+ *
+ * At 520px this card was 1500px tall in a 900px window: the eight numbers
+ * anybody opens it for were the top third, and the rest was a column of
+ * machinery to scroll past before reaching Close. The same content laid out
+ * two across fits on one screen, which is the whole point of a panel you open
+ * to find something out at a glance. */
+.health-card { width: min(920px, 100%); }
 .health-card h2 { display: flex; align-items: center; gap: 10px; }
+
+/* The numbers, two across. Each row is already a self-contained key / value /
+   pill, so it becomes a tile as it stands. */
+@media (min-width: 760px) {
+  .health-body { grid-template-columns: 1fr 1fr; column-gap: 30px; }
+
+  /* No underline beneath the bottom row of tiles — and which tiles those are
+     depends on how many there are. The archive drive only appears when there
+     is one, so the count is seven as often as eight, and taking the border off
+     "the last two" leaves a line under one column and not the other. */
+  .health-body:has(> .health-row:nth-child(even):last-child)
+    > .health-row:nth-last-child(-n+2) { border-bottom: 0; }
+  .health-body:has(> .health-row:nth-child(odd):last-child)
+    > .health-row:last-child { border-bottom: 0; }
+
+  /* And everything under them, likewise — with each column able to shrink,
+     or a wide <pre> in the playback report pushes the card off the screen. */
+  .health-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 30px;
+    align-items: start;
+  }
+  .health-panels > * { min-width: 0; }
+  /* The playback report is a block of fixed-width text and wants the width. */
+  .health-panels > .playback-panel { grid-column: 1 / -1; }
+
+  /* Side by side, the separators have to agree. Each of these panels carried
+     its own top margin and rule — 14px here, 18px there — which stacked
+     invisibly in one column and, in two, read as columns that had drifted.
+     Carries .health-card so it outranks each panel's own margin, which is
+     written later in this file. */
+  .health-card .health-panels > * {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line-soft);
+  }
+}
+
+/* One heading style for both, since they now sit beside each other: Listings
+   was plain 14px and Reports was the display face in caps, and at arm's
+   length that reads as a mistake rather than a distinction. */
+.gsrc h3,
+.reports h3 {
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: .04em;
+  margin: 0 0 8px;
+}
 
 .health-live {
   font-family: var(--display);
@@ -4835,6 +4893,35 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   line-height: 1.45;
   color: var(--muted-dim);
 }
+
+/* The feed pickers and the rest of the machinery, folded away.
+ *
+ * The coverage line above this is the answer somebody opens Listings to read;
+ * everything inside is for changing that answer, which is done once. Left
+ * open it was six hundred pixels — more than the eight numbers, the network
+ * and the reports put together. */
+.gsrc-more > summary {
+  cursor: pointer;
+  list-style: none;
+  margin-top: 8px;
+  padding: 7px 0;
+  font-size: 13px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.gsrc-more > summary::-webkit-details-marker { display: none; }
+.gsrc-more > summary::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--dur-hover, .16s) var(--ease, ease);
+}
+.gsrc-more[open] > summary::before { transform: rotate(45deg); }
+.gsrc-more > summary:hover { color: var(--text); }
 
 /* Two columns where there is room: the list is nine items and a single
    column pushes everything below it off the modal. */

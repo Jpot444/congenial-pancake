@@ -208,8 +208,11 @@ const EPISODES = {
     const html = health.render(data);
     return { html };
   }, { ...health, archive: { mounted: true, free: 500 * 1024 ** 3, total: 2000 * 1024 ** 3 } });
+  /* Labelled 'Archive', not 'Archive drive': the key column on that panel is
+     96px, and two words wrapped onto two lines and made the row taller than
+     every other one. The word that carries the meaning is the first. */
   check('a mounted drive paints its free space',
-    /Archive drive/.test(painted.html) && /500\.0 GB free/.test(painted.html)
+    /health-key">Archive</.test(painted.html) && /500\.0 GB free/.test(painted.html)
     && /1500\.0 GB used of 2000\.0 GB/.test(painted.html),
     painted.html.slice(painted.html.indexOf('Archive'), painted.html.indexOf('Archive') + 200));
   const unplugged = await page.evaluate((data) => health.render(data),
@@ -219,7 +222,7 @@ const EPISODES = {
   const absent = await page.evaluate((data) => health.render(data),
     { ...health, archive: null });
   check('and a box with no archive at all shows no row for it',
-    !/Archive drive/.test(absent));
+    !/health-key">Archive</.test(absent));
 
   await browser.close();
   console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(', ')}` : '\nall passed');
