@@ -6843,7 +6843,7 @@ async function handleApi(req, res, pathname, query) {
       cache: similarCache,
       fetchJson: (url, headers) => fetchJson(url, { ...SITE_HEADERS, ...(headers || {}) }),
       log: (line) => console.log(line),
-      tmdbKey: String(readConfig().tmdbKey || '').trim(),
+      tmdbKey: String(cfg?.tmdbKey || '').trim(),
     });
     return json(res, 200, answer);
   }
@@ -6859,11 +6859,11 @@ async function handleApi(req, res, pathname, query) {
    * given away.
    */
   if (pathname === '/api/tmdb') {
-    const cfg = readConfig();
     if (req.method === 'GET') {
-      return json(res, 200, { set: Boolean(String(cfg.tmdbKey || '').trim()) });
+      return json(res, 200, { set: Boolean(String(cfg?.tmdbKey || '').trim()) });
     }
     if (req.method === 'PUT') {
+      if (!cfg) return json(res, 400, { error: 'Connect a provider first.' });
       let incoming;
       try {
         incoming = JSON.parse(await collectRequestBody(req));
@@ -7351,7 +7351,7 @@ async function handleApi(req, res, pathname, query) {
         /* Read here rather than passed around: it lives in config.json with
            the provider password, 0600, and it must not travel to a browser
            or into any URL this box hands out. */
-        tmdbKey: String(readConfig().tmdbKey || '').trim(),
+        tmdbKey: String(cfg?.tmdbKey || '').trim(),
       });
       return json(res, 200, answer);
     }
