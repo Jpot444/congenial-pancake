@@ -53,6 +53,20 @@ const PROFILES_PATH = path.join(ROOT, 'profiles.json');
    other state: a report can carry whatever somebody chose to type into it,
    including how to reach them. */
 const REPORTS_PATH = path.join(ROOT, 'reports.json');
+/*
+ * Where the box writes down its own death.
+ *
+ * This process had no uncaughtException handler and no unhandledRejection
+ * handler, which means a throw on any callback — an ffmpeg exit handler, a
+ * timer, a socket error — took the whole portal down and left NOTHING but
+ * whatever pm2 happened to catch on stderr. The portal went down once and
+ * the honest answer afterwards was "I do not know", because there was no
+ * evidence to have.
+ *
+ * A stack trace on disk, and the last few readable from the health panel, so
+ * the next one is a question with an answer instead of a guess.
+ */
+const CRASH_PATH = path.join(ROOT, 'crash.log');
 /* Who is in what, and what they look like. A cache of other people's answers
    — the provider's credits and IMDb's portraits — so it is disposable, but it
    takes a long time to build and is worth keeping across restarts. */
@@ -1242,6 +1256,10 @@ async function readHealth() {
     },
     memory: memory(),
     power: decodeThrottled(throttleRaw),
+    /* What killed it last time, if anything did. Reported rather than left in
+       a file nobody can reach: "the portal went down and I do not know why"
+       is the one answer this box should never have to give. */
+    crashes: recentCrashes(),
     downloads: {
       active: activeJob ? { name: activeJob.name, bytes: activeJob.bytes, total: activeJob.total } : null,
       queued: queue.length,
@@ -9101,6 +9119,81 @@ function serveStatic(req, res, pathname) {
       res.end(data);
     });
   });
+}
+
+/* ------------------------------------------------------- the black box ---
+ *
+ * What this process was doing when it died.
+ *
+ * There was no handler for either of these, so a throw on ANY callback — an
+ * ffmpeg exit, a timer, a socket that errored after the response went out —
+ * killed the portal outright and left nothing behind but whatever pm2 caught
+ * on stderr, which nobody can reach from the sofa. The box went down once and
+ * the honest answer the next morning was "I do not know", because there was
+ * no evidence to have.
+ *
+ * The two are not the same fault and are not treated the same.
+ *
+ *   AN UNCAUGHT EXCEPTION leaves the process in a state nobody reasoned
+ *   about: half a request written, a file handle open, a Map half updated.
+ *   Carrying on from there is how a crash becomes corruption, so it is
+ *   written down and the process exits for pm2 to restart cleanly. That is
+ *   what already happened — only now it says why.
+ *
+ *   AN UNHANDLED REJECTION is a promise nobody awaited, and on this box that
+ *   is usually a fetch to somebody else's server that failed in a path that
+ *   forgot a catch. Node's default is to turn it into an uncaught exception,
+ *   which means a score feed refusing a connection can take down playback in
+ *   the next room. It is written down and the box carries on.
+ */
+function noteCrash(kind, err) {
+  const when = new Date().toISOString();
+  const detail = err && err.stack ? err.stack : String(err);
+  const entry = `\n[${when}] ${kind}\n${redactUrl(detail)}\n`;
+  try {
+    fs.appendFileSync(CRASH_PATH, entry, { mode: 0o600 });
+  } catch {
+    /* If the disk is full there is nowhere to write it; the console line
+       below is the last thing that can still be said. */
+  }
+  console.error(`  ${kind}: ${redactUrl(String(err && err.message ? err.message : err))}`);
+}
+
+process.on('uncaughtException', (err) => {
+  noteCrash('uncaughtException', err);
+  /* Exit rather than soldier on. pm2 restarts it, which is what happened
+     before — the difference is that now there is a stack trace to read. */
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  noteCrash('unhandledRejection', reason);
+});
+
+/** The last few, newest first, for the health panel. */
+function recentCrashes(limit = 3) {
+  let text;
+  try {
+    text = fs.readFileSync(CRASH_PATH, 'utf8');
+  } catch {
+    return [];
+  }
+  // Only the tail is ever wanted, and this file is read on a poll.
+  return text
+    .split(/\n(?=\[\d{4}-)/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .slice(-limit)
+    .reverse()
+    .map((block) => {
+      const head = /^\[([^\]]+)\]\s*(\w+)/.exec(block);
+      return {
+        at: head ? head[1] : '',
+        kind: head ? head[2] : 'error',
+        // The first line of the stack is the sentence; the rest is for me.
+        detail: block.split('\n').slice(1, 6).join('\n').slice(0, 900),
+      };
+    });
 }
 
 /* -------------------------------------------------------------------- main */

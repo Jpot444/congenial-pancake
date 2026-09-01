@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '36.8';
+const VERSION = '36.9';
 
 const PAGE_SIZE = 60;
 
@@ -2834,6 +2834,37 @@ const health = {
    * usually just been closed. Hidden entirely when nothing has played, since
    * an empty block only raises questions.
    */
+  /**
+   * What killed the portal, when something did.
+   *
+   * The box went down once and the honest answer afterwards was "I do not
+   * know": there was no uncaught-exception handler, so a throw on any
+   * callback took the process with it and left nothing anybody could reach
+   * from the sofa. There is a stack trace now, and this is where it is read
+   * without needing pm2 or a terminal.
+   */
+  paintCrashes(data) {
+    const panel = $('#crashPanel');
+    const rows = (data && data.crashes) || [];
+    panel.hidden = rows.length === 0;
+    if (!rows.length) return;
+    const [last] = rows;
+    const ago = last.at ? new Date(last.at) : null;
+    $('#crashWhen').textContent = ago
+      ? `· ${ago.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+      : '';
+    /* An unhandled rejection did not stop anything — the box carries on and
+       writes it down — so it must not be reported as though it had. */
+    $('#crashLead').textContent = last.kind === 'unhandledRejection'
+      ? 'Something failed in the background and was written down. The portal '
+        + 'kept running; this is worth reading, not worth worrying about.'
+      : 'The portal hit an error it could not carry on from and restarted '
+        + 'itself. This is what it was doing.';
+    $('#crashReport').textContent = rows
+      .map((row) => `[${row.at}] ${row.kind}\n${row.detail}`)
+      .join('\n\n');
+  },
+
   paintPlayback() {
     const panel = $('#playbackPanel');
     const live = !$('#playerOverlay').hidden && $('#video').currentSrc && !$('#video').paused;
@@ -2874,6 +2905,7 @@ const health = {
     // A one-frame flicker each poll, so it's obvious the numbers are current.
     setTimeout(() => live.classList.remove('is-beating'), 600);
     this.markBadge(data);
+    this.paintCrashes(data);
   },
 
   /** Surface trouble on the header button so it's seen without opening. */
@@ -3382,6 +3414,24 @@ $('#speedTest').addEventListener('click', async () => {
   } finally {
     btn.disabled = false;
     btn.textContent = label;
+  }
+});
+
+$('#copyCrash').addEventListener('click', async () => {
+  const text = $('#crashReport').textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Crash report copied — paste it into the chat.');
+  } catch {
+    // Same reason as the playback one: the clipboard needs a secure context
+    // and this is plain http on the tailnet. Select it to copy by hand.
+    const pre = $('#crashReport');
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    toast('Selected — copy it with your keyboard.');
   }
 });
 

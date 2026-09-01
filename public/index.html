@@ -86,6 +86,17 @@
          machinery you had to scroll past to reach the Close button. -->
     <div class="health-panels">
 
+    <!-- What killed the portal, when something did.
+         Hidden unless there is one, because an empty box only raises
+         questions — but when the box has gone down, this is the difference
+         between a stack trace and a shrug. -->
+    <div class="playback-panel crash-panel" id="crashPanel" hidden>
+      <h3>The portal stopped <span class="crash-when" id="crashWhen"></span></h3>
+      <p class="health-note" id="crashLead"></p>
+      <pre class="playback-report" id="crashReport"></pre>
+      <button type="button" class="btn btn-ghost btn-sm" id="copyCrash">Copy report</button>
+    </div>
+
     <!-- Reads the watchdog rather than the player, because how fast the media
          clock actually moves is the number that says what is wrong. Survives
          the player closing, since this panel cannot be reached from inside it. -->
