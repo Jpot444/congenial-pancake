@@ -95,6 +95,7 @@ const UA = 'Mozilla/5.0 (compatible; TreasureTheater/1.0)';
 const store = {
   dir: __dirname,
   log: () => {},
+  guard: null,
   sources: [],
   /** ourChannelId -> [{ title, start, stop }] */
   byChannel: new Map(),
@@ -479,6 +480,9 @@ function open(target, redirectsLeft = 5, keepErrors = false) {
     } catch {
       return reject(new Error('That does not look like a URL.'));
     }
+    if (!/^https?:$/.test(u.protocol)) {
+      return reject(new Error('Only http and https URLs can be fetched.'));
+    }
     const lib = u.protocol === 'https:' ? https : http;
     const req = lib.request(u, {
       method: 'GET',
@@ -501,7 +505,22 @@ function open(target, redirectsLeft = 5, keepErrors = false) {
       const loc = res.headers.location;
       if (status >= 300 && status < 400 && loc && redirectsLeft > 0) {
         res.resume();
-        return resolve(open(new URL(loc, u).toString(), redirectsLeft - 1, keepErrors));
+        let next;
+        try {
+          next = new URL(loc, u).toString();
+        } catch {
+          return reject(new Error('Bad redirect URL'));
+        }
+        // A public feed must not hop onto this network. Local providers may
+        // still redirect among themselves — the first hop was already private.
+        if (store.guard) {
+          const fromPrivate = store.guard(u.toString());
+          const toPrivate = store.guard(next);
+          if (!fromPrivate && toPrivate) {
+            return reject(new Error(toPrivate));
+          }
+        }
+        return resolve(open(next, redirectsLeft - 1, keepErrors));
       }
       res.finalUrl = u.toString();
       // The probe wants the body of a failure — a 404 page usually explains
@@ -1001,6 +1020,7 @@ function load() {
 function configure(opts = {}) {
   if (opts.dir) store.dir = opts.dir;
   if (opts.log) store.log = opts.log;
+  if (opts.guard) store.guard = opts.guard;
   load();
 }
 
