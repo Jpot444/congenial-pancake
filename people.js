@@ -80,12 +80,65 @@ function fold(name) {
     .trim();
 }
 
+/*
+ * Words that belong to a company rather than to a person.
+ *
+ * The provider's `director` field is not always a director. On Analyze This
+ * it holds "Spring Creek Productions, Tribeca Productions, Baltimore
+ * Pictures, Warner Bros. Pictures" — the production companies, four of them,
+ * every one presented on the film's page as a director with its initials in
+ * a circle.
+ *
+ * That is worse than the cosmetic mess it looks like. A shared DIRECTOR is
+ * the strongest signal the recommender has, worth more than a shared actor,
+ * because a director is a choice — so an index that thinks Warner Bros.
+ * Pictures directed nine hundred films quietly decides that all nine hundred
+ * are by the same person, and For You leans on it.
+ *
+ * The bar is deliberately set to never drop a REAL person. A company left in
+ * is a bad row; a director taken out is a lost fact and a worse
+ * recommendation, so anything ambiguous stays.
+ */
+const COMPANY_WORDS = new Set([
+  'animation', 'bros', 'brothers', 'cinema', 'cinemas', 'company', 'corporation',
+  'distribution', 'entertainment', 'enterprises', 'filmes', 'films',
+  'gmbh', 'group', 'industries', 'international', 'media', 'network', 'networks',
+  'partners', 'pictures', 'prods', 'production', 'productions',
+  'releasing', 'studio', 'studios', 'television', 'ventures', 'worldwide',
+]);
+/* Singular `film` and `picture` are deliberately NOT on that list. They are
+   the only two words here a person's name could plausibly end in, and a
+   company using either almost always carries a second marker anyway — "Film4
+   Productions", "Motion Picture Corporation". Recall is worth less than not
+   deleting a director. */
+
+/* Only when they END the name, and only alongside another word: these are
+   short enough to be somebody's initials in the middle of one. */
+const COMPANY_SUFFIX = new Set([
+  'inc', 'incorporated', 'ltd', 'limited', 'llc', 'plc', 'corp', 'co',
+  'sa', 'ag', 'bv', 'ab', 'oy', 'srl', 'spa', 'kg',
+]);
+
+/** Is this a company rather than a person? */
+function isCompany(name) {
+  const words = String(name || '')
+    .toLowerCase()
+    .replace(/[.,]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!words.length) return false;
+  if (words.some((word) => COMPANY_WORDS.has(word))) return true;
+  return words.length > 1 && COMPANY_SUFFIX.has(words[words.length - 1]);
+}
+
 /** The people in one get_vod_info payload, as the provider wrote them. */
 function peopleIn(info) {
   const split = (raw) => String(raw || '')
     .split(/[,/|]/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 1 && s.length < 80);
+    .filter((s) => s.length > 1 && s.length < 80)
+    // A studio is not a person, and is certainly not a director.
+    .filter((s) => !isCompany(s));
   return {
     cast: [...new Set(split(info?.cast ?? info?.actors))],
     directors: [...new Set(split(info?.director))],
@@ -109,14 +162,34 @@ function load(file, log = () => {}) {
   try {
     const body = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (Number(body.shape) !== SHAPE) return;
+    /* Swept on the way in, because the damage is already written down.
+     *
+     * Every film opened before this had its production companies filed as
+     * directors, and that index is what the recommender reads — so leaving
+     * the old entries alone would mean the fix only applied to films nobody
+     * had looked at yet, while a thousand already-crawled ones went on
+     * insisting Warner Bros. Pictures directed them. Cheaper than a re-crawl
+     * and it keeps the cast, which was never the problem. */
+    let swept = 0;
     for (const [id, entry] of Object.entries(body.films || {})) {
       if (!entry || !Array.isArray(entry.c)) continue;
+      const cast = entry.c.filter((name) => !isCompany(name));
+      const directors = (entry.d || []).filter((name) => !isCompany(name));
+      if (cast.length !== entry.c.length || directors.length !== (entry.d || []).length) {
+        swept += 1;
+        entry.c = cast;
+        entry.d = directors;
+      }
       store.films.set(String(id), entry);
       index(id, entry);
     }
     for (const [key, face] of Object.entries(body.faces || {})) store.faces.set(key, face);
     log(`people: ${store.films.size} films indexed, ${store.byPerson.size} names, `
       + `${store.faces.size} portraits`);
+    if (swept) {
+      log(`people: studios taken out of ${swept} film${swept === 1 ? '' : 's'}`);
+      save();
+    }
   } catch {
     /* no index yet, which is the ordinary state of a new box */
   }
@@ -321,5 +394,6 @@ module.exports = {
   portrait,
   fold,
   peopleIn,
+  isCompany,
   SHAPE,
 };

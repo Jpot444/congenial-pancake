@@ -8183,6 +8183,24 @@ async function handleApi(req, res, pathname, query) {
          call has already been paid for, and this is the only place the cast
          and the director ever pass through the box. */
       if (params.action === 'get_vod_info' && data && data.info) {
+        /* Studios out before anybody sees them, index and card alike.
+         *
+         * This provider writes the production companies into `director` on a
+         * good many films — Analyze This lists four, and the page put every
+         * one of them up as a director with its initials in a circle. Doing
+         * it here rather than on the page means the credits index gets the
+         * same clean list, which matters more than the display does: a
+         * shared director is the strongest signal the recommender has, so an
+         * index that believes Warner Bros. Pictures directed nine hundred
+         * films quietly ties all nine hundred together. */
+        const clean = (raw) => String(raw || '')
+          .split(/[,/|]/)
+          .map((s) => s.trim())
+          .filter((s) => s && !people.isCompany(s))
+          .join(', ');
+        if (data.info.director) data.info.director = clean(data.info.director);
+        if (data.info.cast) data.info.cast = clean(data.info.cast);
+        if (data.info.actors) data.info.actors = clean(data.info.actors);
         people.note(params.vod_id, data.info);
       }
       return json(res, 200, data);
