@@ -62,7 +62,27 @@ const SHAPE = [
   'id', 'channelId', 'channelName', 'title', 'subtitle', 'description',
   'startsAt', 'endsAt', 'leadMs', 'tailMs', 'status', 'file', 'bytes',
   'error', 'profileId', 'createdAt', 'startedAt', 'finishedAt', 'source',
+  // How many times the box has tried to start this, and whether a person
+  // stopped it — see the retry block in tick(). The wait between attempts is
+  // measured from `finishedAt`, so it needs no field of its own.
+  'tries', 'byHand',
 ];
+
+/*
+ * How long to wait before trying a failed start again, and the ceiling.
+ *
+ * A recording that wrote NOTHING has nothing to lose by being attempted
+ * again, and an overnight booking is exactly the case that cannot ask anybody
+ * to press retry. One refused connection at two in the morning — a slot
+ * momentarily full, a provider hiccup, a channel that comes up late — ended
+ * the whole eight-hour window at minute one, and the morning showed "failed"
+ * with no hint that a single retry would have caught it.
+ *
+ * Backing off so a channel that is genuinely gone is not hammered all night:
+ * a minute, then two, then three, settling at five.
+ */
+const RETRY_STEP_MS = 60 * 1000;
+const RETRY_MAX_MS = 5 * 60 * 1000;
 
 const store = {
   dir: '',
@@ -213,6 +233,11 @@ function cancel(id, { reason = '' } = {}) {
   if (!row) return null;
   const live = store.running.get(row.id);
   if (live) {
+    /* Marked as a person's doing before it is stopped. A stop with nothing
+       written yet lands on `failed`, which the scheduler now retries — and
+       restarting something somebody has just switched off would be the box
+       arguing with the button. */
+    row.byHand = true;
     stop(row.id, { reason: reason || 'Stopped.' });
     return get(id);
   }
@@ -286,6 +311,35 @@ function tick(now, hooks) {
         stop(row.id, { reason: 'The feed stopped sending.' });
       }
       continue;
+    }
+
+    /*
+     * A start that failed, inside a window that is still open.
+     *
+     * `failed` means one thing in this file: NOTHING was written. All three
+     * places that set it — ffmpeg exiting with an empty file, a stall before
+     * the first byte, and a refusal to start at all — leave no footage
+     * behind, so there is nothing a fresh attempt can destroy and the `-y`
+     * that would overwrite has nothing to overwrite.
+     *
+     * Only when a person did not do it. Stopping a recording to take the
+     * connection back also lands on `failed` when it had not written anything
+     * yet, and restarting that a minute later would be the box arguing with
+     * whoever pressed the button.
+     */
+    if (row.status === 'failed' && !row.bytes && !row.byHand
+      && now >= opensAt(row) && now < closesAt(row)) {
+      /* Measured from when it failed rather than kept in a field of its own:
+         the first attempt has to wait as long as the rest, or a failure that
+         is instant becomes a retry every tick. */
+      const tries = row.tries || 0;
+      const wait = Math.min(RETRY_MAX_MS, RETRY_STEP_MS * (tries + 1));
+      if (now - (row.finishedAt || 0) < wait) continue;
+      row.tries = tries + 1;
+      row.status = 'scheduled';
+      persist();
+      /* Falls through on purpose: the lines below start a scheduled row, and
+         this one is due now. */
     }
 
     if (row.status !== 'scheduled') continue;
