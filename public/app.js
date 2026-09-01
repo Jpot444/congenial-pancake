@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '36.3';
+const VERSION = '36.4';
 
 const PAGE_SIZE = 60;
 
@@ -10431,6 +10431,11 @@ function attach(url, format, opts = {}) {
       engine.attachMedia(video);
       if (live) waitForCushion(video);
       engine.on(Hls.Events.ERROR, (_, data) => {
+        /* Written down BEFORE the fatal test. A fragment that fails to load
+           is not fatal — the engine shrugs and moves on, leaving a hole in
+           the buffer that the player later steps over — so the one event
+           that explains a skip was the one this handler threw away. */
+        playback.noteEngineError(data);
         if (!data.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) engine.startLoad();
         else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) engine.recoverMediaError();
@@ -10641,10 +10646,69 @@ function stopLiveTracking() {
  * you watch is wrong — so the server is asked to inspect its own output too,
  * and the answer is folded into the report.
  */
+/**
+ * How much video sits ahead of the playhead WITHOUT A HOLE IN IT, and where
+ * the picture would resume if there is one.
+ *
+ * The end of the last buffered range is not that number, and reporting it as
+ * the cushion is how a stream walked into a ten-second hole with the log
+ * saying "+30s" on every row up to it. `buffered` is a list of ranges: a
+ * failed segment leaves 1141-1179 and 1189-1239, and the far end of that is
+ * thirty seconds of comfort that the playhead cannot reach without crossing a
+ * wall. The number that says when playback stops is the end of the range the
+ * playhead is actually in.
+ */
+function bufferAhead(video) {
+  const ranges = video.buffered;
+  const at = video.currentTime;
+  for (let i = 0; i < ranges.length; i += 1) {
+    // A shade of slack at the start: the playhead sits a frame or two before
+    // the range it is playing often enough to matter.
+    if (at >= ranges.start(i) - 0.25 && at <= ranges.end(i)) {
+      return {
+        end: ranges.end(i),
+        // Where the next island begins, when this one is not the last.
+        resumeAt: i + 1 < ranges.length ? ranges.start(i + 1) : null,
+      };
+    }
+  }
+  return { end: ranges.length ? ranges.end(ranges.length - 1) : 0, resumeAt: null };
+}
+
+/** Every hole in what has been downloaded, as "1179.5→1189.5 (10.0s)". */
+function bufferHoles(video) {
+  const ranges = video.buffered;
+  const out = [];
+  for (let i = 1; i < ranges.length; i += 1) {
+    out.push({ from: ranges.end(i - 1), to: ranges.start(i),
+      seconds: ranges.start(i) - ranges.end(i - 1) });
+  }
+  return out;
+}
+
 const playback = {
   samples: [],
   events: { waiting: 0, stalled: 0, error: 0, ratechange: 0, seeked: 0 },
   startedAt: 0,
+  /*
+   * Content that was never shown, because the player stepped over a hole.
+   *
+   * hls.js jumps a gap in the media rather than sitting frozen at the edge of
+   * one, which is the right trade for a picture that has to keep moving — but
+   * it is silent, and the seconds it steps over are seconds somebody was
+   * watching for. A home run went past in ten of them.
+   */
+  gaps: [],
+  /*
+   * What the streaming engine complained about, INCLUDING the non-fatal ones.
+   *
+   * Those were dropped on the floor — `if (!data.fatal) return` and nothing
+   * else — and a fragment that fails to load is not fatal. So the one event
+   * that explains a hole in the buffer was the one event never written down,
+   * and a report of a skipped ten seconds could say that it happened and
+   * nothing whatever about why.
+   */
+  engineErrors: [],
   // The low point of this viewing, kept with the full report from that moment.
   //
   // Held across reset(), unlike everything above it. Reloading the stream or
@@ -10685,6 +10749,8 @@ const playback = {
     this.probedSession = '';
     this.rescues = 0;
     this.lastRescueAt = 0;
+    this.gaps = [];
+    this.engineErrors = [];
   },
 
   reset() {
@@ -10734,6 +10800,27 @@ const playback = {
       if (wall > 0.2 && wall < 4) step = (video.currentTime - prev.t) / wall;
     }
 
+    /* The end of the range the playhead is IN, not the end of the last range
+       there is — see bufferAhead(). The old number reported thirty seconds of
+       cushion while the playhead was four tenths of a second from a wall. */
+    const ahead = bufferAhead(video);
+
+    /*
+     * A hole stepped over, caught from the two rows either side of it.
+     *
+     * The signature is exact and cannot be confused with somebody seeking:
+     * the previous row was sitting AT the end of its own contiguous range,
+     * that range was followed by another one, and the playhead is now at the
+     * start of that next one. That is the player crossing a wall, and the
+     * distance between them is what nobody got to watch.
+     */
+    if (prev && Number.isFinite(prev.resumeAt) && prev.resumeAt !== null
+      && prev.t >= prev.buf - 0.75
+      && video.currentTime >= prev.resumeAt - 0.5
+      && video.currentTime - prev.t > 1) {
+      this.noteGap(prev.buf, video.currentTime);
+    }
+
     this.history.push({
       at: now,
       t: video.currentTime,
@@ -10743,11 +10830,75 @@ const playback = {
       seeking: video.seeking,
       rs: video.readyState,
       nw: video.networkState,
-      buf: video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0,
+      buf: ahead.end,
+      resumeAt: ahead.resumeAt,
       f: q ? q.total : 0,
       notes,
     });
     if (this.history.length > 120) this.history.shift();
+  },
+
+  /**
+   * Ten seconds of a ball game went past and nobody was told.
+   *
+   * The picture continuing is the right answer to a hole — frozen for good is
+   * worse than a jump — but doing it in silence is not. What somebody needs
+   * to know is that they missed something and roughly how much, because
+   * "did I just miss a play or did my eyes wander" is not a question a
+   * television should leave you holding.
+   *
+   * And on a live channel the skipped segment is often still in the
+   * provider's window, which is a minute wide here. So the offer is to go
+   * back and ask for it again: if it was one bad fetch, this is the whole
+   * fix; if it is genuinely gone, the picture lands where it already was.
+   */
+  noteGap(from, to) {
+    const seconds = to - from;
+    if (!(seconds > 0.5)) return;
+    const now = Date.now();
+    /* One hole, announced once. Landing in the same place twice inside a
+       minute is the same hole being met again, not a second event. */
+    const known = this.gaps.some(
+      (g) => Math.abs(g.to - to) < 1 && now - g.at < 60_000);
+    this.gaps.push({ at: now, from, to, seconds });
+    if (this.gaps.length > 20) this.gaps.shift();
+    if (known) return;
+
+    const said = `Skipped ${seconds.toFixed(1)}s — that part never arrived.`;
+    /* Only worth offering where going back can actually help: a live window
+       still holds the segment, and a downloaded file has no hole to re-ask
+       about. */
+    if (currentLiveItem) {
+      toast(said, {
+        action: {
+          label: 'Go back',
+          run: () => {
+            const video = $('#video');
+            video.currentTime = Math.max(0, from - 0.5);
+            video.play().catch(() => {});
+          },
+        },
+      });
+    } else {
+      toast(said);
+    }
+  },
+
+  /** Everything the engine said, not only the parts that killed the stream. */
+  noteEngineError(data) {
+    const frag = data && data.frag;
+    this.engineErrors.push({
+      at: Date.now(),
+      details: String(data?.details || 'unknown'),
+      type: String(data?.type || ''),
+      fatal: Boolean(data?.fatal),
+      // Which segment, in playlist terms. The URL is the provider's and is
+      // never printed — redactUrl exists because these carry credentials.
+      sn: frag && frag.sn !== undefined ? String(frag.sn) : '',
+      at_s: frag && Number.isFinite(frag.start) ? frag.start.toFixed(1) : '',
+      reason: String(data?.reason || data?.err?.message || '').slice(0, 120),
+    });
+    if (this.engineErrors.length > 24) this.engineErrors.shift();
   },
 
   /**
@@ -10790,13 +10941,20 @@ const playback = {
       // anybody reading this column actually wants.
       const bufFilm = r.buf + (r.pos - r.t);
       const cushion = r.buf - r.t;
+      /* A wall ahead, marked on the row. Both columns are now the CONTIGUOUS
+         buffer, so a run of healthy-looking cushion no longer hides a hole
+         four tenths of a second away — the row that walked into one used to
+         read "+30s" like every row before it. */
+      const wall = Number.isFinite(r.resumeAt) && r.resumeAt !== null
+        ? `  hole→${r.resumeAt.toFixed(1)}` : '';
       return `  +${String(secs).padStart(3)}s ${r.pos.toFixed(1).padStart(8)} ` +
         `${rate.padStart(7)}  rs${r.rs}/${r.nw} buf${String(Math.round(bufFilm)).padStart(5)}` +
-        ` +${String(Math.round(cushion)).padStart(3)}s` +
+        ` +${String(Math.round(cushion)).padStart(3)}s` + wall +
         (r.notes ? `  ${r.notes}` : '');
     });
     return ['',
       'timeline  (film position, rate, readyState/networkState, buffered to, cushion)',
+      '          cushion is to the next HOLE, not to the end of everything held',
       ...rows];
   },
 
@@ -11270,6 +11428,18 @@ const playback = {
         : 'n/a'}`,
       `events          waiting ${this.events.waiting}, stalled ${this.events.stalled}, ` +
         `error ${this.events.error}, ratechange ${this.events.ratechange}, seeked ${this.events.seeked}`,
+      /* What was never shown. Top of the report rather than buried, because
+         if this line is not empty it is almost always the complaint. */
+      `skipped         ${this.gaps.length
+        ? this.gaps.map((g) => `${g.seconds.toFixed(1)}s at ${g.from.toFixed(1)}`).join(', ')
+        : 'nothing'}`,
+      `holes now       ${(() => {
+        const holes = bufferHoles(video);
+        return holes.length
+          ? holes.map((h) => `${h.from.toFixed(1)}→${h.to.toFixed(1)} (${h.seconds.toFixed(1)}s)`)
+            .join(', ')
+          : 'none';
+      })()}`,
       `engine          ${engineKind || 'none'}`,
       ...this.hlsLines(),
       ...this.browserLines(),
@@ -11280,6 +11450,15 @@ const playback = {
         `ready ${Math.round(film.ready)}, duration ${film.duration}`,
       `remux session   ${lastRemux.session || 'none (playing directly)'}`,
       `watching since  ${Math.round((Date.now() - this.startedAt) / 1000)}s ago`,
+      /* The engine's own complaints, non-fatal ones included — see
+         noteEngineError(). A fragment that would not load is what puts a hole
+         in the buffer, and it says so here rather than nowhere. */
+      ...(this.engineErrors.length
+        ? this.engineErrors.slice(-6).map((e, i) => `${i === 0 ? 'engine says' : ''}`.padEnd(16)
+          + `${Math.round((Date.now() - e.at) / 1000)}s ago  ${e.details}`
+          + `${e.sn ? ` seg ${e.sn}` : ''}${e.at_s ? ` at ${e.at_s}s` : ''}`
+          + `${e.fatal ? ' (fatal)' : ''}${e.reason ? ` — ${e.reason}` : ''}`)
+        : ['engine says     nothing']),
       `slow spells     ${spells.length
         ? spells.map((sp) => `${Math.round((sp.end.at - sp.start.at) / 1000) + 1}s from ` +
             `${sp.start.pos.toFixed(0)}, down to ${sp.worst.toFixed(2)}x`).join('; ')

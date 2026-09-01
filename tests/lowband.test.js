@@ -88,10 +88,17 @@ function lift(name, extra = '') {
 
   /* ---- live is shrunk too, and must keep up ---------------------------- */
   console.log('\n  a live channel on a weak link');
+  /* Read out of server.js rather than written down here.
+   *
+   * liveDvrArgs reaches for this and it is declared nowhere near the block
+   * `consts` lifts, so the function came out of the extractor referring to a
+   * name that did not exist and this whole section threw before its first
+   * check. Taking the real value keeps the harness honest if it changes. */
+  const coldStart = Number(/const COLD_START_SEGMENTS = (\d+)/.exec(SERVER)[1]);
   // eslint-disable-next-line no-new-func
-  const liveDvrArgs = new Function('path', 'LIVE_DVR',
+  const liveDvrArgs = new Function('path', 'LIVE_DVR', 'COLD_START_SEGMENTS',
     `${consts}\n${lift('liveDvrArgs')}\nreturn liveDvrArgs;`
-  )(path, { segmentSeconds: 4, windowSegments: 30 });
+  )(path, { segmentSeconds: 4, windowSegments: 30 }, coldStart);
   const liveNormal = liveDvrArgs('http://p/live.m3u8', '/out', false, false).join(' ');
   const liveSmall = liveDvrArgs('http://p/live.m3u8', '/out', false, true).join(' ');
   /* The picture is copied; the sound never is. An HE-AAC core reaching a
@@ -232,8 +239,12 @@ exit 0
   });
   check('there is a switch for it', box.exists, JSON.stringify(box));
   check('off unless asked for', box.checked === false, String(box.checked));
+  /* Case-insensitive on purpose: the claim is that the switch admits the
+     cost, not that the word happens to fall mid-sentence. Shortening this
+     copy moved "softer" to the front of one and the assertion failed on the
+     capital, which is the test being fussy about the wrong thing. */
   check('and it says what it will actually do, including the cost',
-    /1 Mbit/.test(box.words) && /softer/.test(box.words), box.words.slice(0, 160));
+    /1 Mbit/.test(box.words) && /softer/i.test(box.words), box.words.slice(0, 160));
 
   await page.evaluate(() => {
     document.querySelector('#lowMode').checked = true;
