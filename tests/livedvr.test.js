@@ -127,6 +127,8 @@ const get = (p) => new Promise((resolve, reject) => {
   check('the ingest reads the provider playlist, not the realtime push feed',
     /buildStreamUrl\([^)]+, 'live', channelId, 'm3u8'\)/.test(SERVER)
     && !/buildStreamUrl\([^)]+, 'live', channelId, 'ts'\)/.test(SERVER));
+  check('and a new ingest refuses rather than opening ffmpeg on an uncounted login',
+    /if \(!account\) throw new Error\('No free provider connection for live ingest'\)/.test(SERVER));
   check('and banks a published run of it rather than trickling in from the edge',
     /'-live_start_index', resumed \? '-1' : `-\$\{COLD_START_SEGMENTS\}`,\s*'-i', input/
       .test(SERVER));
@@ -205,6 +207,10 @@ const get = (p) => new Promise((resolve, reject) => {
   console.log('\n  the wiring');
   check('the DVR is tried first and ANY failure falls back to the direct proxy',
     /try \{\s*const session = await ensureLiveDvr[\s\S]{0,220}catch \{\s*\/\* direct proxy below \*\//.test(SERVER));
+  const playHandler = SERVER.slice(SERVER.indexOf("pathname === '/api/play'"));
+  check('and a successful DVR tune does not first reserve a proxy slot it will never use',
+    playHandler.indexOf('ensureLiveDvr') < playHandler.indexOf("pick(cfg, { reserve: true })"),
+    'reserve still sits above the DVR attempt');
   check('the channel id is checked before it becomes a directory name',
     /\/\^\[\\w-\]\+\$\/\.test\(id\)/.test(SERVER));
   check('a live playlist is never closed with ENDLIST between drop and respawn',
@@ -302,6 +308,13 @@ while :; do sleep 2; emit; done
     console.log('   /api/play said:', play.body);
     check('a live channel is answered with the local window, marked as such',
       answer.url === '/hls/live-7/index.m3u8' && answer.dvr === true, play.body);
+
+    const pool = JSON.parse((await get('/api/providers')).body);
+    console.log('   pool after DVR tune-in:', JSON.stringify({
+      inUse: pool.inUse, free: pool.free, streams: (pool.accounts || []).map((a) => a.streams),
+    }));
+    check('the ingest is counted as using a connection, not left as a dangling reservation',
+      pool.inUse >= 1, JSON.stringify({ inUse: pool.inUse, free: pool.free }));
 
     const playlist = await get('/hls/live-7/index.m3u8');
     check('and the playlist is really there, with segments in it',

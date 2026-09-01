@@ -250,9 +250,18 @@ function readConfig() {
 }
 
 function writeConfig(cfg) {
-  writeJsonAtomic(CONFIG_PATH, cfg, { mode: 0o600 });
+  const ok = writeJsonAtomic(CONFIG_PATH, cfg, { mode: 0o600 });
   // `mode` only applies when the file is created; re-assert it on overwrite.
-  fs.chmodSync(CONFIG_PATH, 0o600);
+  // Skip when the write failed — chmod on a missing file throws, and a full
+  // disk during first-time setup used to take the request down with it.
+  if (ok) {
+    try {
+      fs.chmodSync(CONFIG_PATH, 0o600);
+    } catch {
+      /* best effort */
+    }
+  }
+  return ok;
 }
 
 /**
@@ -595,6 +604,31 @@ function noteAttempt(req, ok) {
   passwordAttempts.set(key, record);
 }
 
+/**
+ * An M3U playlist URL is usually the credentials, written as a query string:
+ * `/get.php?username=…&password=…`. GET /api/config is unauthenticated, and
+ * the settings panel prints whatever this returns — so the password has to
+ * come off before the URL leaves the box. Host and the rest of the path stay,
+ * so the screen can still say which playlist is connected.
+ */
+function publicPlaylistUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  try {
+    const u = new URL(raw);
+    u.username = '';
+    u.password = '';
+    for (const key of [...u.searchParams.keys()]) {
+      if (/^(user(name)?|pass(word)?|pwd|token|auth)$/i.test(key)) {
+        u.searchParams.delete(key);
+      }
+    }
+    return u.toString();
+  } catch {
+    return '';
+  }
+}
+
 /** Strip the password before anything goes over the wire to the browser. */
 function publicConfig(cfg) {
   if (!cfg) return { configured: false };
@@ -603,7 +637,7 @@ function publicConfig(cfg) {
     mode: cfg.mode,
     host: cfg.host || '',
     username: cfg.username || '',
-    playlistUrl: cfg.playlistUrl || '',
+    playlistUrl: publicPlaylistUrl(cfg.playlistUrl || ''),
     epgUrl: cfg.epgUrl || '',
     epgUrls: guideSources(cfg),
     useProviderGuide: cfg.useProviderGuide !== false,
@@ -651,6 +685,13 @@ function request(target, opts = {}, redirectsLeft = 5) {
     } catch (err) {
       return reject(new Error(`Bad URL: ${target}`));
     }
+    if (!/^https?:$/.test(u.protocol)) {
+      return reject(new Error('Only http and https URLs can be fetched.'));
+    }
+    if (opts.allowUrl) {
+      const denied = opts.allowUrl(u.toString());
+      if (denied) return reject(new Error(denied));
+    }
     const lib = u.protocol === 'https:' ? https : http;
     const req = lib.request(
       u,
@@ -664,7 +705,24 @@ function request(target, opts = {}, redirectsLeft = 5) {
         const loc = res.headers.location;
         if (status >= 300 && status < 400 && loc && redirectsLeft > 0) {
           res.resume();
-          const next = new URL(loc, u).toString();
+          let next;
+          try {
+            next = new URL(loc, u).toString();
+          } catch {
+            return reject(new Error('Bad redirect URL'));
+          }
+          if (opts.allowUrl) {
+            const denied = opts.allowUrl(next);
+            if (denied) return reject(new Error(denied));
+          } else {
+            // A public URL must not hop onto this network — the classic SSRF
+            // of an open redirect onto link-local metadata or a neighbour.
+            const fromPrivate = privateAddress(u.toString());
+            const toPrivate = privateAddress(next);
+            if (!fromPrivate && toPrivate) {
+              return reject(new Error(toPrivate));
+            }
+          }
           return resolve(request(next, opts, redirectsLeft - 1));
         }
         res.finalUrl = u.toString();
@@ -677,10 +735,19 @@ function request(target, opts = {}, redirectsLeft = 5) {
   });
 }
 
-function readBody(res) {
+function readBody(res, limit = 0) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    res.on('data', (c) => chunks.push(c));
+    let size = 0;
+    res.on('data', (c) => {
+      size += c.length;
+      if (limit && size > limit) {
+        res.destroy();
+        reject(new Error('Response too large'));
+        return;
+      }
+      chunks.push(c);
+    });
     res.on('end', () => resolve(Buffer.concat(chunks)));
     res.on('error', reject);
   });
@@ -3691,6 +3758,11 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
   }
   if (existing) killSession(id);
 
+  fs.mkdirSync(HLS_DIR, { recursive: true });
+  const dir = path.join(HLS_DIR, id);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+
   // Ingest reads the provider's HLS, not its TS push feed — see the
   // live_start_index note in liveDvrArgs for why that decides startup time.
   //
@@ -3698,12 +3770,15 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
   // dropped feed reuses the same URL, so the same account carries the channel
   // from the first segment to the last rather than hopping between logins
   // every time the provider hiccups.
-  const account = providers.pick(cfg);
-  const input = buildStreamUrl(account || cfg, 'live', channelId, 'm3u8');
-  fs.mkdirSync(HLS_DIR, { recursive: true });
-  const dir = path.join(HLS_DIR, id);
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.mkdirSync(dir, { recursive: true });
+  //
+  // Reserved until take() below, the same way /api/play holds a proxy URL:
+  // without it, two tune-ins at once both see the last free slot and one of
+  // them starts on an account that is already in use. If nothing is free,
+  // refuse rather than opening ffmpeg against credentials that are not
+  // counted — that was how a live window ran while the pool read as idle.
+  const account = providers.pick(cfg, { reserve: true });
+  if (!account) throw new Error('No free provider connection for live ingest');
+  const input = buildStreamUrl(account, 'live', channelId, 'm3u8');
 
   const session = {
     id,
@@ -3725,9 +3800,10 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
   };
   /* The ingest holds its slot for as long as ffmpeg is running, which is what
      makes a live channel cost one connection however many people are watching
-     it — they all read the Pi's window rather than the provider. */
-  session.account = account ? account.id : '';
-  session.releaseSlot = account ? providers.take(account.id) : null;
+     it — they all read the Pi's window rather than the provider. take()
+     consumes the reservation from pick() above. */
+  session.account = account.id;
+  session.releaseSlot = providers.take(account.id);
   remuxSessions.set(id, session);
   lastProviderActiveAt = Date.now();
   autoPauseActiveDownload();
@@ -3815,7 +3891,7 @@ function makeArchiveThumb(rel, abs, item, outFile) {
  * Parse a plain M3U/M3U8 playlist into channel records. Handles the usual
  * tvg-* attribute soup plus group-title.
  */
-function parseM3U(text) {
+function parseM3U(text, baseUrl) {
   const lines = text.split(/\r?\n/);
   const out = [];
   let pending = null;
@@ -3853,7 +3929,15 @@ function parseM3U(text) {
     } else if (line.startsWith('#')) {
       continue;
     } else if (pending) {
-      pending.url = line;
+      let url = line;
+      if (baseUrl) {
+        try {
+          url = new URL(line, baseUrl).toString();
+        } catch {
+          /* keep the raw line — handleStream will reject it */
+        }
+      }
+      pending.url = url;
       pending.id = `m3u-${out.length}`;
       out.push(pending);
       pending = null;
@@ -4087,14 +4171,43 @@ async function handleStream(req, res, query) {
     return send(res, 400, 'Bad target URL');
   }
 
+  const denied = proxyAllowed(target);
+  if (denied) return send(res, 400, denied);
+
   const headers = {};
   if (req.headers.range) headers.range = req.headers.range;
 
   let upstream;
   try {
-    upstream = await request(target, { headers });
+    upstream = await request(target, { headers, allowUrl: proxyAllowed });
   } catch (err) {
     return send(res, 502, `Upstream error: ${err.message}`);
+  }
+
+  req.on('close', () => {
+    try { upstream.destroy(); } catch { /* already gone */ }
+  });
+
+  const contentType = upstream.headers['content-type'] || '';
+
+  if (isPlaylist(upstream.finalUrl, contentType)) {
+    /* A playlist fetch is not a stream. Counting it as one made the first
+       HLS request consume the /api/play reservation, then drop it the moment
+       the text arrived, so the segments that actually occupy the provider
+       arrived as extra takes on an account that already looked full. */
+    let body;
+    try {
+      body = await readBody(upstream, 8 * 1024 * 1024);
+    } catch (err) {
+      return send(res, 502, `Upstream error: ${err.message}`);
+    }
+    const rewritten = rewritePlaylist(body.toString('utf8'), upstream.finalUrl);
+    res.writeHead(upstream.statusCode || 200, {
+      'content-type': 'application/vnd.apple.mpegurl',
+      'cache-control': 'no-store',
+      'access-control-allow-origin': '*',
+    });
+    return res.end(rewritten);
   }
 
   /* This connection is now occupying a slot on whichever login its
@@ -4117,19 +4230,6 @@ async function handleStream(req, res, query) {
   res.on('close', release);
   upstream.on('close', release);
 
-  const contentType = upstream.headers['content-type'] || '';
-
-  if (isPlaylist(upstream.finalUrl, contentType)) {
-    const body = await readBody(upstream);
-    const rewritten = rewritePlaylist(body.toString('utf8'), upstream.finalUrl);
-    res.writeHead(upstream.statusCode || 200, {
-      'content-type': 'application/vnd.apple.mpegurl',
-      'cache-control': 'no-store',
-      'access-control-allow-origin': '*',
-    });
-    return res.end(rewritten);
-  }
-
   const passthrough = {};
   for (const h of [
     'content-type',
@@ -4146,25 +4246,28 @@ async function handleStream(req, res, query) {
 
   // Live TS only: drop the provider's opening backlog so the player joins near
   // the live edge. Movies must never be drained — you'd lose the opening.
-  const drain = Number(query.get('drain') || 0);
-  const hold = Number(query.get('hold') || 0);
+  // Both numbers are query-controlled, so they are capped: an unbounded hold
+  // buffers the whole stream in RAM, and drain=1e10 never starts forwarding.
+  const drain = Math.min(30, Math.max(0, Number(query.get('drain')) || 0));
+  const hold = Math.min(15, Math.max(0, Number(query.get('hold')) || 0));
   // Riding alongside the pipe, not replacing it — this is the same provider
   // connection a download would use, so its rate belongs in the same meter.
   upstream.on('data', (chunk) => meterBytes(chunk.length));
   if (drain > 0) pipeLive(upstream, res, drain, hold);
   else upstream.pipe(res);
-
-  req.on('close', () => upstream.destroy());
 }
 
 /** Logos and posters are frequently http-only or hotlink-blocked. */
 async function handleImage(req, res, query) {
   const src = query.get('u');
   if (!src) return send(res, 400, 'Missing u');
+  const denied = proxyAllowed(src);
+  if (denied) return send(res, 400, denied);
   try {
     const upstream = await request(src, {
       headers: { accept: 'image/*' },
       timeout: 10000,
+      allowUrl: proxyAllowed,
     });
     if ((upstream.statusCode || 500) >= 400) {
       upstream.resume();
@@ -4173,6 +4276,9 @@ async function handleImage(req, res, query) {
     res.writeHead(200, {
       'content-type': upstream.headers['content-type'] || 'image/jpeg',
       'cache-control': 'public, max-age=86400',
+    });
+    req.on('close', () => {
+      try { upstream.destroy(); } catch { /* already gone */ }
     });
     upstream.pipe(res);
   } catch {
@@ -5995,7 +6101,21 @@ const GUIDE_CATALOGUE_HOME = 'https://epgshare01.online/epgshare01/';
  * way to read a printer's admin page or a neighbouring service that was never
  * meant to be reachable from a browser. The portal is unauthenticated by
  * design, so the guard is on the address rather than on who is asking.
+ *
+ * Node's URL parser already folds `http://2130706433/` and `http://127.1/`
+ * into `127.0.0.1`. What it leaves for us: a trailing dot on localhost, and
+ * IPv4-mapped IPv6 (`[::ffff:127.0.0.1]`, which it spells `::ffff:7f00:1`).
  */
+function mappedIpv4(host) {
+  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(host);
+  if (dotted) return dotted[1];
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(host);
+  if (!hex) return '';
+  const hi = parseInt(hex[1], 16);
+  const lo = parseInt(hex[2], 16);
+  return `${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`;
+}
+
 function privateAddress(target) {
   let host;
   try {
@@ -6003,6 +6123,9 @@ function privateAddress(target) {
   } catch {
     return 'That is not a web address.';
   }
+  host = host.replace(/\.+$/, '');
+  const mapped = mappedIpv4(host);
+  if (mapped) host = mapped;
   const isPrivate = host === 'localhost'
     || host.endsWith('.local')
     || host.endsWith('.internal')
@@ -6015,8 +6138,60 @@ function privateAddress(target) {
     || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
     // The tailnet this box lives on counts as inside.
     || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)
-    || /^f[cd][0-9a-f]{2}:/.test(host);
+    || /^f[cd][0-9a-f]{2}:/.test(host)
+    || /^fe80:/i.test(host);
   return isPrivate ? 'Only addresses out on the internet can be tested.' : '';
+}
+
+/**
+ * Whether /stream or /img may fetch this URL.
+ *
+ * Public internet is allowed — HLS segments live on CDNs whose host is not
+ * the panel's. Private addresses are allowed only when they are the
+ * configured provider or playlist origin, so a local Xtream panel still
+ * plays and a LAN M3U of cameras on the playlist host still plays, while
+ * `http://169.254.169.254/` and the router at `192.168.1.1` do not.
+ */
+function originKey(url) {
+  const u = new URL(url);
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+  const port = u.port || (u.protocol === 'https:' ? '443' : '80');
+  return `${host}:${port}`;
+}
+
+function configuredOrigins(cfg) {
+  const out = new Set();
+  const add = (raw) => {
+    if (!raw) return;
+    try {
+      out.add(originKey(normalizeHost(String(raw))));
+    } catch {
+      /* ignore */
+    }
+  };
+  if (!cfg) return out;
+  add(cfg.host);
+  add(cfg.playlistUrl);
+  for (const account of providers.accounts(cfg)) add(account.host);
+  return out;
+}
+
+function proxyAllowed(target) {
+  let u;
+  try {
+    u = new URL(target);
+  } catch {
+    return 'That is not a web address.';
+  }
+  if (!/^https?:$/.test(u.protocol)) return 'Only http and https URLs can be fetched.';
+  const privateErr = privateAddress(target);
+  if (!privateErr) return '';
+  try {
+    if (configuredOrigins(readConfig()).has(originKey(u))) return '';
+  } catch {
+    /* ignore */
+  }
+  return privateErr;
 }
 
 /**
@@ -6174,7 +6349,7 @@ const CREDIT_CRAWL_MS = 4000;
 
 function crawlCredits() {
   const cfg = readConfig();
-  if (cfg.mode !== 'xtream') return Promise.resolve(null);
+  if (!cfg || cfg.mode !== 'xtream') return Promise.resolve(null);
   return people.crawl({
     items: cachedMovies(),
     busy: () => providerBusy() || Boolean(activeJob && activeJob.status === 'downloading'),
@@ -6452,6 +6627,7 @@ function decodeEpg(listing) {
 
 async function handleApi(req, res, pathname, query) {
   const cfg = readConfig();
+  const mode = cfg && cfg.mode;
 
   if (pathname === '/api/config') {
     if (req.method === 'GET') return json(res, 200, publicConfig(cfg));
@@ -7694,7 +7870,7 @@ async function handleApi(req, res, pathname, query) {
   // listing is good for as long as the programme runs; half an hour old is
   // still true.
   if (pathname === '/api/epg/now') {
-    if (cfg.mode !== 'xtream') return json(res, 200, { channels: [], reason: 'not-xtream' });
+    if (mode !== 'xtream') return json(res, 200, { channels: [], reason: 'not-xtream' });
 
     const ids = String(query.get('ids') || '')
       .split(',').map((s) => s.trim()).filter(Boolean).slice(0, EPG_MAX_CHANNELS);
@@ -8129,6 +8305,8 @@ async function handleApi(req, res, pathname, query) {
           if (!/^https?:\/\//i.test(u)) {
             return json(res, 400, { error: `That is not a web address: ${u}` });
           }
+          const bad = privateAddress(u);
+          if (bad) return json(res, 400, { error: bad });
         }
         cfg.epgUrls = urls;
         // The single legacy field has been folded into the list; leaving it
@@ -8162,7 +8340,7 @@ async function handleApi(req, res, pathname, query) {
 
   /* ---- Xtream passthrough ---- */
   if (pathname === '/api/xtream') {
-    if (cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
+    if (mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
     const params = {};
     for (const [k, v] of query.entries()) {
       if (k !== 'username' && k !== 'password') params[k] = v;
@@ -8211,11 +8389,11 @@ async function handleApi(req, res, pathname, query) {
 
   /* ---- M3U playlist ---- */
   if (pathname === '/api/playlist') {
-    if (cfg.mode !== 'm3u') return json(res, 400, { error: 'Not in M3U mode' });
+    if (mode !== 'm3u') return json(res, 400, { error: 'Not in M3U mode' });
     try {
       const upstream = await request(cfg.playlistUrl);
-      const text = (await readBody(upstream)).toString('utf8');
-      const buckets = bucketM3U(parseM3U(text));
+      const text = (await readBody(upstream, 32 * 1024 * 1024)).toString('utf8');
+      const buckets = bucketM3U(parseM3U(text, upstream.finalUrl || cfg.playlistUrl));
       for (const kind of Object.keys(buckets)) {
         buckets[kind] = buckets[kind].map((item) => ({
           ...item,
@@ -8233,7 +8411,7 @@ async function handleApi(req, res, pathname, query) {
   if (pathname === '/api/library') {
     const tab = query.get('tab');
     if (!LIBRARY_ACTIONS[tab]) return json(res, 400, { error: 'Unknown tab' });
-    if (cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
+    if (mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
 
     const prefs = readPrefs();
     /* `all=1` sets the filter aside for this one request without touching
@@ -8296,7 +8474,7 @@ async function handleApi(req, res, pathname, query) {
       const id = query.get('id');
       const ext = query.get('ext') || 'mkv';
       if (!kind || !id) return json(res, 400, { error: 'kind and id are required' });
-      if (cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
+      if (mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
       /* Whichever login has room, not always the first one. A converted film
          holds a connection for as long as ffmpeg is pulling it, so sending
          every one of them down account #1 is how two logins still behave like
@@ -8691,8 +8869,38 @@ async function handleApi(req, res, pathname, query) {
     const id = query.get('id');
     const ext = query.get('ext') || '';
     if (!kind || !id) return json(res, 400, { error: 'kind and id are required' });
-    if (cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
+    if (!cfg || cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
     try {
+      // A live HLS channel goes through the Pi's own DVR window when it can:
+      // ~2 minutes of local playlist instead of the provider's ~60 seconds,
+      // which is what stops segments expiring under a slow viewer. Any
+      // failure — no ffmpeg, a dead feed, a timeout, no free slot — falls
+      // back to the direct proxy, which is exactly what this endpoint always
+      // returned.
+      //
+      // Tried BEFORE reserving a proxy slot: the reservation used to be taken
+      // first, so ensureLiveDvr's pick() saw the only login as full, started
+      // ffmpeg on cfg credentials without take(), and left the reservation
+      // to expire while the ingest was already using the connection.
+      // On a weak link the channel goes through the DVR whatever the
+      // preferred format is — the shrunk feed only exists there, and the
+      // direct TS proxy hands over the provider's full-size stream, which is
+      // the thing that cannot get through.
+      const lowWanted = query.get('low') === '1';
+      const format = ext || cfg.preferredFormat;
+      if (kind === 'live' && (format === 'm3u8' || lowWanted)
+          && hasFfmpeg() && /^[\w-]+$/.test(id)) {
+        try {
+          const session = await ensureLiveDvr(cfg, id, lowWanted);
+          return json(res, 200, {
+            url: `/hls/${session.id}/index.m3u8`, format: 'm3u8', dvr: true,
+            low: lowWanted,
+          });
+        } catch {
+          /* direct proxy below */
+        }
+      }
+
       /* Which login opens this. The choice is reserved for a few seconds
          because the URL is built here and the pipe opens in the NEXT request:
          without it, two things started together would both be told to use the
@@ -8730,31 +8938,8 @@ async function handleApi(req, res, pathname, query) {
       // because they are the ones that measured zero stalls and zero seeks —
       // the other two modes each gave up one of the two things a viewer wants.
       const LIVE_TS = { drain: 12, hold: 4 };
-      const format = ext || cfg.preferredFormat;
       if (kind === 'live' && format === 'ts') {
         url += `&drain=${LIVE_TS.drain}&hold=${LIVE_TS.hold}`;
-      }
-      // A live HLS channel goes through the Pi's own DVR window when it can:
-      // ~2 minutes of local playlist instead of the provider's ~60 seconds,
-      // which is what stops segments expiring under a slow viewer. Any
-      // failure — no ffmpeg, a dead feed, a timeout — falls back to the
-      // direct proxy, which is exactly what this endpoint always returned.
-      // On a weak link the channel goes through the DVR whatever the
-      // preferred format is — the shrunk feed only exists there, and the
-      // direct TS proxy hands over the provider's full-size stream, which is
-      // the thing that cannot get through.
-      const lowWanted = query.get('low') === '1';
-      if (kind === 'live' && (format === 'm3u8' || lowWanted)
-          && hasFfmpeg() && /^[\w-]+$/.test(id)) {
-        try {
-          const session = await ensureLiveDvr(cfg, id, lowWanted);
-          return json(res, 200, {
-            url: `/hls/${session.id}/index.m3u8`, format: 'm3u8', dvr: true,
-            low: lowWanted,
-          });
-        } catch {
-          /* direct proxy below */
-        }
       }
       return json(res, 200, { url, format });
     } catch (err) {
@@ -8945,7 +9130,7 @@ recoverOrphanedDownloads();
 reportDiskSpace();
 loadLibraryCache();
 archive.configure({ root: ARCHIVE_ROOT, indexPath: ARCHIVE_INDEX });
-guide.configure({ dir: ROOT, log: (line) => console.log(`  ${line}`) });
+guide.configure({ dir: ROOT, log: (line) => console.log(`  ${line}`), guard: privateAddress });
 people.load(PEOPLE_PATH, (line) => console.log(`  ${line}`));
 recordings.load(RECORDINGS_DIR, (line) => console.log(`  ${line}`));
 
