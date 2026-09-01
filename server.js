@@ -3774,9 +3774,10 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
   // Reserved until take() below, the same way /api/play holds a proxy URL:
   // without it, two tune-ins at once both see the last free slot and one of
   // them starts on an account that is already in use. If nothing is free,
-  // refuse rather than opening ffmpeg against credentials that are not
-  // counted — that was how a live window ran while the pool read as idle.
-  const account = providers.pick(cfg, { reserve: true });
+  // still start — multiview and a recording already in progress are the
+  // cases that need a second window — but take() the first login anyway so
+  // the pool is not left reading idle while ffmpeg is pulling.
+  const account = providers.pick(cfg, { reserve: true }) || providers.accounts(cfg)[0] || null;
   if (!account) throw new Error('No free provider connection for live ingest');
   const input = buildStreamUrl(account, 'live', channelId, 'm3u8');
 
