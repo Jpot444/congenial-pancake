@@ -95,6 +95,28 @@ fi
 pass=0; fail=0; failed=()
 for suite in "${SUITES[@]}"; do
   [ -f "$suite" ] || { echo "no such suite: $suite"; fail=$((fail+1)); continue; }
+
+  # Every suite starts as Hunter, walkthroughs seen, scores on baseball.
+  #
+  # All of this lives on the BOX and one box is shared by every suite, so
+  # anything a suite changes is still there for the next one. That was always
+  # true of the profile's own settings — livehead.test.js presses the NFL
+  # button, which really does save the choice, and a suite further down the
+  # alphabet then drew the wrong sport and failed for a reason that had nothing
+  # to do with what it was testing. Who is watching joined them when that moved
+  # onto the box too: reports.test.js signs in as Dad to see what a non-owner
+  # gets, and every suite after it booted as Dad.
+  #
+  # Set before each suite rather than once at the start, so the order they run
+  # in stops mattering.
+  curl -fs -o /dev/null -X PUT \
+    -H 'content-type: application/json' -d '{"id":"own1"}' \
+    "http://127.0.0.1:$PORT/api/profiles/current" || true
+  curl -fs -o /dev/null -X PUT \
+    -H 'content-type: application/json' \
+    -d '{"tourDone":true,"liveTourDone":true,"reportNoticeSeen":true,"dlExplainSeen":true,"scoreSport":"mlb"}' \
+    "http://127.0.0.1:$PORT/api/profiles/own1/prefs" || true
+
   printf '%-24s ' "$suite"
   if out=$(node "$suite" 2>&1); then
     echo 'PASS'; pass=$((pass+1))

@@ -8,7 +8,7 @@
  */
 
 import { focus } from './focus.js';
-import { state, loadProfile, loadTaste, refreshHealth } from './state.js';
+import { state, loadProfile, loadTaste, refreshHealth, followBox } from './state.js';
 import { el, clear, toast } from './ui.js';
 
 import * as live from './screens/live.js';
@@ -296,6 +296,33 @@ async function boot() {
     if (state.screen === 'player' || state.screen === 'multi') return;
     refreshHealth().then(paintHealth);
   }, 60000);
+
+  /*
+   * Keeping up with the rest of the house.
+   *
+   * Somebody picks a different profile on the phone and this television
+   * follows; somebody favourites a channel in the kitchen and it is on the
+   * Live screen here without anybody restarting anything. Same rule as the
+   * health poll — nothing competes with the thing being watched, so it stands
+   * down while the player is up and catches up when it closes.
+   */
+  setInterval(async () => {
+    const playing = state.screen === 'player' || state.screen === 'multi';
+    const news = await followBox({ playing }).catch(() => null);
+    if (!news) return;
+    if (news.switched) {
+      /* Every shelf on the screen belongs to the person who was watching a
+         moment ago. Starting again is the only way none of it is left over. */
+      location.reload();
+      return;
+    }
+    paintProfile();
+    /* Redraw whatever is showing, so a favourite or a rating made elsewhere
+       lands rather than waiting for the next screen change. Keeping the
+       cursor: a row that jumps out from under somebody's thumb because the
+       kitchen starred a channel is worse than the stale row was. */
+    app.refresh();
+  }, 10000);
 
   app.go('live');
 }

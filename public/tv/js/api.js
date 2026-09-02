@@ -61,6 +61,11 @@ export async function api(path, params, options = {}) {
 /* ------------------------------------------------------------- profiles ── */
 
 export const getProfiles = () => api('/api/profiles');
+/* Who the box is showing. Told to the box rather than kept here, because the
+   Shield, the phone and the two web addresses cannot see each other's
+   storage — only the box's answer is shared by all of them. */
+export const putCurrentProfile = (id) =>
+  api('/api/profiles/current', null, { method: 'PUT', body: { id } });
 export const getProfilePrefs = (id) => api(`/api/profiles/${id}/prefs`);
 export const putProfilePrefs = (id, body) =>
   api(`/api/profiles/${id}/prefs`, null, { method: 'PUT', body });

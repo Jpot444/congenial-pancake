@@ -10,12 +10,14 @@
  */
 
 import {
-  getProfiles, getProfilePrefs, putProfilePrefs, getTaste,
+  getProfiles, putCurrentProfile, getProfilePrefs, putProfilePrefs, getTaste,
   getLibrary, getEpgNow, getHealth,
 } from './api.js';
 
 export const state = {
   profile: null,
+  /** The box's change counter, as last seen. Below any real value to start. */
+  rev: -1,
   /** Per-profile favorites, pins, allowance and the owner flag. */
   prefs: null,
   /** continueWatching / recentlyWatched / categoryAffinity / ratings. */
@@ -37,19 +39,70 @@ const EPG_MAX = 40;
 /* ------------------------------------------------------------- profile ── */
 
 /**
- * Pick up whichever profile this box was last used with — the same key the
- * browser portal writes, so the TV opens on the same person the house was
- * already using rather than asking again from the sofa.
+ * Pick up whoever the BOX says is watching.
+ *
+ * This used to read localStorage, which sounded like the same thing and is
+ * not: the service answers on the Tailscale address and on the domain, and a
+ * browser treats those as two unrelated origins with two separate stores. So
+ * the Shield pointed at one of them knew nothing about the phone on the other,
+ * and each remembered its own person. The box holds one answer and every way
+ * in reads it.
+ *
+ * localStorage is still consulted, but only as the fallback for a box that has
+ * never been told — the upgrade case, where the device's own memory is the
+ * best guess available.
  */
 export async function loadProfile() {
   const data = await getProfiles();
   const list = data.profiles || [];
   if (!list.length) throw new Error('This box has no profiles yet. Make one in the browser portal first.');
-  const wanted = localStorage.getItem(PROFILE_KEY);
+  const wanted = data.current || localStorage.getItem(PROFILE_KEY);
   state.profile = list.find((p) => p.id === wanted) || list[0];
+  state.rev = Number.isFinite(data.rev) ? data.rev : -1;
   localStorage.setItem(PROFILE_KEY, state.profile.id);
+  /* If the box had no answer, this is now it — so the phone opened next lands
+     on the same person rather than starting the disagreement over. */
+  if (!data.current) putCurrentProfile(state.profile.id).catch(() => {});
   state.prefs = await getProfilePrefs(state.profile.id).catch(() => null);
   return state.profile;
+}
+
+/**
+ * Keep up with the rest of the house.
+ *
+ * One small call, polled: it answers who the box is showing and how many times
+ * anything about a profile has changed. Nothing in this app re-read anything
+ * before — prefs were fetched at launch and held — so a favourite added on the
+ * phone or a series rated on the laptop stayed invisible on the television
+ * until somebody restarted it, and the stale copy would eventually be saved
+ * back over the fresh one.
+ *
+ * Never while the player is up. This app's whole rule about background work is
+ * that nothing competes with the thing being watched, and catching up can wait
+ * for the credits.
+ */
+export async function followBox({ playing = false } = {}) {
+  if (!state.profile || playing) return null;
+  let data;
+  try {
+    data = await getProfiles();
+  } catch {
+    return null; // the box will still be there next time
+  }
+  if (data.current && data.current !== state.profile.id) {
+    const next = (data.profiles || []).find((p) => p.id === data.current);
+    if (next) {
+      localStorage.setItem(PROFILE_KEY, next.id);
+      return { switched: next };
+    }
+  }
+  if (Number.isFinite(data.rev) && data.rev !== state.rev) {
+    state.rev = data.rev;
+    state.prefs = await getProfilePrefs(state.profile.id).catch(() => state.prefs);
+    await loadTaste();
+    return { refreshed: true };
+  }
+  return null;
 }
 
 export async function loadTaste() {

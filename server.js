@@ -398,6 +398,21 @@ function readProfiles() {
   // Off unless someone deliberately turned it on — including on the boxes that
   // already had a password, where it was never a choice anyone made.
   if (typeof data.profileLock !== 'boolean') data.profileLock = false;
+  /*
+   * Who the box is showing, and how many times anything about a profile has
+   * changed. Both live here rather than in each browser because a browser
+   * cannot share them.
+   *
+   * The service answers on three addresses — the Tailscale one, the domain,
+   * and whatever the Shield app was pointed at — and to a browser those are
+   * three different origins with three separate boxes of localStorage. So the
+   * same television remembering "I am Hunter" on one address knew nothing
+   * about it on another, and every device kept its own idea of who was
+   * watching. One answer, kept where all three can see it, is the only way
+   * they agree.
+   */
+  if (!data.current || typeof data.current !== 'object') data.current = { id: '', at: 0 };
+  if (!Number.isFinite(data.rev)) data.rev = 0;
   return data;
 }
 
@@ -421,6 +436,18 @@ const DOWNLOAD_ALLOWANCE = 20 * 1024 * 1024 * 1024;
  * anyone can edit from the profile screen would be ownership in name only.
  */
 const OWNER_PROFILE = 'hunter';
+
+/**
+ * Who the box is showing, checked against the profiles that still exist.
+ *
+ * Stored ids outlive the profiles they name — somebody deletes the profile
+ * that was last picked and every device would otherwise be pointed at nothing.
+ * Answering '' there sends them to the picker, which is the right place to be.
+ */
+function currentProfileId(data) {
+  const id = String(data.current?.id || '');
+  return data.profiles.some((p) => p.id === id) ? id : '';
+}
 
 function isOwnerProfile(profile) {
   return String(profile?.name || '').trim().toLowerCase() === OWNER_PROFILE;
@@ -451,7 +478,21 @@ function ownerOf(profileId) {
   return readProfiles().profiles.find((p) => p.id === profileId);
 }
 
+/**
+ * Save, and count the change.
+ *
+ * `rev` goes up on every write, and it is the whole of how the other devices
+ * find out. They poll one small call and compare the number: same, and there
+ * is nothing to do; different, and they re-read. That is cheaper than each of
+ * them re-reading everything on a timer to discover that nothing happened,
+ * which is most of the time.
+ *
+ * A device also learns the number its OWN write produced — every one of these
+ * endpoints hands it back — so it does not go and re-read its own change a
+ * moment later.
+ */
 function writeProfiles(data) {
+  data.rev = (Number(data.rev) || 0) + 1;
   writeJsonAtomic(PROFILES_PATH, data, { mode: 0o600 });
   try {
     fs.chmodSync(PROFILES_PATH, 0o600);
@@ -7166,6 +7207,12 @@ async function handleApi(req, res, pathname, query) {
         profiles: data.profiles.map(publicProfile),
         // So the browser knows whether to ask for a password before it does.
         locked: data.profileLock,
+        // Who the box is showing, and the change counter. This is the call
+        // every device polls: it is small, it answers "has anything changed"
+        // in one number, and it answers "who am I" in a way that survives
+        // being opened at a different address.
+        current: currentProfileId(data),
+        rev: data.rev,
       });
     }
 
@@ -7214,6 +7261,42 @@ async function handleApi(req, res, pathname, query) {
       return json(res, 200, publicProfile(profile));
     }
 
+    return json(res, 405, { error: 'Method not allowed' });
+  }
+
+  /*
+   * Who the box is showing.
+   *
+   * Ahead of the /api/profiles/:id routes below on purpose — "current" is a
+   * word, not an id, and the pattern down there would happily try to look up a
+   * profile by that name and answer 404.
+   */
+  if (pathname === '/api/profiles/current') {
+    const data = readProfiles();
+    if (req.method === 'GET') {
+      return json(res, 200, { current: currentProfileId(data), rev: data.rev });
+    }
+    if (req.method === 'PUT') {
+      let incoming;
+      try {
+        incoming = JSON.parse(await collectRequestBody(req));
+      } catch {
+        return json(res, 400, { error: 'Invalid JSON' });
+      }
+      const wanted = String(incoming.id || '');
+      if (!data.profiles.some((p) => p.id === wanted)) {
+        return json(res, 404, { error: 'No such profile' });
+      }
+      /* Already the answer: nothing is written and the counter does not move.
+         Otherwise every device confirming what it already knows would look to
+         every other device like somebody changing it. */
+      if (currentProfileId(data) === wanted) {
+        return json(res, 200, { current: wanted, rev: data.rev });
+      }
+      data.current = { id: wanted, at: Date.now() };
+      writeProfiles(data);
+      return json(res, 200, { current: wanted, rev: data.rev });
+    }
     return json(res, 405, { error: 'Method not allowed' });
   }
 
@@ -7325,7 +7408,10 @@ async function handleApi(req, res, pathname, query) {
           profile.dlExplainSeen = incoming.dlExplainSeen;
         }
         writeProfiles(data);
-        return json(res, 200, { ok: true });
+        /* The counter this write produced, so the device that made the change
+           does not read it back off the poll a moment later as though somebody
+           else had made it. */
+        return json(res, 200, { ok: true, rev: data.rev });
       }
       return json(res, 405, { error: 'Method not allowed' });
     }
@@ -7378,7 +7464,12 @@ async function handleApi(req, res, pathname, query) {
       }
 
       writeProfiles(data);
-      return json(res, 200, { ok: true });
+      /* The counter this write produced. This one matters most of all: it
+         fires every fifteen seconds for the whole of whatever is being
+         watched, so a device that did not recognise its own heartbeat would
+         decide four times a minute that another room had changed something,
+         and re-read and redraw itself under the viewer. */
+      return json(res, 200, { ok: true, rev: data.rev });
     }
 
     /* explicit thumbs — the strongest personalization signal */
@@ -7395,7 +7486,7 @@ async function handleApi(req, res, pathname, query) {
       if (value === 0) delete profile.ratings[incoming.key];
       else profile.ratings[incoming.key] = value > 0 ? 1 : -1;
       writeProfiles(data);
-      return json(res, 200, { ratings: profile.ratings });
+      return json(res, 200, { ratings: profile.ratings, rev: data.rev });
     }
 
     /* where this profile left off in one specific title */

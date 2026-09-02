@@ -48,6 +48,19 @@ const post = (body) => new Promise((resolve, reject) => {
   req.end(payload);
 });
 
+/** Tell the box who is watching — the one place that answer now lives. */
+const putCurrent = (id) => new Promise((resolve, reject) => {
+  const payload = JSON.stringify({ id });
+  const req = http.request({ hostname: '127.0.0.1', port: 8481, path: '/api/profiles/current',
+    method: 'PUT', headers: { 'content-type': 'application/json',
+      'content-length': Buffer.byteLength(payload) } }, (res) => {
+    res.resume();
+    res.on('end', resolve);
+  });
+  req.on('error', reject);
+  req.end(payload);
+});
+
 const stored = () => {
   try {
     return JSON.parse(fs.readFileSync(path.join(LIVE, 'reports.json'), 'utf8')).reports;
@@ -127,16 +140,30 @@ error: 403 from http://cf.boffworld.com/live/hunter99/s3cr3tP@ss/12.ts`;
     r.fulfill({ status: 200, contentType: 'application/json',
       body: '{"recentlyWatched":[],"categoryAffinity":[],"ratings":{}}' }));
 
-  const signIn = async (name) => {
+  const signIn = async (who) => {
+    /*
+     * Told to the box, not clicked through the picker.
+     *
+     * Who is watching lives on the box now — one answer for the whole house,
+     * because the service answers on three addresses and a browser keeps a
+     * separate store per origin, so no amount of clearing localStorage here
+     * would settle it. Setting it and loading the page is both the shortest
+     * way in and a truer test of the thing: the box says who, and the page
+     * opens as them.
+     *
+     * Clicking the tile is no longer usable for this anyway. The page now
+     * boots straight into whoever the box names, and this suite has turned the
+     * one-time notice back on for EVERY profile a few lines up — so the picker
+     * arrives behind a modal that swallows the click, and dismissing it would
+     * spend the very notice the checks below are waiting to see.
+     */
+    await putCurrent(who.id);
     await page.goto(BASE, { waitUntil: 'networkidle' });
-    await page.evaluate(() => localStorage.removeItem('portal.profile'));
-    await page.reload({ waitUntil: 'networkidle' });
-    await page.locator('.profile-tile', { hasText: name }).first().click();
     await page.waitForTimeout(2000);
   };
 
   console.log('\n  the corner button');
-  await signIn('Dad');
+  await signIn(guest);
   const asDad = await page.evaluate(() => ({
     health: !document.querySelector('#healthBtn').hidden,
     report: !document.querySelector('#reportBtn').hidden,
@@ -164,7 +191,7 @@ error: 403 from http://cf.boffworld.com/live/hunter99/s3cr3tP@ss/12.ts`;
   check('it is written down so it does not come back',
     (await page.evaluate(() => profiles.data.reportNoticeSeen)) === true);
 
-  await signIn('Dad');
+  await signIn(guest);
   const again = await page.evaluate(() => !document.querySelector('#noticeModal').hidden);
   check('and it does not, on the next sign-in', again === false);
 
@@ -218,7 +245,7 @@ error: 403 from http://cf.boffworld.com/live/hunter99/s3cr3tP@ss/12.ts`;
 
   // --- Hunter's side -------------------------------------------------------
   console.log('\n  Hunter');
-  await signIn('Hunter');
+  await signIn(hunter);
   const asHunter = await page.evaluate(() => ({
     health: !document.querySelector('#healthBtn').hidden,
     report: !document.querySelector('#reportBtn').hidden,

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '37.1';
+const VERSION = '38.0';
 
 const PAGE_SIZE = 60;
 
@@ -148,6 +148,9 @@ const profiles = {
   current: null,
   locked: false,
   data: { favorites: [], pinnedCategories: [] },
+  /* The box's change counter, as last seen or as last caused. Starts below any
+     real value so the first poll always finds something. */
+  rev: -1,
 
   async load() {
     const res = await api('/api/profiles');
@@ -155,15 +158,46 @@ const profiles = {
     // Whether adding or removing a profile needs the password. Off unless
     // somebody deliberately turned it on.
     this.locked = res.locked === true;
-    const lastId = localStorage.getItem('portal.profile');
-    const match = this.all.find((p) => p.id === lastId);
+    if (Number.isFinite(res.rev)) this.rev = res.rev;
+    /*
+     * The BOX decides who is watching, not this browser.
+     *
+     * The service answers on three addresses, and to a browser those are three
+     * different origins with three separate boxes of localStorage — so the
+     * television that remembered "Hunter" on one address knew nothing about it
+     * on another, and asked again. One answer, kept on the Pi, is the only way
+     * every address and every device agree.
+     *
+     * localStorage is still read, but only as the fallback for a box that has
+     * never been told: an upgrade lands with a `current` of nothing, and the
+     * device that was already signed in is the best guess there is.
+     */
+    const wanted = res.current || localStorage.getItem('portal.profile');
+    const match = this.all.find((p) => p.id === wanted);
     if (match) await this.select(match, { silent: true });
   },
 
-  async select(profile, { silent = false } = {}) {
+  async select(profile, { silent = false, publish = true } = {}) {
     this.current = profile;
+    // Kept in step as the fallback described in load(), and so a box that is
+    // unreachable for a moment still opens on the right face.
     localStorage.setItem('portal.profile', profile.id);
     this.data = await api(`/api/profiles/${profile.id}/prefs`);
+    /* Tell the box, so every other device follows. Not when this WAS the box
+       telling us — that would be an echo. */
+    if (publish) {
+      try {
+        const said = await (await fetch('/api/profiles/current', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id: profile.id }),
+        })).json();
+        if (Number.isFinite(said?.rev)) this.rev = said.rev;
+      } catch {
+        /* The pick still works on this device; it just will not travel until
+           the box is reachable again. */
+      }
+    }
     $('#chipAvatar').textContent = profile.emoji;
     $('#chipAvatar').style.background = profile.color;
     $('#chipName').textContent = profile.name;
@@ -172,6 +206,162 @@ const profiles = {
     // is decided here rather than once at startup.
     reporter.applyButtons();
     if (!silent) toast(`Watching as ${profile.name}.`);
+  },
+
+  /* ------------------------------------------------ keeping every device in step ── */
+
+  /**
+   * Ask the box what has changed, and catch up.
+   *
+   * Two different things arrive on the same small call, because both are
+   * answers to "am I still showing the truth":
+   *
+   *   SOMEBODY PICKED A DIFFERENT PROFILE, here or in another room. The box
+   *   holds one current profile for the whole house, so this device follows.
+   *
+   *   SOMETHING ABOUT THIS PROFILE CHANGED — a favourite added on the phone, a
+   *   series rated on the laptop, a film watched on the Shield. Before this,
+   *   nothing re-read anything: prefs were fetched once at startup and that
+   *   was that, so a rating made on one device was invisible on another until
+   *   it was relaunched. Worse, the stale device would eventually save its
+   *   whole out-of-date favourites list back over the fresh one.
+   */
+  async follow() {
+    if (!this.current) return;
+    /*
+     * Not on top of a write this device is in the middle of.
+     *
+     * Everything here is painted before the box is told — a thumb lights up on
+     * the press, not on the round trip — so for the moment between the press
+     * and the answer, this page is AHEAD of the box. Catching up in that
+     * moment reads the state from before the press and paints it back, and the
+     * thumb somebody just pressed goes out under their finger.
+     */
+    if (this.writing) return;
+    let res;
+    try {
+      res = await api('/api/profiles');
+    } catch {
+      return; // the box will still be there next time
+    }
+    this.all = res.profiles || [];
+    this.locked = res.locked === true;
+
+    /* The profile this device is showing was deleted in another room. Nothing
+       on the page belongs to anybody now, so back to the picker. */
+    const mine = this.all.find((p) => p.id === this.current.id);
+    if (!mine) {
+      localStorage.removeItem('portal.profile');
+      return this.handOver({ id: '', name: 'somebody else' });
+    }
+    /* Renamed, recoloured or given a different face elsewhere. */
+    if (mine.name !== this.current.name || mine.emoji !== this.current.emoji
+      || mine.color !== this.current.color) {
+      this.current = mine;
+      $('#chipAvatar').textContent = mine.emoji;
+      $('#chipAvatar').style.background = mine.color;
+      $('#chipName').textContent = mine.name;
+    }
+
+    if (res.current && res.current !== this.current.id) {
+      const next = this.all.find((p) => p.id === res.current);
+      if (next) return this.handOver(next);
+    }
+    if (Number.isFinite(res.rev) && res.rev !== this.rev) {
+      /*
+       * Not while something is playing.
+       *
+       * Playback reports where it has got to every fifteen seconds, and that
+       * write moves the counter like any other. It goes out by sendBeacon,
+       * which has no reply — so unlike every other write on this page, there
+       * is no number to learn from it, and this device cannot tell its own
+       * heartbeat from news out of another room. Redrawing on it would
+       * rebuild the page under the viewer four times a minute.
+       *
+       * The counter is deliberately NOT taken here: leaving it behind means
+       * the difference is still waiting when the player closes, so a genuine
+       * change made elsewhere during the film lands the moment it ends.
+       */
+      const overlay = $('#playerOverlay');
+      if (overlay && !overlay.hidden) return undefined;
+      this.rev = res.rev;
+      await this.catchUp();
+    }
+    return undefined;
+  },
+
+  /** Re-read what this profile is, and redraw whatever is showing it. */
+  async catchUp() {
+    if (!this.current) return;
+    try {
+      this.data = await api(`/api/profiles/${this.current.id}/prefs`);
+    } catch {
+      return;
+    }
+    await this.loadTaste();
+    /* Favourites, pins, ratings and Continue watching are all on screen
+       somewhere; the current tab is the part of that anybody is looking at.
+       Where the page had been scrolled to is put back afterwards — somebody
+       halfway down Movies did not ask to be sent to the top because the
+       kitchen starred a channel. */
+    const view = document.querySelector('#appView:not([hidden])');
+    const wasView = view ? view.scrollTop : 0;
+    const wasPage = window.scrollY;
+    try {
+      render();
+    } catch {
+      /* A redraw that fails is not worth losing the fresh data over. */
+      return;
+    }
+    if (view && wasView) view.scrollTop = wasView;
+    if (wasPage) window.scrollTo(0, wasPage);
+  },
+
+  /**
+   * Somebody in another room is now watching as somebody else.
+   *
+   * Not while something is playing. A profile changing under a film is the one
+   * moment where being right instantly is worse than being right in a minute —
+   * so it waits for the player to close, and then takes effect.
+   *
+   * A reload rather than a re-render: every shelf, every pin, every allowance
+   * and every recommendation on the page belongs to the old profile, and
+   * starting clean is the only way to be sure none of it is left behind.
+   */
+  handOver(next) {
+    if (next.id) localStorage.setItem('portal.profile', next.id);
+    const overlay = $('#playerOverlay');
+    if (overlay && !overlay.hidden) {
+      if (this.pendingHandOver) return;
+      // Marked with a placeholder when the profile itself is gone, so the flag
+      // is still truthy and the reload still happens on close.
+      this.pendingHandOver = next.id || 'gone';
+      toast(`Switching to ${next.name} when this finishes.`);
+      return;
+    }
+    location.reload();
+  },
+
+  /** The poll, and the moments worth an extra look. */
+  watch() {
+    // Reachable from boot and from the profile gate, and the gate can be
+    // opened again later — a second set of listeners would poll twice as often
+    // for no more truth.
+    if (this.watching) return;
+    this.watching = true;
+    setInterval(() => { this.follow().catch(() => {}); }, 5000);
+    /* Coming back to a tab that has been in the background for an hour is the
+       case the interval alone handles worst: the answer should be current
+       before the first glance, not five seconds after it.
+
+       This event and NOT window 'focus'. Focus fires on ordinary clicking
+       about inside the page, which turned every press into a catch-up — and a
+       catch-up landing on the same tick as a press overwrote what the press
+       had just done. "Came back to the app" is what is wanted here, and this
+       is the event that means it. */
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) this.follow().catch(() => {});
+    });
   },
 
   /** Recently watched, which fills the For You shelf. */
@@ -194,14 +384,22 @@ const profiles = {
 
   async save() {
     if (!this.current) return;
+    this.writing = (this.writing || 0) + 1;
     try {
-      await fetch(`/api/profiles/${this.current.id}/prefs`, {
+      const res = await fetch(`/api/profiles/${this.current.id}/prefs`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(this.data),
       });
+      /* Note the counter this write produced. Without it the next poll sees a
+         number it does not recognise, decides somebody else changed something,
+         and re-reads the change it just made itself. */
+      const said = await res.json().catch(() => ({}));
+      if (Number.isFinite(said.rev)) this.rev = said.rev;
     } catch {
       toast('Could not save to this profile.');
+    } finally {
+      this.writing -= 1;
     }
   },
 
@@ -13633,6 +13831,9 @@ function ratingButtons(item) {
 
 async function saveRating(key, value) {
   if (!profiles.current || !key) return;
+  /* The thumb is painted on the press, so until this lands the page is ahead
+     of the box and must not be caught up — see profiles.follow. */
+  profiles.writing = (profiles.writing || 0) + 1;
   try {
     const res = await fetch(`/api/profiles/${profiles.current.id}/rating`, {
       method: 'POST',
@@ -13641,8 +13842,12 @@ async function saveRating(key, value) {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.ratings) state.ratings = data.ratings;
+    // Ours, so the poll does not treat it as news from another room.
+    if (Number.isFinite(data.rev)) profiles.rev = data.rev;
   } catch (err) {
     console.warn('rating not saved', err);
+  } finally {
+    profiles.writing -= 1;
   }
 }
 
@@ -14473,6 +14678,14 @@ function closePlayer() {
   fetch('/api/remux/stop', { method: 'GET' }).catch(() => {});
   $('#playerOverlay').hidden = true;
   document.body.style.overflow = '';
+  /* Somebody in another room changed who the box is showing while this was
+     playing. Held until now on purpose — see profiles.handOver. */
+  if (profiles.pendingHandOver) return location.reload();
+  /* And anything else that changed while the film was on. The poll deliberately
+     left the counter alone rather than acting on it mid-playback, so this is
+     where a favourite added in the kitchen an hour ago finally shows up. */
+  profiles.follow().catch(() => {});
+  return undefined;
 }
 
 $('#playerClose').addEventListener('click', closePlayer);
@@ -14619,6 +14832,9 @@ function renderProfileGate() {
       if (managing) return openProfileModal(profile);
       await profiles.select(profile);
       $('#profileGate').hidden = true;
+      // Same as boot: from the moment somebody is signed in, this device
+      // follows the box.
+      profiles.watch();
       await startApp();
     });
     grid.append(tile);
@@ -14996,8 +15212,12 @@ async function startApp() {
     state.config = config;
     await prefs.load();
     await profiles.load();
-    // No profile picked on this device yet — ask before showing the library.
+    // Nobody is signed in on the box yet — ask before showing the library.
     if (!profiles.current) return showProfileGate();
+    // From here on this device keeps itself in step with the box, so a
+    // favourite added on the phone or a profile picked in another room shows
+    // up here without anybody reloading anything.
+    profiles.watch();
     await startApp();
   } catch (err) {
     showSetup();
