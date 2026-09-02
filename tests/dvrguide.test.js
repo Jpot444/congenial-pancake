@@ -155,8 +155,29 @@ const LISTINGS = (id) => Array.from({ length: 12 }, (_, h) => ({
   }, label);
 
   /* ---- 1. the window moves --------------------------------------------- */
+  /*
+   * Which programme "this hour" is, asked of the screen rather than of a
+   * number worked out when this file was loaded.
+   *
+   * The listings are built from the top of the current hour, and so were the
+   * expectations — both frozen at import. If the hour rolls over at any point
+   * during this suite, the box moves on and the frozen expectations do not,
+   * and every assertion below fails by exactly one in the same direction. That
+   * really happened, in a sweep that crossed an hour boundary, and it read as
+   * a routing bug because the sweep it happened in had touched routing.
+   *
+   * So the first hour on screen is read once, and everything after it is
+   * counted from there. What this suite is actually about is how the window
+   * MOVES — four across, two per press, eight and no further — and none of
+   * that cares which hour of the day it started in.
+   */
   console.log('\n  the schedule starts where it always did');
   const at0 = await look();
+  const base = Number((/hour (\d+)/.exec(at0.titles[0] || '') || [])[1]);
+  const hours = (from, count = 4) =>
+    Array.from({ length: count }, (_, i) => `700 hour ${from + i}`).join(',');
+  check('the first row is a programme this fixture put there',
+    Number.isFinite(base), JSON.stringify(at0.titles[0]));
   console.log('   ', JSON.stringify(at0));
   check('four hours across the top, beginning with this one',
     at0.hours.length === 4, JSON.stringify(at0.hours));
@@ -165,8 +186,7 @@ const LISTINGS = (id) => Array.from({ length: 12 }, (_, h) => ({
   check('and it says it is showing now', at0.when === 'On now', at0.when);
   check('with nothing earlier to go back to', at0.backOff === true, String(at0.backOff));
   check('the first row is this hour and the three after it',
-    at0.titles.join(',') === '700 hour 0,700 hour 1,700 hour 2,700 hour 3',
-    JSON.stringify(at0.titles));
+    at0.titles.join(',') === hours(base), JSON.stringify(at0.titles));
 
   console.log('\n  and Later walks it forward');
   await press('Later');
@@ -178,8 +198,7 @@ const LISTINGS = (id) => Array.from({ length: 12 }, (_, h) => ({
     at2.hours[0] === at0.hours[2] && at2.hours[1] === at0.hours[3],
     JSON.stringify([at0.hours, at2.hours]));
   check('and the programmes in it are the later ones',
-    at2.titles.join(',') === '700 hour 2,700 hour 3,700 hour 4,700 hour 5',
-    JSON.stringify(at2.titles));
+    at2.titles.join(',') === hours(base + 2), JSON.stringify(at2.titles));
   /* The window now begins two hours from the top of this hour, so now is
      behind its left edge and the line goes with it. */
   check('now has gone off the left edge, so its line goes too',
@@ -196,8 +215,7 @@ const LISTINGS = (id) => Array.from({ length: 12 }, (_, h) => ({
   const at8 = await look();
   console.log('   ', JSON.stringify(at8));
   check('eight hours out is the far end',
-    at8.titles.join(',') === '700 hour 8,700 hour 9,700 hour 10,700 hour 11',
-    JSON.stringify(at8.titles));
+    at8.titles.join(',') === hours(base + 8), JSON.stringify(at8.titles));
   check('and Later stops offering itself there',
     at6.laterOff === false && at8.laterOff === true,
     JSON.stringify([at6.laterOff, at8.laterOff]));
@@ -211,7 +229,7 @@ const LISTINGS = (id) => Array.from({ length: 12 }, (_, h) => ({
   const back = await look();
   console.log('   ', JSON.stringify(back));
   check('pressing the label returns to now',
-    back.when === 'On now' && back.titles[0] === '700 hour 0',
+    back.when === 'On now' && back.titles[0] === `700 hour ${base}`,
     JSON.stringify(back));
 
   /* ---- 2. pressing a programme ----------------------------------------- */
@@ -234,8 +252,10 @@ const LISTINGS = (id) => Array.from({ length: 12 }, (_, h) => ({
   });
   console.log('   ', JSON.stringify(opened));
   check('a sheet opens rather than the channel', opened.open === true, String(opened.open));
+  /* Two hours on from now, so the second slab in the row — counted from
+     whichever hour the box is actually in, see `base` above. */
   check('naming the programme that was pressed',
-    opened.title === '700 hour 3', opened.title);
+    opened.title === `700 hour ${base + 3}`, opened.title);
   check('and the channel it is on, tidied the way the row is',
     opened.chan === 'CHANNEL 0', opened.chan);
   check('it offers to record it', opened.record === 'Record' && !opened.recordHidden,
@@ -256,8 +276,9 @@ const LISTINGS = (id) => Array.from({ length: 12 }, (_, h) => ({
   /* The listing carries seconds and the store keys on milliseconds. Got wrong
      this books a programme in 1970 and the scheduler marks it missed. */
   check('with the programme\'s own start, in milliseconds',
-    sent.startsAt === (top + 3 * HOUR) * 1000, `${sent.startsAt}`);
-  check('and its own end', sent.endsAt === (top + 4 * HOUR) * 1000, `${sent.endsAt}`);
+    sent.startsAt === (top + (base + 3) * HOUR) * 1000, `${sent.startsAt}`);
+  check('and its own end',
+    sent.endsAt === (top + (base + 4) * HOUR) * 1000, `${sent.endsAt}`);
   check('under the profile that asked for it', sent.profileId === 'own1', sent.profileId);
 
   const marked = await page.evaluate(() => {

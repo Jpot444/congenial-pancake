@@ -589,7 +589,11 @@
   /* Read off the hash rather than off state.tab: both app.js and this file
      listen for the same event, and which of them runs first is a question
      about script order that this does not need to have an opinion about. */
-  const tabFromHash = () => (location.hash.replace(/^#\/?/, '').split('/')[0] || 'home');
+  /* The tail after `?` is where a tab keeps what it is showing — a search, a
+     category, a shelf — so it is cut off before the tab is read. Without this,
+     `#/movies?q=batman` reads as a tab called "movies?q=batman". */
+  const tabFromHash = () =>
+    (location.hash.replace(/^#\/?/, '').split('?')[0].split('/')[0] || 'home');
   addEventListener('hashchange', () => {
     if (!on || !catbar || catbar.hidden) return;
     if (tabFromHash() !== barTab) hideCatbar();
@@ -1027,6 +1031,7 @@
         onOpen: () => {
           state.shelf = row.title;
           state.visible = 60;
+          writeView();
           render();
           scrollTo({ top: 0, behavior: 'smooth' });
         },
@@ -1042,6 +1047,7 @@
         } else {
           state.shelf = null;
         }
+        writeView();
         render();
         scrollTo({ top: 0, behavior: 'smooth' });
       },
@@ -1162,7 +1168,12 @@
         catId: c.id,
         count: counts.get(String(c.id)) || 0,
         pinned: profiles.isPinned('live', c.id),
-        onOpen: () => { state.category = String(c.id); render(); scrollTo({ top: 0, behavior: 'smooth' }); },
+        onOpen: () => {
+          state.category = String(c.id);
+          writeView();
+          render();
+          scrollTo({ top: 0, behavior: 'smooth' });
+        },
       })),
     });
 
@@ -2118,6 +2129,7 @@
       section.querySelector('.shelf-head').addEventListener('click', (e) => {
         if (e.target.closest('.dk-hpin')) return;
         state.category = String(cat.id);
+        writeView();
         render();
         scrollTo({ top: 0, behavior: 'smooth' });
       });

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '38.0';
+const VERSION = '38.1';
 
 const PAGE_SIZE = 60;
 
@@ -5427,6 +5427,7 @@ function renderRows() {
     head.addEventListener('click', () => {
       state.shelf = row.title;
       state.visible = PAGE_SIZE;
+      writeView();
       render();
       scrollViewTop();
     });
@@ -5569,6 +5570,7 @@ function renderShelf() {
   back.addEventListener('click', () => {
     state.shelf = null;
     state.visible = PAGE_SIZE;
+    writeView();
     render();
   });
   grid.before(back);
@@ -5619,6 +5621,7 @@ function renderCategories(categories, items) {
       state.category = id;
       state.visible = PAGE_SIZE;
       $('#sidebar').classList.remove('is-open');
+      writeView();
       render();
     });
     row.append(btn);
@@ -7303,7 +7306,7 @@ async function renderShowCard() {
   if (state.seriesId !== wanted) return;
   if (!item) return missingTitle('That show is no longer in the library.');
 
-  const { mount, describe } = detailCard(item, '#/series', 'All series');
+  const { mount, describe } = detailCard(item, listHash('series'), 'All series');
   renderSeries(item, mount, (info) =>
     describe({ year: info.releaseDate, genre: info.genre, plot: info.plot }));
 }
@@ -7547,7 +7550,9 @@ function filmCard(item) {
   back.append(document.createTextNode(category
     ? `${category.name} · ${inCategory.length.toLocaleString()}`
     : 'All movies'));
-  back.addEventListener('click', () => { location.hash = '#/movies'; });
+  /* Back to the list this was opened from — the search, the category, the
+     shelf — not to the front of Movies. */
+  back.addEventListener('click', () => { location.hash = listHash('movies'); });
   heroInner.append(back);
 
   const stage = el('div', 'film-stage');
@@ -7703,8 +7708,10 @@ function filmCard(item) {
     profiles.toggleDeleted(item);
     toast(`Hid “${item.name}”. It's in Deleted.`);
     // Back to the grid, because staying would leave you on the page of
-    // something that is no longer in any list you can reach it from.
-    location.hash = '#/movies';
+    // something that is no longer in any list you can reach it from. The list
+    // it was opened from, not the front of Movies — hiding one result should
+    // not throw away the search that found it.
+    location.hash = listHash('movies');
   });
   actions.append(hide);
 
@@ -8082,8 +8089,7 @@ function filmCard(item) {
       // The genre chips are how you get from one film to the rest of its kind,
       // which is the same move the category bar makes and lands in the same
       // place: the movies grid, filtered.
-      state.query = name;
-      location.hash = '#/movies';
+      location.hash = `#/movies?q=${encodeURIComponent(name)}`;
     });
 
     providerRow.innerHTML = '';
@@ -8267,7 +8273,7 @@ async function renderPersonView() {
   const back = el('button', 'btn btn-ghost folder-back');
   back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
   back.append(document.createTextNode(' All movies'));
-  back.addEventListener('click', () => { location.hash = '#/movies'; });
+  back.addEventListener('click', () => { location.hash = listHash('movies'); });
   grid.before(back);
 
   const note = el('p', 'person-note');
@@ -8447,6 +8453,7 @@ function renderLiveCategories() {
     back.append(document.createTextNode(' All categories'));
     back.addEventListener('click', () => {
       state.category = null;
+      writeView();
       render();
     });
     grid.before(back);
@@ -8484,6 +8491,7 @@ function renderLiveCategories() {
     tile.append(art, title, sub);
     tile.addEventListener('click', () => {
       state.category = DELETED_CATS;
+      writeView();
       render();
     });
     frag.append(tile);
@@ -8670,6 +8678,7 @@ function liveCategoryCard(cat, count, cover, {
   card.addEventListener('click', onOpen || (() => {
     state.category = cat.id;
     state.visible = PAGE_SIZE;
+    writeView();
     render();
   }));
   return card;
@@ -8862,6 +8871,7 @@ function render() {
     back.addEventListener('click', () => {
       state.category = null;
       state.visible = PAGE_SIZE;
+      writeView();
       render();
     });
     grid.before(back);
@@ -10626,7 +10636,7 @@ function renderArchive() {
   }
 }
 
-async function goTo(tab) {
+async function goTo(tab, view = null) {
   state.tab = tab;
   // Leave home the moment the tab changes rather than once the new tab has
   // drawn. A tab whose library fails to load returns before render() ever
@@ -10643,13 +10653,22 @@ async function goTo(tab) {
   if (tab !== 'live') state.listings = false;
   applyListingsButton();
   applyWideSearchButton();
-  state.category = null;
-  state.shelf = null;
+  /* Whatever the address says this tab was showing — a search, a category, a
+     shelf — rather than nothing. `view` is null when there is no such thing to
+     restore: a detail page, or a tab arrived at fresh from the nav, which
+     should open on its front page the way it always has. */
+  state.category = view && view.cat !== null ? view.cat : null;
+  state.shelf = (view && view.shelf) || null;
+  state.query = (view && view.q) || '';
   state.visible = PAGE_SIZE;
   state.catQuery = '';
-  state.query = '';
   $('#catSearch').value = '';
-  $('#searchInput').value = '';
+  $('#searchInput').value = state.query;
+  /* This IS a list address, so it is the one a detail page opened from here
+     should come back to. A detail page is not, and must not overwrite it. */
+  if (!state.movieId && !state.seriesId && !state.person) {
+    lastList.set(tab, location.hash || `#/${tab}`);
+  }
 
   if (tab === 'downloads') {
     await refreshDownloads();
@@ -10725,9 +10744,28 @@ const TABS = ['home', 'live', 'movies', 'series', 'favorites', 'favlive', 'archi
  * Home is the landing page and the badge is the way back to it, but it is
  * deliberately not a tab — favlive is likewise reachable only from there.
  */
+/*
+ * Where you were INSIDE a tab, kept in the address.
+ *
+ * A tab is not one page. Movies is the shelves, or one shelf, or one category,
+ * or the results of a search — and only the tab itself was ever in the
+ * address. The other three lived in memory, and every navigation wiped them:
+ * opening a film set the hash to that film, `goTo` cleared the search box on
+ * the way past, and pressing back landed on the tab's front page with the
+ * results gone. The same was true of a category and of a shelf. Everything
+ * about where somebody actually was got thrown away the moment they opened
+ * something from it.
+ *
+ * So it goes in the address — `#/movies?q=batman`, `#/live?cat=SPORTS` — where
+ * navigation cannot lose it and the phone's own back button restores it for
+ * nothing.
+ */
 function routeFromHash() {
   const raw = location.hash.replace(/^#\/?/, '') || 'home';
-  const parts = raw.split('/');
+  const cut = raw.indexOf('?');
+  const path = cut < 0 ? raw : raw.slice(0, cut);
+  const params = new URLSearchParams(cut < 0 ? '' : raw.slice(cut + 1));
+  const parts = path.split('/');
   const tab = parts[0].toLowerCase();
   return {
     tab: TABS.includes(tab) ? tab : 'home',
@@ -10735,11 +10773,57 @@ function routeFromHash() {
     // safe here — but NOT for what follows it, which is somebody's name.
     param: (parts[1] || '').toLowerCase(),
     rest: parts.slice(2).join('/'),
+    view: {
+      q: params.get('q') || '',
+      // A category id can be the empty string for nothing in particular, so
+      // "is there one at all" is asked of the address, not of the value.
+      cat: params.has('cat') ? params.get('cat') : null,
+      shelf: params.get('shelf') || null,
+    },
   };
 }
 
+/**
+ * The last list each tab was showing, so a detail page's own back button
+ * returns to it.
+ *
+ * The address carries the view, but a film's page has the FILM in the address
+ * — its own back button has to be told where it came from, and "the tab's
+ * front page" is what it used to be told. Remembered per tab rather than read
+ * off history, because how many entries back the list is depends on how the
+ * viewer got here and guessing wrong walks them out of the app.
+ */
+const lastList = new Map();
+const listHash = (tab) => lastList.get(tab) || `#/${tab}`;
+
+/**
+ * Put the current view in the address.
+ *
+ * replaceState rather than assigning to location.hash: a search is typed one
+ * letter at a time, and a history entry per letter would mean pressing back
+ * eight times to get out of "batman". The state is already applied when this
+ * is called — this only records it, so nothing needs to re-render.
+ */
+function writeView() {
+  const params = new URLSearchParams();
+  if (state.query) params.set('q', state.query);
+  if (state.category !== null && state.category !== undefined) {
+    params.set('cat', String(state.category));
+  }
+  if (state.shelf) params.set('shelf', state.shelf);
+  const tail = params.toString();
+  const hash = `#/${state.tab}${tail ? `?${tail}` : ''}`;
+  lastList.set(state.tab, hash);
+  try {
+    history.replaceState(null, '', hash);
+  } catch {
+    /* Some embedded browsers refuse replaceState on a file: origin. The view
+       still works; only the address stops keeping up. */
+  }
+}
+
 function applyRoute() {
-  const { tab, param, rest } = routeFromHash();
+  const { tab, param, rest, view } = routeFromHash();
   state.seriesId = tab === 'series' ? param : '';
   /* #/movies/by/<name> is a person's films; anything else after #/movies is a
      film's own id. The name keeps its capitals and its accents — it is shown
@@ -10747,7 +10831,7 @@ function applyRoute() {
   const byPerson = tab === 'movies' && param === 'by' && rest;
   state.person = byPerson ? decodeURIComponent(rest) : '';
   state.movieId = tab === 'movies' && !byPerson ? param : '';
-  return goTo(tab);
+  return goTo(tab, param || byPerson ? null : view);
 }
 
 window.addEventListener('hashchange', applyRoute);
@@ -14794,6 +14878,7 @@ $('#searchInput').addEventListener('input', (event) => {
     }
     state.query = value;
     state.visible = PAGE_SIZE;
+    writeView();
     render();
   }, 180);
 });
