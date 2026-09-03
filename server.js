@@ -6386,6 +6386,186 @@ function listingFromName(name) {
   return title ? [{ title, start, stop }] : null;
 }
 
+/* ================================================== a channel that is not on ==
+ *
+ * "On some games the stream that should be correct isnt working... when i
+ *  click them a black screen opens with a 10 minute blank video."
+ *
+ * The provider sells a channel per fixture — `MLB 07 | Giants x Pirates` — and
+ * on some nights the one for a given game never carries it. What it carries
+ * instead is a short canned clip on a loop: a black screen, ten minutes long,
+ * ending. That is not a broadcast that has gone wrong, it is a placeholder the
+ * provider left in the slot, and no amount of buffering or reconnecting will
+ * turn it into a ball game.
+ *
+ * It is also, mercifully, obvious on the wire. A live channel's playlist is a
+ * SLIDING WINDOW: a handful of segments, no end marker, rewritten as the
+ * broadcast goes on. A canned clip is a finished file: every segment listed at
+ * once and `#EXT-X-ENDLIST` at the bottom saying there will be no more. A
+ * playlist that says how long it is and then stops is not live, whatever the
+ * channel is called.
+ *
+ * So the shape of the playlist is the test, and it costs one small GET —
+ * against opening a stream, spawning ffmpeg and handing somebody a black
+ * screen for ten minutes.
+ */
+
+/** How long a finished clip may be and still be read as filler rather than a
+    programme somebody meant to publish. The one reported is ten minutes. */
+const CANNED_MAX_SECONDS = 30 * 60;
+
+/** Verdicts, kept briefly: a channel that was filler a minute ago still is. */
+const cannedCache = new Map();
+const CANNED_TTL_MS = 3 * 60 * 1000;
+
+/** Total seconds a media playlist declares, and whether it declares an end. */
+function readPlaylist(text) {
+  const body = String(text || '');
+  let seconds = 0;
+  let segments = 0;
+  for (const m of body.matchAll(/^#EXTINF:\s*([\d.]+)/gim)) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n)) seconds += n;
+    segments += 1;
+  }
+  return {
+    seconds,
+    segments,
+    ended: /#EXT-X-ENDLIST/i.test(body),
+    master: /#EXT-X-STREAM-INF/i.test(body),
+    live: /#EXT-X-MEDIA-SEQUENCE/i.test(body),
+  };
+}
+
+/**
+ * What this channel is actually serving, said plainly.
+ *
+ * Follows one level of master playlist, because a provider that hands back
+ * variants would otherwise look like a playlist with no segments at all — and
+ * "no segments" is not the same claim as "a ten-minute clip".
+ */
+async function inspectLive(cfg, id, { timeout = 8000 } = {}) {
+  const url = buildStreamUrl(cfg, 'live', id, 'm3u8');
+  const fetchOne = async (target) => {
+    const res = await request(target, { timeout, headers: { accept: '*/*' } });
+    const status = res.statusCode || 0;
+    const body = await readBody(res, 256 * 1024);
+    return { status, body: body.toString('utf8'), at: res.finalUrl || target };
+  };
+
+  let got = await fetchOne(url);
+  let seen = readPlaylist(got.body);
+  if (seen.master) {
+    const line = got.body.split('\n').map((l) => l.trim())
+      .find((l) => l && !l.startsWith('#'));
+    if (line) {
+      try {
+        got = await fetchOne(new URL(line, got.at).toString());
+        seen = readPlaylist(got.body);
+      } catch {
+        /* the master is all there is to go on */
+      }
+    }
+  }
+
+  /* A finished playlist, short enough to be filler. Both halves matter: a
+     finished playlist that runs three hours is a recording of the game, which
+     is a perfectly good thing to hand somebody. */
+  const canned = Boolean(seen.ended && seen.segments > 0
+    && seen.seconds > 0 && seen.seconds <= CANNED_MAX_SECONDS);
+  return {
+    status: got.status,
+    canned,
+    seconds: Math.round(seen.seconds),
+    segments: seen.segments,
+    ended: seen.ended,
+    /* Nothing here may carry the account's credentials — this travels to the
+       browser and into reports people paste. */
+    url: redactUrl(url),
+  };
+}
+
+/** The same question, answered from the last few minutes where possible. */
+async function liveIsCanned(cfg, id) {
+  const key = String(id);
+  const held = cannedCache.get(key);
+  if (held && Date.now() - held.at < CANNED_TTL_MS) return held.seen;
+  let seen;
+  try {
+    seen = await inspectLive(cfg, id);
+  } catch (err) {
+    /* Unreachable is not the same as filler, and must never be treated as it:
+       refusing to play a channel because the check timed out would be this
+       fix causing the fault it was written for. */
+    seen = { canned: false, error: err.message };
+  }
+  cannedCache.set(key, { at: Date.now(), seen });
+  return seen;
+}
+
+/* ---------------------------------------------------- the team's own feed ── */
+
+/*
+ * "This can be fixed with either routing to the team streams
+ *  'MLB TORONTO BLUE JAYS ᴿᴬᵂ' in MLB team PPV."
+ *
+ * The provider carries a channel PER CLUB as well as one per fixture, and the
+ * club's own feed is carrying the game whether or not the fixture channel is.
+ * So when the fixture channel turns out to be filler, the two teams are read
+ * out of its name and the club feed is what gets played instead.
+ */
+
+/** The two sides named in an event channel, e.g. `Giants x Pirates`. */
+function teamsInName(name) {
+  const raw = String(name || '');
+  /* Everything before the times, and after the provider's own numbering. */
+  const head = raw.split(/start:/i)[0]
+    .replace(/^[^|]*\|/, '')
+    .replace(/[|\-–—:\s]+$/, '')
+    .trim();
+  const sides = head.split(/\s+(?:x|vs?\.?|at|@)\s+/i)
+    .map((t) => t.replace(/\(.*?\)/g, '').trim())
+    .filter(Boolean);
+  return sides.length === 2 ? sides : [];
+}
+
+/** Is this row one of the provider's per-fixture channels? */
+const isEventChannel = (name) => /start:\s*\d{4}-\d{2}-\d{2}/i.test(String(name || ''));
+
+/**
+ * A club's own channel for one of the two sides, if the box has seen one.
+ *
+ * Deliberately narrow. It must name the same sport as the fixture — a row
+ * called `GIANTS` in a football shelf is the wrong Giants, and that is not a
+ * hypothetical in a library carrying both leagues — and it must not itself be
+ * a fixture channel, or a dead one could hand off to another dead one.
+ */
+function teamFeedFor(name, channels) {
+  const teams = teamsInName(name);
+  if (!teams.length) return null;
+  /* The league the fixture is filed under: `MLB 07 | ...` -> MLB. Without it
+     there is nothing to keep this inside the right sport. */
+  const league = (/^\s*([A-Z]{2,5})\b/.exec(String(name || '').toUpperCase()) || [])[1];
+  if (!league) return null;
+
+  let best = null;
+  for (const team of teams) {
+    const want = team.toUpperCase().trim();
+    if (want.length < 3) continue;
+    for (const channel of channels) {
+      const label = String(channel.name || '').toUpperCase();
+      if (isEventChannel(channel.name)) continue;
+      if (!label.includes(league)) continue;
+      if (!label.includes(want)) continue;
+      /* The shortest name that still says both things is the most likely to be
+         the club's own feed rather than a highlights or a multi-game row. */
+      if (!best || label.length < String(best.name).toUpperCase().length) best = channel;
+    }
+    if (best) return { channel: best, team };
+  }
+  return null;
+}
+
 /** The provider's whole guide in one request, rather than one call a channel. */
 function providerGuideUrl(cfg) {
   if (!cfg || cfg.mode !== 'xtream' || !cfg.host) return null;
@@ -8268,6 +8448,63 @@ async function handleApi(req, res, pathname, query) {
    * both football lists and says what each said, including the ones the
    * ordinary poll never reaches. A page somebody opens, never the poll.
    */
+  /*
+   * Which of tonight's fixture channels are actually carrying anything.
+   *
+   * "Or checking all the streams to see if they work or not."
+   *
+   * The swap in /api/play fixes one press at a time; this answers the question
+   * for the whole shelf at once, which is the one worth asking BEFORE sitting
+   * down. Each row costs one small playlist GET and they are walked strictly
+   * one at a time — this box has a single provider connection and a fan-out
+   * here would be the portal picking a fight with its own player.
+   *
+   * Owner-only, capped, and it names the club feed it would hand off to, so
+   * the answer is a plan rather than a complaint.
+   */
+  if (pathname === '/api/live/check') {
+    if (!cfg || cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
+    const rows = knownCatalogue('live');
+    const wanted = String(query.get('match') || '').toUpperCase().trim();
+    const limit = Math.min(40, Math.max(1, Number(query.get('limit')) || 20));
+
+    /* Only the fixture rows, only the ones on now or starting soon: a channel
+       for tomorrow's game is filler tonight and correctly so. */
+    const now = Date.now();
+    const soon = now + 2 * 60 * 60 * 1000;
+    const fixtures = rows.filter((c) => {
+      if (!isEventChannel(c.name)) return false;
+      if (wanted && !String(c.name || '').toUpperCase().includes(wanted)) return false;
+      const listing = (listingFromName(c.name) || [])[0];
+      if (!listing) return false;
+      return listing.stop * 1000 > now && listing.start * 1000 < soon;
+    }).slice(0, limit);
+
+    const checked = [];
+    for (const channel of fixtures) {
+      /* One at a time. See above. */
+      // eslint-disable-next-line no-await-in-loop
+      const seen = await liveIsCanned(cfg, channel.id);
+      const other = seen.canned ? teamFeedFor(channel.name, rows) : null;
+      checked.push({
+        id: channel.id,
+        name: channel.name,
+        working: !seen.canned,
+        seconds: seen.seconds || 0,
+        error: seen.error || '',
+        instead: other ? { id: other.channel.id, name: other.channel.name } : null,
+      });
+    }
+    return json(res, 200, {
+      checked,
+      looked: fixtures.length,
+      broken: checked.filter((c) => !c.working).length,
+      /* What a filler clip looks like, so the number in each row means
+         something to whoever reads this. */
+      cannedUnder: CANNED_MAX_SECONDS,
+    });
+  }
+
   if (pathname === '/api/scores/probe') {
     const only = String(query.get('sport') || '').toLowerCase();
     /* `find` answers the question a games COUNT cannot: a game that is not on
@@ -9080,7 +9317,10 @@ async function handleApi(req, res, pathname, query) {
   /* ---- Resolve a playable, proxied URL ---- */
   if (pathname === '/api/play') {
     const kind = query.get('kind');
-    const id = query.get('id');
+    /* `let`, because a fixture channel that turns out to be filler is swapped
+       for the club's own feed below and everything downstream should open that
+       one instead. */
+    let id = query.get('id');
     const ext = query.get('ext') || '';
     if (!kind || !id) return json(res, 400, { error: 'kind and id are required' });
     if (!cfg || cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
@@ -9102,13 +9342,55 @@ async function handleApi(req, res, pathname, query) {
       // the thing that cannot get through.
       const lowWanted = query.get('low') === '1';
       const format = ext || cfg.preferredFormat;
+
+      /*
+       * Is this fixture channel actually carrying the fixture?
+       *
+       * Asked before anything expensive happens, because the failure it
+       * catches is expensive in the only currency that matters: somebody
+       * pressing a game and getting ten minutes of black. One small GET
+       * against the playlist answers it — see inspectLive.
+       *
+       * Only for the provider's per-fixture rows. Every other channel is a
+       * channel, and asking about all of them would be a request per press for
+       * a fault that does not apply to them.
+       */
+      let swapped = null;
+      if (kind === 'live' && /^[\w-]+$/.test(id) && query.get('nofallback') !== '1') {
+        const rows = knownCatalogue('live');
+        const mine = rows.find((c) => String(c.id) === String(id));
+        if (mine && isEventChannel(mine.name)) {
+          const seen = await liveIsCanned(cfg, id);
+          if (seen.canned) {
+            const other = teamFeedFor(mine.name, rows);
+            if (!other) {
+              /* Nothing to hand off to. Say what was found rather than opening
+                 it anyway — a black screen with no explanation is the thing
+                 being fixed, and a wrong answer given confidently is worse
+                 than no answer. */
+              return json(res, 409, {
+                error: 'That channel is showing a short looped clip, not the game.',
+                canned: seen,
+                channel: mine.name,
+              });
+            }
+            /* Hand off, and say so. The client puts the name on screen: being
+               moved to a different channel without being told is its own kind
+               of broken. */
+            swapped = { from: mine.name, to: other.channel.name, team: other.team,
+              seconds: seen.seconds };
+            id = String(other.channel.id);
+          }
+        }
+      }
+
       if (kind === 'live' && (format === 'm3u8' || lowWanted)
           && hasFfmpeg() && /^[\w-]+$/.test(id)) {
         try {
           const session = await ensureLiveDvr(cfg, id, lowWanted);
           return json(res, 200, {
             url: `/hls/${session.id}/index.m3u8`, format: 'm3u8', dvr: true,
-            low: lowWanted,
+            low: lowWanted, swapped,
           });
         } catch {
           /* direct proxy below */
@@ -9155,7 +9437,7 @@ async function handleApi(req, res, pathname, query) {
       if (kind === 'live' && format === 'ts') {
         url += `&drain=${LIVE_TS.drain}&hold=${LIVE_TS.hold}`;
       }
-      return json(res, 200, { url, format });
+      return json(res, 200, { url, format, swapped });
     } catch (err) {
       return json(res, 400, { error: err.message });
     }

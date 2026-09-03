@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '39.0';
+const VERSION = '39.1';
 
 const PAGE_SIZE = 60;
 
@@ -14304,6 +14304,18 @@ async function resolveStream(item, override) {
   });
   const format =
     kind === 'live' ? data.format : /^(m3u8|ts)$/.test(data.format) ? data.format : 'file';
+  /*
+   * The box moved us to a different channel, and says which.
+   *
+   * The provider's per-fixture rows are sometimes filler — a ten-minute black
+   * clip on a loop instead of the game — and rather than hand that over the
+   * box opens the club's own feed. Being moved without being told is its own
+   * kind of broken, so it is said out loud, once, naming both ends.
+   */
+  if (data.swapped) {
+    toast(`${data.swapped.from.split('|').pop().trim() || 'That channel'} was not `
+      + `carrying the game — playing ${data.swapped.to} instead.`);
+  }
   // dvr means the Pi's own live buffer is serving this channel, which earns a
   // deeper seat than the provider's short window could hold.
   return { url: data.url, format, dvr: Boolean(data.dvr) };
