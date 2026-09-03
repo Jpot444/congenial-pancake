@@ -22,6 +22,7 @@ import { focus } from '../focus.js';
 import { getPlay, postHistory } from '../api.js';
 import { state, loadLibrary, loadEpg, nowOn, nextOn, airProgress, favorites, pinnedIds }
   from '../state.js';
+import { getGames, matchChannel } from '../scores.js';
 
 export const fullbleed = true;
 
@@ -58,9 +59,20 @@ const LIVE_DVR_SEAT = 45;
 /** How long a tuned channel may show nothing before the app admits it. */
 const PICTURE_BY_MS = 15000;
 
+/** How far ahead "soon" reaches on the suggestions panel, and how long after
+    kickoff a game the slate still calls upcoming is worth offering. */
+const SOON_MS = 3 * 3600e3;
+const LATE_MS = 45 * 60e3;
+
 let channel = null;
 let from = 'live';
-let overlay = null;          // null | 'guide' | 'bar'
+let overlay = null;          // null | 'guide' | 'bar' | 'suggest'
+/* The slate, asked for in the background while the channel tunes. ▼ needs it
+   to know whether what is on screen is a game — and a press that had to wait
+   on a fetch would be a press that did nothing for a second, so a slate that
+   has not arrived yet simply means ▼ opens the guide, as it always did. */
+let slate = [];
+let liveChannels = [];
 let media = { video: null, hls: null, mpegts: null };
 let channels = [];
 let guideChannels = [];
@@ -85,8 +97,11 @@ export async function render(hostNode, app, params) {
   if (!channel) { app.go(from); return; }
 
   const lib = await loadLibrary('live');
+  liveChannels = lib.items || [];
   channels = flipList(lib);
   guideChannels = guideList(lib);
+  /* Started, not awaited — see the note by `slate`. */
+  getGames().then((games) => { slate = games || []; }).catch(() => { slate = []; });
   /* One call for both lists — the guide's category and the bar's flip list
      overlap heavily, and asking twice would spend the one connection twice. */
   epg = await loadEpg(
@@ -104,6 +119,7 @@ function paint() {
   if (!overlay) root.append(scrim());
   if (overlay === 'guide') root.append(guide());
   if (overlay === 'bar') root.append(channelBar());
+  if (overlay === 'suggest') root.append(suggestions());
 
   clear(host).append(root);
 }
@@ -146,7 +162,11 @@ function repaint() {
   }
   else if (overlay === 'bar') {
     focus.reset(30, Math.max(0, channels.findIndex((c) => String(c.id) === String(channel.id))));
-  } else focus.reset(-1, 0);
+  }
+  /* The first game, not the guide button above it: the list is what ▼ was
+     pressed for, and landing on the way out of it would be backwards. */
+  else if (overlay === 'suggest') focus.reset(40, 0);
+  else focus.reset(-1, 0);
   focus.collect();
   focus.apply();
 }
@@ -200,7 +220,10 @@ function scrim() {
   left.append(times);
 
   const hints = el('span', 'hintpill');
-  for (const [key, label] of [['▲', 'Jump to live'], ['▼', 'Guide'], ['OK', 'Channels'],
+  /* ▼ does a different thing on a game, and the line has to say which — a hint
+     that names the guide and opens something else is worse than no hint. */
+  for (const [key, label] of [['▲', 'Jump to live'],
+    ['▼', watchingAGame() ? 'Other games' : 'Guide'], ['OK', 'Channels'],
     ['BACK', backLabel()]]) {
     const span = el('span');
     span.append(el('b', null, key), ` ${label}`);
@@ -235,6 +258,147 @@ const fmt = (epochSeconds) =>
 
 function backLabel() {
   return from === 'multi' ? 'Multi-view' : 'Live TV';
+}
+
+/* ----------------------------------------------------- the other games ── */
+
+/*
+ * ▼ on a game.
+ *
+ * Pressing down while a game is on is almost never "show me this category's
+ * schedule" — it is "what else is on". So on a game it opens the other games,
+ * down the right-hand side, and on anything else it opens the guide exactly as
+ * before. The guide is one press away from inside the panel, because a rule
+ * this confident about intent has to leave the old road open.
+ *
+ * OK on a row goes to multi-view with this game and that one already seated,
+ * which is the thing being asked for: both at once, not a channel change.
+ */
+
+/** Is the channel on screen carrying a game the slate knows about? */
+function watchingAGame() {
+  return Boolean(slate.find((game) => matchChannel(game, [channel])));
+}
+
+/**
+ * The games worth offering. Live first, then by how soon they start, with
+ * anything that has no channel behind it left out — a row that opens nothing
+ * is worse than a shorter list.
+ */
+function otherGames() {
+  const now = Date.now();
+  const out = [];
+  const seen = new Set([String(channel.id)]);
+  for (const game of slate) {
+    if (game.status === 'final') continue;
+    if (game.status !== 'live') {
+      const at = Number(game.kickoff) || 0;
+      if (!at || at - now > SOON_MS || now - at > LATE_MS) continue;
+    }
+    const chan = matchChannel(game, liveChannels);
+    if (!chan || seen.has(String(chan.id))) continue;
+    seen.add(String(chan.id));
+    out.push({ game, channel: chan });
+  }
+  out.sort((a, b) => (a.game.status === 'live' ? 0 : 1) - (b.game.status === 'live' ? 0 : 1)
+    || (Number(a.game.kickoff) || 0) - (Number(b.game.kickoff) || 0));
+  return out;
+}
+
+function gameWhen(game) {
+  if (game.redZone) return game.note || 'Whip-around';
+  if (game.status === 'live') return game.clock || 'LIVE';
+  const at = Number(game.kickoff) || 0;
+  if (!at) return game.clock || 'Soon';
+  const mins = Math.round((at - Date.now()) / 60000);
+  if (mins <= 0) return 'Starting now';
+  if (mins < 60) return `In ${mins} min`;
+  return fmt(at / 1000);
+}
+
+function teamMark(team) {
+  const box = el('div', 'sg-mark');
+  if (team && team.logo) {
+    const badge = el('img');
+    badge.src = `/img?u=${encodeURIComponent(team.logo)}`;
+    badge.alt = team.abbr || '';
+    /* A mark that will not load leaves the abbreviation rather than a broken
+       picture: the league's server is not this box's to promise. */
+    badge.addEventListener('error', () => { badge.remove(); box.classList.add('no-mark'); });
+    box.append(badge);
+  } else box.classList.add('no-mark');
+  box.append(el('span', 'sg-abbr', team ? (team.abbr || '') : ''));
+  return box;
+}
+
+function suggestions() {
+  const wrap = el('div', 'suggest');
+
+  const head = el('div', 'suggest-head');
+  head.append(el('h2', null, 'OTHER GAMES'));
+  head.append(el('span', 'meta', 'OK for both at once · BACK to the game'));
+
+  /* Row 39 sits above the list, so ▲ from the first game lands on it. */
+  const toGuide = el('button', 'suggest-guide ring');
+  toGuide.dataset.r = 39;
+  toGuide.dataset.c = 0;
+  toGuide.dataset.kind = 'suggestguide';
+  toGuide.dataset.lift = 'pill';
+  toGuide.append(el('span', null, 'FULL GUIDE'));
+  head.append(toGuide);
+  wrap.append(head);
+
+  const rows = otherGames();
+  const body = el('div', 'suggest-body');
+  body.dataset.scroller = 'suggest';
+
+  if (!rows.length) {
+    /* Two different empties, and they look identical from the sofa unless this
+       says which: nothing else is being played, or nothing that is being
+       played is on a channel this provider carries. */
+    body.append(el('p', 'suggest-none',
+      'Nothing else on right now that this provider carries. ▲ for the guide.'));
+    wrap.append(body);
+    return wrap;
+  }
+
+  rows.forEach(({ game, channel: chan }, i) => {
+    const row = el('div', 'suggest-row ring');
+    row.dataset.r = 40 + i;
+    row.dataset.c = 0;
+    row.dataset.kind = 'suggestgame';
+    row.dataset.lift = 'none';
+    row._channel = chan;
+    if (game.status === 'live') row.classList.add('on');
+
+    const marks = el('div', 'sg-marks');
+    if (game.away || game.home) {
+      marks.append(teamMark(game.away), el('span', 'sg-vs'), teamMark(game.home));
+    } else {
+      marks.classList.add('single');
+      marks.append(teamMark({ abbr: game.channelMatch || 'LIVE', logo: '' }));
+    }
+    row.append(marks);
+
+    const copy = el('div', 'sg-copy');
+    copy.append(el('span', 'sg-title', game.away && game.home
+      ? `${game.away.abbr} at ${game.home.abbr}`
+      : (game.note || game.channelName || plateText(chan.name))));
+
+    const line = el('div', 'sg-line');
+    line.append(el('span', 'sg-when', gameWhen(game)));
+    if (game.status === 'live' && game.away && game.home
+        && game.away.score !== null && game.home.score !== null) {
+      line.append(el('span', 'sg-score', `${game.away.score}–${game.home.score}`));
+    }
+    copy.append(line);
+    copy.append(el('span', 'sg-chan', plateText(chan.name)));
+    row.append(copy);
+    body.append(row);
+  });
+
+  wrap.append(body);
+  return wrap;
 }
 
 /* ----------------------------------------------------------------- guide ── */
@@ -722,6 +886,15 @@ export function onKey(key, { back, ok }) {
     return true;
   }
   if (key === 'ArrowDown' && !overlay) {
+    /* On a game, the other games; on anything else, the guide. See the note
+       above suggestions(). */
+    overlay = watchingAGame() ? 'suggest' : 'guide';
+    repaint();
+    return true;
+  }
+  /* ▼ again out of the suggestions is the guide — the panel replaced it on
+     this press, so the second press has to be able to get back to it. */
+  if (key === 'ArrowDown' && overlay === 'suggest') {
     overlay = 'guide';
     repaint();
     return true;
@@ -748,6 +921,24 @@ export function activate(node, app) {
   if (node.dataset.kind === 'guidemulti') {
     overlay = null;
     app.go('multi');
+    return;
+  }
+
+  /* Both at once. The shell calls leave() on the way out, which stops this
+     channel before multi-view opens its own — the provider allows one
+     connection and would refuse the rest. The two are handed over as a seed
+     so multi-view opens on the pair that was asked for rather than on its own
+     idea of the four best. */
+  if (node.dataset.kind === 'suggestgame') {
+    const pick = node._channel;
+    overlay = null;
+    app.go('multi', { seed: pick ? [channel, pick] : [channel] });
+    return;
+  }
+
+  if (node.dataset.kind === 'suggestguide') {
+    overlay = 'guide';
+    repaint();
     return;
   }
 

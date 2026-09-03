@@ -2799,6 +2799,34 @@ is 60s here, which is what sets that), and forward stops at the live edge.
 Pressing at the edge does nothing rather than throwing the position somewhere
 invalid.
 
+### The other games
+
+Pressing Multi-view from inside a live game is almost always the question
+"what else is on right now", so the answer comes out with the grid rather than
+behind another press: a panel slides in from the right listing every other
+fixture the slate has that is being played now or starts soon, each tied to the
+channel actually carrying it. Tapping one fills the next free cell — the last
+cell, with a toast, when they are all busy — and the row stops being offered.
+`Other games` on the bar puts it away and brings it back.
+
+Two rules do most of the work here. **A game with no channel behind it is left
+out entirely**: a row that opens nothing is the black screen the canned-fixture
+work spent a fortnight removing, dressed up as a recommendation. And **the game
+already on screen is never offered back**, since it is the reason the panel was
+asked for.
+
+The games come from `/api/scores` — reused off `window.dkSlate` when the
+desktop layer has asked recently, otherwise asked for directly; that endpoint
+reads ESPN and MLB, not the provider, so an extra ask costs nothing that
+matters. Which channel a game is on is answered by `__ttDesktop.matchChannel`
+rather than by a second copy of those three passes living in app.js.
+
+**On the television** the same list is what ▼ does while a game is on — the
+guide is still ▼ on everything else, and still one press away from inside the
+panel. OK on a row opens multi-view seeded with the game that was on and the
+game that was picked, in that order, because the ask was for both at once
+rather than a channel change.
+
 ### A film or an episode in a cell
 
 A cell will take a film or an episode as well as a channel — but it is a

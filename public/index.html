@@ -487,9 +487,25 @@
       <button type="button" data-count="3">3</button>
       <button type="button" data-count="4">4</button>
     </div>
+    <!-- The other games. Opening multi-view off a game is almost always
+         "what else is on right now", so the answer is a press away rather
+         than a walk through the channel picker. -->
+    <button class="btn btn-ghost btn-sm" id="mvSuggestBtn">Other games</button>
     <button class="btn btn-ghost btn-sm" id="mvStopAll">Stop all</button>
   </div>
   <div class="mv-grid" id="mvGrid"></div>
+
+  <!-- Slides in over the right-hand edge of the grid. Not a sheet and not a
+       modal: the games it lists are about the games already on screen, so the
+       picture stays up and visible beside it. -->
+  <aside class="mv-suggest" id="mvSuggest" hidden aria-label="Other games on now">
+    <div class="mv-suggest-top">
+      <h3 id="mvSuggestTitle">Other games</h3>
+      <button type="button" class="mv-btn" id="mvSuggestClose" title="Hide" aria-label="Hide">✕</button>
+    </div>
+    <p class="mv-suggest-note" id="mvSuggestNote"></p>
+    <div class="mv-suggest-body" id="mvSuggestBody"></div>
+  </aside>
 </div>
 
 <!-- Channel picker for a multi-view cell.

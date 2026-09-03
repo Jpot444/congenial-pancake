@@ -71,6 +71,7 @@ NFL_URL=http://127.0.0.1:9922/ node server.js
 | Live TV home | `/api/library?tab=live`, `/api/profiles/:id/prefs` (hearted + pinned), `/api/epg/now` |
 | Player | `/api/play?kind=live`, `/api/epg/now`, `/api/profiles/:id/history` |
 | Guide (▼) | `/api/epg/now` for the channels in the flip list |
+| Other games (▼ on a game) | `/api/scores` matched against `/api/library?tab=live` |
 | Channel bar (OK) | the same flip list, current channel marked |
 | Multi-view | four `/api/play` streams, audio follows focus |
 | Movies | `/api/library?tab=movies`, `/api/profiles/:id/taste`, `get_vod_info` for the spotlight synopsis |
@@ -94,7 +95,8 @@ language — brand field while it opens, one bottom scrim, hints spelled out.
 | ▲ ▼ ◀ ▶ | move; rows remember their column |
 | OK | watch / open / press |
 | BACK | up a level; on Live TV it parks on the nav |
-| ▼ in the player | the guide |
+| ▼ in the player | the other games on a game, otherwise the guide |
+| ▼ again, from the other games | the guide |
 | OK in the player | the channel bar, without leaving the picture |
 | ◀ ▶ / ▲ ▼ while a film plays | 10 seconds / 5 minutes |
 

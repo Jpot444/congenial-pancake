@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '39.3';
+const VERSION = '39.4';
 
 const PAGE_SIZE = 60;
 
@@ -1033,6 +1033,154 @@ const MV_IDLE = 3000;        // how long the chrome stays up with nothing moving
  */
 const MV_SOURCES = ['live', 'movies', 'series', 'favorites', 'recent', 'archive'];
 
+/* ------------------------------------------------------- other games on ── */
+
+/*
+ * "When I click multi-view it is usually because I want to watch the other
+ *  games that are on at that time."
+ *
+ * So the other games are offered rather than waited for. The list is the
+ * slate — the same one the Live TV band draws — narrowed to games that are
+ * being played now or start soon, each tied to the channel it is actually on,
+ * with anything already in a cell dropped.
+ *
+ * A game with no channel behind it is left out entirely. A row that cannot be
+ * opened is worse than a shorter list: it is the black screen this portal has
+ * spent a fortnight removing, dressed up as a recommendation.
+ */
+
+/** How far ahead "soon" reaches. Long enough to catch the next window of a
+    Sunday, short enough that it is still a list about tonight. */
+const MV_SOON_MS = 3 * 3600e3;
+/** And how long after kickoff a game the slate still calls upcoming is worth
+    offering — a feed that is slow to flip a game to live should not take the
+    game off the list. */
+const MV_LATE_MS = 45 * 60e3;
+/** How stale the desktop layer's slate may be before this asks for its own.
+    /api/scores does not touch the provider, so an extra ask costs nothing
+    that matters; reusing a fresh one still beats asking twice. */
+const MV_SLATE_FRESH_MS = 60e3;
+
+let mvSlateAt = 0;
+let mvSlateGames = [];
+let mvSlateAsking = null;
+
+/**
+ * The slate, from whoever has it.
+ *
+ * desktop.js owns the polling for the scores band and publishes what it has on
+ * `window.dkSlate`. That band is not on screen while multi-view is open, so its
+ * copy goes stale — hence the fall back to asking directly. Never throws: no
+ * games is a state this panel can say out loud, and an exception is not.
+ */
+async function mvSlate() {
+  const shared = window.dkSlate;
+  if (shared && Array.isArray(shared.games) && shared.games.length
+      && Date.now() - (shared.at || 0) < MV_SLATE_FRESH_MS) {
+    return shared.games;
+  }
+  if (Date.now() - mvSlateAt < MV_SLATE_FRESH_MS) return mvSlateGames;
+  if (mvSlateAsking) return mvSlateAsking;
+  mvSlateAsking = fetch('/api/scores', { headers: { accept: 'application/json' } })
+    .then((res) => (res.ok ? res.json() : { games: [] }))
+    .then((data) => {
+      mvSlateGames = Array.isArray(data && data.games) ? data.games : [];
+      mvSlateAt = Date.now();
+      return mvSlateGames;
+    })
+    .catch(() => mvSlateGames)
+    .finally(() => { mvSlateAsking = null; });
+  return mvSlateAsking;
+}
+
+/**
+ * Which live channel a game is on.
+ *
+ * Answered by the desktop layer, which already carries the three passes this
+ * needs — what the guide says is on, the provider's own row for the fixture,
+ * then the network — and has the provider's naming quirks baked into them. A
+ * second copy here would be a second thing to keep in step. With the layer
+ * missing there is no answer, and no answer means no row, which is the right
+ * failure: a suggestion that opens the wrong game is worse than none.
+ */
+function mvGameChannel(game) {
+  const match = window.__ttDesktop && window.__ttDesktop.matchChannel;
+  if (typeof match !== 'function') return null;
+  const lib = state.library.live || {};
+  try {
+    return match(game, lib.items || [], lib.categories || [], null) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Live first, then by how soon it starts. */
+function mvGameRank(game) {
+  if (game.status === 'live') return 0;
+  return 1;
+}
+
+/**
+ * The games worth offering, in the order worth offering them.
+ *
+ * `skip` is the set of channel ids already on screen — the game being watched
+ * is the reason this list was asked for, and offering it back is the one row
+ * guaranteed to be useless.
+ */
+async function mvSuggestions(skip) {
+  if (!state.library.live) {
+    try { await loadTab('live'); } catch { /* the panel says so below */ }
+  }
+  const games = await mvSlate();
+  const now = Date.now();
+  const out = [];
+  const seen = new Set(skip || []);
+  for (const game of games) {
+    if (game.status === 'final') continue;
+    if (game.status !== 'live') {
+      const at = Number(game.kickoff) || 0;
+      if (!at || at - now > MV_SOON_MS || now - at > MV_LATE_MS) continue;
+    }
+    const channel = mvGameChannel(game);
+    if (!channel || seen.has(String(channel.id))) continue;
+    seen.add(String(channel.id));
+    out.push({ game, channel });
+  }
+  out.sort((a, b) => mvGameRank(a.game) - mvGameRank(b.game)
+    || (Number(a.game.kickoff) || 0) - (Number(b.game.kickoff) || 0));
+  return out;
+}
+
+/** The club's mark, falling back to its abbreviation rather than to a broken
+    picture: the league's server is not this box's to promise. */
+function mvTeamMark(team) {
+  const box = el('span', 'mv-sg-mark');
+  if (team && team.logo) {
+    const img = document.createElement('img');
+    img.src = `/img?u=${encodeURIComponent(team.logo)}`;
+    img.alt = team.abbr || '';
+    img.loading = 'lazy';
+    img.addEventListener('error', () => { img.remove(); box.classList.add('no-mark'); });
+    box.append(img);
+  } else box.classList.add('no-mark');
+  const abbr = el('span', 'mv-sg-abbr');
+  abbr.textContent = team ? (team.abbr || '') : '';
+  box.append(abbr);
+  return box;
+}
+
+/** What the row says about the state of the game, in as few words as it can. */
+function mvGameWhen(game) {
+  if (game.redZone) return game.note || 'Whip-around';
+  if (game.status === 'live') return game.clock || 'LIVE';
+  const at = Number(game.kickoff) || 0;
+  if (!at) return game.clock || 'Soon';
+  const mins = Math.round((at - Date.now()) / 60000);
+  if (mins <= 0) return 'Starting now';
+  if (mins < 60) return `In ${mins} min`;
+  return new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
 const multiview = {
   cells: [],
   count: 4,
@@ -1408,7 +1556,141 @@ const multiview = {
     $('#multiview').classList.remove('is-idle');
     $('#multiview').hidden = true;
     $('#mvPicker').hidden = true;
+    this.hideSuggest();
     document.body.style.overflow = '';
+  },
+
+  /* -- the other games -------------------------------------------------- */
+
+  /**
+   * The panel that comes out of the right-hand edge.
+   *
+   * Opened by hand from the bar, and on its own when multi-view is entered off
+   * a live game — which is the case it exists for. The picture stays up beside
+   * it: this is a list about what is already on screen, and covering that up to
+   * show it would be answering the wrong question.
+   */
+  async suggest() {
+    const panel = $('#mvSuggest');
+    panel.hidden = false;
+    /* Off the paint, so the transform has a frame to animate from. */
+    requestAnimationFrame(() => panel.classList.add('is-open'));
+    $('#multiview').classList.add('has-suggest');
+    $('#mvSuggestBtn').classList.add('is-on');
+    this.wake();
+
+    const body = $('#mvSuggestBody');
+    const note = $('#mvSuggestNote');
+    body.replaceChildren();
+    note.textContent = 'Looking at what else is on…';
+
+    const mine = (this.suggestToken = (this.suggestToken || 0) + 1);
+    const skip = this.cells
+      .filter((c, i) => i < this.count && c.item && c.item.kind === 'live')
+      .map((c) => String(c.item.id));
+    let rows = [];
+    try {
+      rows = await mvSuggestions(skip);
+    } catch (err) {
+      if (this.suggestToken !== mine) return;
+      note.textContent = `Couldn't work out what else is on — ${err.message}`;
+      return;
+    }
+    if (this.suggestToken !== mine || panel.hidden) return;
+    this.paintSuggest(rows);
+  },
+
+  hideSuggest() {
+    const panel = $('#mvSuggest');
+    panel.classList.remove('is-open');
+    panel.hidden = true;
+    $('#multiview').classList.remove('has-suggest');
+    $('#mvSuggestBtn').classList.remove('is-on');
+  },
+
+  toggleSuggest() {
+    if ($('#mvSuggest').hidden) this.suggest();
+    else this.hideSuggest();
+  },
+
+  paintSuggest(rows) {
+    const body = $('#mvSuggestBody');
+    body.replaceChildren();
+    const note = $('#mvSuggestNote');
+    const free = this.cells.findIndex((c, i) => i < this.count && !c.item);
+
+    if (!rows.length) {
+      /* Two different empties, and from the sofa they look identical unless
+         this says which: nothing is being played, or nothing that is being
+         played is on a channel this provider carries. */
+      note.textContent = state.library.live
+        ? 'Nothing else on right now that this provider carries.'
+        : 'The channel list has not loaded, so there is nothing to match games against.';
+      return;
+    }
+
+    note.textContent = free >= 0
+      ? `Tap one to add it to ${free === 0 ? 'the first' : `screen ${free + 1}`}.`
+      : `All ${this.count} are full — tapping one replaces screen ${this.count}.`;
+
+    for (const { game, channel } of rows) {
+      const row = el('button', 'mv-sg');
+      if (game.status === 'live') row.classList.add('is-live');
+
+      const marks = el('div', 'mv-sg-marks');
+      if (game.away || game.home) {
+        marks.append(mvTeamMark(game.away));
+        marks.append(el('span', 'mv-sg-vs'));
+        marks.append(mvTeamMark(game.home));
+      } else {
+        /* Red Zone and the like: one row, no two sides. */
+        marks.classList.add('is-single');
+        marks.append(mvTeamMark({ abbr: game.channelMatch || 'LIVE', logo: '' }));
+      }
+      row.append(marks);
+
+      const copy = el('div', 'mv-sg-copy');
+      const title = el('span', 'mv-sg-title');
+      title.textContent = game.away && game.home
+        ? `${game.away.abbr} at ${game.home.abbr}`
+        : (game.note || game.channelName || cleanCatName(channel.name));
+      copy.append(title);
+
+      const line = el('span', 'mv-sg-line');
+      const when = el('span', 'mv-sg-when');
+      when.textContent = mvGameWhen(game);
+      line.append(when);
+      if (game.status === 'live' && game.away && game.home
+          && game.away.score !== null && game.home.score !== null) {
+        const score = el('span', 'mv-sg-score');
+        score.textContent = `${game.away.score}–${game.home.score}`;
+        line.append(score);
+      }
+      copy.append(line);
+
+      const on = el('span', 'mv-sg-chan');
+      on.textContent = cleanCatName(channel.name);
+      copy.append(on);
+      row.append(copy);
+
+      row.addEventListener('click', () => this.takeSuggestion(channel));
+      body.append(row);
+    }
+  },
+
+  /**
+   * Put a suggested game in a cell. The first free one, or the last one when
+   * they are all busy — and never silently: being moved off something you were
+   * watching without being told is its own kind of broken.
+   */
+  takeSuggestion(channel) {
+    const free = this.cells.findIndex((c, i) => i < this.count && !c.item);
+    const index = free >= 0 ? free : this.count - 1;
+    if (free < 0) toast(`Replacing screen ${this.count} with ${cleanCatName(channel.name)}.`);
+    this.start(index, { ...channel, kind: 'live' });
+    /* Repainted rather than closed: the next game is usually the next tap, and
+       the row just taken has to stop being offered. */
+    this.suggest();
   },
 
   /* -- how many cells --------------------------------------------------- */
@@ -2495,6 +2777,8 @@ const multiview = {
 
 $('#mvClose').addEventListener('click', () => multiview.close());
 $('#mvStopAll').addEventListener('click', () => multiview.stopAll());
+$('#mvSuggestBtn').addEventListener('click', () => multiview.toggleSuggest());
+$('#mvSuggestClose').addEventListener('click', () => multiview.hideSuggest());
 $('#mvPickerBack').addEventListener('click', () => multiview.pickerBack());
 for (const button of document.querySelectorAll('#mvSourceSeg button')) {
   button.addEventListener('click', () => multiview.setSource(button.dataset.source));
@@ -12862,6 +13146,11 @@ $('#cinemaMultiview').addEventListener('click', () => {
   multiview.open();          // closes the player, and with it its connection
   const free = multiview.cells.findIndex((c, i) => i < multiview.count && !c.item);
   multiview.start(free >= 0 ? free : 0, item);
+  /* And the other games with it. Pressing this from inside a game is the
+     question "what else is on" far more often than it is "let me go and find
+     three more things", so the answer comes out with the grid rather than
+     waiting behind another press. */
+  multiview.suggest();
 });
 
 for (const evt of ['mousemove', 'touchstart', 'click']) {

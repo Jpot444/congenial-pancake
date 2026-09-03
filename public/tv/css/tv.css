@@ -1077,6 +1077,114 @@ a { color: var(--text); text-decoration: none; }
 .guide-cell.on .guide-cell-title { color: #fff; }
 .guide-cell-time { font-size: 20px; color: var(--muted-dim); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
+/* the other games — ▼ on a game.
+   Down the right-hand edge rather than across the bottom like the guide: the
+   picture is the reason this panel exists, and a full-width sheet over it
+   answers "what else is on" by taking away what is on. */
+.suggest {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 620px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 7, 8, .95);
+  border-left: 1px solid var(--line);
+  backdrop-filter: var(--blur-badge);
+}
+.suggest-head { display: grid; gap: 10px; padding: 30px 40px 18px; }
+.suggest-head h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 34px;
+  font-weight: 400;
+  letter-spacing: .02em;
+}
+.suggest-head .meta { font-size: 21px; color: var(--muted-dim); }
+.suggest-guide {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  height: 52px;
+  padding: 0 24px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  font-family: var(--display);
+  font-size: 23px;
+  letter-spacing: .06em;
+  color: var(--text);
+  cursor: pointer;
+}
+.suggest-guide.f { background: var(--text); color: var(--on-light); border-color: var(--text); }
+
+.suggest-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 40px 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.suggest-none { margin: 0; font-size: 23px; line-height: 1.4; color: var(--muted); }
+
+.suggest-row {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 22px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--line-soft);
+}
+/* A game in progress is the one worth taking first, and the eye should find it
+   without reading every clock. */
+.suggest-row.on { border-color: var(--brand-red-light); }
+.suggest-row.f {
+  box-shadow: 0 0 0 3px var(--bg), 0 0 0 7px var(--text), var(--shadow-float);
+  border-color: var(--line-hover-warm);
+  transform: none;
+}
+
+.sg-marks { flex: none; display: flex; align-items: center; gap: 8px; }
+.sg-mark {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+}
+.sg-mark img { max-width: 100%; max-height: 100%; object-fit: contain; }
+/* The abbreviation shows only where the mark could not be drawn. */
+.sg-abbr { display: none; font-family: var(--display); font-size: 22px; letter-spacing: .04em; }
+.sg-mark.no-mark .sg-abbr { display: block; }
+.sg-vs { width: 1px; height: 26px; background: var(--line); }
+.sg-marks.single .sg-mark { width: 120px; }
+
+.sg-copy { min-width: 0; display: grid; gap: 4px; }
+.sg-title {
+  font-family: var(--display);
+  font-size: 30px;
+  letter-spacing: .03em;
+  color: var(--text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sg-line { display: flex; align-items: baseline; gap: 14px; font-size: 22px; }
+.sg-when { color: var(--muted); }
+.suggest-row.on .sg-when { color: var(--live); }
+.sg-score { font-variant-numeric: tabular-nums; color: var(--text); }
+.sg-chan {
+  font-size: 20px;
+  color: var(--muted-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* channel bar */
 .chanbar {
   position: absolute;

@@ -2822,6 +2822,13 @@
        here rather than carrying a second copy of the band, the poll and the
        slate. See scoreboard() for what the argument does. */
     scoreboard,
+    /* Which channel a game is on. Multi-view's suggestions list needs the
+       same answer this band needs, and the three passes below it — what the
+       guide says is on, the provider's own row for the fixture, the network —
+       took a long time to get right. A second copy in app.js would be a
+       second thing to keep in step with the provider's naming, so app.js asks
+       here. Falls back to nothing rather than guessing when unavailable. */
+    matchChannel,
     get on() { return on; } };
 
 

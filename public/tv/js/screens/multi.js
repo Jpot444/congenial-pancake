@@ -25,11 +25,11 @@ let cells = [];
 let slate = [];
 let epg = new Map();
 
-export async function render(host, app) {
+export async function render(host, app, params) {
   const lib = await loadLibrary('live');
   slate = await getGames();
 
-  const picked = preset(lib);
+  const picked = preset(lib, (params && params.seed) || []);
   epg = await loadEpg(picked.map((c) => String(c.epgId || c.id)));
   cells = picked.map((channel) => ({ channel, video: null, hls: null, mpegts: null, error: '' }));
 
@@ -72,10 +72,16 @@ export async function render(host, app) {
 }
 
 /**
- * Which four. The games that matched a channel come first — this screen exists
- * for Sunday — then hearted channels, then pinned categories.
+ * Which four.
+ *
+ * A `seed` comes first and in the order given: it is what was actually asked
+ * for — the game being watched and the one picked out of the suggestions panel
+ * — and this screen guessing over the top of an explicit choice would make the
+ * choice pointless. After that, and when nothing was seeded, the games that
+ * matched a channel — this screen exists for Sunday — then hearted channels,
+ * then pinned categories.
  */
-function preset(lib) {
+function preset(lib, seed) {
   const items = lib.items || [];
   const out = [];
   const seen = new Set();
@@ -85,6 +91,7 @@ function preset(lib) {
     out.push(c);
   };
 
+  for (const c of seed || []) push(c);
   for (const game of slate) {
     if (game.status !== 'live') continue;
     push(matchChannel(game, items));

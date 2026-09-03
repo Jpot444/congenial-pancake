@@ -3518,6 +3518,137 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .mv-grid.is-solo { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 .mv-grid.is-solo > .mv-cell { grid-row: auto; }
 
+/* ---- the other games ------------------------------------------------------
+   Out of the right-hand edge, over the grid rather than beside it — but with
+   the grid inset by the same width on a screen wide enough to afford it, so
+   the games already on stay visible while the list of the rest is read. That
+   is the whole point of a panel here instead of a sheet. */
+:root { --mv-suggest-w: 340px; }
+
+.mv-suggest {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(88vw, var(--mv-suggest-w));
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 6, 6, .96);
+  border-left: 1px solid rgba(255, 255, 255, .1);
+  box-shadow: -18px 0 40px rgba(0, 0, 0, .55);
+  transform: translateX(100%);
+  transition: transform .22s ease;
+}
+.mv-suggest.is-open { transform: none; }
+/* The bar button says whether the panel it opens is out. */
+#mvSuggestBtn.is-on { border-color: var(--text); color: var(--text); }
+@media (prefers-reduced-motion: reduce) {
+  .mv-suggest { transition: none; }
+}
+/* Wide enough to hold both: the grid gives up the width rather than being
+   covered. Below this the panel simply sits over the picture. */
+@media (min-width: 900px) {
+  .multiview.has-suggest .mv-grid { padding-right: calc(min(88vw, var(--mv-suggest-w)) + 8px); }
+}
+/* The panel is chrome, and chrome on this screen fades with the rest of it —
+   but only when there is nothing to read. An open list is being read. */
+.multiview.is-idle .mv-suggest { opacity: 1; }
+
+.mv-suggest-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px 8px;
+}
+.mv-suggest-top h3 {
+  margin: 0;
+  flex: 1 1 auto;
+  font-size: .95rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.mv-suggest-note {
+  margin: 0 14px 8px;
+  font-size: .76rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.mv-suggest-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mv-sg {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .04);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.mv-sg:hover { background: rgba(255, 255, 255, .1); }
+.mv-sg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A game in progress is the one worth taking first, and the eye should find it
+   without reading every clock. */
+.mv-sg.is-live { border-color: rgba(255, 107, 94, .45); }
+
+.mv-sg-marks {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mv-sg-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+}
+.mv-sg-mark img { max-width: 100%; max-height: 100%; object-fit: contain; }
+/* The abbreviation only shows where the mark could not be drawn: a league's
+   server is not this box's to promise. */
+.mv-sg-abbr { display: none; font-size: .62rem; font-weight: 700; letter-spacing: .02em; }
+.mv-sg-mark.no-mark .mv-sg-abbr { display: block; }
+.mv-sg-vs {
+  width: 1px;
+  height: 14px;
+  background: rgba(255, 255, 255, .18);
+}
+.mv-sg-marks.is-single .mv-sg-mark { width: 64px; }
+
+.mv-sg-copy { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.mv-sg-title {
+  font-size: .88rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mv-sg-line { display: flex; align-items: baseline; gap: 8px; font-size: .74rem; }
+.mv-sg-when { color: var(--muted); }
+.mv-sg.is-live .mv-sg-when { color: var(--live); font-weight: 700; }
+.mv-sg-score { font-variant-numeric: tabular-nums; font-weight: 700; }
+.mv-sg-chan {
+  font-size: .7rem;
+  color: rgba(255, 255, 255, .58);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mv-cell {
   position: relative;
   overflow: hidden;
