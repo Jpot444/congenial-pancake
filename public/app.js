@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '38.1';
+const VERSION = '38.2';
 
 const PAGE_SIZE = 60;
 
@@ -2021,7 +2021,7 @@ const multiview = {
     const wantId = String(row.kind === 'series' ? row.seriesId ?? row.id : row.id);
     let item;
     try {
-      item = await findTitle(tab, wantId);
+      item = await findTitle(tab, wantId, row.seriesName || row.name || '');
     } catch (err) {
       return giveUp(`Couldn't load ${tab}: ${err.message}`);
     }
@@ -4626,12 +4626,19 @@ function savedCopy(row) {
  * completely different remedy. Somebody told their film is gone deletes it;
  * somebody told the library did not load presses again.
  */
-function missingWhy(tab) {
+function missingWhy(tab, noun = 'title') {
   const held = state.library[tab];
   if (!held || !(held.items || []).length) {
     return 'The library has not loaded yet — try that again in a moment.';
   }
-  return 'That title is no longer in the library.';
+  /* A third case was tried here and taken out again: "it may just be outside
+     the language filter — press All languages". True, and useless, because the
+     wide catalogue is deliberately not loaded until somebody asks for it, so
+     the hedge fired on EVERY genuine removal as well. findTitle says the same
+     thing about the same trade beside its own fallback: a title the filter
+     hides reports as missing, and that is the answer this gave before any of
+     it existed. The strong claim stays a strong claim. */
+  return `That ${noun} is no longer in the library.`;
 }
 
 /**
@@ -4654,9 +4661,58 @@ function missingWhy(tab) {
  * Throws if a library cannot be loaded, so callers can tell "the box did
  * not answer" from "there is no such title" — which the old code could not.
  */
-async function findTitle(tab, wantId) {
+/**
+ * A title reduced to what a person would call it, for matching one record
+ * against another. The provider's filing prefix, the year, the punctuation and
+ * the case all come off — everything that can differ between two listings of
+ * the same film.
+ */
+function foldName(raw) {
+  return trimTag(raw)
+    .toLowerCase()
+    .replace(/\(\s*\d{4}\s*\)\s*$/, '')
+    .replace(/[^\w\d]+/g, ' ')
+    .trim();
+}
+
+/**
+ * What the watch history called this title, if it has seen it.
+ *
+ * The pages below are reached by address, so all they have is the provider's
+ * id — and a stale bookmark, or a link kept from before the provider
+ * renumbered, carries an id that finds nothing. The history is the one place
+ * on this side that remembers what that id used to BE, which is enough for
+ * findTitle to match it by name.
+ */
+function historyName(kind, id) {
+  const want = String(id);
+  const row = (state.recentlyWatched || []).find((r) =>
+    r.kind === kind && String(kind === 'series' ? r.seriesId ?? r.id : r.id) === want);
+  return row ? (row.seriesName || row.name || '') : '';
+}
+
+async function findTitle(tab, wantId, name = '') {
   const id = String(wantId);
   const lookIn = (store) => (store[tab]?.items || []).find((i) => String(i.id) === id);
+  /*
+   * And if the id finds nothing, the name.
+   *
+   * An id is the provider's filing number, not the film's — this one renumbers
+   * its catalogue, and when it does, every id written down in a watch history
+   * points at nothing. Continue watching is where that shows up first and
+   * worst: the row is right there with the poster and the progress bar on it,
+   * and pressing it said the title had been withdrawn when it was sitting in
+   * the library under a new number.
+   *
+   * Tried only AFTER every id lookup, and never instead of one. An id is
+   * exact; a name can collide — two different films called The Gift — so this
+   * is the fallback for a lookup that has already failed, where the choice is
+   * between a plausible match and telling somebody their programme is gone.
+   */
+  const want = foldName(name);
+  const byName = (store) => (want
+    ? (store[tab]?.items || []).find((i) => foldName(i.name) === want)
+    : undefined);
 
   if (!state.library[tab]) await loadTab(tab);
   const near = lookIn(state.library);
@@ -4676,7 +4732,8 @@ async function findTitle(tab, wantId) {
    * from that moment everything found in it opens and plays; without that,
    * a title the filter hides is reported missing, which is the same answer
    * this gave before any of it existed and costs nothing to arrive at. */
-  return lookIn(state.libraryAll) || null;
+  return lookIn(state.libraryAll)
+    || byName(state.library) || byName(state.libraryAll) || null;
 }
 
 /* ---------------------------------------------------------- movie rows ---
@@ -6014,7 +6071,9 @@ async function playFromHistory(row) {
 
   let item;
   try {
-    item = await findTitle(tab, wantId);
+    /* The name as well as the id: a history row remembers what the thing was
+       called, and that outlives the provider's filing number. */
+    item = await findTitle(tab, wantId, row.seriesName || row.name || '');
   } catch {
     return toast(`Couldn't load ${tab}.`);
   } finally {
@@ -7298,13 +7357,13 @@ async function renderShowCard() {
   const wanted = state.seriesId;
   let item;
   try {
-    item = await findTitle('series', wanted);
+    item = await findTitle('series', wanted, historyName('series', wanted));
   } catch (err) {
     if (state.seriesId !== wanted) return;
     return missingTitle(`Couldn't load the series list — ${err.message}`);
   }
   if (state.seriesId !== wanted) return;
-  if (!item) return missingTitle('That show is no longer in the library.');
+  if (!item) return missingTitle(missingWhy('series', 'show'));
 
   const { mount, describe } = detailCard(item, listHash('series'), 'All series');
   renderSeries(item, mount, (info) =>
@@ -8337,13 +8396,13 @@ async function renderMovieCard() {
   const wanted = state.movieId;
   let item;
   try {
-    item = await findTitle('movies', wanted);
+    item = await findTitle('movies', wanted, historyName('movie', wanted));
   } catch (err) {
     if (state.movieId !== wanted) return;
     return missingTitle(`Couldn't load the film list — ${err.message}`);
   }
   if (state.movieId !== wanted) return;
-  if (!item) return missingTitle('That film is no longer in the library.');
+  if (!item) return missingTitle(missingWhy('movies', 'film'));
 
   const { describe } = filmCard(item);
 

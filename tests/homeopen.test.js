@@ -154,19 +154,40 @@ const WIDE_SERIES = [
   check('reporting the title as missing, which is the honest answer here',
     noFetch.found === null, String(noFetch.found));
 
-  /* ---- and a row that genuinely cannot be resolved ---------------------- */
+  /* ---- a row whose id is no good, but which says what it was ------------ */
   //
   // History from before series ids were recorded carries only the EPISODE's
-  // id, which is in no library and never will be. It has to fail — but it
-  // must fail SAYING so, not silently.
-  console.log('\n  a row carrying an episode id and nothing else');
+  // id, which is in no library and never will be. This used to be the case
+  // that HAD to fail, and it does not any more: the row also remembers what
+  // the show was called, and a name outlives the provider's filing number.
+  //
+  // Same rescue as a provider that renumbers its catalogue, which is the
+  // complaint this came from — every id in a watch history pointing at
+  // nothing, and Continue watching reporting the lot as withdrawn.
+  console.log('\n  a row carrying an episode id, but the show\'s name');
   const stale = await pressHome({
     kind: 'series', id: 5002, name: 'Two', seriesName: 'The Ordinary Show',
     season: 1, episode: 2, position: 60, duration: 1800, key: 'series:5002',
   });
   console.log('   ', JSON.stringify(stale));
+  check('the show is found by name and opened',
+    /#\/series\/700/.test(stale.hash), stale.hash);
+  check('and nothing claims it was withdrawn',
+    !/no longer in the library/.test(stale.toast), stale.toast);
+
+  /* ---- and one that truly cannot be resolved ---------------------------- */
+  //
+  // The fallback must not become "always find something". A row whose id is
+  // in no library and whose name is in no library is gone, and saying so is
+  // the right answer — it is the one of these that should get a message.
+  console.log('\n  and a row that matches nothing at all');
+  const nowhere = await pressHome({
+    kind: 'series', id: 5003, name: 'One', seriesName: 'A Show That Left',
+    season: 1, episode: 1, position: 60, duration: 1800, key: 'series:5003',
+  });
+  console.log('   ', JSON.stringify(nowhere));
   check('it says so rather than going quiet',
-    /no longer in the library/.test(stale.toast), stale.toast);
+    /no longer in the library/.test(nowhere.toast), nowhere.toast);
 
   await browser.close();
   console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(', ')}` : '\nall passed');
