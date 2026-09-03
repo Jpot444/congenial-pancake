@@ -51,7 +51,18 @@ const LIB = {
   },
   series: {
     categories: [{ id: 's1', name: 'Drama' }],
-    items: [{ kind: 'series', id: 90088, name: 'The Show', categoryId: 's1', logo: '' }],
+    items: [
+      { kind: 'series', id: 90088, name: 'The Show', categoryId: 's1', logo: '' },
+      /* The real one, from the report that forced the second half of this:
+         a filing prefix the history does not have and a quality stamp it does
+         not have either, against a history row carrying a region suffix the
+         library does not have. Neither side is wrong; they are just two
+         records of Breaking Bad. */
+      { kind: 'series', id: 90101, name: 'AR - Breaking Bad 4K', categoryId: 's1', logo: '' },
+      /* And the pair that must NOT be guessed between. */
+      { kind: 'series', id: 90102, name: 'EN - The Office US', categoryId: 's1', logo: '' },
+      { kind: 'series', id: 90103, name: 'EN - The Office UK', categoryId: 's1', logo: '' },
+    ],
   },
   live: { categories: [], items: [] },
 };
@@ -71,6 +82,18 @@ const TASTE = {
        to everything. */
     { key: 'movie:77', kind: 'movie', id: 77, name: 'A Withdrawn Picture',
       position: 100, duration: 6000, at: Date.now() - 2000, poster: '' },
+    /* Reported verbatim: "Breaking Bad US S1E2 AR - Breaking Bad 4K - S01E02"
+       — the card's own label followed by what the row was called. */
+    { key: 'series:5100:1:2', kind: 'series', id: 5100, seriesId: 5100,
+      seriesName: 'Breaking Bad US', name: 'AR - Breaking Bad 4K - S01E02',
+      season: 1, episode: 2, position: 400, duration: 2800,
+      at: Date.now() - 3000, poster: '' },
+    /* Two shows in the library could be meant by this, and the box must
+       decline rather than start the wrong country's. */
+    { key: 'series:5200:1:1', kind: 'series', id: 5200, seriesId: 5200,
+      seriesName: 'The Office', name: 'The Office - S01E01',
+      season: 1, episode: 1, position: 100, duration: 1400,
+      at: Date.now() - 4000, poster: '' },
   ],
 };
 
@@ -189,7 +212,53 @@ const TASTE = {
   check('is still reported, rather than opening something else',
     gone.length > 0 && await playing() === false, JSON.stringify(gone));
 
-  /* ---- 4. and the wording still tells apart the two real cases ---------- */
+  /* ---- 4. the report's own title, spelled two different ways ------------ */
+  /*
+   * Equality of the folded name was not enough for this one, which is why
+   * there is a second pass. The two records share "breaking bad" and each
+   * carries a word the other does not, so neither string equals the other
+   * however hard it is scrubbed.
+   */
+  console.log('\n  the show from the report, spelled differently on each side');
+  await page.evaluate(() => { location.hash = '#/home'; });
+  await wait(1200);
+  await clear();
+  await page.evaluate(() => {
+    [...document.querySelectorAll('.home-recent .card')]
+      .find((n) => /Breaking Bad/.test(n.textContent || '')).click();
+  });
+  await wait(2500);
+  const bb = await page.evaluate(() => location.hash);
+  console.log('   said:', JSON.stringify(await said()), '· at', JSON.stringify(bb));
+  check('Breaking Bad US finds AR - Breaking Bad 4K',
+    /#\/series\/90101/.test(bb), bb);
+  check('and is not called withdrawn',
+    !(await said()).some((t) => /no longer in the library/i.test(t)),
+    JSON.stringify(await said()));
+
+  /* ---- 5. and the one it must refuse to guess ---------------------------- */
+  /*
+   * The loose pass is only allowed when exactly ONE thing could be meant. The
+   * Office US and The Office UK are different programmes, and quietly starting
+   * the wrong one is worse than saying it cannot be found.
+   */
+  console.log('\n  and a name two different shows could answer to');
+  await page.evaluate(() => { location.hash = '#/home'; });
+  await wait(1200);
+  await clear();
+  await page.evaluate(() => {
+    [...document.querySelectorAll('.home-recent .card')]
+      .find((n) => /The Office/.test(n.textContent || '')).click();
+  });
+  await wait(2500);
+  const office = await page.evaluate(() => location.hash);
+  console.log('   said:', JSON.stringify(await said()), '· at', JSON.stringify(office));
+  check('the box declines rather than starting the wrong country\'s',
+    !/#\/series\/9010[23]/.test(office), office);
+  check('and says it could not find it', (await said()).length > 0,
+    JSON.stringify(await said()));
+
+  /* ---- 6. and the wording still tells apart the two real cases ---------- */
   /*
    * "Withdrawn" and "not loaded yet" are different facts with different
    * remedies: somebody told their film is gone deletes the row, somebody told

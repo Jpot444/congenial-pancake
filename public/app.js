@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '38.2';
+const VERSION = '38.3';
 
 const PAGE_SIZE = 60;
 
@@ -4667,12 +4667,70 @@ function missingWhy(tab, noun = 'title') {
  * the case all come off — everything that can differ between two listings of
  * the same film.
  */
+/*
+ * Words that describe the FILE, not the programme.
+ *
+ * A provider stamps these on and takes them off between ingests, so two
+ * records of the same show disagree about them constantly. The report that
+ * forced this was one line long and contained both halves of the problem:
+ *
+ *   the history said   Breaking Bad US
+ *   the library said   AR - Breaking Bad 4K
+ *
+ * The filing prefix comes off already. "4K" is this list. "US" is why an
+ * equality test is not enough on its own — see byName below.
+ */
+const NOT_THE_TITLE = new Set([
+  '4k', 'uhd', 'fhd', 'hd', 'sd', 'hq', 'hevc', 'h264', 'h265', 'x264', 'x265',
+  '1080p', '1080', '720p', '720', '2160p', '2160', 'hdr', 'dv', 'dolby',
+  'multi', 'vip', 'raw', 'dub', 'dubbed', 'sub', 'subbed', 'vost', 'vf',
+]);
+
 function foldName(raw) {
-  return trimTag(raw)
+  const bare = trimTag(raw)
     .toLowerCase()
-    .replace(/\(\s*\d{4}\s*\)\s*$/, '')
+    .replace(/\(\s*\d{4}\s*\)/g, ' ')
+    // S01E02, S1 E2, 1x02 — an episode tag on a name that is meant to name
+    // the SHOW, which is what a history row's own title often carries.
+    .replace(/\bs\d{1,2}\s*[ex]\d{1,3}\b/g, ' ')
+    .replace(/\b\d{1,2}x\d{1,3}\b/g, ' ')
     .replace(/[^\w\d]+/g, ' ')
     .trim();
+  const kept = bare.split(' ').filter((w) => w && !NOT_THE_TITLE.has(w)).join(' ');
+  // A title made only of those words is a title made of those words.
+  return kept || bare;
+}
+
+const titleWords = (raw) => new Set(foldName(raw).split(' ').filter(Boolean));
+const covers = (big, small) => [...small].every((w) => big.has(w));
+
+/**
+ * The one item whose name is this name, or nothing.
+ *
+ * Equality first. When that finds nothing, the same title spelled with a word
+ * the other side does not have — "Breaking Bad US" against "Breaking Bad" —
+ * is accepted, but ONLY when exactly one item in the library could be meant.
+ * Two candidates is not a near miss, it is a question this cannot answer: The
+ * Office US and The Office UK are different programmes, and quietly playing
+ * the wrong one is worse than saying so. Ambiguity gives up.
+ *
+ * One-word names are never matched loosely. "Dune" inside "Dune Part Two" is
+ * the kind of match that looks clever and starts the wrong film.
+ */
+function byName(items, name) {
+  const want = foldName(name);
+  if (!want) return null;
+  const exact = items.filter((i) => foldName(i.name) === want);
+  if (exact.length) return exact[0];
+
+  const wanted = new Set(want.split(' ').filter(Boolean));
+  if (wanted.size < 2) return null;
+  const near = items.filter((i) => {
+    const has = titleWords(i.name);
+    if (has.size < 2) return false;
+    return covers(wanted, has) || covers(has, wanted);
+  });
+  return near.length === 1 ? near[0] : null;
 }
 
 /**
@@ -4709,10 +4767,7 @@ async function findTitle(tab, wantId, name = '') {
    * is the fallback for a lookup that has already failed, where the choice is
    * between a plausible match and telling somebody their programme is gone.
    */
-  const want = foldName(name);
-  const byName = (store) => (want
-    ? (store[tab]?.items || []).find((i) => foldName(i.name) === want)
-    : undefined);
+  const named = (store) => (name ? byName(store[tab]?.items || [], name) : null);
 
   if (!state.library[tab]) await loadTab(tab);
   const near = lookIn(state.library);
@@ -4733,7 +4788,7 @@ async function findTitle(tab, wantId, name = '') {
    * a title the filter hides is reported missing, which is the same answer
    * this gave before any of it existed and costs nothing to arrive at. */
   return lookIn(state.libraryAll)
-    || byName(state.library) || byName(state.libraryAll) || null;
+    || named(state.library) || named(state.libraryAll) || null;
 }
 
 /* ---------------------------------------------------------- movie rows ---
