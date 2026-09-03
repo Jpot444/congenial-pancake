@@ -1682,14 +1682,91 @@ body.is-reordering .cht { transition: none; }
 .desk #dkHero .slide.is-mark.on .art { animation: none; }
 .desk #dkHero .slide.is-mark .art img {
   position: absolute;
-  inset: 0;
-  margin: auto;
-  width: auto;
+  /* Over on the right, clear of the copy, rather than centred behind it. A
+     mark set in the middle of a billboard whose left half is a wall of text
+     has nowhere to be except underneath the words, which is most of why it
+     read as "too far back". */
+  right: 7%;
+  top: 50%;
+  left: auto;
+  transform: translateY(-50%);
+  /* Sized UP to the allowance rather than left at whatever the provider's
+     file happens to be. A 200px mark drawn at 200px on a 1440px billboard is
+     the other half of "too far back to see" — the first half being that it
+     was faint, and the two together made it furniture. */
+  width: min(38%, 480px);
   height: auto;
-  max-width: min(34%, 420px);
-  max-height: 46%;
+  max-height: 56%;
   object-fit: contain;
-  opacity: .38;
+  /* It was .38, which on a dark field is the difference between a station mark
+     and a smudge — and some marks are themselves dark. CBS's eye on a near
+     black plate at a third opacity is not visible at all. */
+  opacity: .95;
+  z-index: 1;
+}
+
+/*
+ * A light behind the mark.
+ *
+ * Raising the opacity fixes a pale mark. It does nothing for a DARK one — the
+ * CBS eye is close to black, and no amount of opacity separates black from a
+ * black billboard. So the plate behind it is lifted instead: a soft pool of
+ * light where the mark sits, which a dark mark reads against and a bright one
+ * simply sits in.
+ */
+/* `::before`, not `::after` — a pseudo-element after the children paints on
+   top of them, which put the light in FRONT of the mark and washed it out
+   instead of lifting it off the plate. */
+.desk #dkHero .slide.is-mark .art::before {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 58%;
+  height: 82%;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(58% 58% at 60% 50%,
+    rgba(255, 255, 255, .22), rgba(255, 255, 255, .08) 52%, transparent 74%);
+}
+
+/*
+ * A POSTER is not a backdrop either.
+ *
+ * Two units tall for every three wide, covering a billboard nearly three times
+ * as wide as it is tall: most of the picture is thrown away and what is left
+ * is magnified past recognition — a show's logo blown up until it is a
+ * texture. Laid out whole instead, on the right where the copy is not, tall
+ * enough to be the thing it is.
+ *
+ * Which images are posters is measured on load rather than assumed from the
+ * kind, because the provider sends both shapes under the same field — see
+ * buildHero.
+ */
+.desk #dkHero .slide.is-poster .art { inset: 0; transform: none; }
+.desk #dkHero .slide.is-poster.on .art { animation: none; }
+.desk #dkHero .slide.is-poster .art img {
+  position: absolute;
+  right: 6%;
+  top: 50%;
+  left: auto;
+  transform: translateY(-50%);
+  width: auto;
+  height: 86%;
+  max-width: 42%;
+  object-fit: contain;
+  border-radius: var(--radius);
+  opacity: .95;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, .6);
+}
+
+/* Narrow enough that the copy and the artwork would fight for the same
+   column: the picture goes back to being a field behind the words. */
+@media (max-width: 1100px) {
+  .desk #dkHero .slide.is-poster .art img,
+  .desk #dkHero .slide.is-mark .art img { opacity: .3; }
+  .desk #dkHero .slide.is-mark .art::before { opacity: .5; }
 }
 
 /* Protection is a gradient, never a plate — so the picture keeps going under
@@ -2101,6 +2178,19 @@ body.is-reordering .cht { transition: none; }
   background: none;
   text-align: left;
   cursor: pointer;
+}
+
+/* The show's poster fills the still. A 16:9 card carrying a 2:3 poster wants
+   covering rather than containing — this is a card, not a shelf of marks, and
+   the words that sit on it are protected by their own gradient below. */
+.desk .dk-ep .still img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 22%;
+  opacity: .82;
 }
 
 .desk .dk-ep .still {

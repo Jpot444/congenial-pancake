@@ -209,12 +209,11 @@ html.car body { font-size: 16px; }
 /* --------------------------------------------------------- the home screen ── */
 
 /*
- * Two columns and a ticker.
+ * Two columns.
  *
  * The desktop home is a stack of rails, which is right for a page somebody
  * scrolls. In a car the whole point is that nothing needs scrolling to be
- * useful: what is on, and what you were watching, both on screen at once, with
- * the scores running along the foot where a glance finds them.
+ * useful: what is on, and what you were watching, both on screen at once.
  *
  * Laid out in the grid rather than by rebuilding the page, so every rail is
  * still the rail the rest of the portal draws.
@@ -226,7 +225,7 @@ html.car body { font-size: 16px; }
  * through features. It is the right first thing on a page somebody browses,
  * and the wrong first thing on a screen where the whole point is that nothing
  * needs scrolling: it took six hundred pixels of a seven-hundred-pixel screen
- * and pushed both columns and the ticker below the fold.
+ * and pushed both columns below the fold.
  */
 .car #dkHero { display: none !important; }
 
@@ -240,9 +239,8 @@ html.car body { font-size: 16px; }
  * One screenful, and it stays one screenful.
  *
  * The two columns scroll inside themselves rather than the page scrolling, so
- * the ticker is always at the foot where a glance finds it and the header is
- * always at the top. A car is not a place to go looking for the thing you
- * were about to press.
+ * the header stays at the top and neither column can push the other off. A car
+ * is not a place to go looking for the thing you were about to press.
  */
 /*
  * One screenful, and the height is measured rather than guessed.
@@ -266,10 +264,8 @@ html.car body { font-size: 16px; }
   height: var(--car-fit, auto);
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(300px, 27vw, 400px);
-  grid-template-rows: minmax(0, 1fr) auto;
-  grid-template-areas:
-    'watch scores'
-    'ticker ticker';
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: 'watch scores';
   gap: var(--space-5);
   min-height: 0;
   padding-bottom: 0;
@@ -288,8 +284,8 @@ html.car body { font-size: 16px; }
  * The column, and the band inside it, both told they may be shorter than their
  * contents. Without `min-height: 0` at every step a flex child refuses to
  * shrink below its content, so the strip's own scrollbar never engages and the
- * list simply runs on down the page and under the ticker — which is what it
- * did.
+ * list simply runs on down the page past the bottom of the screen — which is
+ * what it did.
  */
 .car .car-scores {
   grid-area: scores;
@@ -305,7 +301,6 @@ html.car body { font-size: 16px; }
   gap: var(--space-3);
 }
 .car .car-scores .sc-head { flex: none; }
-.car .car-ticker { grid-area: ticker; min-width: 0; }
 
 /* ---- continue watching, at a size worth pressing ---- */
 
@@ -345,63 +340,7 @@ html.car body { font-size: 16px; }
 .car .car-scores .sc-mark,
 .car .car-scores .sc-mark img { width: 40px; height: 40px; }
 
-/* ---- the ticker ---- */
-
-/*
- * Every game on one line, moving.
- *
- * The cards above show a handful in detail; this is the other question — what
- * is the score in the game I am not watching — and it is answered by looking
- * at one place rather than by scrolling anything. It moves because a line long
- * enough to hold a full slate is longer than any screen, and pausing it on
- * press is the whole of its interaction.
- */
-.car .car-ticker {
-  position: relative;
-  border-top: 1px solid var(--line-soft);
-  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, .35));
-  overflow: hidden;
-  height: 60px;
-  display: flex;
-  align-items: center;
-}
-
-.car .tick-track {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  white-space: nowrap;
-  will-change: transform;
-  animation: car-tick 60s linear infinite;
-  padding-left: var(--space-6);
-}
-.car .car-ticker:active .tick-track,
-.car .car-ticker.is-held .tick-track { animation-play-state: paused; }
-
-@keyframes car-tick {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
-
-.car .tick-game {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 10px;
-  font-size: 20px;
-  color: var(--text);
-}
-.car .tick-team { font-weight: 600; letter-spacing: .02em; }
-.car .tick-num { font-family: var(--display); font-size: 24px; letter-spacing: .02em; }
-.car .tick-state { font-size: 15px; color: var(--muted); }
-.car .tick-game.is-live .tick-state { color: var(--live); }
-.car .tick-sep { color: var(--muted-dim); }
-
-/* Nothing to say, said once rather than as an empty moving line. */
-.car .tick-empty { padding-left: var(--space-6); font-size: 17px; color: var(--muted); }
-
-/* A car is parked. Anybody who has asked for less movement should not get a
-   line sliding across their dashboard. */
-@media (prefers-reduced-motion: reduce) {
-  .car .tick-track { animation: none; }
-  .car .car-ticker { overflow-x: auto; }
-}
+/* The ticker that used to run along the foot is gone. A line of scores sliding
+   across a dashboard is movement in the corner of somebody's eye that they
+   cannot help reading, and the board beside it already answers the question.
+   Removed rather than replaced: the room goes back to the two columns. */

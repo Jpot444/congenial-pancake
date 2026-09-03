@@ -28,9 +28,15 @@
  *   un-hides both of them for its own reasons, so a layout that only set
  *   `hidden` would lose the argument the moment a channel started.
  *
- *   IT FITS ON ONE SCREEN. Two columns and a ticker, nothing below the fold,
- *   nothing pushed off the right-hand edge. A car is not a place to go looking
- *   for the thing you were about to press.
+ *   IT FITS ON ONE SCREEN. Two columns, nothing below the fold, nothing pushed
+ *   off the right-hand edge. A car is not a place to go looking for the thing
+ *   you were about to press.
+ *
+ * There was a scrolling ticker along the foot for a while, and it is gone: a
+ * line of scores sliding across a dashboard is movement in the corner of
+ * somebody's eye that they cannot help reading, and the board beside it was
+ * already answering the question. Removed rather than replaced, so the check
+ * below is that nothing took its place.
  */
 const { chromium } = require('./playwright.js');
 const BASE = 'http://127.0.0.1:8481';
@@ -160,12 +166,11 @@ const HISTORY = [
       arranged: !!document.querySelector('#homeView.car-home'),
       watch: box('.car-watch'),
       scores: box('.car-scores'),
-      ticker: box('.car-ticker'),
+      ticker: document.querySelectorAll('.car-ticker, .tick-track, .tick-game').length,
+      areas: getComputedStyle(document.querySelector('#homeView.car-home')
+        || document.body).gridTemplateAreas,
       cards: document.querySelectorAll('.car-watch .card, .car-watch .rail-card').length,
       scoreCards: document.querySelectorAll('.car-scores .sc-card').length,
-      ticks: document.querySelectorAll('.tick-game').length,
-      tickWords: [...document.querySelectorAll('.tick-game')].slice(0, 2)
-        .map((n) => n.textContent.replace(/\s+/g, ' ').trim()),
       heroGone: !document.querySelector('#dkHero')
         || getComputedStyle(document.querySelector('#dkHero')).display === 'none',
       wide: document.documentElement.scrollWidth,
@@ -173,8 +178,9 @@ const HISTORY = [
       vp,
     };
   }, TESLA);
-  console.log('   ', JSON.stringify({ watch: home.watch, scores: home.scores, ticker: home.ticker }));
-  console.log('    cards', home.cards, '· score cards', home.scoreCards, '· ticks', home.ticks);
+  console.log('   ', JSON.stringify({ watch: home.watch, scores: home.scores }));
+  console.log('    cards', home.cards, '· score cards', home.scoreCards,
+    '· ticker bits', home.ticker);
 
   check('home is rearranged for the car', home.arranged === true);
   /* Two columns, side by side — the whole reason this shape exists. */
@@ -184,20 +190,15 @@ const HISTORY = [
     home.scores && home.scores.x > home.watch.x + home.watch.w - 1
       && Math.abs(home.scores.y - home.watch.y) < 4,
     JSON.stringify([home.watch, home.scores]));
-  check('and the ticker runs along the foot under both',
-    home.ticker && home.ticker.y >= home.watch.bottom - 1
-      && home.ticker.w > home.watch.w, JSON.stringify(home.ticker));
+  /* And nothing along the foot. The ticker that used to live there was taken
+     out rather than replaced, so the two columns have the whole screen. */
+  check('there is no ticker', home.ticker === 0, String(home.ticker));
+  check('and nothing stands where it did', !/ticker/.test(home.areas), home.areas);
 
   check('the cards are the ones the rest of the portal draws', home.cards > 0,
     String(home.cards));
   check('the scoreboard is really the scoreboard', home.scoreCards >= 3,
     String(home.scoreCards));
-  /* The ticker is the thing that exists nowhere else, and it says the score. */
-  check('the ticker carries every game', home.ticks >= SCORES.games.length,
-    `${home.ticks} for ${SCORES.games.length} games`);
-  check('with the score in it', /SEA/.test(home.tickWords[0] || '') && /4/.test(home.tickWords[0] || ''),
-    JSON.stringify(home.tickWords));
-
   /*
    * The cinematic hero the desktop leads with is six hundred pixels of a
    * seven-hundred-pixel screen. Right for a page somebody browses, wrong for

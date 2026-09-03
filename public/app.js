@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '39.1';
+const VERSION = '39.2';
 
 const PAGE_SIZE = 60;
 
@@ -4641,6 +4641,72 @@ async function loadTab(tab, { quiet = false, all = false } = {}) {
 }
 
 /**
+ * The library record behind a history row — the SHOW, not the episode.
+ *
+ * A history row is written per episode, because that is what was watched. It
+ * carries the episode's name and, often, nothing else: no poster, and for
+ * older rows no series name either. Drawn straight, that gives a card called
+ * "Episode 2" over an empty tinted field, which is not what anybody means by
+ * "carry on with this".
+ *
+ * The library still has the show, with its artwork and its real name, and the
+ * row says which one. So this is that lookup, done synchronously against what
+ * is already in hand — no fetching, because a card is drawn while somebody is
+ * looking at it and a card that waits is a card that flickers.
+ */
+function shelfItemFor(row) {
+  if (!row) return null;
+  const tab = row.kind === 'series' ? 'series'
+    : row.kind === 'live' ? 'live' : 'movies';
+  const want = String(row.kind === 'series' ? (row.seriesId ?? row.id) : row.id);
+  for (const store of [state.library, state.libraryAll]) {
+    const found = (store[tab]?.items || []).find((i) => String(i.id) === want);
+    if (found) return found;
+  }
+  /* An older row with no seriesId at all cannot be matched by id — the id it
+     has is the episode's. The name it remembers is the way back. */
+  if (row.kind === 'series' && row.seriesName) {
+    const want2 = foldName(row.seriesName);
+    for (const store of [state.library, state.libraryAll]) {
+      const found = (store.series?.items || []).find((i) => foldName(i.name) === want2);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * What makes two history rows the same thing, for one-card-per-title.
+ *
+ * The id normally does it — every episode of a show carries its seriesId. Rows
+ * written before that was recorded do not, and grouping those by id gives one
+ * card per EPISODE: the same show four times across a five-card shelf. The
+ * name it remembers is the only thing those rows have in common, so it is the
+ * fallback.
+ */
+function historyKey(row) {
+  if (row.kind === 'series') {
+    if (row.seriesId) return `series:${row.seriesId}`;
+    const shelf = shelfItemFor(row);
+    if (shelf) return `series:${shelf.id}`;
+    if (row.seriesName) return `series:${foldName(row.seriesName)}`;
+  }
+  return `${row.kind}:${row.id}`;
+}
+
+/** How a history row should be titled and pictured: as the thing, not the part. */
+function historyFace(row) {
+  const shelf = shelfItemFor(row);
+  return {
+    item: shelf,
+    name: row.kind === 'series'
+      ? (row.seriesName || shelf?.name || row.name || '')
+      : (shelf?.name || row.name || ''),
+    art: shelf?.logo || row.poster || '',
+  };
+}
+
+/**
  * The finished download behind a history row, as something playable.
  *
  * Built from the row itself rather than from the library, which is the whole
@@ -6935,21 +7001,28 @@ function homeCard(row, className) {
   const card = el('button', `card ${className}`);
   const art = el('div', 'card-art');
 
-  if (row.poster) {
+  /* The SHOW, not the episode. A history row is written per episode and
+     carries the episode's name and no artwork; the library has the show, and
+     the row says which one. Continue watching is a shelf of things you are
+     part-way through, and a thing is a series — a card called "Episode 2" over
+     an empty field is a row of the same show four times over. */
+  const face = historyFace(row);
+
+  if (face.art) {
     const image = el('img');
     image.loading = 'lazy';
     image.alt = '';
-    image.src = row.poster;
+    image.src = face.art;
     image.addEventListener('error', () => {
       image.remove();
       const fb = el('div', 'fallback');
-      fb.textContent = row.name || '';
+      fb.textContent = face.name;
       art.append(fb);
     });
     art.append(image);
   } else {
     const fb = el('div', 'fallback');
-    fb.textContent = row.name || '';
+    fb.textContent = face.name;
     art.append(fb);
   }
 
@@ -6964,9 +7037,11 @@ function homeCard(row, className) {
   }
 
   const title = el('h3', 'card-title');
-  title.textContent = row.seriesName || row.name || '';
+  title.textContent = face.name;
   card.append(art, title);
 
+  /* Where you are in it, under the show's own name — which is the one place
+     the episode belongs on this card. */
   if (row.season && row.episode) {
     const sub = el('p', 'card-sub');
     sub.textContent = `S${row.season}·E${row.episode}`;
@@ -7213,7 +7288,7 @@ function renderHome() {
   const seen = new Set();
   const recent = [];
   for (const row of state.recentlyWatched || []) {
-    const key = `${row.kind}:${row.seriesId ?? row.id}`;
+    const key = historyKey(row);
     if (seen.has(key)) continue;
     seen.add(key);
     recent.push(row);

@@ -1071,7 +1071,24 @@
      Above the categories, because it is the answer to the question most
      visits to this page are actually asking. */
   function buildUpNext() {
-    const rows = (state.recentlyWatched || []).filter((r) => r.kind === 'series');
+    /*
+     * One card per SHOW, with the show's own poster on it.
+     *
+     * This was one card per history row over a tinted field with no picture at
+     * all — so a viewer three episodes into one series got three identical
+     * blank cards, and the row that is supposed to answer "what do I put on"
+     * answered it with a colour swatch. A history row knows the episode; the
+     * library knows the show, and the show is what a card on this page is for.
+     */
+    const seen = new Set();
+    const rows = [];
+    for (const row of state.recentlyWatched || []) {
+      if (row.kind !== 'series') continue;
+      const key = window.historyKey(row);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push(row);
+    }
     if (!rows.length) return;
 
     const lane = document.createElement('section');
@@ -1095,19 +1112,26 @@
         ? Math.min(100, Math.round((row.position / row.duration) * 100)) : 0;
       const left = row.duration && row.position
         ? Math.max(1, Math.round((row.duration - row.position) / 60)) : null;
+      const face = window.historyFace(row);
       const card = document.createElement('button');
       card.type = 'button';
       card.className = 'dk-ep';
       card.style.setProperty('--field', FIELDS[i % FIELDS.length]);
       card.innerHTML = `
         <span class="still">
+          ${face.art ? `<img src="${esc(face.art)}" alt="" loading="lazy">` : ''}
           ${row.season && row.episode ? `<span class="se">S${row.season} E${row.episode}</span>` : ''}
           <span class="go"><span>${ICON.play}</span></span>
-          <span class="nm">${esc(row.seriesName || row.name || '')}</span>
+          <span class="nm">${esc(face.name)}</span>
           ${pct ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ''}
         </span>
         <span class="cap">${row.name ? `<span>${esc(row.name)}</span>` : ''}
           ${left ? `<s>${left} min left</s>` : ''}</span>`;
+      /* The poster may not load — the provider's art host is not this box's to
+         promise — and a broken image is worse than the field it covers. */
+      card.querySelector('.still img')?.addEventListener('error', function drop() {
+        this.remove();
+      });
       card.addEventListener('click', () => playFromHistory(row));
       track.append(card);
     });
@@ -2285,7 +2309,53 @@
   function heroFeatures() {
     const out = [];
 
-    const channel = profiles.favItems().find((i) => i.kind === 'live');
+    /*
+     * The billboard leads with the last thing you watched.
+     *
+     * It used to lead with whichever favourite channel came first, which is a
+     * fact about a list rather than about you — and it never changed, so the
+     * top of the landing page said the same thing every day whatever had
+     * happened since. The most recent history row is the one thing on this
+     * page that is actually about the person looking at it, and it is a
+     * channel, a show or a film according to what that was.
+     */
+    const last = (state.recentlyWatched || [])[0];
+    if (last) {
+      const shelf = window.shelfItemFor(last);
+      const face = window.historyFace(last);
+      const pct = last.duration && last.position
+        ? Math.min(100, Math.round((last.position / last.duration) * 100)) : 0;
+      const live = last.kind === 'live';
+      out.push({
+        kind: live ? 'live' : 'resume',
+        /* `item` for a channel so the mark is drawn and the card opens; `art`
+           for a title, which is looked up for its artwork only. */
+        item: live ? (shelf || null) : null,
+        art: shelf,
+        eyebrow: live
+          ? `<span class="plive"><span class="d"></span>LIVE</span>`
+            + `<span class="caps">${esc(shortMark(face.name))}</span>`
+          : '<span class="caps">Continue watching</span>',
+        tags: live ? ['Where you were']
+          : [last.season && last.episode ? `S${last.season} E${last.episode}`
+            : pct ? 'Resume' : 'Watch again'],
+        title: live ? shortMark(face.name) : face.name,
+        meta: live ? ['Last watched'] : [pct ? `${pct}% in` : 'Watched'],
+        blurb: live
+          ? 'The last channel you had on. Straight from the provider — no '
+            + 'transcode and nothing to wait for.'
+          : 'Already on the box, so seeking is instant anywhere in it. '
+            + 'Picks up where you stopped.',
+        progress: pct,
+        cta: live ? 'Watch live' : (pct ? 'Resume' : 'Play'),
+        go: () => playFromHistory(last),
+      });
+    }
+
+    /* A favourite channel still earns a place — just not the first one, and
+       not when it is the thing already on the billboard above. */
+    const channel = profiles.favItems().find((i) => i.kind === 'live'
+      && !(last && last.kind === 'live' && String(last.id) === String(i.id)));
     if (channel) {
       out.push({
         kind: 'live',
@@ -2305,23 +2375,18 @@
       });
     }
 
-    const resume = (state.recentlyWatched || []).find((r) => r.duration && r.position);
+    /* The next thing part-way through, after whatever is leading above. */
+    const resume = (state.recentlyWatched || []).find((r) => r.duration && r.position
+      && r !== last && window.historyKey(r) !== (last && window.historyKey(last)));
     if (resume) {
       const pct = Math.round((resume.position / resume.duration) * 100);
-      /* A history row remembers what you watched, not what it looked like —
-         no poster, no logo — so the billboard for Continue watching came up
-         as bare gradient. The library still has the title; this is the same
-         record, looked up for its artwork only. */
-      const shelf = state.library[resume.kind === 'series' ? 'series' : 'movies'];
-      const art = (shelf?.items || []).find(
-        (i) => String(i.id) === String(resume.seriesId ?? resume.id)
-      );
+      const face = window.historyFace(resume);
       out.push({
         kind: 'resume',
-        art,
+        art: window.shelfItemFor(resume),
         eyebrow: '<span class="caps">Continue watching</span>',
         tags: [resume.season && resume.episode ? `S${resume.season} E${resume.episode}` : 'Resume'],
-        title: resume.seriesName || resume.name || '',
+        title: face.name,
         meta: [`${pct}% in`],
         blurb: 'Already on the box, so seeking is instant anywhere in it. '
           + 'Picks up where you stopped.',
@@ -2403,11 +2468,31 @@
         image.src = logoSource(logo);
         image.addEventListener('error', () => image.remove());
         art.append(image);
+        const slide = art.closest('.slide');
         /* A channel has a MARK, not a backdrop. Filling a 1900px billboard
            with a 400px station logo blows it up to six times its size and
            crops it, which is the giant half-an-abc. Marked so the styling
-           can centre it at its own size instead of covering with it. */
-        if (source.kind === 'live') art.closest('.slide')?.classList.add('is-mark');
+           can lay it out at its own size instead of covering with it. */
+        if (source.kind === 'live') slide?.classList.add('is-mark');
+        /*
+         * And the same problem, one step milder, for everything else.
+         *
+         * `logo` on a film or a show is a POSTER — two units tall for every
+         * three wide — and covering a billboard nearly three times as wide as
+         * it is tall with one throws away most of the picture and magnifies
+         * what is left. That is the show logo zoomed past recognition.
+         *
+         * Which it is cannot be told from the URL or the kind, because the
+         * provider sends both shapes under the same field. So it is MEASURED,
+         * once, when the image arrives: anything meaningfully wider than tall
+         * is a backdrop and covers as before; anything else is laid out whole.
+         */
+        image.addEventListener('load', () => {
+          const w = image.naturalWidth;
+          const h = image.naturalHeight;
+          if (!w || !h || slide?.classList.contains('is-mark')) return;
+          if (w / h < 1.5) slide?.classList.add('is-poster');
+        });
       }
       const chip = hero.querySelector(`.picker button[data-i="${i}"] .bg`);
       if (chip) chip.style.setProperty('--field', FIELDS[i % FIELDS.length]);
@@ -2540,10 +2625,13 @@
       view.append(lane);
     }
 
+    /* One card per TITLE. Rows written before series ids were recorded carry
+       only the episode's id, so grouping by that gives the same show four
+       times across one rail — historyKey falls back to the name for those. */
     const seen = new Set();
     const recent = [];
     for (const row of state.recentlyWatched || []) {
-      const key = `${row.kind}:${row.seriesId ?? row.id}`;
+      const key = window.historyKey(row);
       if (seen.has(key)) continue;
       seen.add(key);
       recent.push(row);
