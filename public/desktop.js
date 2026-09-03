@@ -1305,30 +1305,57 @@
   let slate = { games: [], at: 0, trouble: '', asked: false, epg: new Map(), feeds: [],
     since: 0, slow: false };
   let slateInFlight = null;
+
+  /*
+   * The slate, said out loud.
+   *
+   * This module owns the asking — it polls, it coalesces, it knows how long an
+   * answer is allowed to take — and the car layer needs the same games for its
+   * ticker. Fetching them a second time would be a second call to a box with
+   * one provider connection, for data already sitting in this closure, so it
+   * is published instead and car.js listens.
+   */
+  function publishSlate() {
+    window.dkSlate = slate;
+    window.dispatchEvent(new CustomEvent('dk:slate'));
+  }
   /* How long an ask may go unremarked before the band says it is still
      waiting. Short enough that nobody decides it is broken, long enough that
      an ordinary ask never trips it. */
   const SLATE_SLOW_MS = 6000;
 
-  function scoreboard() {
-    const head = document.querySelector('.content-head');
+  function scoreboard(host) {
+    /*
+     * `host` is where the band goes, which used to be only one place.
+     *
+     * Live TV puts it across the page head, replacing the title and the count
+     * — see the note at the call site. The car home wants the same band down
+     * its right-hand side, so the destination became an argument rather than a
+     * second copy of all of this. Everything below is unchanged: one band, one
+     * poll, one slate, wherever it is asked to draw.
+     */
+    const head = host || document.querySelector('.content-head');
     if (!head) return;
 
-    /* The words this replaces. The pair is hidden by its own wrapper rather
-       than emptied: app.js writes into both of them on every render and would
-       find nothing to write into, and hiding them one at a time leaves the
-       gap they stood in. */
-    const title = document.querySelector('#contentTitle');
-    if (title?.parentElement) title.parentElement.hidden = true;
-    head.classList.add('has-scores');
+    if (!host) {
+      /* The words this replaces. The pair is hidden by its own wrapper rather
+         than emptied: app.js writes into both of them on every render and
+         would find nothing to write into, and hiding them one at a time leaves
+         the gap they stood in. */
+      const title = document.querySelector('#contentTitle');
+      if (title?.parentElement) title.parentElement.hidden = true;
+      head.classList.add('has-scores');
+    }
 
     let band = document.querySelector('#dkScores');
     if (!band) {
       band = document.createElement('div');
       band.id = 'dkScores';
       band.dataset.dkOwned = '1';
-      head.append(band);
     }
+    /* Moved rather than rebuilt when the destination changes — the band holds
+       the slate that has already been asked for. */
+    if (band.parentElement !== head) head.append(band);
     paintScores(band);
 
     /* Asked once a minute at most. A score changes, but not on the timescale
@@ -1345,6 +1372,7 @@
          what it must not do is leave somebody staring at a loading word with
          no idea whether anything is still happening. */
       slate = { ...slate, since: Date.now(), slow: false };
+      publishSlate();
       const mine = slate.since;
       /* Repeated, not once: the message carries how long it has been waiting,
          and a count that froze at six seconds while the wait ran to ninety
@@ -1353,6 +1381,7 @@
         // Only while this same ask is still the one outstanding.
         if (slate.since !== mine || !slateInFlight) return clearInterval(nudge);
         slate = { ...slate, slow: true };
+        publishSlate();
         const still = document.querySelector('#dkScores');
         if (still) paintScores(still);
         return undefined;
@@ -1384,10 +1413,12 @@
                one sentence that rules out the thing that actually happened. */
             feeds: Array.isArray(data && data.feeds) ? data.feeds : [],
           };
+          publishSlate();
         })
         .catch((err) => {
           slate = { ...slate, games: [], at: Date.now(), asked: true, slow: false,
             feeds: [], trouble: err.message || 'the box could not be reached' };
+          publishSlate();
         })
         /* Drawn HERE, before the guide is asked.
          *
@@ -2699,6 +2730,10 @@
      whole of the tooling. Nothing in the portal reads this. */
   window.__ttDesktop = { ICON, esc, num, guard, $$, catId, ensureCatbar, ensureSheet,
     closeSheet, fillSheet, syncArrows, decorateCards,
+    /* The car layer draws the same scoreboard somewhere else, and asks for it
+       here rather than carrying a second copy of the band, the poll and the
+       slate. See scoreboard() for what the argument does. */
+    scoreboard,
     get on() { return on; } };
 
 

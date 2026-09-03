@@ -228,7 +228,7 @@ const EPISODES = {
   // --- the phone stacks it -----------------------------------------------
   console.log('\n  phone');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.evaluate(() => { device.setPhone(true); location.hash = '#/series/77'; });
+  await page.evaluate(() => { device.set('phone'); location.hash = '#/series/77'; });
   await page.waitForSelector('.show-card .ep', { timeout: 10000 });
   const phone = await page.evaluate(() => {
     const poster = document.querySelector('.show-poster').getBoundingClientRect();

@@ -1,0 +1,407 @@
+/*
+ * Treasure Theater, on a dashboard.
+ *
+ * This layer sits on top of the desktop one rather than beside it. `.desk`
+ * keeps drawing the shell, the header and the rails — the desktop screen was
+ * already most of the way to what a car wants — and everything here is the
+ * difference between a screen a foot from your face with a mouse on it and a
+ * screen an arm's length away that you prod while holding a coffee.
+ *
+ * Three things that difference actually consists of:
+ *
+ *   EVERYTHING GETS BIGGER, and not uniformly. The controls grow more than the
+ *   text does, because the failure in a car is never "I could not read that",
+ *   it is "I pressed the wrong thing". Apple and Google both land around 44pt
+ *   for a finger at desk distance; a dashboard is further away and moves, so
+ *   the transport controls here are 72 and the play button is 96.
+ *
+ *   SOME BUTTONS GO. Picture-in-picture puts the video in a floating window on
+ *   top of a browser you cannot see the rest of; the delay readout is a
+ *   diagnostic for somebody deciding whether their Wi-Fi is bad. Neither is a
+ *   thing anybody does at a charging stall, and every button that stays is one
+ *   more thing to hit by accident.
+ *
+ *   HOVER IS NOT A THING. Anything that only appears on hover has to be
+ *   already visible, because there is no pointer to hover with.
+ *
+ * Built for the Model 3/Y centre screen — landscape, about 1150×750 CSS
+ * pixels once the browser's own chrome is off it — but nothing here is pinned
+ * to that number.
+ */
+
+/* ---------------------------------------------------------------- sizing ── */
+
+/*
+ * The scale, moved at the root so everything built out of these tokens comes
+ * along without being told. This is why the portal's controls are sized from
+ * variables rather than from literals: a new kind of screen is a new set of
+ * numbers, not a new set of rules.
+ */
+html.car {
+  --control-h: 56px;
+  --control-h-lg: 72px;
+  --control-h-sm: 48px;
+  --text-sm: 15px;
+  --text-md: 17px;
+  --text-lg: 20px;
+  --radius: 18px;
+  --radius-sm: 12px;
+  /* The bar is taller because everything in it is. */
+  --header-h: 84px;
+}
+
+/* Nothing in a car is being read at desk distance. */
+html.car body { font-size: 16px; }
+
+/* ---- the bar ---- */
+
+.car .site-header.lifted { height: var(--header-h); }
+.car .brand-bison,
+.car .site-header.lifted .brand-bison { width: 52px; }
+.car .brand-title,
+.car .site-header.lifted .brand-title { font-size: 30px; }
+.car .brand-sub { font-size: 11px; letter-spacing: .24em; }
+
+.car .site-header .nav a {
+  font-size: 19px;
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius-sm);
+}
+
+.car .site-header .icon-btn,
+.car .icon-btn {
+  width: var(--control-h);
+  height: var(--control-h);
+  border-radius: var(--radius-sm);
+}
+.car .site-header .icon-btn svg,
+.car .icon-btn svg { width: 24px; height: 24px; }
+
+.car .profile-chip { height: var(--control-h); font-size: 17px; padding: 0 16px; }
+.car .chip-avatar { width: 34px; height: 34px; font-size: 19px; }
+
+/*
+ * The search collapses to its magnifier, and opens on press.
+ *
+ * Six nav links at car size, a wordmark, five buttons and a search box do not
+ * fit across 1152pt — the wordmark clipped and the last nav link ran under the
+ * profile chip. Something had to give, and a text field is the right thing:
+ * typing is the one interaction nobody wants in a car, and the tab somebody is
+ * reaching for is the thing that must not move.
+ *
+ * The input is zero-width rather than removed, for the same reason the desktop
+ * does it that way at narrow widths: a label focuses the control inside it, and
+ * `display: none` is not focusable — the magnifier would do nothing at all.
+ */
+.car .site-header .search {
+  height: var(--control-h);
+  flex: 0 0 var(--control-h);
+  width: var(--control-h);
+  padding: 0;
+  justify-content: center;
+}
+.car .site-header .search svg { width: 24px; height: 24px; flex: none; }
+.car .site-header .search input {
+  font-size: 20px;
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease);
+}
+.car .site-header .search:focus-within {
+  flex: 0 1 340px;
+  width: 340px;
+  padding: 0 var(--space-6);
+  gap: var(--space-3);
+  justify-content: flex-start;
+}
+.car .site-header .search:focus-within input { width: 100%; opacity: 1; }
+
+/* The nav is what a car actually presses, so it gets the room the search gave
+   back — and enough of it that the six links never have to shrink into each
+   other. */
+.car .site-header .nav { flex: 1 1 auto; min-width: 0; }
+.car .brand { flex: none; }
+.car .brand-words { min-width: 0; }
+
+/* ---------------------------------------------------- what a car does not need ── */
+
+/*
+ * Hidden with `display: none` rather than `[hidden]`, because app.js decides
+ * these two for itself — pipBtn on whether the browser can do it at all, the
+ * live pill whenever a channel starts — and would helpfully un-hide them
+ * again. This is the layout's answer, and it outranks.
+ */
+.car #pipBtn,
+.car #livePill,
+.car #vodSpeed {
+  display: none !important;
+}
+
+/* Hover-only affordances, made permanent. There is no pointer here to reveal
+   them with, so a card's own buttons are either on screen or unreachable. */
+.car .card-pin,
+.car .card-bin,
+.car .rail-page {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* ------------------------------------------------------------- the player ── */
+
+/*
+ * The three controls somebody in a parked car actually uses: play, pause and
+ * captions. Sized so that none of them needs a second try.
+ */
+.car .vod-bar {
+  padding: 20px 26px 26px;
+  gap: var(--space-5);
+}
+
+.car .vod-btn {
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+}
+.car .vod-btn svg { width: 34px; height: 34px; }
+
+.car .vod-btn-lg {
+  width: 96px;
+  height: 96px;
+  border-radius: 26px;
+}
+.car .vod-btn-lg svg { width: 46px; height: 46px; }
+
+/* Captions get the same weight as the transport, and say so in words. A `CC`
+   glyph at 16px on a dashboard is a guess, not a button. */
+.car .vod-cc {
+  width: auto;
+  min-width: 96px;
+  padding: 0 22px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: .04em;
+}
+
+.car .vod-time { font-size: 17px; min-width: 68px; }
+
+/* A scrubber you can actually land on at arm's length. */
+.car .vod-track { height: 16px; border-radius: 8px; }
+.car .vod-knob { width: 30px; height: 30px; }
+.car .vod-scrub { padding: 22px 0; }
+
+.car .live-bar .live-play {
+  width: 96px;
+  height: 96px;
+  border-radius: 26px;
+}
+.car .live-bar .live-play svg { width: 46px; height: 46px; }
+
+.car .cinema-back { width: var(--control-h-lg); height: var(--control-h-lg); }
+.car .cinema-back svg { width: 30px; height: 30px; }
+.car .cinema-titles h2 { font-size: 26px; }
+.car .cinema-titles p { font-size: 16px; }
+
+/* Captions themselves, at car distance. */
+.car .cc-overlay { font-size: 30px; line-height: 1.35; }
+
+/* --------------------------------------------------------- the home screen ── */
+
+/*
+ * Two columns and a ticker.
+ *
+ * The desktop home is a stack of rails, which is right for a page somebody
+ * scrolls. In a car the whole point is that nothing needs scrolling to be
+ * useful: what is on, and what you were watching, both on screen at once, with
+ * the scores running along the foot where a glance finds them.
+ *
+ * Laid out in the grid rather than by rebuilding the page, so every rail is
+ * still the rail the rest of the portal draws.
+ */
+/*
+ * The hero goes.
+ *
+ * The desktop home leads with a full-bleed cinematic banner that cycles
+ * through features. It is the right first thing on a page somebody browses,
+ * and the wrong first thing on a screen where the whole point is that nothing
+ * needs scrolling: it took six hundred pixels of a seven-hundred-pixel screen
+ * and pushed both columns and the ticker below the fold.
+ */
+.car #dkHero { display: none !important; }
+
+/* And the footer with it. Uptime, provider, network and disk are a thing to
+   read when you are the person who runs the box, at the bottom of a page you
+   scrolled to get to. In a car it is a hundred pixels of a screen that is
+   trying very hard to be exactly one screen. */
+.car #dkFoot { display: none !important; }
+
+/*
+ * One screenful, and it stays one screenful.
+ *
+ * The two columns scroll inside themselves rather than the page scrolling, so
+ * the ticker is always at the foot where a glance finds it and the header is
+ * always at the top. A car is not a place to go looking for the thing you
+ * were about to press.
+ */
+/*
+ * One screenful, and the height is measured rather than guessed.
+ *
+ * The first cut sized this off `100dvh` minus the header minus an assumption
+ * about the shell's padding, and the assumption was wrong by fifty pixels —
+ * which on a page whose whole promise is "nothing below the fold" is the
+ * difference between keeping that promise and not. The second cut turned the
+ * shell into a flex column to make it size itself, and collapsed the left
+ * column to nothing: the shell is a GRID, with a sidebar track, and taking
+ * that away took the width with it.
+ *
+ * So car.js measures what is actually left — the window, less the header, less
+ * this shell's own padding, all read off the page — and writes it here. The
+ * browser is the only thing that knows those numbers, and this file should not
+ * be carrying a copy of any of them.
+ */
+.car .app-shell.car-fit { padding-bottom: 0; }
+
+.car #homeView.car-home {
+  height: var(--car-fit, auto);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 27vw, 400px);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'watch scores'
+    'ticker ticker';
+  gap: var(--space-5);
+  min-height: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.car .car-watch {
+  grid-area: watch;
+  min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; gap: var(--space-5);
+  overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: none;
+}
+.car .car-watch::-webkit-scrollbar { display: none; }
+/*
+ * The column, and the band inside it, both told they may be shorter than their
+ * contents. Without `min-height: 0` at every step a flex child refuses to
+ * shrink below its content, so the strip's own scrollbar never engages and the
+ * list simply runs on down the page and under the ticker — which is what it
+ * did.
+ */
+.car .car-scores {
+  grid-area: scores;
+  min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.car .car-scores #dkScores {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.car .car-scores .sc-head { flex: none; }
+.car .car-ticker { grid-area: ticker; min-width: 0; }
+
+/* ---- continue watching, at a size worth pressing ---- */
+
+.car .car-watch .rail-card,
+.car .car-watch .home-resume { width: clamp(200px, 17vw, 268px); }
+.car .car-watch .card-title { font-size: 18px; }
+.car .car-watch .card-sub { font-size: 14px; }
+.car .car-watch .shelf-title { font-size: 26px; }
+
+/* ---- the scores column ---- */
+
+/*
+ * The band that runs across the top of a desktop stood on its end. Same cards,
+ * same data, read down instead of across — a column is what fits beside
+ * something else on a screen this shape, and a scoreboard is a list anyway.
+ */
+.car .car-scores .sc-strip,
+.car .car-scores .sc-strip.is-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+.car .car-scores .sc-strip::-webkit-scrollbar { display: none; }
+
+.car .car-scores .sc-card {
+  width: 100%;
+  flex: none;
+  padding: var(--space-4) var(--space-5);
+}
+.car .car-scores .sc-title { font-size: 24px; }
+.car .car-scores .sc-score { font-size: 30px; }
+.car .car-scores .sc-mark,
+.car .car-scores .sc-mark img { width: 40px; height: 40px; }
+
+/* ---- the ticker ---- */
+
+/*
+ * Every game on one line, moving.
+ *
+ * The cards above show a handful in detail; this is the other question — what
+ * is the score in the game I am not watching — and it is answered by looking
+ * at one place rather than by scrolling anything. It moves because a line long
+ * enough to hold a full slate is longer than any screen, and pausing it on
+ * press is the whole of its interaction.
+ */
+.car .car-ticker {
+  position: relative;
+  border-top: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, .35));
+  overflow: hidden;
+  height: 60px;
+  display: flex;
+  align-items: center;
+}
+
+.car .tick-track {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  white-space: nowrap;
+  will-change: transform;
+  animation: car-tick 60s linear infinite;
+  padding-left: var(--space-6);
+}
+.car .car-ticker:active .tick-track,
+.car .car-ticker.is-held .tick-track { animation-play-state: paused; }
+
+@keyframes car-tick {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.car .tick-game {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 20px;
+  color: var(--text);
+}
+.car .tick-team { font-weight: 600; letter-spacing: .02em; }
+.car .tick-num { font-family: var(--display); font-size: 24px; letter-spacing: .02em; }
+.car .tick-state { font-size: 15px; color: var(--muted); }
+.car .tick-game.is-live .tick-state { color: var(--live); }
+.car .tick-sep { color: var(--muted-dim); }
+
+/* Nothing to say, said once rather than as an empty moving line. */
+.car .tick-empty { padding-left: var(--space-6); font-size: 17px; color: var(--muted); }
+
+/* A car is parked. Anybody who has asked for less movement should not get a
+   line sliding across their dashboard. */
+@media (prefers-reduced-motion: reduce) {
+  .car .tick-track { animation: none; }
+  .car .car-ticker { overflow-x: auto; }
+}

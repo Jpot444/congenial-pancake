@@ -350,7 +350,7 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
   // this goes wrong.
   console.log('\n  on a phone');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.evaluate(() => device.setPhone(true));
+  await page.evaluate(() => device.set('phone'));
   await home();
   const phone = await page.evaluate(() => {
     const view = document.querySelector('#appView');
@@ -424,7 +424,7 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
   console.log('\n  with nothing watched or starred');
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.evaluate(() => {
-    device.setPhone(false);
+    device.set('desk');
     state.recentlyWatched = [];
     profiles.data.favorites = [];
     location.hash = '#/home';

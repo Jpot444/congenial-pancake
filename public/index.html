@@ -9,6 +9,8 @@
        desktop.js sets only in desktop layout on a window wide enough to hold
        the design, so the phone and iPad layout stays exactly what it was. -->
   <link rel="stylesheet" href="/desktop.css" />
+  <!-- The car layer sits on top of the desktop one; see the head of car.css. -->
+  <link rel="stylesheet" href="/car.css" />
   <!-- The bison, manufactured into the shape iOS actually wants: square,
        opaque, 180x180, on the app's own background. The raw logo was the icon
        for a while and the iPad said no — public/bison.png is 219x148 with a
@@ -1076,9 +1078,14 @@
 
     <div class="field">
       <span>Layout</span>
+      <!-- Three shapes, and the third is chosen rather than detected: nothing
+           in a browser announces that it is bolted to a dashboard, and a
+           Tesla's centre screen is as wide as a laptop's so it would otherwise
+           read as a desktop and get a desktop's hit targets. -->
       <div class="seg" id="layoutSeg" role="group" aria-label="Layout">
-        <button type="button" data-phone="1">Phone</button>
-        <button type="button" data-phone="0">Desktop</button>
+        <button type="button" data-layout="phone">Phone</button>
+        <button type="button" data-layout="desk">Desktop</button>
+        <button type="button" data-layout="car">Tesla</button>
       </div>
     </div>
 
@@ -1119,5 +1126,6 @@
      is on the page and where the data came from, and this dresses the result.
      Inert unless the desktop design is on. -->
 <script src="/desktop.js"></script>
+<script src="/car.js"></script>
 </body>
 </html>

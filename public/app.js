@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '38.4';
+const VERSION = '39.0';
 
 const PAGE_SIZE = 60;
 
@@ -823,21 +823,57 @@ function scrollViewTop() {
    last step is the one that gets an iPad's 820pt bar down to size. */
 const PHONE_MAX = 820;
 
+/*
+ * Which shape this screen is, of the three the portal knows how to be.
+ *
+ *   phone    a finger on something pocket-sized: a tab bar, one column
+ *   desk     a pointer and room: the nav in a row, rails, hover
+ *   car      a finger on a screen bolted to a dashboard
+ *
+ * The third is not a size the other two could have covered by a breakpoint.
+ * A Tesla's centre screen is as wide as a laptop's, so it reads as a desktop
+ * and gets the desktop's hit targets — which are sized for a mouse, at a desk,
+ * with the screen a foot from your face. In a car the screen is an arm's
+ * length away, the person is holding a coffee, and half the buttons are ones
+ * nobody in a car has any use for. That is a different design, not a smaller
+ * one, and it is chosen rather than guessed at: nothing in a browser announces
+ * that it is bolted to a dashboard.
+ */
+const LAYOUTS = ['phone', 'desk', 'car'];
+
 const device = {
-  phone: false,
+  layout: 'desk',
   coarse: false,
   /** Did a person choose the layout, or are we reading the hardware? */
   chosen: false,
 
+  /* Kept as a property name because the whole app asks `device.phone`. */
+  get phone() { return this.layout === 'phone'; },
+  get car() { return this.layout === 'car'; },
+
   /* A finger, or a layout that is built like one. Either is enough. */
-  get touch() { return this.coarse || this.phone; },
+  get touch() { return this.coarse || this.phone || this.car; },
 
   init() {
-    const saved = localStorage.getItem('portal.touch');
-    // A coarse pointer means a finger, which is every iPhone and every iPad.
+    // A coarse pointer means a finger, which is every iPhone and every iPad —
+    // and every car, though a car is never inferred. See the note above.
     this.coarse = Boolean(window.matchMedia?.('(pointer: coarse)').matches);
-    this.chosen = saved !== null;
-    this.phone = this.chosen ? saved === '1' : this.autoPhone();
+
+    const saved = localStorage.getItem('portal.layout');
+    if (LAYOUTS.includes(saved)) {
+      this.layout = saved;
+      this.chosen = true;
+    } else {
+      /* What older builds stored: one boolean, phone or not. Read once and
+         written forward, so a device somebody already set up does not ask
+         again. */
+      const legacy = localStorage.getItem('portal.touch');
+      this.chosen = legacy !== null;
+      this.layout = this.chosen
+        ? (legacy === '1' ? 'phone' : 'desk')
+        : (this.autoPhone() ? 'phone' : 'desk');
+      if (this.chosen) localStorage.setItem('portal.layout', this.layout);
+    }
 
     // The column setting is retired. Clear what an older build stored rather
     // than leaving a key in localStorage that nothing reads.
@@ -855,9 +891,9 @@ const device = {
      re-asked on resize — but never once somebody has chosen for themselves. */
   reflow() {
     if (this.chosen) return;
-    const next = this.autoPhone();
-    if (next === this.phone) return;
-    this.phone = next;
+    const next = this.autoPhone() ? 'phone' : 'desk';
+    if (next === this.layout) return;
+    this.layout = next;
     this.apply();
     if (state.config) render();
   },
@@ -865,26 +901,35 @@ const device = {
   apply() {
     const root = document.documentElement;
     root.classList.toggle('touch', this.touch);
+    /* The car layer sits ON TOP of the desktop one rather than beside it —
+       `.desk` keeps drawing the shell, the rails and the header, and `.car`
+       changes the parts a dashboard needs changed. The desktop screen was
+       already most of the way there; this is the difference. */
+    root.classList.toggle('car', this.car);
 
     const btn = $('#touchToggle');
-    btn.classList.toggle('is-on', this.phone);
-    btn.setAttribute('aria-pressed', String(this.phone));
+    btn.classList.toggle('is-on', this.layout !== 'desk');
+    btn.setAttribute('aria-pressed', String(this.layout !== 'desk'));
 
     $('#tabBar').hidden = !this.phone;
     // The bar covers the foot of the page, so the page has to stop above it.
     document.body.classList.toggle('has-tabbar', this.phone);
 
     for (const b of document.querySelectorAll('#layoutSeg button')) {
-      b.classList.toggle('is-on', (b.dataset.phone === '1') === this.phone);
+      b.classList.toggle('is-on', b.dataset.layout === this.layout);
     }
 
     syncTabs();
   },
 
-  setPhone(on) {
-    this.phone = on;
+  set(layout) {
+    if (!LAYOUTS.includes(layout)) return;
+    this.layout = layout;
     this.chosen = true;
-    localStorage.setItem('portal.touch', on ? '1' : '0');
+    localStorage.setItem('portal.layout', layout);
+    /* Kept in step for anything still reading the old key — and so that
+       rolling this build back does not land somebody in the wrong shape. */
+    localStorage.setItem('portal.touch', layout === 'phone' ? '1' : '0');
     this.apply();
   },
 };
@@ -911,7 +956,7 @@ $('#deviceModal').addEventListener('click', (event) => {
 $('#layoutSeg').addEventListener('click', (event) => {
   const button = event.target.closest('button');
   if (!button) return;
-  device.setPhone(button.dataset.phone === '1');
+  device.set(button.dataset.layout);
   // The sidebar and the rails lay out differently between the two.
   if (state.config) render();
 });

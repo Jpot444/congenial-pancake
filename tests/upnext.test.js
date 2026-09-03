@@ -223,7 +223,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   await freshPage();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => {
-    device.setPhone(true);
+    device.set('phone');
     upNext.arm({ label: 'S1 · E2 — An Unusually Long Episode Title That Runs On', start: () => {} });
     upNext.reveal();
   });
@@ -254,7 +254,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.setViewportSize({ width: 1280, height: 900 });
   await freshPage();
   await page.evaluate(() => {
-    device.setPhone(false);
+    device.set('desk');
     document.querySelector('#playerOverlay').hidden = true;
     location.hash = '#/home';
   });
@@ -289,7 +289,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // Phone: must not sit under the tab bar.
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.evaluate(() => { device.setPhone(true); location.hash = '#/home'; });
+  await page.evaluate(() => { device.set('phone'); location.hash = '#/home'; });
   await wait(1500);
   const onPhone = await page.evaluate(() => {
     const s = document.querySelector('.home-version');

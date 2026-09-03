@@ -138,7 +138,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log('\n  on a phone');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => {
-    device.setPhone(true);
+    device.set('phone');
     profiles.data.tourDone = false;
     tour.start();
   });

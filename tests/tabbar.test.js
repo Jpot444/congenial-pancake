@@ -346,7 +346,7 @@ const SERIES = {
     await desk.waitForTimeout(1500);
   }
   await desk.evaluate((lib) => {
-    device.setPhone(false);
+    device.set('desk');
     state.library.series = lib;
     location.hash = '#/series';
     state.tab = 'series';
