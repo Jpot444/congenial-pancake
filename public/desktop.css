@@ -3136,12 +3136,27 @@ body.is-reordering .cht { transition: none; }
 /* Never glass. That state is for a bar with a picture running underneath it;
    here the bar is a row in a column and there is nothing behind it to show
    through. Since `lifted` is now permanent rather than a scroll state, this
-   is what the phone's bar IS, not what it becomes. */
+   is what the phone's bar IS, not what it becomes.
+ *
+ * Dark, though, and not the red field it used to be. The desktop's bar has
+ * been black with the wordmark in crimson for a while and the phone was still
+ * carrying the older treatment — a red plate — so the same portal looked like
+ * two different products depending on which screen it was opened on.
+ *
+ * A flat colour rather than the desktop's translucency, for the reason above:
+ * `rgba(17, 11, 10, .74)` over nothing is just a lighter grey. This is what
+ * that glass settles to over the page, so the two read as the same bar.
+ *
+ * The hairline underneath is the desktop's, and it is doing real work here —
+ * it is the only thing separating a black bar from a black page. */
+.desk body.has-tabbar .site-header,
 .desk body.has-tabbar .site-header.lifted {
   height: auto;
-  background: var(--header-field);
+  background: #100B0A;
   backdrop-filter: none;
-  box-shadow: var(--shadow-header);
+  box-shadow:
+    0 1px 0 rgba(162, 31, 36, .6),
+    0 10px 30px rgba(0, 0, 0, .45);
 }
 
 .desk body.has-tabbar .header-inner {
@@ -3151,13 +3166,64 @@ body.is-reordering .cht { transition: none; }
   min-width: 0;
 }
 
-/* The mark alone. The wordmark beside it is the first thing this design sheds
-   at every step above, and at 393pt it is the difference between reaching the
-   profile chip and not. */
-.desk body.has-tabbar .brand { flex: none; border-right: 0; padding-right: 0; margin-right: 0; }
-.desk body.has-tabbar .brand-words { display: none; }
-.desk body.has-tabbar .brand-bison { width: 34px; }
-.desk body.has-tabbar .site-header.lifted .brand-bison { width: 34px; }
+/* The mark, and the wordmark beside it in crimson — the desktop's treatment,
+ * which is the whole point of the colour above.
+ *
+ * The words used to be dropped here, on the grounds that at 393pt they were
+ * the difference between reaching the profile chip and not. That is still the
+ * constraint, so the brand is allowed to SHRINK rather than being allowed to
+ * push: `min-width: 0` with the title ellipsised means the row runs out of
+ * wordmark before it runs out of buttons. Everything to the right keeps the
+ * width it had.
+ *
+ * Only the first line. `.brand-sub` is a company name that wants a width this
+ * bar does not have — the desktop sheds it at its own narrow steps for the
+ * same reason. */
+.desk body.has-tabbar .brand {
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: var(--space-2);
+  border-right: 0;
+  padding-right: 0;
+  margin-right: 0;
+}
+.desk body.has-tabbar .brand-words { display: flex; min-width: 0; }
+.desk body.has-tabbar .brand-sub { display: none; }
+/* Both selectors, and the second one is not decoration: the desktop's own
+   `.desk .site-header.lifted .brand-title` outranks a plain
+   `.desk body.has-tabbar .brand-title`, so a size set only there is quietly
+   ignored and the bar keeps the desktop's 22px. Which is how this was first
+   written, and why the wordmark clipped. */
+.desk body.has-tabbar .brand-title,
+.desk body.has-tabbar .site-header.lifted .brand-title {
+  font-size: 17px;
+  color: #E4262E;
+  text-shadow: 0 0 18px rgba(226, 38, 46, .45);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Two steps down, both measured on the real bar rather than reasoned about.
+ *
+ * The wordmark is 111pt wide at 17px, and what it is given is whatever the
+ * five buttons and the mark leave: 111 at 393pt, 101 at 375, 86 at 360. So it
+ * fits exactly on a modern phone, needs a point off for the small ones, and at
+ * 360 there is no size that both fits and still reads as a wordmark.
+ *
+ * There it goes away and the mark carries the bar alone, which is what it did
+ * before any of this. The ellipsis above stays as the backstop for whatever
+ * width nobody thought of: a clipped wordmark is poor, a wordmark shoving the
+ * profile chip off the screen is broken. */
+@media (max-width: 392px) {
+  .desk body.has-tabbar .brand-title,
+  .desk body.has-tabbar .site-header.lifted .brand-title { font-size: 15px; }
+}
+@media (max-width: 370px) {
+  .desk body.has-tabbar .brand-words { display: none; }
+}
+.desk body.has-tabbar .brand-bison { width: 32px; flex: none; }
+.desk body.has-tabbar .site-header.lifted .brand-bison { width: 32px; }
 
 /* Nothing here for the nav on purpose. It is the hamburger's, and the hamburger
    is the overflow from the bottom bar; styles.css already shows the toggle and
@@ -3196,7 +3262,7 @@ body.is-reordering .cht { transition: none; }
   width: auto;
 }
 
-.desk body.has-tabbar .header-actions { flex: 0 1 auto; flex-wrap: nowrap; margin-left: auto; gap: var(--space-2); }
+.desk body.has-tabbar .header-actions { flex: none; flex-wrap: nowrap; margin-left: auto; gap: var(--space-1); }
 
 /* ---- the category bar ----
  *
