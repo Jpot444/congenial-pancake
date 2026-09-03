@@ -6414,9 +6414,81 @@ function listingFromName(name) {
     programme somebody meant to publish. The one reported is ten minutes. */
 const CANNED_MAX_SECONDS = 30 * 60;
 
-/** Verdicts, kept briefly: a channel that was filler a minute ago still is. */
+/*
+ * What the box has learned about a channel, and how long it keeps it.
+ *
+ * "after I have gone to a game once and then try to click on it again it still
+ *  trys to use the old stream it already checked didn't work. It should
+ *  replace it so it knows not to try and use it again"
+ *
+ * Right, and the first cut got this wrong in three separate ways, all of them
+ * the same mistake: treating "this channel is filler" as a fact with a short
+ * shelf life. It is not. The provider builds these rows for one fixture and
+ * renames them for the next; a row that is a canned clip at the first pitch is
+ * a canned clip for that whole game.
+ *
+ *   IT EXPIRED. Three minutes, against a game that runs three hours. Come back
+ *   from the kitchen and the box has forgotten and checks again.
+ *
+ *   THE RE-CHECK COULD FAIL. This box has ONE provider connection, and by the
+ *   second press something is usually using it. The playlist fetch then times
+ *   out, and an unreachable check is deliberately read as "not filler" so a
+ *   slow provider can never block playback — which is right, and which meant a
+ *   channel already KNOWN to be dead got opened again anyway.
+ *
+ *   A RESTART FORGOT. The updater restarts this process every couple of
+ *   minutes when there is a commit to take.
+ *
+ * So a negative verdict is written down, and it lives as long as the fixture
+ * does — the channel's own stop time, out of its own name. A positive one is
+ * not: a channel that is fine now can break later, and re-reading a playlist
+ * is cheap.
+ */
+const CHANNEL_HEALTH = path.join(ROOT, 'channel-health.json');
 const cannedCache = new Map();
+/** How long a channel that ANSWERED is taken at its word before asking again. */
 const CANNED_TTL_MS = 3 * 60 * 1000;
+
+/** id → { canned, seconds, name, until } for the rows found to be filler. */
+let knownBad = new Map();
+
+function loadChannelHealth() {
+  try {
+    const rows = JSON.parse(fs.readFileSync(CHANNEL_HEALTH, 'utf8'));
+    const now = Date.now();
+    knownBad = new Map(Object.entries(rows)
+      .filter(([, v]) => v && v.until > now));
+  } catch {
+    knownBad = new Map();
+  }
+}
+
+function saveChannelHealth() {
+  try {
+    /* Only what is still live. A fixture channel is renamed for the next
+       night's game, so a verdict outliving its fixture would be a verdict
+       about a different broadcast. */
+    const now = Date.now();
+    const keep = {};
+    for (const [id, v] of knownBad) if (v.until > now) keep[id] = v;
+    knownBad = new Map(Object.entries(keep));
+    writeJsonAtomic(CHANNEL_HEALTH, keep, { mode: 0o600 });
+  } catch (err) {
+    console.error(`  channel health: could not write it down — ${err.message}`);
+  }
+}
+
+/** Remember that this row is filler, for as long as the fixture lasts. */
+function rememberBad(channel, seen) {
+  const listing = (listingFromName(channel.name) || [])[0];
+  /* Its own stop time, plus an hour for a game that runs long. Without a
+     listing at all, the rest of tonight. */
+  const until = listing ? (listing.stop * 1000) + 3600e3 : Date.now() + 6 * 3600e3;
+  knownBad.set(String(channel.id), {
+    canned: true, seconds: seen.seconds || 0, name: channel.name, until,
+  });
+  saveChannelHealth();
+}
 
 /** Total seconds a media playlist declares, and whether it declares an end. */
 function readPlaylist(text) {
@@ -8482,15 +8554,21 @@ async function handleApi(req, res, pathname, query) {
 
     const checked = [];
     for (const channel of fixtures) {
-      /* One at a time. See above. */
-      // eslint-disable-next-line no-await-in-loop
-      const seen = await liveIsCanned(cfg, channel.id);
+      const remembered = knownBad.get(String(channel.id));
+      /* Already known, and not asked again — the point of writing it down. */
+      const seen = remembered && remembered.until > Date.now()
+        ? { canned: true, seconds: remembered.seconds, remembered: true }
+        /* One at a time. See above. */
+        // eslint-disable-next-line no-await-in-loop
+        : await liveIsCanned(cfg, channel.id);
+      if (seen.canned && !seen.remembered) rememberBad(channel, seen);
       const other = seen.canned ? teamFeedFor(channel.name, rows) : null;
       checked.push({
         id: channel.id,
         name: channel.name,
         working: !seen.canned,
         seconds: seen.seconds || 0,
+        remembered: Boolean(seen.remembered),
         error: seen.error || '',
         instead: other ? { id: other.channel.id, name: other.channel.name } : null,
       });
@@ -9360,8 +9438,20 @@ async function handleApi(req, res, pathname, query) {
         const rows = knownCatalogue('live');
         const mine = rows.find((c) => String(c.id) === String(id));
         if (mine && isEventChannel(mine.name)) {
-          const seen = await liveIsCanned(cfg, id);
+          /*
+           * What the box already knows comes first, and it is not asked again.
+           *
+           * A row found to be filler stays filler for the fixture — see the
+           * note by knownBad. Asking the provider a second time is a request
+           * this box does not have a spare connection for, and one that
+           * failing would put the dead channel back on screen.
+           */
+          const remembered = knownBad.get(String(id));
+          const seen = remembered && remembered.until > Date.now()
+            ? { canned: true, seconds: remembered.seconds, remembered: true }
+            : await liveIsCanned(cfg, id);
           if (seen.canned) {
+            if (!seen.remembered) rememberBad(mine, seen);
             const other = teamFeedFor(mine.name, rows);
             if (!other) {
               /* Nothing to hand off to. Say what was found rather than opening
@@ -9704,6 +9794,15 @@ archive.configure({ root: ARCHIVE_ROOT, indexPath: ARCHIVE_INDEX });
 guide.configure({ dir: ROOT, log: (line) => console.log(`  ${line}`), guard: privateAddress });
 people.load(PEOPLE_PATH, (line) => console.log(`  ${line}`));
 recordings.load(RECORDINGS_DIR, (line) => console.log(`  ${line}`));
+/* What the box has learned about dead fixture channels. Read at boot so a
+   restart — and the updater restarts this process whenever there is a commit
+   to take — does not send somebody back to a channel already known to be a
+   ten-minute black clip. */
+loadChannelHealth();
+if (knownBad.size) {
+  console.log(`  channels: ${knownBad.size} fixture row${knownBad.size === 1 ? '' : 's'} `
+    + 'known to be showing filler');
+}
 
 /* The scheduler.
  *

@@ -173,6 +173,7 @@ const portFree = async (port) => {
     env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1' },
     stdio: ['ignore', 'ignore', 'ignore'],
   });
+  let born = null;
   try {
     let up = false;
     for (let i = 0; i < 40 && !up; i += 1) {
@@ -267,6 +268,72 @@ const portFree = async (port) => {
     check('a channel that is working is not interfered with',
       !fine.swapped && Boolean(fine.url), JSON.stringify(fine));
 
+    /* ---- 3b. and it remembers, which is the whole of the follow-up ------- */
+    /*
+     * "after I have gone to a game once and then try to click on it again it
+     *  still trys to use the old stream it already checked didn't work"
+     *
+     * The verdict used to live for three minutes in memory, against a game
+     * that runs three hours — and the re-check needed the provider connection,
+     * which by the second press something else is usually using. An
+     * unreachable check reads as "not filler" on purpose, so a channel already
+     * known to be dead went back on screen.
+     *
+     * The provider is taken away entirely here, which is a harder case than
+     * merely busy: if the box still routes correctly, it is doing it from what
+     * it wrote down and not from anything it can ask.
+     */
+    console.log('\n  and it remembers, with the provider gone');
+    await new Promise((r) => provider.close(r));
+    const again = (await get(PORT, '/api/play?kind=live&id=709&ext=ts')).body;
+    const openedAgain = (() => {
+      try {
+        const u = new URL(again.url, 'http://x').searchParams.get('u') || '';
+        return Buffer.from(u, 'base64').toString('utf8');
+      } catch { return ''; }
+    })();
+    console.log('   ', JSON.stringify({ swapped: again.swapped?.to }),
+      openedAgain.replace(/\/u\/p\//, '/…/…/'));
+    check('the second press still goes to the club feed',
+      /\/900\./.test(openedAgain), openedAgain || JSON.stringify(again));
+    check('without having asked the provider again',
+      Boolean(again.swapped), JSON.stringify(again.swapped));
+
+    /* And across a restart, because the updater restarts this process whenever
+       there is a commit to take — which on a Sunday is several times a game. */
+    console.log('\n  and across a restart');
+    box.kill('SIGKILL');
+    await wait(600);
+    born = spawn('node', ['server.js'], {
+      cwd: DIR,
+      env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1' },
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    /* Kept running past this section: section 4 needs a box to talk to, and
+       this one — restarted, with the provider still down — is the harder box
+       to ask. */
+    let back = false;
+    for (let i = 0; i < 40 && !back; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      try { await get(PORT, '/api/health'); back = true; } catch { await wait(250); }
+    }
+    check('the box came back up', back === true);
+    /* The library is gone with the process and the provider is down, so
+       there is nothing to look the channel up in — which is the honest limit
+       of this: what it remembers is the VERDICT, and it still needs the
+       channel list to know what to hand off to. What must not happen is the
+       verdict being forgotten. */
+    const kept = JSON.parse(fs.readFileSync(path.join(DIR, 'channel-health.json'), 'utf8'));
+    console.log('   written down:', JSON.stringify(Object.keys(kept)));
+    check('the verdict was written down', Boolean(kept['709']), JSON.stringify(kept));
+    check('with the fixture it belongs to', /Blue Jays/.test(kept['709']?.name || ''),
+      kept['709']?.name);
+    /* And it dies with the fixture rather than outliving it: the provider
+       renames these rows for the next night's game. */
+    check('and an expiry tied to that fixture, not to the clock',
+      kept['709'].until > Date.now() && kept['709'].until < Date.now() + 24 * 3600e3,
+      new Date(kept['709'].until).toISOString());
+
     /* ---- 4. and it never refuses on a bad answer ------------------------- */
     /*
      * Unreachable is not the same as filler. Refusing to play a channel
@@ -274,8 +341,9 @@ const portFree = async (port) => {
      * was written for, so a check that cannot get an answer says nothing.
      */
     console.log('\n  and when the check itself cannot get an answer');
-    await new Promise((r) => provider.close(r));
-    const blind = (await get(PORT, '/api/play?kind=live&id=707&ext=ts')).body;
+    /* 711 was never found to be filler, so nothing is remembered about it and
+       the check has to be made — with the provider down, it cannot be. */
+    const blind = (await get(PORT, '/api/play?kind=live&id=711&ext=ts')).body;
     console.log('   ', JSON.stringify({ url: (blind.url || '').slice(0, 40), error: blind.error }));
     check('the channel is still opened rather than refused',
       Boolean(blind.url) && !blind.error, JSON.stringify(blind));
@@ -283,6 +351,7 @@ const portFree = async (port) => {
     console.log(`\n  ${fails.length ? `FAILED: ${fails.join(', ')}` : 'all passed'}`);
   } finally {
     box.kill('SIGKILL');
+    if (born) born.kill('SIGKILL');
     try { provider.close(); } catch { /* already shut */ }
   }
   process.exit(fails.length ? 1 : 0);

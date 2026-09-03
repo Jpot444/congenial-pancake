@@ -19,3 +19,4 @@ thumbs/
 # Screenshots the suites write while running.
 tests/shots/
 crash.log
+channel-health.json
