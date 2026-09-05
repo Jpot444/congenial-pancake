@@ -1514,6 +1514,66 @@ and the verdict reports them even when every average has gone back to saying
 everything is fine — which is the state things are usually in by the time
 anyone can open the panel.
 
+#### When the playhead goes backwards
+
+Everything above measures whether the media clock **keeps up** — the rate, the
+delivery rate, the cushion, dropped frames, holes stepped over. Every one of
+those describes a playhead moving forwards, and a playhead that jumps
+*backwards* satisfies all of them. A report sent in about a live channel that
+"jumps back in time and restarts my position" read: 1.000× over 9s, nothing
+stalled, 15 frames dropped of 24890, `skipped nothing`, `holes now none`, and
+two minutes of timeline every row of which said 1.00×. The only trace the jump
+left was `seeked 1` — a bare count, with nothing about where, when, how far or
+who did it, and by the time anybody opens the panel the jump is minutes old and
+the two-minute window has rolled over it.
+
+So a backwards move is now its own finding, kept for the whole viewing rather
+than in the rolling window:
+
+    playhead moves  94s ago  BACK 397.3s  401.5 → 4.2  — the playlist was replaced 0s earlier
+                    — the seconds around the last one —
+                        0s     400.60  rs4/2  buf 463
+                        1s     401.20  rs4/2  buf 463
+                        1s     401.50  rs4/2  buf 464
+                    >>> the jump <<<
+                        2s       4.20  rs4/2  buf 464
+                        2s       4.50  rs4/2  buf 464
+    playlist reset  96s ago  seq 1200→1, window started 400.0→0.0  (sequence and timeline went backwards)
+
+`none` is printed when nothing moved, because "did it happen while I was
+watching" is a question the report has to be able to answer either way.
+
+**Two faults look identical from the sofa**, and separating them is the whole
+point of writing this down:
+
+- **The playhead was moved.** Something seeked — this app, or hls.js putting
+  itself back on the seat after a playlist reload. The media timeline is
+  unchanged and the position on it went down.
+- **The timeline was replaced.** The provider's encoder restarted, the playlist
+  came back numbered from the beginning, and the same instant of the broadcast
+  is now called by a smaller number. Nothing seeked at all. No property of the
+  media element can see this happen; only the playlist can, which is why every
+  `LEVEL_UPDATED` is compared against the last one — a live window only ever
+  slides forwards, and one that comes back with a lower media sequence is an
+  encoder that restarted.
+
+The line says which. A seek fires `seeking`/`seeked` whoever caused it, so its
+presence separates "something moved the playhead" from "the timeline moved
+under a playhead that never moved", and a fresh playlist reset behind the jump
+is blamed ahead of both. Anything this app does on purpose says so — the Live
+pill, the scrubber, the Go-back offer on a skipped part all call
+`playback.expectMove()` first, so a button working as designed is never
+reported as a mystery.
+
+A new source is excluded: `loadstart` means a new timeline, so the row before it
+describes a different thing and the difference between them means nothing.
+Without that, every channel change would report a jump of whatever the two
+streams happened to differ by.
+
+It is also said out loud once while it happens — rate-limited to one toast every
+thirty seconds, because an encoder restarting in a loop would otherwise put one
+on screen every few seconds.
+
 #### The half the browser cannot see
 
 Every number above describes the timeline the player was handed. If the

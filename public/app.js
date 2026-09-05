@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '39.6';
+const VERSION = '39.7';
 
 const PAGE_SIZE = 60;
 
@@ -12001,6 +12001,14 @@ function attach(url, format, opts = {}) {
       engine.loadSource(url);
       engine.attachMedia(video);
       if (live) waitForCushion(video);
+      /* Every playlist the engine is handed, so a window that goes backwards
+         is on the record. That is the only place an encoder restart shows —
+         see notePlaylist. */
+      if (Hls.Events.LEVEL_UPDATED) {
+        engine.on(Hls.Events.LEVEL_UPDATED, (_, data) => {
+          try { playback.notePlaylist(data && data.details); } catch { /* a report is not worth a throw */ }
+        });
+      }
       engine.on(Hls.Events.ERROR, (_, data) => {
         /* Written down BEFORE the fatal test. A fragment that fails to load
            is not fatal — the engine shrugs and moves on, leaving a hole in
@@ -12280,6 +12288,43 @@ const playback = {
    * nothing whatever about why.
    */
   engineErrors: [],
+  /* -- the playhead going backwards ------------------------------------- *
+   *
+   * "my stream will jump back in time and restart my position, but I dont
+   *  think it reads on the playback report"
+   *
+   * It does not, and could not have. Everything else here measures whether the
+   * media clock KEEPS UP — rate, cushion, dropped frames, holes stepped over —
+   * and every one of those describes a playhead moving forwards. A playhead
+   * that moves BACKWARDS reads as perfectly healthy in all of them: the rate
+   * over the following ten seconds is 1.00x, nothing stalls, no frame is
+   * dropped. The only trace it left was `seeked 1`, a bare count with nothing
+   * to say where, when, how far, or who did it.
+   *
+   * Two different faults look identical from the sofa, and telling them apart
+   * is the whole reason for writing this down:
+   *
+   *   THE PLAYHEAD WAS MOVED. Something seeked — this app, or hls.js putting
+   *   itself back on the seat after a playlist reload. The media timeline is
+   *   unchanged; the position on it went down.
+   *
+   *   THE TIMELINE WAS REPLACED. The provider's encoder restarted, so the
+   *   playlist comes back with its media sequence reset and its first fragment
+   *   at a lower time. Nothing seeked at all — the same instant of the
+   *   broadcast is now called by a smaller number, and the picture restarts
+   *   from where that number lands. This one is invisible from the media
+   *   element alone; only the playlist says it happened.
+   *
+   * Both are kept for the whole viewing rather than in the two-minute window,
+   * because by the time anybody opens the report the jump is minutes old —
+   * which is exactly why the report in hand had nothing in it.
+   */
+  moves: [],
+  /** The last playlist the engine handed us, to compare the next one against. */
+  playlistWas: null,
+  playlistResets: [],
+  /** Set by our own code just before it moves the playhead on purpose. */
+  expected: null,
   // The low point of this viewing, kept with the full report from that moment.
   //
   // Held across reset(), unlike everything above it. Reloading the stream or
@@ -12322,6 +12367,10 @@ const playback = {
     this.lastRescueAt = 0;
     this.gaps = [];
     this.engineErrors = [];
+    this.moves = [];
+    this.playlistWas = null;
+    this.playlistResets = [];
+    this.expected = null;
   },
 
   reset() {
@@ -12385,11 +12434,52 @@ const playback = {
      * start of that next one. That is the player crossing a wall, and the
      * distance between them is what nobody got to watch.
      */
-    if (prev && Number.isFinite(prev.resumeAt) && prev.resumeAt !== null
+    const steppedHole = Boolean(prev && Number.isFinite(prev.resumeAt) && prev.resumeAt !== null
       && prev.t >= prev.buf - 0.75
       && video.currentTime >= prev.resumeAt - 0.5
-      && video.currentTime - prev.t > 1) {
-      this.noteGap(prev.buf, video.currentTime);
+      && video.currentTime - prev.t > 1);
+    if (steppedHole) this.noteGap(prev.buf, video.currentTime);
+
+    /*
+     * The playhead moving somewhere the clock cannot explain.
+     *
+     * Backwards at all is worth writing down — a media clock does not run
+     * backwards on its own. Forwards is only worth it beyond what the wall
+     * clock allows, and only when it is not the hole-step above, which has its
+     * own line and its own explanation.
+     */
+    /* A new source is a new timeline, so the row before it describes a
+       different thing entirely and the difference between them means nothing.
+       Without this, every channel change would report a jump of whatever the
+       two streams happened to differ by, and say so out loud.
+
+       A SEEK, on the other hand, is kept — and it is the whole point. Moving
+       the playhead fires `seeking` and `seeked` whoever did it, so excluding
+       seek-marked rows the way the rate calculation does would throw away
+       precisely the events being chased. It is recorded instead: a jump WITH a
+       seek behind it is something seeking, and a jump WITHOUT one is the
+       timeline changing underneath a playhead that never moved. */
+    const newSource = /loadstart/.test(notes);
+    if (prev && !newSource && !prev.paused && !video.paused) {
+      const wall = (now - prev.at) / 1000;
+      const moved = video.currentTime - prev.t;
+      if (wall > 0.2 && wall < 4) {
+        const seeked = /seek/.test(notes);
+        if (moved < -0.5) this.noteMove('back', prev, video, moved, seeked);
+        else if (!steppedHole && moved > wall + 1.5) {
+          this.noteMove('forward', prev, video, moved, seeked);
+        }
+      }
+    }
+    /* The rows either side are the evidence. A jump on its own says it
+       happened; the seconds around it say what the buffer and the readyState
+       were doing when it did, which is what tells a correction apart from a
+       stream that fell over. */
+    for (const move of this.moves) {
+      if (move.want > 0) {
+        move.after.push(this.snap(video, now, ahead));
+        move.want -= 1;
+      }
     }
 
     this.history.push({
@@ -12445,6 +12535,7 @@ const playback = {
           label: 'Go back',
           run: () => {
             const video = $('#video');
+            playback.expectMove('Go back was pressed, to re-ask for a skipped part');
             video.currentTime = Math.max(0, from - 0.5);
             video.play().catch(() => {});
           },
@@ -12453,6 +12544,126 @@ const playback = {
     } else {
       toast(said);
     }
+  },
+
+  /* -- the playhead moving on its own ----------------------------------- */
+
+  /** One second of the timeline, small enough to print a dozen of. */
+  snap(video, now, ahead) {
+    const reach = ahead || bufferAhead(video);
+    return {
+      at: now,
+      t: video.currentTime,
+      buf: reach.end,
+      rs: video.readyState,
+      nw: video.networkState,
+    };
+  },
+
+  /**
+   * Our own code is about to move the playhead. Say so, so the jump it causes
+   * is reported as a decision rather than as a mystery.
+   *
+   * Two and a half seconds of grace, because a seek is not instant: the
+   * assignment lands, the element seeks, and the next sample is where the
+   * difference actually shows up.
+   */
+  expectMove(why) {
+    this.expected = { why, at: performance.now() };
+  },
+
+  noteMove(kind, prev, video, moved, seeked) {
+    const now = performance.now();
+    const asked = this.expected && now - this.expected.at < 2500 ? this.expected.why : '';
+    /* A playlist that was replaced within the last few seconds is the reason,
+       and a far more useful one than "something seeked": it means the picture
+       did not move, the numbering did. */
+    const reset = this.playlistResets[this.playlistResets.length - 1];
+    const resetAgo = reset ? (Date.now() - reset.at) / 1000 : null;
+    /* The three answers this can give, in the order they are worth having.
+       The last two are the two faults that look identical from the sofa, and
+       the difference between them is whether a seek happened at all. */
+    const why = asked
+      || (resetAgo !== null && resetAgo < 8
+        ? `the playlist was replaced ${resetAgo.toFixed(0)}s earlier`
+        : seeked
+          ? 'something seeked, and nothing here asked for it'
+          : 'no seek at all — the timeline moved under the playhead');
+    this.moves.push({
+      at: Date.now(),
+      kind,
+      from: prev.t,
+      to: video.currentTime,
+      moved,
+      why,
+      asked: Boolean(asked),
+      seeked: Boolean(seeked),
+      /* How far behind the live edge the playhead was when this happened. A
+         backwards jump that lands on the seat is the engine correcting itself;
+         one that lands nowhere near it is not. */
+      behindLive: (() => {
+        try {
+          return engineKind === 'hls.js' && engine && Number.isFinite(engine.latency)
+            ? engine.latency : null;
+        } catch { return null; }
+      })(),
+      before: this.history.slice(-8).map((r) => ({
+        at: r.at, t: r.t, buf: r.buf, rs: r.rs, nw: r.nw,
+      })),
+      after: [],
+      want: 4,
+    });
+    if (this.moves.length > 12) this.moves.shift();
+
+    /* Said out loud while it is happening. The report is for afterwards;
+       somebody watching a game wants to know the picture jumped rather than
+       sitting there wondering whether they imagined it.
+
+       Rate-limited, because the fault that causes this can repeat: a provider
+       whose encoder is restarting in a loop would otherwise put a toast on
+       screen every few seconds, which is its own kind of broken. */
+    if (kind === 'back' && !asked && moved < -2
+      && Date.now() - (this.lastMoveSaidAt || 0) > 30_000) {
+      this.lastMoveSaidAt = Date.now();
+      toast(`The stream jumped back ${Math.abs(moved).toFixed(0)}s on its own.`);
+    }
+  },
+
+  /**
+   * What the engine is being offered, and whether it went backwards.
+   *
+   * A live playlist only ever slides forwards: the media sequence climbs and
+   * the window it describes moves later. When the provider's encoder restarts
+   * it comes back numbered from the beginning again, and every position the
+   * player holds becomes meaningless — the same instant of the broadcast is
+   * now called by a smaller number, so the picture restarts. Nothing about the
+   * media element can see this happen; only the playlist can.
+   */
+  notePlaylist(details) {
+    if (!details) return;
+    const frags = details.fragments || [];
+    const last = frags[frags.length - 1];
+    const now = {
+      at: Date.now(),
+      startSN: Number.isFinite(details.startSN) ? details.startSN : null,
+      endSN: Number.isFinite(details.endSN) ? details.endSN : null,
+      first: frags.length && Number.isFinite(frags[0].start) ? frags[0].start : null,
+      last: last && Number.isFinite(last.start) ? last.start + (last.duration || 0) : null,
+      total: Number(details.totalduration) || 0,
+      live: Boolean(details.live),
+    };
+    const was = this.playlistWas;
+    if (was) {
+      const snBack = was.startSN !== null && now.startSN !== null && now.startSN < was.startSN;
+      /* A second of slack, because the engine recomputes fragment starts and
+         they wobble by a frame or two. A real reset drops by a window. */
+      const timeBack = was.first !== null && now.first !== null && now.first < was.first - 1;
+      if (snBack || timeBack) {
+        this.playlistResets.push({ at: Date.now(), was, now, sn: snBack, time: timeBack });
+        if (this.playlistResets.length > 12) this.playlistResets.shift();
+      }
+    }
+    this.playlistWas = now;
   },
 
   /** Everything the engine said, not only the parts that killed the stream. */
@@ -12788,8 +12999,64 @@ const playback = {
       + 'the buffer, and at this bitrate it never gets a cushion back.';
   },
 
+  /**
+   * Where the playhead went that the clock cannot account for, and what the
+   * seconds either side of it looked like.
+   *
+   * Printed whether or not there were any: "none" is the answer to "did it
+   * happen while I was watching", and a report that simply omitted the section
+   * would leave that question open — which is the state the report was in when
+   * this was asked for.
+   */
+  moveLines() {
+    const out = [];
+    if (!this.moves.length) {
+      out.push('playhead moves  none — the media clock only went forwards');
+    } else {
+      const ago = (at) => `${Math.round((Date.now() - at) / 1000)}s ago`;
+      out.push(...this.moves.slice(-6).map((m, i) =>
+        `${i === 0 ? 'playhead moves' : ''}`.padEnd(16)
+        + `${ago(m.at)}  ${m.kind === 'back' ? 'BACK' : 'forward'} `
+        + `${Math.abs(m.moved).toFixed(1)}s  ${m.from.toFixed(1)} → ${m.to.toFixed(1)}`
+        + `${m.behindLive !== null ? `  (${m.behindLive.toFixed(1)}s behind live)` : ''}`
+        + `  — ${m.why}`));
+
+      /* The rows around the most recent one. A jump on its own says it
+         happened; these say what the buffer and the readyState were doing when
+         it did, which is what tells a correction apart from a stream that fell
+         over underneath the player. */
+      const m = this.moves[this.moves.length - 1];
+      const base = m.before.length ? m.before[0].at : 0;
+      const line = (r, mark) => '                '
+        + `${mark}${((r.at - base) / 1000).toFixed(0).padStart(4)}s  ${r.t.toFixed(2).padStart(9)}`
+        + `  rs${r.rs}/${r.nw}  buf ${Math.round(r.buf)}`;
+      out.push('                — the seconds around the last one —');
+      out.push(...m.before.map((r) => line(r, ' ')));
+      out.push('                >>> the jump <<<');
+      out.push(...m.after.map((r) => line(r, ' ')));
+    }
+
+    /* And whether the ground moved rather than the playhead. A live playlist
+       only ever slides forwards; one that comes back numbered from further
+       back is an encoder that restarted, and every position the player was
+       holding stopped meaning anything at that moment. */
+    if (this.playlistResets.length) {
+      out.push(...this.playlistResets.slice(-4).map((r, i) =>
+        `${i === 0 ? 'playlist reset' : ''}`.padEnd(16)
+        + `${Math.round((Date.now() - r.at) / 1000)}s ago  `
+        + `seq ${r.was.startSN}→${r.now.startSN}, `
+        + `window started ${r.was.first === null ? '?' : r.was.first.toFixed(1)}`
+        + `→${r.now.first === null ? '?' : r.now.first.toFixed(1)}`
+        + `  (${[r.sn ? 'sequence' : '', r.time ? 'timeline' : ''].filter(Boolean).join(' and ')} went backwards)`));
+    } else {
+      out.push('playlist reset  none — the window only ever moved forwards');
+    }
+    return out;
+  },
+
   hlsLines() {
     if (engineKind !== 'hls.js' || !engine) return [];
+    const video = $('#video');
     const out = [];
     try {
       const level = engine.levels?.[engine.currentLevel];
@@ -12808,10 +13075,28 @@ const playback = {
         out.push(`playlist        ${d.live ? 'live' : 'vod'}, `
           + `${(d.fragments || []).length} segments of ~${d.targetduration}s `
           + `= ${Math.round(d.totalduration)}s window`);
+        /* The numbering, which is the thing that has to be watched. A window
+           that comes back with a lower sequence is an encoder that restarted,
+           and the media element cannot see that happen. */
+        const frags = d.fragments || [];
+        const first = frags.length && Number.isFinite(frags[0].start) ? frags[0].start : null;
+        out.push(`  numbering     seq ${d.startSN}–${d.endSN}`
+          + (first === null ? '' : `, covering ${first.toFixed(1)}s onwards`)
+          + (Number.isFinite(d.discontinuityStarts?.length)
+            ? `, ${d.discontinuityStarts.length} discontinuit${d.discontinuityStarts.length === 1 ? 'y' : 'ies'}`
+            : ''));
       }
       if (Number.isFinite(engine.latency)) {
         out.push(`latency         ${engine.latency.toFixed(1)}s behind the edge, `
           + `asked for ${Number(engine.targetLatency ?? LIVE_HLS.liveSyncDuration).toFixed(1)}s`);
+        /* Where the engine thinks the playhead ought to be. A backwards jump
+           that lands exactly here is hls.js correcting itself onto the seat,
+           which is a completely different fault from the stream restarting —
+           and the two are indistinguishable without this number. */
+        if (Number.isFinite(engine.liveSyncPosition)) {
+          out.push(`  seat          ${engine.liveSyncPosition.toFixed(1)}s, `
+            + `playhead ${(video.currentTime - engine.liveSyncPosition).toFixed(1)}s from it`);
+        }
       }
     } catch {
       // A report that cannot read the engine is still a report.
@@ -13011,6 +13296,10 @@ const playback = {
             .join(', ')
           : 'none';
       })()}`,
+      /* Near the top, beside `skipped`, because when this line is not empty it
+         is the complaint. Everything below it describes a playhead moving
+         forwards and will look perfect either way. */
+      ...this.moveLines(),
       `engine          ${engineKind || 'none'}`,
       ...this.hlsLines(),
       ...this.browserLines(),
@@ -13457,6 +13746,7 @@ $('#livePill').addEventListener('click', () => {
   const video = $('#video');
   if (!video.buffered.length) return;
   const edge = video.buffered.end(video.buffered.length - 1);
+  playback.expectMove('the Live pill was pressed');
   video.currentTime = Math.max(0, edge - 1.5);
   video.play().catch(() => {});
 });
@@ -13756,6 +14046,7 @@ async function seekFilm(target, { force = false } = {}) {
   // Range support — an ordinary seek works. Restarting a remux for it would
   // spend a provider connection to do what the video element does for free.
   if (!force && !lastRemux.session && Number.isFinite(video.duration) && clamped < video.duration) {
+    playback.expectMove('the scrubber was moved');
     video.currentTime = clamped;
     paintFilmBar();
     return;
@@ -13765,6 +14056,7 @@ async function seekFilm(target, { force = false } = {}) {
   const withinStart = film.offset;
   const withinEnd = film.offset + film.ready;
   if (!force && clamped >= withinStart && clamped < withinEnd - 1) {
+    playback.expectMove('the scrubber was moved inside what is converted');
     video.currentTime = clamped - film.offset;
     paintFilmBar();
     return;
@@ -13810,6 +14102,7 @@ async function seekFilm(target, { force = false } = {}) {
         if (sameSession) {
           // Same growing playlist the player is already attached to; the
           // jump is nothing more than a currentTime.
+          playback.expectMove('a jump inside the archive conversion');
           video.currentTime = clamped;
           video.play().catch(() => {});
         } else {
