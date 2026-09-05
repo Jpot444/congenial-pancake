@@ -2873,6 +2873,47 @@ panel. OK on a row opens multi-view seeded with the game that was on and the
 game that was picked, in that order, because the ask was for both at once
 rather than a channel change.
 
+### A row that names a fixture is that fixture's row
+
+`matchChannel` has three passes — what the guide says is on, the provider's own
+row for the fixture, then the network the feed named — and until recently only
+the middle one ever read the two sides off a row. The other two treat every row
+as a channel that might be showing anything.
+
+That is fine for `US| ESPN` and wrong for the long tail this provider actually
+carries: hundreds of per-event rows across the Flo, ESPN+ and PPV shelves, most
+for games nobody asked about and some left over from last season, and every one
+of them naming a school that somebody is playing today. A row called
+`Flo (FLSP) 279: 2025 UConn vs Mercyhurst - Womens - 24/10 15:00` could answer
+for UConn–Lafayette — through the network pass if a network word appeared
+anywhere in that long name, or through the guide pass if its listing was stale
+or generic — while the row's own name sat there saying who was on it.
+
+So a row that names two sides is only ever eligible for the game whose two
+sides they are. It costs the by-row pass nothing, since that pass already
+requires both names, and it takes these rows away from the two passes that were
+never in a position to judge them. A row is read as naming a fixture when its
+words carry a `vs` / `v` / `x` / `at` / `@` separator with something on both
+sides of it. The dated-placeholder filter is a separate thing and stays: those
+rows have nothing on them at all.
+
+**The card says how it decided.** `matchChannelWhy` returns the winning pass and
+what it had to go on, and the tune button's tooltip prints it — "Matched because
+the network the feed named — CBS". A card pointed at the wrong game is nearly
+impossible to argue with from the sofa, because the three passes disagree
+invisibly once one of them has won, and "matched on the network" and "the guide
+says this is what is on it" are two completely different faults that used to
+look identical.
+
+What this still cannot do is tell two feeds of the same network apart from the
+name alone. If the feed says bare `CBS` and the box carries both a local
+affiliate and CBS Sports Network, the network pass has nothing to choose with —
+`CBS SPORTS NETWORK` is not CBS any more than CNBC is NBC, but it is not a
+substring either, so the whole-word rule that fixed CNBC has nothing to say. And
+picking *some* affiliate would be worse: without the game's market, one city's
+CBS is as likely wrong as the sibling network. Choosing between them is the
+guide pass's job, and that is exactly what it is for.
+
 ### A film or an episode in a cell
 
 A cell will take a film or an episode as well as a channel — but it is a

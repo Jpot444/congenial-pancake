@@ -255,8 +255,13 @@ const SCHEDULE = {
     /* The matcher runs in the television. Exercised here against the shape the
        box actually emits, since the two are only useful together. */
     const scores = fs.readFileSync(path.join(ROOT, 'public/tv/js/scores.js'), 'utf8');
+    /* Said as the two things it means, rather than as a count of characters
+       between them: the pairs the by-row pass uses are built from all three
+       spellings the feed ships, and that pass runs before the network one.
+       The character window this used to be broke the moment anything was
+       written between the two, which is a test measuring its own formatting. */
     check('the matcher tries both team names before the network',
-      /teamMatch[\s\S]{0,600}teams\.every\(/.test(scores)
+      /const pairs = \[game\.teamMatch, game\.teamAlt, game\.teamShort\]/.test(scores)
         && scores.indexOf('teams.every(') < scores.indexOf('channelMatch || game.channelName'),
       'public/tv/js/scores.js');
     check('and the television asks for every sport rather than for football',

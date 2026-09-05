@@ -223,8 +223,51 @@ export function matchChannel(game, channels) {
      They are the best possible match by name, which is exactly the problem —
      a card pointed at one opens a channel that is not playing. The stamped
      time is what identifies them. */
-  const live = channels.filter((c) => !/\(\s*\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/
-    .test(String(c.name || '')));
+  const dated = /\(\s*\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/;
+
+  /* Two spellings per side, best first. A pro row says 'BEARS X PACKERS'; a
+     college row is far likelier to say 'ALABAMA X GEORGIA' than 'CRIMSON TIDE
+     X BULLDOGS', and some go with 'ALA X UGA'. Without this the college games
+     had no by-row pass at all on the television — the restriction below was
+     baseball's alone — and every one of them fell through to the network,
+     which on a Saturday is eight games all saying ESPN. */
+  const pairs = [game.teamMatch, game.teamAlt, game.teamShort]
+    .map((pair) => (pair || []).map((t) => String(t).toUpperCase().trim()).filter(Boolean))
+    .filter((pair) => pair.length >= 2);
+
+  /*
+   * A row that names a fixture is THAT fixture's row.
+   *
+   * The provider carries hundreds of per-event rows — 'Flo (FLSP) 279: 2025
+   * UConn vs Mercyhurst - Womens - 24/10 15:00' — and until now only the
+   * by-row pass ever read the two sides off them. The network pass treats
+   * every row as a channel that might be showing anything, so a row naming one
+   * of the two schools, or merely carrying a network word, could answer for a
+   * completely different game. That row says who is playing on it; if it is
+   * not this game, it is not this game's channel.
+   *
+   * Costs the by-row pass nothing — it already requires both names.
+   */
+  const fixtureSplit = /\s(?:VS|V|X|AT)\s|\s@\s/;
+  const wordsOf = (text) => ` ${String(text || '').toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ').trim()} `;
+  const namesAFixture = (name) => {
+    const hay = wordsOf(name);
+    if (hay.search(fixtureSplit) < 0) return false;
+    const [left, right] = hay.split(fixtureSplit);
+    return Boolean(left && left.trim() && right && right.trim());
+  };
+  const fixtureIsOurs = (name) => {
+    const hay = wordsOf(name);
+    return pairs.some((pair) => pair.every((team) => hay.includes(` ${wordsOf(team).trim()} `)));
+  };
+
+  const live = channels.filter((c) => {
+    const name = String(c.name || '');
+    if (dated.test(name)) return false;
+    if (namesAFixture(name) && !fixtureIsOurs(name)) return false;
+    return true;
+  });
 
   /* The game's OWN channel first. On a baseball night this provider carries a
      row per game — 'MLB 01 | Rockies x Nationals' — and that is the broadcast
@@ -247,15 +290,6 @@ export function matchChannel(game, channels) {
     return /FOOTBALL/.test(name) && /\bUSA?\b/.test(name);
   };
 
-  /* Two spellings per side, best first. A pro row says 'BEARS X PACKERS'; a
-     college row is far likelier to say 'ALABAMA X GEORGIA' than 'CRIMSON TIDE
-     X BULLDOGS', and some go with 'ALA X UGA'. Without this the college games
-     had no by-row pass at all on the television — the restriction above was
-     baseball's alone — and every one of them fell through to the network,
-     which on a Saturday is eight games all saying ESPN. */
-  const pairs = [game.teamMatch, game.teamAlt, game.teamShort]
-    .map((pair) => (pair || []).map((t) => String(t).toUpperCase().trim()).filter(Boolean))
-    .filter((pair) => pair.length >= 2);
   for (const teams of pairs) {
     let byTeams = null;
     for (const channel of live) {

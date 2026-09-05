@@ -1621,7 +1621,7 @@
        through it, which is the opposite of what a slate is for. */
     strip.classList.toggle('is-grid', sport === 'ncaaf');
     for (const game of games) {
-      strip.append(scoreCard(game, matchChannel(game, channels, cats, slate.epg)));
+      strip.append(scoreCard(game, matchChannelWhy(game, channels, cats, slate.epg)));
     }
   }
 
@@ -1647,7 +1647,20 @@
    *             up, which is the moment tuning to it is worth doing.
    *   FINAL     the score, greyed, with no dot claiming it is still on.
    */
-  function scoreCard(game, channel) {
+  /* How a routing was arrived at, in the words the tooltip uses. */
+  const WHY = {
+    guide: 'the guide says this is what is on it',
+    row: 'the provider has a row for this fixture',
+    network: 'the network the feed named',
+  };
+
+  function scoreCard(game, routed) {
+    /* `routed` carries the channel AND which pass found it — see
+       matchChannelWhy. Still accepts a bare channel so nothing that calls this
+       with one has to know. */
+    const channel = routed && routed.channel !== undefined ? routed.channel : routed;
+    const pass = (routed && routed.pass) || '';
+    const evidence = (routed && routed.evidence) || '';
     const card = document.createElement('div');
     card.className = `sc-card is-${esc(game.status || 'live')} is-${esc(game.sport || 'mlb')}`;
     if (game.warmup) card.classList.add('is-warmup');
@@ -1673,7 +1686,15 @@
     tune.type = 'button';
     tune.className = 'sc-tune';
     tune.disabled = !channel;
-    tune.title = channel ? `Watch on ${channel.name}` : 'No channel on this box carries it';
+    /* Why this channel, not just which. A card pointed at the wrong game is
+       nearly impossible to argue with from the sofa — the three passes
+       disagree invisibly once one has won — and "matched on the network ESPN"
+       and "the guide says this is what is on it" are two completely different
+       faults that used to look identical. */
+    tune.title = channel
+      ? `Watch on ${channel.name}${pass ? `\n\nMatched because ${WHY[pass]}`
+        + `${evidence ? ` — ${evidence}` : ''}.` : ''}`
+      : 'No channel on this box carries it';
 
     tune.append(scoreLine(game));
     tune.append(game.status === 'upcoming' ? pregameFoot(game) : livingFoot(game, channel));
@@ -2047,6 +2068,44 @@
   const namePairs = (game) => [game.teamMatch, game.teamAlt, game.teamShort]
     .filter((pair) => Array.isArray(pair) && pair.length >= 2 && pair.every(Boolean));
 
+  /*
+   * A row that names a fixture is THAT fixture's row.
+   *
+   * "the Uconn Lafayette game is routed to Flo (FLSP) 279: 2025 UConn vs
+   *  Mercyhurst - Womens - 24/10 15:00, really it is on CBS HARTFORD (WFSB)"
+   *
+   * That row says who is playing on it, and it is not this game. It reached
+   * the card anyway because only the by-row pass ever read the two sides: the
+   * guide pass and the network pass treat every row as a channel that might be
+   * showing anything, so a row naming one of the two schools — or merely
+   * sitting under a network word — could answer for a completely different
+   * fixture. On a college Saturday that is not a rare shape. The provider
+   * carries hundreds of per-event rows across Flo, ESPN+ and the PPV shelves,
+   * most of them for games nobody asked about and some of them left over from
+   * last season, and every one of them names a school somebody is playing.
+   *
+   * So: if a row names two sides, it is only ever eligible for the game whose
+   * two sides those are. It costs the by-row pass nothing — that pass already
+   * requires both names — and it takes these rows away from the two passes
+   * that were never in a position to judge them.
+   *
+   * The dated placeholder filter below is a different thing and stays: those
+   * rows have nothing on them at all.
+   */
+  const FIXTURE_SPLIT = /\s(?:VS|V|X|AT)\s|\s@\s/;
+  function namesAFixture(name) {
+    const hay = words(name);
+    const at = hay.search(FIXTURE_SPLIT);
+    if (at < 0) return false;
+    const [left, right] = hay.split(FIXTURE_SPLIT);
+    return Boolean(left && left.trim() && right && right.trim());
+  }
+  /** Is this fixture row about THIS game? Both sides, in any one spelling. */
+  function fixtureIsOurs(name, pairs) {
+    const hay = words(name);
+    return pairs.some((pair) => pair.every((team) => hasName(hay, team)));
+  }
+
   /**
    * Tie a game to a channel in the real live library.
    *
@@ -2078,10 +2137,32 @@
   const NOT_A_CHANNEL = /^(ESPN\+|ESPN3|PEACOCK|PARAMOUNT\+|FUBO|MAX|NETFLIX|PRIME)/i;
 
   function matchChannel(game, channels, categories, epg) {
+    return matchChannelWhy(game, channels, categories, epg).channel;
+  }
+
+  /**
+   * The same answer with its reasons attached: which pass produced it, and
+   * what the pass had to go on.
+   *
+   * A wrong card is nearly impossible to argue with from the sofa — the three
+   * passes disagree in ways that are invisible once one of them has won — so
+   * the winning pass is carried out of here and put on the card's own tooltip.
+   * "Matched by the network — ESPN" and "Matched by the guide — Lafayette at
+   * UConn" are two completely different bugs, and until now they looked
+   * identical.
+   */
+  function matchChannelWhy(game, channels, categories, epg) {
     const catNames = new Map((categories || []).map((c) => [String(c.id), c.name || '']));
-    const live = channels.filter((c) => !DATED_EVENT.test(String(c.name || '')));
     const sport = game.sport || 'mlb';
     const pairs = namePairs(game);
+    const live = channels.filter((c) => {
+      const name = String(c.name || '');
+      if (DATED_EVENT.test(name)) return false;
+      /* A row that names a fixture answers only for that fixture. See the note
+         by namesAFixture. */
+      if (namesAFixture(name) && !fixtureIsOurs(name, pairs)) return false;
+      return true;
+    });
 
     /* ---- what is on ---- */
     if (epg && epg.size && pairs.length) {
@@ -2093,7 +2174,7 @@
         if (!pairs.some((pair) => pair.every((team) => hasName(hay, team)))) continue;
         if (!best || title.length < best.title.length) best = { channel, title };
       }
-      if (best) return best.channel;
+      if (best) return { channel: best.channel, pass: 'guide', evidence: best.title };
     }
 
     /* ---- the provider's own row for this game ---- */
@@ -2105,7 +2186,7 @@
         if (!pair.every((team) => hasName(hay, team))) continue;
         if (!best || String(channel.name).length < String(best.name).length) best = channel;
       }
-      if (best) return best;
+      if (best) return { channel: best, pass: 'row', evidence: pair.join(' / ') };
     }
 
     /* ---- the network ----
@@ -2123,12 +2204,12 @@
      * two.
      */
     const said = String(game.channelMatch || game.channelName || '').toUpperCase().trim();
-    if (!said || NOT_A_CHANNEL.test(said)) return null;
+    if (!said || NOT_A_CHANNEL.test(said)) return { channel: null, pass: '', evidence: said };
     const networks = said.split(/\s*\/\s*/)
       .map((n) => n.trim())
       .filter((n) => n && !NOT_A_CHANNEL.test(n))
       .sort((a, b) => b.length - a.length);
-    if (!networks.length) return null;
+    if (!networks.length) return { channel: null, pass: '', evidence: said };
 
     let best = null;
     let bestRank = 9;
@@ -2146,7 +2227,7 @@
         bestRank = rank;
       }
     }
-    return best;
+    return { channel: best, pass: best ? 'network' : '', evidence: networks.join(' / ') };
   }
 
 
@@ -2829,6 +2910,9 @@
        second thing to keep in step with the provider's naming, so app.js asks
        here. Falls back to nothing rather than guessing when unavailable. */
     matchChannel,
+    /* And the same answer with its reasons attached, for arguing with a card
+       that went to the wrong game — see matchChannelWhy. */
+    matchChannelWhy,
     get on() { return on; } };
 
 
