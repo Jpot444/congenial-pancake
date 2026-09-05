@@ -320,9 +320,16 @@ async function boot() {
     /* Redraw whatever is showing, so a favourite or a rating made elsewhere
        lands rather than waiting for the next screen change. Keeping the
        cursor: a row that jumps out from under somebody's thumb because the
-       kitchen starred a channel is worse than the stale row was. */
+       kitchen starred a channel is worse than the stale row was.
+
+       Only reached when something a screen actually draws from has changed —
+       followBox compares that rather than the write counter, which every
+       playing device moves twice a minute. */
     app.refresh();
-  }, 10000);
+    /* Every ten seconds was a poll for somebody in another room changing their
+       mind, running all evening. A minute is the same answer, later, and
+       matches what the health chip already settles for. */
+  }, 60000);
 
   app.go('live');
 }

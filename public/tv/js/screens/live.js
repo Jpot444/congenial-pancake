@@ -16,10 +16,11 @@
 import { el, clear, cleanName } from '../ui.js';
 import { loadLibrary, loadEpg, nowOn, favorites, pinnedIds, pinnedFirst, state }
   from '../state.js';
-import { getGames, usingPlaceholders, matchChannel, slateTrouble, feedTrouble, slateSource }
-  from '../scores.js';
+import { getGames, peekGames, forgetGames, usingPlaceholders, matchChannel, slateTrouble,
+  feedTrouble, slateSource } from '../scores.js';
 import { channelCard, categoryCard, allCategoriesCard, rowHead, strip, rowBlock } from './cards.js';
 import { putProfilePrefs } from '../api.js';
+import { focus } from '../focus.js';
 
 const CHANNELS_IN_ROW = 14;
 const CATS_PER_GRID_ROW = 8;
@@ -38,6 +39,9 @@ const GAMES_IN_ROW = 16;
 const GAMES_IN_GRID = 40;
 const GAMES_PER_GRID_ROW = 4;
 const SLATE_ORDER = { live: 0, upcoming: 1, final: 2 };
+/* How often the games row asks again while somebody is looking at it. */
+const SLATE_REFRESH_MS = 60_000;
+let slateTimer = null;
 
 /*
  * Which sport the games row is showing.
@@ -76,7 +80,12 @@ const SPORT_ICON = {
   ncaaf: 'M12 4L2 9l10 5 10-5-10-5z M6 11.5V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-4.5',
 };
 
-let view = { games: [], channels: [], categories: [], epg: new Map(), lib: null };
+let view = { games: [], channels: [], categories: [], epg: new Map(), lib: null,
+  /* Whether the slate has answered for THIS painting of the screen. An empty
+     row means one of three things now — still asking, nothing on, or nobody
+     could be asked — and from ten feet away they look identical unless the row
+     says which. */
+  slateIn: false };
 /** What row 2 is showing: favourites and pins, or one chosen category. */
 let channelSource = null;
 let catsExpanded = false;
@@ -91,10 +100,80 @@ export async function render(host, app) {
      a list of all the others — which is neither the category nor the list. */
   if (channelSource) return renderCategory(host);
 
-  const [games] = await Promise.all([getGames()]);
-  const sport = scoreSport();
-  view.sport = sport;
-  view.games = games
+  view.sport = scoreSport();
+  view.categories = pinnedFirst(lib.categories || [], 'live');
+  view.channels = channelsForRow(lib);
+
+  /* A slate already in hand goes straight into this paint. Only a screen with
+     nothing to show waits, and only the first one ever does. */
+  const held = peekGames();
+  view.slateIn = Boolean(held);
+  view.games = held ? pickGames(held) : [];
+
+  /*
+   * The screen goes up before the slate arrives.
+   *
+   * "the sheild tv takes too long to load because it trys to load in sports
+   *  scores so much"
+   *
+   * This used to await the games before painting anything, and the shell
+   * clears the screen before calling in here — so the television sat on a
+   * blank page for as long as the box took to ask ESPN, the MLB stats API and
+   * the NCAA scoreboard. Three services on the far side of the internet, in
+   * front of a channel list that was already in hand.
+   *
+   * So the rows that need nothing but the library are drawn now and the games
+   * row fills itself in afterwards. Nothing else on the screen moves when it
+   * does — see fillGames.
+   */
+  const seen = view.games.map((g) => matchChannel(g, lib.items || [])).filter(Boolean);
+  view.epg = await loadEpg(
+    [...view.channels, ...seen].map((c) => String(c.epgId || c.id))
+  );
+
+  const root = el('div', 'screen');
+  root.append(sportRow(app));
+  root.append(gameRow(app));
+  root.append(channelRow());
+  root.append(categoryRow());
+  if (state.errors.live) {
+    root.append(el('div', 'empty', `The live library did not load: ${state.errors.live}`));
+  }
+  clear(host).append(root);
+
+  if (!held) fillGames(app, root);
+
+  /*
+   * The scores keep up, and nothing else moves.
+   *
+   * Taking the ten-second whole-screen refresh away would otherwise have left
+   * the games row frozen at whatever it said when the screen opened, which is
+   * a different complaint waiting to be made about the same row. So the row
+   * refreshes itself, on its own slow clock, and only the row — the channels,
+   * the categories and the cursor are not part of it.
+   *
+   * A minute, because that is how often a scoreboard is worth asking about and
+   * because the answer behind it costs three calls across the internet.
+   */
+  clearInterval(slateTimer);
+  slateTimer = setInterval(() => {
+    if (!root.isConnected) return clearInterval(slateTimer);
+    forgetGames();
+    fillGames(app, root);
+    return undefined;
+  }, SLATE_REFRESH_MS);
+}
+
+/** The screen is gone; stop asking on its behalf. */
+export function leave() {
+  clearInterval(slateTimer);
+  slateTimer = null;
+}
+
+/** This sport's games, in the order the row shows them. */
+function pickGames(games) {
+  const sport = view.sport;
+  return games
     .filter((g) => (g.sport || 'nfl') === sport)
     /* A televised college game ahead of one without a network against its
        name: the box asks ESPN for FBS first, but when that address is refused
@@ -108,27 +187,59 @@ export async function render(host, app) {
          the earliest number there is and it is not an early kickoff. */
       || (a.kickoff || Number.MAX_SAFE_INTEGER) - (b.kickoff || Number.MAX_SAFE_INTEGER))
     .slice(0, sport === 'ncaaf' ? GAMES_IN_GRID : GAMES_IN_ROW);
+}
 
-  view.categories = pinnedFirst(lib.categories || [], 'live');
-  view.channels = channelsForRow(lib);
-
-  /* One EPG call for everything on screen: the channels in row 2 and whatever
-     channels the game cards matched. The box answers for six unseen channels
-     at a time, so the rest fill in on the next visit rather than queueing
-     forty provider calls behind whatever is playing. */
-  const matched = view.games.map((g) => matchChannel(g, lib.items || [])).filter(Boolean);
-  const ids = [...view.channels, ...matched].map((c) => String(c.epgId || c.id));
-  view.epg = await loadEpg(ids);
-
-  const root = el('div', 'screen');
-  root.append(sportRow(app));
-  root.append(gameRow(app));
-  root.append(channelRow());
-  root.append(categoryRow());
-  if (state.errors.live) {
-    root.append(el('div', 'empty', `The live library did not load: ${state.errors.live}`));
+/**
+ * The games row, once the slate has answered.
+ *
+ * Only the row is replaced, and only if this screen is still the one showing —
+ * a slate that arrives after somebody has moved on has nothing to redraw. The
+ * cursor is put back where it was: a row appearing under somebody's thumb is
+ * the other half of what was reported, and the fix for a slow screen must not
+ * be a screen that rearranges itself.
+ */
+async function fillGames(app, root) {
+  const token = (fillGames.token = (fillGames.token || 0) + 1);
+  let games = [];
+  try {
+    games = await getGames();
+  } catch {
+    games = [];
   }
-  clear(host).append(root);
+  /* Left the screen, or asked again since. Either way this answer is stale. */
+  if (token !== fillGames.token || !root.isConnected) return;
+
+  const lib = view.lib || { items: [], categories: [] };
+  view.slateIn = true;
+  view.games = pickGames(games);
+
+  /* The listings for whatever channels the cards matched. The channel row's
+     own listings are already in hand from the first paint, so this only adds
+     to them — the box answers for six unseen channels at a time and forty
+     provider calls behind whatever is playing is not a trade worth making. */
+  const matched = view.games.map((g) => matchChannel(g, lib.items || [])).filter(Boolean);
+  if (matched.length) {
+    try {
+      const more = await loadEpg(matched.map((c) => String(c.epgId || c.id)));
+      if (token !== fillGames.token || !root.isConnected) return;
+      for (const [id, listings] of more) view.epg.set(id, listings);
+    } catch {
+      /* No listings is a card without a progress bar, not a card missing. */
+    }
+  }
+
+  /* In place of the row that was there, and nothing else touched. */
+  const fresh = gameRow(app);
+  const old = root.querySelector('[data-row="games"]');
+  if (old) old.replaceWith(fresh); else root.append(fresh);
+
+  /* The engine has to be told the row it is pointing at has changed shape.
+     Where the cursor was is where it stays — see the note on fillGames. */
+  const at = { r: focus.pos.r, c: focus.pos.c };
+  focus.collect();
+  focus.pos = at;
+  focus.el = null;
+  focus.apply();
 }
 
 /* -------------------------------------------------------- one category ── */
@@ -231,15 +342,26 @@ function sportGlyph(key) {
 function gameRow(app) {
   const liveCount = view.games.filter((g) => g.status === 'live' && !g.redZone).length;
   const whip = view.games.filter((g) => g.redZone).length;
-  const meta = usingPlaceholders()
-    ? 'Scores are placeholder — no feed connected'
-    : `${liveCount} game${liveCount === 1 ? '' : 's'}${whip ? ` · ${whip} whip-around` : ''}`;
+  const meta = !view.slateIn
+    ? 'asking…'
+    : usingPlaceholders()
+      ? 'Scores are placeholder — no feed connected'
+      : `${liveCount} game${liveCount === 1 ? '' : 's'}${whip ? ` · ${whip} whip-around` : ''}`;
 
   const head = rowHead('LIVE NOW', {
     label: labelForSlate(),
     meta,
     size: 'big',
   });
+
+  /* Still asking. The row says so rather than claiming an empty slate: the
+     box is talking to three services on the far side of the internet and the
+     honest answer for those few seconds is "not yet", not "no games". */
+  if (!view.slateIn) {
+    const block = rowBlock(head, el('div', 'empty', 'Looking for what is on…'));
+    block.dataset.row = 'games';
+    return block;
+  }
 
   /* An empty row means one of two entirely different things — nothing is on,
      or nobody could be asked — and from ten feet away they look identical.
@@ -254,9 +376,11 @@ function gameRow(app) {
        is asking somebody standing in their living room to work out what to put
        in front of it. */
     const where = `${location.origin}${slateSource()}`;
-    return rowBlock(head, el('div', 'empty', why
+    const block = rowBlock(head, el('div', 'empty', why
       ? `No scores: ${why}. Type ${where}/probe into a browser to see what every address replied.`
       : `No games on the slate right now — the feed answered, with nothing on it. ${where} shows what it was asked.`));
+    block.dataset.row = 'games';
+    return block;
   }
 
   /* A college Saturday is sixty games. A row you scroll along is right for a
@@ -273,11 +397,15 @@ function gameRow(app) {
         .map((game, c) => gameCard(game, c, 1 + (i / GAMES_PER_GRID_ROW) * 0.1));
       grid.append(strip(line, { wide: true }));
     }
-    return rowBlock(head, grid);
+    const block = rowBlock(head, grid);
+    block.dataset.row = 'games';
+    return block;
   }
 
   const cards = view.games.map((game, i) => gameCard(game, i));
-  return rowBlock(head, strip(cards, { wide: true }));
+  const block = rowBlock(head, strip(cards, { wide: true }));
+  block.dataset.row = 'games';
+  return block;
 }
 
 function labelForSlate() {

@@ -72,6 +72,21 @@ NFL_URL=http://127.0.0.1:9922/ node server.js
 | Player | `/api/play?kind=live`, `/api/epg/now`, `/api/profiles/:id/history` |
 | Guide (▼) | `/api/epg/now` for the channels in the flip list |
 | Other games (▼ on a game) | `/api/scores` matched against `/api/library?tab=live` |
+
+The slate is asked for **once** and shared: `getGames()` holds it for thirty
+seconds and coalesces callers, because behind that one address the box asks
+ESPN, the MLB stats API and the NCAA scoreboard — three services across the
+internet, and four screens in this app want the answer. The Live screen paints
+before it arrives and fills the games row in afterwards, replacing that row
+alone and putting the cursor back; the row then re-asks once a minute while the
+screen is up, and stops when it is left.
+
+The once-a-minute profile poll only redraws when something a screen is actually
+drawn from has changed — hearted channels, pinned categories, binned items,
+ratings, the chosen sport. The write counter it used to act on moves every time
+any player in the house reports its position, which is twice a minute per
+device, so acting on it alone rebuilt the screen all evening for news that was
+somebody else's playhead.
 | Channel bar (OK) | the same flip list, current channel marked |
 | Multi-view | four `/api/play` streams, audio follows focus |
 | Movies | `/api/library?tab=movies`, `/api/profiles/:id/taste`, `get_vod_info` for the spotlight synopsis |

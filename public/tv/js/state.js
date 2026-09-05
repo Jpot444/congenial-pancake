@@ -98,11 +98,56 @@ export async function followBox({ playing = false } = {}) {
   }
   if (Number.isFinite(data.rev) && data.rev !== state.rev) {
     state.rev = data.rev;
+    const was = screenPrint();
     state.prefs = await getProfilePrefs(state.profile.id).catch(() => state.prefs);
     await loadTaste();
+    /*
+     * Only redraw if what is ON THE SCREEN actually changed.
+     *
+     * "It also refreshes a lot and the screen changes"
+     *
+     * The counter this poll watches moves on every write to the profile, and
+     * the commonest write by a distance is a position report: every player in
+     * the house says where it has got to every fifteen or thirty seconds. So
+     * the counter is almost never still, and acting on it alone meant redrawing
+     * the whole screen every ten seconds all evening — a rebuild the viewer
+     * sees, for news that was somebody's playhead moving.
+     *
+     * What this screen is actually drawn from is a much smaller thing: which
+     * channels are hearted, which categories are pinned, what has been binned,
+     * what has been rated, which sport the games row is on. Comparing those
+     * across the reload answers the question the counter cannot.
+     */
+    if (screenPrint() === was) return null;
     return { refreshed: true };
   }
   return null;
+}
+
+/**
+ * A fingerprint of everything a screen in this app draws from.
+ *
+ * Deliberately not the whole of prefs or taste. Watch positions live in both
+ * and change constantly by design; a fingerprint that included them would be
+ * the counter again under another name. What is here is the settings that
+ * shape a screen, plus the IDENTITY of what is in the taste lists rather than
+ * how far through any of it somebody is.
+ */
+function screenPrint() {
+  const p = state.prefs || {};
+  const t = state.taste || {};
+  const ids = (rows) => (rows || []).map((r) => r && (r.key || r.id)).join(',');
+  return JSON.stringify([
+    p.favorites || [],
+    p.pinnedCategories || [],
+    p.deletedItems || [],
+    p.deletedCategories || [],
+    p.scoreSport || '',
+    Boolean(p.owner),
+    t.ratings || {},
+    ids(t.continueWatching),
+    ids(t.recentlyWatched),
+  ]);
 }
 
 export async function loadTaste() {

@@ -156,7 +156,64 @@ let asked = 0;
    actually happened. */
 let feeds = [];
 
+/*
+ * The slate, asked for once and shared.
+ *
+ * "the sheild tv takes too long to load because it trys to load in sports
+ *  scores so much"
+ *
+ * Every caller used to mean a fresh fetch, and there are four of them now: the
+ * Live screen on every render, multi-view when it opens, the player on every
+ * tune, and the Live screen again on every ten-second refresh. Behind that one
+ * address the box asks ESPN, the MLB stats API and the NCAA scoreboard — three
+ * services on the far side of the internet — so this is the slowest thing the
+ * television waits on and it was being waited on over and over.
+ *
+ * A scoreboard is worth about half a minute of staleness. What it is not worth
+ * is the app stopping to ask again because somebody pressed a channel.
+ */
+const SLATE_TTL_MS = 30_000;
+let cached = null;
+let cachedAt = 0;
+let inFlight = null;
+
+/**
+ * The slate already in hand, or null.
+ *
+ * For a screen that is being painted again rather than opened: coming back to
+ * Live TV, or the once-a-minute refresh. Those have a slate a few seconds old
+ * sitting right here, and putting a "looking for what is on" placeholder up
+ * before replacing it a frame later is the screen changing under somebody for
+ * no reason at all.
+ */
+export function peekGames() {
+  return cached && Date.now() - cachedAt < SLATE_TTL_MS ? cached : null;
+}
+
+/** Throw the held slate away, so the next ask really asks. */
+export function forgetGames() {
+  cached = null;
+  cachedAt = 0;
+}
+
 export async function getGames() {
+  if (cached && Date.now() - cachedAt < SLATE_TTL_MS) return cached;
+  /* Two screens opening at once is one request, not two. Both get the same
+     answer, which is also the only way they can agree about what is on. */
+  if (inFlight) return inFlight;
+  inFlight = fetchGames().then((games) => {
+    cached = games;
+    cachedAt = Date.now();
+    inFlight = null;
+    return games;
+  }, (err) => {
+    inFlight = null;
+    throw err;
+  });
+  return inFlight;
+}
+
+async function fetchGames() {
   if (!ENDPOINT) {
     live = false;
     trouble = '';
