@@ -254,8 +254,16 @@ const portFree = async () => {
      * the player is up, so the difference is still there to act on afterwards.
      */
     check('and does not redraw itself while the player is up',
-      /const overlay = \$\('#playerOverlay'\);\n\s*if \(overlay && !overlay\.hidden\) return undefined;/.test(app),
+      /const overlay = \$\('#playerOverlay'\);[\s\S]{0,200}?overlay && !overlay\.hidden[\s\S]{0,120}?return undefined;/
+        .test(app),
       'the poll acts on the counter during playback');
+    /* Multi-view is four things playing, and a cell holding a film reports its
+       position on the same heartbeat — so it needs the same exemption, and
+       without it the page was rebuilt under the grid four times a minute. */
+    check('nor while multi-view is up, which is four of them',
+      /const grid = \$\('#multiview'\);[\s\S]{0,200}?grid && !grid\.hidden[\s\S]{0,60}?return undefined;/
+        .test(app),
+      'the poll acts on the counter under the multi-view grid');
     check('and catches up when the player closes',
       /profiles\.follow\(\)\.catch/.test(app), 'closePlayer does not catch up');
 

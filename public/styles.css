@@ -3712,6 +3712,74 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .mv-name.is-link { cursor: pointer; text-decoration: underline dotted rgba(255, 255, 255, .45); }
 .mv-name.is-link:hover { color: #fff; text-decoration-color: rgba(255, 255, 255, .9); }
 
+/* ---- the scrubber, on a cell holding a film or an episode ----
+   Hung off the bar at `bottom: 100%` rather than placed in the cell on its
+   own, so it sits exactly above however tall the bar has become — it wraps on
+   a narrow screen — and fades with it rather than needing a second rule that
+   would have to be kept in step. */
+.mv-track {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 6px;
+  font-size: .68rem;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, .72);
+}
+.mv-track-rail {
+  position: relative;
+  flex: 1 1 auto;
+  height: 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, .16);
+  cursor: pointer;
+}
+/* A taller invisible target than the rail it draws: 4px is the right weight
+   over a picture and the wrong thing to ask a finger to hit. */
+.mv-track-rail::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -9px;
+  bottom: -9px;
+}
+/* The span already converted — instant to jump inside, where anywhere else
+   costs a restart of ffmpeg. Drawn because that difference is several seconds
+   of waiting and the viewer is the one choosing. */
+.mv-track-ready {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, .44);
+}
+.mv-track-played {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: var(--brand-red-light, #B0242A);
+}
+.mv-track-knob {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 50%;
+  background: #fff;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.mv-track-time { flex: none; min-width: 3.2em; }
+.mv-track-time:last-child { text-align: right; }
+
 /* ---- the episode list, inside its own cell ----
    Not over the whole screen: the other cells are still playing, and choosing
    the next episode of one show is no reason to take the game away from

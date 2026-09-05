@@ -2799,6 +2799,52 @@ is 60s here, which is what sets that), and forward stops at the live edge.
 Pressing at the edge does nothing rather than throwing the position somewhere
 invalid.
 
+### A film in a cell has a timeline
+
+A cell used to know only what its video element knew, and for a converted title
+the element's zero is wherever ffmpeg was started — not the top of the film. So
+there was no way to reach minute forty of anything (both skip buttons were
+clamped to the span already written, and ten seconds past the frontier did
+nothing, for ever), and a half-watched film always began again at the
+beginning.
+
+The cell now keeps the **film's** timeline rather than the element's:
+
+- `offset` — where this conversion begins in the title, straight from the
+  server's answer. Position is `offset + currentTime` everywhere, including in
+  what gets written to the watch history; reading the element alone put every
+  resume point back at the start of the conversion.
+- `duration` — the runtime the server probed, which is what the bar is laid out
+  against.
+- The **converted span** is drawn as a lighter band, because a jump inside it is
+  instant and a jump outside it is a restart of ffmpeg — several seconds of
+  waiting, and the viewer is the one choosing.
+
+A jump outside that band restarts the conversion at the mark and passes
+`replaces`, so the other cells keep their pictures. That parameter was added to
+the server for the main player's scrubber; a cell simply never asked for it.
+
+**Resume, without a dialogue.** A cell reads the profile's position for the
+title before asking for anything and has the conversion **start** there — going
+to the top and seeking afterwards would spend a whole restart of ffmpeg to
+arrive where it could have begun. It resumes rather than asking, the same as
+opening a title from a card does: there is no room in a cell for a question,
+and three other pictures should not wait on one. A whole file and an archive
+conversion (which always runs from the top — these rips only hold sync that
+way) are seated with a `currentTime` instead, measured against `seekable`
+rather than `duration`, since a growing playlist has no duration to check.
+
+**And a cell writes history**, which is the other half of it: without that, a
+film watched only in multi-view left nothing to come back to. Films and
+episodes only — four channels at once all reporting watch time would tell the
+suggestions layer this profile watched four things simultaneously, which is not
+what happened. Only one conversion runs at a time, so there is only ever one.
+
+That heartbeat also moves the profile counter, so `follow()` leaves the counter
+alone while the grid is up for the same reason it does under the player: this
+device cannot tell its own beacon from news out of another room, and acting on
+it rebuilt the page underneath multi-view four times a minute.
+
 ### The other games
 
 Pressing Multi-view from inside a live game is almost always the question

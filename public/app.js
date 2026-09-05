@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '39.4';
+const VERSION = '39.5';
 
 const PAGE_SIZE = 60;
 
@@ -282,8 +282,16 @@ const profiles = {
        * the difference is still waiting when the player closes, so a genuine
        * change made elsewhere during the film lands the moment it ends.
        */
+      /*
+       * Multi-view counts, for exactly the same reason. A cell holding a film
+       * reports its position on the same fifteen-second heartbeat, and this
+       * device cannot tell that from news out of another room either — so
+       * without it here, watching a film in a cell rebuilt the page underneath
+       * the grid four times a minute.
+       */
       const overlay = $('#playerOverlay');
-      if (overlay && !overlay.hidden) return undefined;
+      const grid = $('#multiview');
+      if ((overlay && !overlay.hidden) || (grid && !grid.hidden)) return undefined;
       this.rev = res.rev;
       await this.catchUp();
     }
@@ -1033,6 +1041,25 @@ const MV_IDLE = 3000;        // how long the chrome stays up with nothing moving
  */
 const MV_SOURCES = ['live', 'movies', 'series', 'favorites', 'recent', 'archive'];
 
+/**
+ * What the watch history calls what a cell is playing.
+ *
+ * The same key the main player writes, because they have to be the same title:
+ * a film started in the player and carried on in a cell is one thing watched,
+ * and two spellings of its name would make it two half-watched ones.
+ *
+ * A cell is handed the SHOW plus an override naming the episode, so the
+ * episode's own numbers have to come off the override — `resumeKeyFor` takes a
+ * provider episode record, which is not what a cell has by then.
+ */
+function mvResumeKey(item, override) {
+  if (item.resumeKey) return item.resumeKey;      // downloads carry theirs
+  if (override && override.season && override.episode) {
+    return `series:${item.id}:s${override.season}e${override.episode}`;
+  }
+  return resumeKeyFor(item);
+}
+
 /* ------------------------------------------------------- other games on ── */
 
 /*
@@ -1233,6 +1260,22 @@ const multiview = {
       // Asked for is not the same as playing, and on this account it was
       // expected not to be. Tracked separately so the count says which.
       ok: false,
+
+      /* -- a film's own timeline, which a channel does not have -----------
+       *
+       * A conversion is not the film: ffmpeg is started AT a point and writes
+       * forward from there, so the video element's zero is `offset` seconds
+       * into the title and everything the viewer means by a position has to be
+       * `offset + currentTime`. Without these three a cell could only ever nudge
+       * ten seconds inside whatever span happened to be converted, which is
+       * what "I can't seek into the film" is.
+       */
+      offset: 0,          // where this conversion starts, in the film
+      duration: 0,        // the film's real runtime, from the probe
+      resumeKey: '',      // what this title is called in the watch history
+      seeking: false,     // a jump in flight; a second one must not overlap it
+      histTimer: null,    // the position reporter, so a cell leaves a resume point
+      histTarget: null,
     };
     this.cells[index] = rec;
 
@@ -1297,7 +1340,41 @@ const multiview = {
     grip.setAttribute('aria-label', grip.title);
     this.makeDraggable(grip, rec);
 
+    /*
+     * The scrubber, for a film or an episode.
+     *
+     * A channel has no timeline to scrub — it is a window on now — so this only
+     * exists on a cell holding a conversion, which is also the only cell that
+     * has a runtime to lay out against.
+     *
+     * It hangs off the bar at `bottom: 100%` rather than being positioned in
+     * the cell on its own, so it sits exactly above however tall the bar has
+     * become (it wraps on a narrow screen) and inherits the bar's fade without
+     * a second rule to keep in step.
+     *
+     * The lighter band is the span already converted — instant to jump inside,
+     * where anywhere else costs a restart of ffmpeg — and it is drawn because
+     * that difference is several seconds of waiting and the viewer is the one
+     * choosing.
+     */
+    const track = el('div', 'mv-track');
+    track.hidden = true;
+    const ready = el('span', 'mv-track-ready');
+    const played = el('span', 'mv-track-played');
+    const knob = el('span', 'mv-track-knob');
+    const rail = el('div', 'mv-track-rail');
+    rail.append(ready, played, knob);
+    const elapsed = el('span', 'mv-track-time');
+    const total = el('span', 'mv-track-time');
+    rail.addEventListener('click', (event) => {
+      const seconds = this.trackSeconds(rec, event);
+      if (seconds !== null) this.seekCell(this.at(rec), seconds);
+      this.wake();
+    });
+    track.append(elapsed, rail, total);
+
     bar.append(name, tag, grip, back, play, fwd, again, sound, grow, drop);
+    bar.append(track);
 
     const note = el('p', 'mv-status');
     note.hidden = true;   // an empty one still paints as a grey strip
@@ -1327,9 +1404,17 @@ const multiview = {
     sheet.append(sheetTop, sheetBody);
 
     box.append(video, note, bar, empty, sheet);
+    /* The scrubber repaints off the element rather than off a timer: what is
+       converted is exactly what the element reports as seekable, so `progress`
+       and `timeupdate` are the two moments either number can have changed. */
+    for (const evt of ['timeupdate', 'progress', 'durationchange', 'seeked']) {
+      video.addEventListener(evt, () => this.paintTrack(rec));
+    }
+
     Object.assign(rec, {
       box, video, empty, bar, name, tag, play, sound, note,
       sheet, sheetTitle, sheetBody,
+      track, rail, ready, played, knob, elapsed, total,
     });
     return box;
   },
@@ -1415,6 +1500,8 @@ const multiview = {
             ext: ep.container_extension || 'mp4',
             vcodec: ep.info?.video?.codec_name || '',
             label: `${show.name} — S${season}E${ep.episode_num}`,
+            season,
+            episode: ep.episode_num,
           });
         });
         body.append(row);
@@ -1806,6 +1893,9 @@ const multiview = {
       cell.sound.classList.toggle('is-on', !cell.video.muted);
       cell.play.textContent = cell.video.paused ? '▶' : '❚❚';
       cell.play.title = cell.video.paused ? 'Play' : 'Pause';
+      /* On a film the skips move along the film, so say so: ten seconds past
+         the converted edge used to be a button that did nothing for ever. */
+      this.paintTrack(cell);
     });
 
     for (const button of document.querySelectorAll('#mvCountSeg button')) {
@@ -1835,9 +1925,232 @@ const multiview = {
     const cell = this.cells[index];
     const video = cell?.video;
     if (!cell?.item || !video || !video.seekable?.length) return;
+    /* On a film the ten seconds are ten seconds OF THE FILM, which past the
+       edge of what is converted is a jump rather than a nudge — otherwise +10
+       at the frontier does nothing for ever, which is what it used to do. */
+    if (cell.vod) return this.seekCell(index, this.cellPosition(cell) + seconds);
     const first = video.seekable.start(0);
     const last = video.seekable.end(video.seekable.length - 1);
     video.currentTime = Math.max(first, Math.min(last, video.currentTime + seconds));
+  },
+
+  /* -- a film's own timeline -------------------------------------------- *
+   *
+   * "If I load a movie or series in multiplayer I can't seek into the film and
+   *  I don't get a resume playing button."
+   *
+   * Both of those are the same missing idea. A cell used to know only what the
+   * video element knew, and for a conversion the element's zero is wherever
+   * ffmpeg was started — so ten seconds either way inside the converted span
+   * was the whole of what a cell could do, and a title always began at the
+   * beginning however much of it had already been watched.
+   *
+   * What follows is the film's timeline rather than the element's: position is
+   * `offset + currentTime`, what is instantly reachable is the converted span,
+   * and anywhere else is a restart of the conversion at the mark. The server
+   * has taken a `start` and answered with its `offset` all along, and
+   * `replaces` exists precisely so one cell's restart does not cut off
+   * another's — none of that needed building, only asking for.
+   */
+
+  /** Where this cell is in the title, in seconds. */
+  cellPosition(cell) {
+    if (!cell || !cell.video) return 0;
+    return (cell.offset || 0) + (cell.video.currentTime || 0);
+  },
+
+  /** How far the conversion has written, as a point in the title. */
+  cellReady(cell) {
+    const video = cell && cell.video;
+    const ranges = video && video.seekable && video.seekable.length
+      ? video.seekable : (video && video.buffered);
+    if (!ranges || !ranges.length) return cell ? cell.offset || 0 : 0;
+    const end = ranges.end(ranges.length - 1);
+    return (cell.offset || 0) + (Number.isFinite(end) ? end : 0);
+  },
+
+  /**
+   * The runtime to lay the bar out against.
+   *
+   * The probe's answer where there is one. Where there is not — and a provider
+   * that has never been asked for this title has none — the furthest point
+   * reached stands in, so the knob is never off the end of its own track.
+   */
+  cellDuration(cell) {
+    const seen = Math.max(this.cellPosition(cell), this.cellReady(cell));
+    const known = Number(cell && cell.duration) || 0;
+    if (known > seen) return known;
+    const native = cell && cell.video ? cell.video.duration : 0;
+    if (!known && Number.isFinite(native) && native > seen) return native;
+    return Math.max(known, seen);
+  },
+
+  /** Where on the film a click on the rail landed, or null if unanswerable. */
+  trackSeconds(cell, event) {
+    const total = this.cellDuration(cell);
+    if (!total) return null;
+    const rect = cell.rail.getBoundingClientRect();
+    if (!rect.width) return null;
+    const x = (event.touches ? event.touches[0].clientX : event.clientX) - rect.left;
+    return Math.max(0, Math.min(1, x / rect.width)) * total;
+  },
+
+  paintTrack(cell) {
+    if (!cell || !cell.track) return;
+    /* Only where there is a timeline. A channel is a window on now and has
+       none, and a rail across one would be a control that cannot be right. */
+    cell.track.hidden = !(cell.item && cell.vod);
+    if (cell.track.hidden) return;
+
+    const total = this.cellDuration(cell);
+    const at = this.cellPosition(cell);
+    const ready = this.cellReady(cell);
+    const pct = (n) => (total ? Math.max(0, Math.min(100, (n / total) * 100)) : 0);
+
+    cell.played.style.width = `${pct(at)}%`;
+    cell.knob.style.left = `${pct(at)}%`;
+    /* The converted span starts where this conversion was started, not at the
+       top of the film — the difference is the whole reason a jump backwards
+       out of it costs a restart. */
+    cell.ready.style.left = `${pct(cell.offset || 0)}%`;
+    cell.ready.style.width = `${Math.max(0, pct(ready) - pct(cell.offset || 0))}%`;
+    cell.elapsed.textContent = hms(Math.floor(at));
+    cell.total.textContent = total ? hms(Math.floor(total)) : '';
+  },
+
+  /**
+   * Jump to a point in the film.
+   *
+   * Three cases, cheapest first, and the difference between them is seconds of
+   * waiting rather than a detail: a native file seeks itself, a mark already
+   * inside the converted span is an ordinary `currentTime`, and anywhere else
+   * is ffmpeg started again at the mark. That last one names the session it
+   * supersedes, so the other cells keep their pictures — `replaces` was added
+   * to the server for exactly this and until now only the main player used it.
+   */
+  async seekCell(index, target) {
+    const cell = this.cells[index];
+    if (!cell || !cell.item || !cell.vod || cell.seeking) return;
+    const video = cell.video;
+    const total = this.cellDuration(cell);
+    const ceiling = total > 0 ? Math.max(0, total - 2) : Number.MAX_SAFE_INTEGER;
+    const clamped = Math.max(0, Math.min(ceiling, target));
+
+    /* A file the browser can seek itself — a finished download, or the
+       archive drive answering `direct`. No conversion to restart. */
+    if (!cell.remux) {
+      if (Number.isFinite(video.duration)) {
+        video.currentTime = Math.min(clamped, Math.max(0, video.duration - 0.5));
+        this.paintTrack(cell);
+      }
+      return;
+    }
+
+    const within = clamped >= (cell.offset || 0) && clamped < this.cellReady(cell) - 1;
+    if (within) {
+      video.currentTime = clamped - (cell.offset || 0);
+      video.play().catch(() => {});
+      this.paintTrack(cell);
+      return;
+    }
+
+    cell.seeking = true;
+    const wasPlaying = !video.paused;
+    video.pause();
+    cell.note.hidden = false;
+    cell.note.textContent = `Jumping to ${hms(Math.floor(clamped))}…`;
+    this.paint();
+
+    const mine = (cell.token = (cell.token || 0) + 1);
+    try {
+      /* An archive conversion is the whole file from the top — the only
+         arrangement these rips hold sync in — so it is never restarted. Wait
+         for it to pass the mark inside the session already running. */
+      if (cell.item.archivePath) {
+        await this.waitForSpan(cell, clamped, () => cell.token !== mine);
+        if (cell.token !== mine) return;
+        video.currentTime = clamped - (cell.offset || 0);
+      } else {
+        const over = cell.override || {};
+        const kind = over.kind || (cell.item.kind === 'movie' ? 'movie' : cell.item.kind);
+        const remuxed = cell.item.downloadId
+          ? await api('/api/remux', { download: cell.item.downloadId,
+            start: Math.floor(clamped), replaces: cell.remux, ...lowParam() })
+          : await api('/api/remux', {
+            kind,
+            id: over.id ?? cell.item.id,
+            ext: over.ext ?? cell.item.ext ?? '',
+            vcodec: over.vcodec || cell.item.vcodec || '',
+            start: Math.floor(clamped),
+            replaces: cell.remux,
+            ...lowParam(),
+          });
+        if (cell.token !== mine) {
+          if (remuxed.session) {
+            fetch(`/api/remux/stop?id=${encodeURIComponent(remuxed.session)}`).catch(() => {});
+          }
+          return;
+        }
+        cell.remux = remuxed.session || '';
+        if (remuxed.sourceDuration) cell.duration = remuxed.sourceDuration;
+        await this.waitForConversion(cell, remuxed, () => cell.token !== mine);
+        if (cell.token !== mine) return;
+        /* Swapped in together with the source, not when the answer came back:
+           an offset describing the incoming session while the outgoing one
+           still plays makes the bar jump early and any position saved in that
+           window wrong by the length of the jump. */
+        cell.offset = remuxed.offset || 0;
+        /* The outgoing engine goes first. attach() does not take one down —
+           stop() is what usually does — and two of them feeding one element is
+           a picture that stutters between two parts of the film. */
+        if (cell.engine) {
+          try { cell.engine.destroy(); } catch { /* already gone */ }
+          cell.engine = null;
+        }
+        this.attach(cell, remuxed.url, 'm3u8', true, false);
+      }
+      if (wasPlaying) video.play().catch(() => {});
+    } catch (err) {
+      if (cell.token !== mine) return;
+      cell.note.hidden = false;
+      cell.note.textContent = `Couldn't jump there: ${err.message}`;
+      /* The jump failed, so the old stream is still loaded and still where it
+         was. Put it back rather than leaving the film silently stopped
+         somewhere nobody asked for. */
+      if (wasPlaying) video.play().catch(() => {});
+    } finally {
+      if (cell.token === mine) {
+        cell.seeking = false;
+        this.paintTrack(cell);
+        this.paint();
+      }
+    }
+  },
+
+  /**
+   * Wait for a conversion running from the top to write past a mark.
+   *
+   * The main player's waitForConversionSpan cannot be reused: it puts the
+   * app-wide loader up, which here would cover the other three cells for a
+   * wait that is about one of them. The count goes on the cell instead.
+   */
+  async waitForSpan(cell, wantSeconds, stale) {
+    if (!cell.remux) return;
+    const target = wantSeconds + 8;
+    for (;;) {
+      if (stale()) return;
+      let status;
+      try {
+        status = await api('/api/remux/status', { id: cell.remux });
+      } catch {
+        return;                        // session gone; let the player try anyway
+      }
+      if (status.failed) throw new Error(status.error || 'Conversion failed');
+      if (status.complete || status.seconds >= target) return;
+      cell.note.textContent =
+        `Loading up to ${hms(Math.floor(wantSeconds))} — ${hms(Math.floor(status.seconds))} ready`;
+      await new Promise((r) => setTimeout(r, 700));
+    }
   },
 
   /**
@@ -2384,6 +2697,12 @@ const multiview = {
       ext: ep.container_extension || 'mp4',
       vcodec: ep.info?.video?.codec_name || '',
       label: `${item.name} — S${season}E${wanted}`,
+      /* Which episode this is, in the show's own numbering. The stream id
+         alone cannot say — and the resume point is written against the
+         numbering, so without these a cell and the main player would call the
+         same episode two different things. */
+      season,
+      episode: wanted,
     });
   },
 
@@ -2448,6 +2767,8 @@ const multiview = {
           ext: ep.container_extension || 'mp4',
           vcodec: ep.info?.video?.codec_name || '',
           label: `${item.name} — S${season}E${ep.episode_num}`,
+          season,
+          episode: ep.episode_num,
         });
       });
       box.append(card);
@@ -2487,6 +2808,9 @@ const multiview = {
     cell.override = override || null;
     cell.label = override?.label || item.name;
     cell.ok = false;
+    cell.offset = 0;
+    cell.duration = 0;
+    cell.resumeKey = vod ? mvResumeKey(item, override) : '';
     cell.note.hidden = false;
     cell.note.textContent = vod ? 'Converting…' : 'Asking for the stream…';
     this.paint();
@@ -2497,8 +2821,27 @@ const multiview = {
     const stale = () => cell.token !== mine || cell.item !== item;
 
     try {
+      /*
+       * Where this title was left, if it was left anywhere.
+       *
+       * Read before the conversion is asked for, because a provider title is
+       * converted FROM a point — starting at the top and seeking afterwards
+       * would spend a whole restart of ffmpeg to arrive where it could have
+       * begun. The same rule the rest of the portal follows from a card: a
+       * position is resumed, not asked about. There is no room in a cell for a
+       * dialogue and three other pictures behind it that should not be waiting
+       * on one.
+       */
+      let resumeAt = 0;
+      if (vod && cell.resumeKey) {
+        const saved = await fetchProgress(cell.resumeKey);
+        if (stale()) return;
+        resumeAt = saved ? Math.floor(saved.position) : 0;
+        if (saved && saved.duration) cell.duration = Math.floor(saved.duration);
+      }
+
       const play = vod
-        ? await this.resolveVod(cell, item, override, () => stale())
+        ? await this.resolveVod(cell, item, override, () => stale(), resumeAt)
         : await api('/api/play', {
           kind: 'live',
           id: item.id,
@@ -2508,6 +2851,17 @@ const multiview = {
       if (stale() || !play) return;
       cell.format = play.format || '';
       this.attach(cell, play.url, play.format, vod, Boolean(play.dvr));
+      /* One rule for all three deliveries: seat the element wherever the
+         resume point is that the conversion did not already start at. A
+         provider remux began AT the mark, so the difference is nothing; a
+         whole file, or an archive conversion running from the top, needs the
+         playhead moved. */
+      if (vod && resumeAt - (cell.offset || 0) > 1) {
+        this.seatAt(cell, resumeAt - (cell.offset || 0));
+      }
+      if (vod && resumeAt > 0) toast(`Resumed “${cell.label}” at ${hms(resumeAt)}.`);
+      if (vod) this.beginCellHistory(cell, item, override);
+      this.paintTrack(cell);
     } catch (err) {
       if (cell.token !== mine) return;
       // The interesting failure. Said plainly rather than as a stack.
@@ -2515,6 +2869,110 @@ const multiview = {
       cell.ok = false;
       this.paint();
     }
+  },
+
+  /**
+   * Put the playhead at the resume point, once there is enough of the thing to
+   * accept one.
+   *
+   * Measured against `seekable`, not `duration`. A conversion's playlist has no
+   * end marker while ffmpeg is still writing, so its duration reads as infinite
+   * — a check on that would simply never fire, and the film would quietly start
+   * from the top with nothing on screen to say the resume had been dropped.
+   *
+   * It waits for the mark to actually be reachable rather than clamping to
+   * whatever is there on the first event: landing at the conversion frontier
+   * and stopping is not resuming.
+   */
+  seatAt(cell, seconds) {
+    const video = cell.video;
+    const reach = () => {
+      const r = video.seekable && video.seekable.length ? video.seekable : video.buffered;
+      if (r && r.length) return r.end(r.length - 1);
+      return Number.isFinite(video.duration) ? video.duration : 0;
+    };
+    let tries = 0;
+    const seat = () => {
+      const end = reach();
+      if (!(end > 0)) return false;
+      /* Past the mark, or out of patience and taking the best that exists. */
+      if (end < seconds && tries < 40) return false;
+      video.currentTime = Math.min(seconds, Math.max(0, end - 0.5));
+      this.paintTrack(cell);
+      return true;
+    };
+    if (seat()) return;
+    const again = () => {
+      tries += 1;
+      if (!seat() && tries <= 60) return;
+      for (const evt of ['loadedmetadata', 'canplay', 'progress', 'timeupdate']) {
+        video.removeEventListener(evt, again);
+      }
+    };
+    for (const evt of ['loadedmetadata', 'canplay', 'progress', 'timeupdate']) {
+      video.addEventListener(evt, again);
+    }
+  },
+
+  /* -- what a cell leaves behind ---------------------------------------- *
+   *
+   * A cell never wrote history, so a film watched in one left no resume point
+   * anywhere — which is half of why there was nothing to resume. Written for a
+   * film or an episode only: four channels at once all claiming watch time
+   * would tell the suggestions layer that this profile watched four things
+   * simultaneously, which is not what happened and not a signal worth having.
+   * Only one conversion can run at a time, so there is only ever one of these.
+   */
+  beginCellHistory(cell, item, override) {
+    if (!profiles.current) return;
+    const source = state.library[item.kind === 'movie' ? 'movies' : item.kind] || {};
+    const category = (source.categories || [])
+      .find((c) => String(c.id) === String(item.categoryId));
+    cell.histTarget = {
+      key: cell.resumeKey,
+      kind: override?.kind || item.kind,
+      id: override?.id ?? item.id,
+      name: cell.label || item.name,
+      categoryId: item.categoryId || '',
+      categoryName: category ? category.name : '',
+      poster: item.logo || '',
+      seriesId: override?.season ? item.id : undefined,
+      season: override?.season,
+      episode: override?.episode,
+      newPlay: true,
+    };
+    this.reportCellHistory(cell);
+    clearInterval(cell.histTimer);
+    cell.histTimer = setInterval(() => this.reportCellHistory(cell), 15000);
+  },
+
+  reportCellHistory(cell) {
+    if (!cell.histTarget || !profiles.current || !cell.item) return;
+    /* The film's position, not the element's: after a jump the element starts
+       at zero again inside a conversion that begins somewhere else, and a
+       resume point off by the length of the jump is worse than none. */
+    const position = Math.floor(this.cellPosition(cell));
+    const duration = Math.floor(this.cellDuration(cell)) || 0;
+    const payload = {
+      ...cell.histTarget,
+      position,
+      duration,
+      completed: duration > 0 && position / duration > 0.95,
+    };
+    cell.histTarget.newPlay = false;
+    navigator.sendBeacon?.(
+      `/api/profiles/${profiles.current.id}/history`,
+      new Blob([JSON.stringify(payload)], { type: 'application/json' })
+    );
+  },
+
+  endCellHistory(cell) {
+    if (cell.histTimer) {
+      this.reportCellHistory(cell);
+      clearInterval(cell.histTimer);
+      cell.histTimer = null;
+    }
+    cell.histTarget = null;
   },
 
   /**
@@ -2526,7 +2984,7 @@ const multiview = {
    * a conversion, and the wait for it is reported on the cell rather than
    * through the app-wide loader, which would cover the other three.
    */
-  async resolveVod(cell, item, override, stale) {
+  async resolveVod(cell, item, override, stale, startAt = 0) {
     // A file on the archive drive. Its own endpoint, because it is not a
     // provider title and has no stream id to ask about — and because that
     // endpoint keeps one conversion per file, which a cell joins like any
@@ -2538,9 +2996,16 @@ const multiview = {
         ...lowParam(),
       });
       if (stale()) return null;
+      cell.duration = data.sourceDuration || cell.duration;
       if (data.mode === 'direct') return { url: data.url, format: 'file' };
       cell.remux = data.session || '';
-      await this.waitForConversion(cell, data, stale);
+      /* An archive conversion is the whole file from the top and is never
+         started anywhere else — these rips only hold sync that way — so
+         resuming into one means waiting for it to reach the mark rather than
+         asking for it to begin there. */
+      cell.offset = 0;
+      if (startAt > 0) await this.waitForSpan(cell, startAt, stale);
+      else await this.waitForConversion(cell, data, stale);
       if (stale()) return null;
       return { url: data.url, format: 'm3u8' };
     }
@@ -2558,13 +3023,18 @@ const multiview = {
     // server clears that one away and leaves the other cells alone; without
     // it, opening a second converted title killed the first.
     const replaces = cell.remux || '';
+    /* Converted FROM the resume point rather than from the top. The server has
+       taken `start` and answered with the `offset` it actually used since the
+       main player's scrubber was built; a cell simply never asked. */
+    const start = startAt > 0 ? Math.floor(startAt) : '';
     const remuxed = local
-      ? await api('/api/remux', { download: local.id, replaces, ...lowParam() })
+      ? await api('/api/remux', { download: local.id, start, replaces, ...lowParam() })
       : await api('/api/remux', {
         kind,
         id,
         ext,
         vcodec: override?.vcodec || item.vcodec || '',
+        start,
         replaces,
         ...lowParam(),
       });
@@ -2576,6 +3046,12 @@ const multiview = {
       return null;
     }
     cell.remux = remuxed.session || '';
+    /* Where this conversion begins in the film, and how long the film is. Both
+       come back from the probe the server already ran, and both are what the
+       scrubber is laid out against — without them a cell has an element's
+       timeline rather than a film's. */
+    cell.offset = remuxed.offset || 0;
+    if (remuxed.sourceDuration) cell.duration = remuxed.sourceDuration;
     await this.waitForConversion(cell, remuxed, stale);
     if (stale()) return null;
     return { url: remuxed.url, format: 'm3u8' };
@@ -2738,6 +3214,10 @@ const multiview = {
   stop(index) {
     const cell = this.cells[index];
     if (!cell) return;
+    /* Where it got to, written down before anything is torn down — this is the
+       last chance to leave a resume point, and it is the one that matters:
+       stopping a cell is how somebody usually finishes with a film. */
+    this.endCellHistory(cell);
     cell.token = (cell.token || 0) + 1;   // orphan anything still in flight
     if (cell.engine) {
       try { cell.engine.destroy(); } catch { /* already gone */ }
@@ -2764,6 +3244,10 @@ const multiview = {
     cell.note.hidden = true;
     cell.note.textContent = '';
     cell.pending = false;
+    cell.offset = 0;
+    cell.duration = 0;
+    cell.resumeKey = '';
+    cell.seeking = false;
     // The list belongs to the show that was in this cell; there isn't one now.
     if (cell.sheet) cell.sheet.hidden = true;
     if (this.solo === index) this.unexpand({ silent: true });
