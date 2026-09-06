@@ -2197,6 +2197,34 @@ Remux output lands in `hls/` and is deleted when the session ends or after five
 idle minutes. A full episode's segments are roughly the size of the source, so
 keep an eye on space on the Pi's SD card.
 
+### Resume has to actually resume
+
+Every road out of `resolveStream` honours the resume point — a conversion is
+**started** at the mark, a downloaded file and an archive file seek themselves —
+except one. A title the provider already ships in a container the browser opens
+goes through `/api/play`, and that branch computed the mark, took it as an
+argument, and returned without it. The player got no seek and played from zero.
+
+That is not a corner case: `NATIVE_CONTAINERS` is mp4, m4v and mov, and this
+provider's episodes are very often mp4. Anything needing a remux resumed
+correctly all along, which is why it looked intermittent rather than broken —
+whether Resume worked depended on the container. Seeking a proxied file works
+because `/stream` forwards the browser's `Range` header and passes back
+`content-range` and `accept-ranges`; live is exempt, having no position to
+return to.
+
+**And there is one rule now for what is worth resuming.** There were two, and
+they disagreed. The film page drew its Resume button from the progress
+stripe's test — anything past one per cent of the runtime — and the player
+decided whether to honour it from another: at least a minute in, short of the
+end, not already finished. A forty-second stop in a forty-five minute episode
+passes the first and fails the second, so the button said "Resume 0:40" and the
+player, told by that same page not to ask again, started from the beginning.
+`worthResuming()` is now the single test, used by the button, by "Play from
+disk", by the time-remaining line and by `fetchProgress`. The stripe keeps its
+own looser rule: a sliver of progress on a card is a different claim from an
+offer to pick something back up.
+
 ### "No longer in the library" is a claim about the provider
 
 Everything the browser searches is a **filtered view** of the catalogue: the

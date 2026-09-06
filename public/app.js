@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '40.0';
+const VERSION = '40.1';
 
 const PAGE_SIZE = 60;
 
@@ -8692,13 +8692,16 @@ function filmCard(item) {
 
   const play = el('button', 'btn btn-primary play-title');
   play.append(filmIcon('play'));
+  /* The same test the player will apply. Offering to resume from a point the
+     player is going to refuse is how a Resume button starts a film over. */
+  const resumable = worthResuming(history);
   const playLabel = document.createTextNode(
-    at > 0 && history?.position ? ` Resume ${hms(history.position)}` : ' Play');
+    resumable ? ` Resume ${hms(history.position)}` : ' Play');
   play.append(playLabel);
   // The page has already made the resume choice — that is what the two buttons
   // ARE — so the player is told rather than asked. Putting its modal up on top
   // of them would be the same question twice.
-  play.addEventListener('click', () => openPlayer(item, { resume: at > 0 ? 'resume' : 'ask' }));
+  play.addEventListener('click', () => openPlayer(item, { resume: resumable ? 'resume' : 'ask' }));
   actions.append(play);
 
   const restart = el('button', 'btn btn-ghost film-restart');
@@ -8898,7 +8901,10 @@ function filmCard(item) {
       const row = el('div', 'film-box-buttons');
       const disk = el('button', 'btn btn-ghost btn-sm');
       disk.textContent = 'Play from disk';
-      disk.addEventListener('click', () => openPlayer(item, { resume: at > 0 ? 'resume' : 'ask' }));
+      /* The same rule as the Resume button above — a copy on disk resumes or
+         does not for exactly the same reasons a streamed one does. */
+      disk.addEventListener('click', () =>
+        openPlayer(item, { resume: resumable ? 'resume' : 'ask' }));
       const device = el('button', 'btn btn-ghost btn-sm');
       device.textContent = 'Save to device';
       device.addEventListener('click', () => saveToDevice(have));
@@ -9110,7 +9116,7 @@ function filmCard(item) {
     // whether tonight is the night.
     const total = seconds || history?.duration || 0;
     left.textContent = total
-      ? at > 0 && history?.position
+      ? worthResuming(history)
         ? `${hms(Math.max(0, total - history.position))} left of ${hms(total)}`
         : hms(total)
       : '';
@@ -15180,14 +15186,32 @@ function resumeKeyFor(item, episode, season) {
   return `${item.kind}:${item.id}`;
 }
 
+/**
+ * Is this position worth going back to?
+ *
+ * ONE rule, because there used to be two and they disagreed. The film page
+ * decided whether to draw a Resume button from the progress stripe's test —
+ * anything past one per cent of the runtime — and the player decided whether
+ * to honour it from this one. A forty-second stop in a forty-five minute
+ * episode passes the first and fails the second, so the button said
+ * "Resume 0:40" and the player, told not to ask, started from the beginning.
+ *
+ * The stripe keeps its own looser test: a sliver of progress on a card is a
+ * different claim from an offer to pick something back up.
+ */
+function worthResuming(row) {
+  if (!row || row.completed) return false;
+  if (!(Number(row.position) >= RESUME_MIN)) return false;
+  if (row.duration && row.position / row.duration > RESUME_MAX_RATIO) return false;
+  return true;
+}
+
 async function fetchProgress(key) {
   if (!profiles.current || !key) return null;
   try {
     const row = await api(`/api/profiles/${profiles.current.id}/progress`, { key });
-    if (!row.found || row.completed) return null;
-    if (row.position < RESUME_MIN) return null;
-    if (row.duration && row.position / row.duration > RESUME_MAX_RATIO) return null;
-    return row;
+    if (!row.found) return null;
+    return worthResuming(row) ? row : null;
   } catch {
     return null;
   }
@@ -15506,7 +15530,32 @@ async function resolveStream(item, override) {
   }
   // dvr means the Pi's own live buffer is serving this channel, which earns a
   // deeper seat than the provider's short window could hold.
-  return { url: data.url, format, dvr: Boolean(data.dvr) };
+  /*
+   * And the resume point, which this branch used to drop on the floor.
+   *
+   * "a lot of the time I click the resume button on a series or movie and it
+   *  restarts the whole thing"
+   *
+   * Every other road out of here honours `startAt`: a conversion is STARTED at
+   * the mark, a downloaded file and an archive file seek themselves. This one
+   * — a title the provider already ships in a container the browser opens, so
+   * there is nothing to convert — computed the mark, passed it in, and then
+   * returned without it. The player got no seek and played from zero.
+   *
+   * Which is most of a library: NATIVE_CONTAINERS is mp4, m4v and mov, and
+   * this provider's episodes are very often mp4. The film page had already
+   * read the position, drawn "Resume 42:10" on the button and told the player
+   * not to ask again — so the one thing left to do with it was the one thing
+   * that was not done.
+   *
+   * Live is exempt because live has no position to return to.
+   */
+  return {
+    url: data.url,
+    format,
+    dvr: Boolean(data.dvr),
+    seekTo: kind === 'live' ? 0 : startAt,
+  };
 }
 
 function updateFavButton(item) {
