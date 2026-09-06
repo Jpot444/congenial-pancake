@@ -2197,6 +2197,41 @@ Remux output lands in `hls/` and is deleted when the session ends or after five
 idle minutes. A full episode's segments are roughly the size of the source, so
 keep an eye on space on the Pi's SD card.
 
+### A copy on the box is played from the box
+
+Before asking the provider for anything, `resolveStream` looks for a finished
+download of the same title and plays that instead. It always did. What it
+looked **in** was a list the browser happened to be holding — and that list was
+a snapshot, taken at boot, when the Downloads tab is opened, and before a
+season is queued. Nothing else refreshed it.
+
+So an episode saved this evening and then pressed from the show's page, or
+reached by Next episode, was checked against a list from before it existed,
+found nothing, and spent the account's single provider connection streaming a
+file already sitting on the SD card. A film opened from its card was fine,
+because `openPlayer` refreshed first — which is why it looked intermittent and
+why the suspicion landed on Next episode in particular.
+
+The list is now asked for by `resolveStream` itself, which is the one place
+every route passes through: the show's page, Next episode, a multi-view cell,
+Continue watching, a card. **No time window in front of it**, deliberately —
+every window wide enough to be worth having is wide enough to miss a download
+that finished a moment ago, which is exactly when somebody presses play on it.
+It is one small request to a box on the same network, once per play, and
+concurrent callers share it, so four multi-view cells starting together ask
+once. `openPlayer` no longer asks separately: its own read decides only what to
+say while the title opens and whether the film's details are worth fetching, so
+a stale answer there costs a wasted metadata call and never a wrong source.
+
+**And the player says where it is playing from.** A copy on the box and a
+stream from the provider are indistinguishable once they are running, so
+"I think it is streaming" was the only available position. The film bar carries
+a `FROM THE BOX` badge, set from what the resolver actually did rather than
+from what anything intended, and shown for every locally-served route — a
+download, the archive drive, a local conversion. Nothing is shown for a
+provider stream: the badge is the claim worth making, and making it only when
+true is what makes it worth reading.
+
 ### Resume has to actually resume
 
 Every road out of `resolveStream` honours the resume point — a conversion is

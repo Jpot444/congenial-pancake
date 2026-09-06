@@ -1018,6 +1018,16 @@
         <span id="vodSpeedLabel">1×</span>
       </button>
 
+      <!-- Where this is coming from. A copy on the box and a stream from the
+           provider look identical once they are playing, and "I think it is
+           streaming" is not a thing a viewer should have to wonder about a
+           file they saved themselves. Shown only when it IS the box, because
+           that is the claim worth making. -->
+      <span class="vod-source" id="vodSource" hidden
+            title="Playing the copy on your Pi — no provider connection is being used.">
+        FROM THE BOX
+      </span>
+
       <!-- Captions. The menu opens upward out of the bar rather than as a
            modal: it is a choice about what is on screen, made while watching,
            and a dialog over the picture to pick a language is the wrong

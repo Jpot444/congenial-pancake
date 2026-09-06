@@ -4342,6 +4342,30 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 .vod-speed:hover { background: rgba(240, 195, 106, .28); }
 
+/* Where this is playing from. Green rather than the amber the speed badge
+   wears: that one is a warning, this one is reassurance — the file is on the
+   box and no provider connection is being spent on it. */
+.vod-source {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid rgba(120, 200, 140, .45);
+  border-radius: 999px;
+  background: rgba(120, 200, 140, .14);
+  color: #8FD6A4;
+  font-family: var(--display);
+  font-size: 14px;
+  letter-spacing: .05em;
+  white-space: nowrap;
+}
+/* On a phone the bar is already tight and the badge is the least of what has
+   to fit; the tooltip and the playback report still carry the fact. */
+@media (max-width: 640px) {
+  .vod-source { display: none; }
+}
+
 .vod-track {
   position: relative;
   flex: 1;

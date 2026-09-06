@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '40.1';
+const VERSION = '40.2';
 
 const PAGE_SIZE = 60;
 
@@ -3014,6 +3014,11 @@ const multiview = {
     const id = override?.id ?? item.id;
     const ext = override?.ext ?? item.ext ?? '';
 
+    /* The same guarantee the main player gets: a copy on the box is played from
+       the box, checked against a list this asks for rather than one it happens
+       to be holding. A cell is very often the second thing started, by which
+       time the list can be minutes old. */
+    await ensureDownloads();
     const local = findLocalCopy(kind, id);
     if (local && !needsRemux(local.ext)) {
       return { url: `/api/downloads/${local.id}/file`, format: 'file' };
@@ -9964,6 +9969,43 @@ function formatBytes(n) {
   return `${(n / 1024 ** 2).toFixed(0)} MB`;
 }
 
+/*
+ * When the downloads list was last read, and whoever is reading it now.
+ *
+ * A copy on the box is only used if the browser KNOWS about it, and that
+ * knowledge is a snapshot: taken at boot, on the Downloads tab, and before a
+ * season is queued. Everything else played against whatever was last seen —
+ * so an episode saved this evening and pressed from the show's page went to
+ * the provider, because the list in hand predated it.
+ */
+let downloadsInFlight = null;
+
+/**
+ * A downloads list no older than `maxAge`, asked for once however many callers
+ * want it. Cheap: it is the box's own answer over the local network, and it is
+ * the difference between playing off the SD card and spending the provider's
+ * one connection on something already sitting there.
+ */
+async function ensureDownloads() {
+  /*
+   * No time window, deliberately.
+   *
+   * A cache here is a cache of the one fact this has to be right about, and
+   * every window wide enough to be worth having is wide enough to miss a
+   * download that finished a moment ago — which is precisely when somebody
+   * presses play on it. It is a small request to a box on the same network,
+   * made once per play, and the thing it buys is never spending the account's
+   * single provider connection on a file already on the SD card.
+   *
+   * Concurrent callers still share one request: four multi-view cells starting
+   * together ask the box once.
+   */
+  if (!downloadsInFlight) {
+    downloadsInFlight = refreshDownloads().finally(() => { downloadsInFlight = null; });
+  }
+  await downloadsInFlight;
+}
+
 async function refreshDownloads({ rerender = false } = {}) {
   const was = new Map((state.downloads.items || []).map((j) => [j.id, j]));
   try {
@@ -11911,6 +11953,24 @@ function teardown() {
   }
   video.removeAttribute('src');
   video.load();
+}
+
+/**
+ * Say where this is coming from.
+ *
+ * "sometimes if i press next episode on something I have downloaded Im not
+ *  convinced it plays from my pi, i think it is streaming"
+ *
+ * A copy on the box and a stream from the provider look identical once they
+ * are playing, so being unsure was the only available position. The badge is
+ * shown only for the box, because that is the claim worth making — and it is
+ * set from what the resolver actually DID rather than from what anything
+ * intended, so it cannot say one thing while the player does another.
+ */
+function showSource(local) {
+  const pill = $('#vodSource');
+  if (pill) pill.hidden = !local;
+  if (local) status('Playing from the box — no provider connection used.');
 }
 
 function status(message) {
@@ -15439,17 +15499,17 @@ async function resolveStream(item, override) {
       // The index's runtime rides along so the film bar has a length even
       // when the item was rebuilt from a history row that carries none.
       lastRemux = { sourceDuration: data.sourceDuration || 0 };
-      return { url: data.url, format: 'file', seekTo: startAt };
+      return { url: data.url, format: 'file', seekTo: startAt, local: true };
     }
 
     lastRemux = data;
     film.offset = 0;
     if (startAt > 3) {
       await waitForConversionSpan(data, startAt);
-      return { url: data.url, format: 'm3u8', seekTo: startAt };
+      return { url: data.url, format: 'm3u8', seekTo: startAt, local: true };
     }
     await waitForPrebuffer(data);
-    return { url: data.url, format: 'm3u8' };
+    return { url: data.url, format: 'm3u8', local: true };
   }
 
   if (item.directUrl) {
@@ -15467,7 +15527,7 @@ async function resolveStream(item, override) {
       // session is what marks this as remux-backed for seeking.
       lastRemux = data;
       await waitForPrebuffer(data);
-      return { url: data.url, format: 'm3u8' };
+      return { url: data.url, format: 'm3u8', local: true };
     }
 
     const format = /\.m3u8(\?|$)/i.test(source)
@@ -15476,14 +15536,34 @@ async function resolveStream(item, override) {
         ? 'ts'
         : 'file';
     // A native local file honours a resume point by seeking itself.
-    return { url: item.directUrl, format, seekTo: format === 'file' ? startAt : 0 };
+    return { url: item.directUrl, format, seekTo: format === 'file' ? startAt : 0,
+      local: true };
   }
   const kind = override?.kind || (item.kind === 'movie' ? 'movie' : item.kind);
   const id = override?.id ?? item.id;
   const ext = override?.ext ?? item.ext ?? '';
 
-  // Already on disk? Then never touch the provider for it.
+  /*
+   * Already on disk? Then never touch the provider for it.
+   *
+   * "if i try to play someting from anywhere, the series card or anything,
+   *  that I already have downloaded. I want it to play from my pi"
+   *
+   * It always meant to, and this line has always been here — but it reads a
+   * list the browser happened to be holding, and that list is a snapshot taken
+   * at boot, on the Downloads tab, and before a season is queued. Nothing else
+   * refreshed it. So an episode saved this evening and then pressed from the
+   * show's page — or reached by Next episode — was checked against a list from
+   * before it existed, found nothing, and went to the provider for a file
+   * sitting on the SD card.
+   *
+   * Asked for here rather than at each caller because this is the one place
+   * every route passes through: the show's page, Next episode, a multi-view
+   * cell, Continue watching, a card. Coalesced and four seconds fresh, so the
+   * callers that already refreshed pay nothing for it.
+   */
   if (kind !== 'live') {
+    await ensureDownloads();
     const local = findLocalCopy(kind, id);
     if (local) return playLocalCopy(local, startAt);
   }
@@ -15587,6 +15667,11 @@ function preparePlayer(item) {
   // and the previous title's playback evidence is not about this one either.
   upNext.clear();
   playback.resetViewing();
+  /* Cleared for every title, so the badge can only ever describe the one being
+     opened — a stale "FROM THE BOX" left over from the last thing watched
+     would be worse than no badge at all. showSource puts it back if this one
+     really is coming off the disk. */
+  showSource(false);
   document.body.style.overflow = 'hidden';
 
   // Full screen from the first frame — the windowed shell used to flash up
@@ -15661,7 +15746,11 @@ async function openPlayer(item, { resume = 'ask' } = {}) {
 
   // Know what's on disk before deciding how to play it. Live never has a
   // local copy, so don't spend a round trip on it before tuning the channel.
-  if (item.kind !== 'live') await refreshDownloads();
+  /* Whatever list is in hand, for two cosmetic decisions: what to say while it
+     opens, and whether the film's details are worth fetching. The decision
+     that MATTERS — which file actually gets played — is made in resolveStream
+     against a list it refreshes itself, so a stale read here costs at worst a
+     wasted metadata call and never a wrong source. */
   const localCopy = item.kind === 'live' || item.localOnly ? null : findLocalCopy(item.kind, item.id);
 
   // Pick up where this profile left off, if it did. Asked before anything is
@@ -15704,8 +15793,9 @@ async function openPlayer(item, { resume = 'ask' } = {}) {
       // one, which a measured session spent 15 silent seconds proving.
       status('Tuning in — preparing the channel…');
     }
-    const { url, format, seekTo, dvr } = await resolveStream(item, { startAt });
+    const { url, format, seekTo, dvr, local } = await resolveStream(item, { startAt });
     if (myToken !== playToken) return; // player closed while we were buffering
+    showSource(local);
     attach(url, format, { seekTo, dvr });
     if (item.kind === 'live') {
       stopLeadWatch();
@@ -16021,8 +16111,9 @@ async function renderSeries(item, mount, onInfo) {
       vcodec: episode.info?.video?.codec_name || '',
     };
     try {
-      const { url, format, seekTo } = await resolveStream(item, { ...override, startAt });
+      const { url, format, seekTo, local } = await resolveStream(item, { ...override, startAt });
       if (myToken !== playToken) return;
+      showSource(local);
       attach(url, format, { seekTo });
       showFilmBar(item, parseRuntime(episode.info), override);
       // After showFilmBar — enterCinema clears the subtitle line.
