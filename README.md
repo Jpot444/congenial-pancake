@@ -2197,6 +2197,40 @@ Remux output lands in `hls/` and is deleted when the session ends or after five
 idle minutes. A full episode's segments are roughly the size of the source, so
 keep an eye on space on the Pi's SD card.
 
+### "No longer in the library" is a claim about the provider
+
+Everything the browser searches is a **filtered view** of the catalogue: the
+language filter, plus only those category pages somebody has opened. So "not
+here" has never meant "not carried" — a film outside the filter, or on a page
+nobody has visited, was being reported as one the provider had withdrawn. Two
+different facts with two different remedies, and the second one was not true.
+
+The browser cannot close that by fetching more, and the code said so: the wide
+catalogue is six figures of titles and pulling it into a Pi's memory to answer
+one press is how the portal ends up restarting mid-request. That trade stands.
+
+What closes it is `/api/title?kind=movie|series&id=N` — the **box** asking the
+provider about one id, with `get_vod_info` / `get_series_info`. That costs no
+stream slot, puts nothing in memory, and answers exactly the question. It is
+reached only after every free lookup has failed, so an ordinary press never
+waits on it, and what comes back is shaped like any other library item so
+nothing downstream has to know it arrived by a different road.
+
+Three answers, kept apart on purpose, because conflating them is what started
+all of this:
+
+| What happened | What the box says | What the viewer sees |
+| --- | --- | --- |
+| The provider carries it | `200` with the item | it opens and plays |
+| The provider has withdrawn it | `404 does not carry` | "no longer in the library" |
+| The box could not ask | `502` | the lookup fails loudly, naming the refusal |
+
+A `400 Not in Xtream mode` is read as the second of those rather than the
+third: an M3U box has one flat playlist and no per-title endpoint behind it, so
+there is nothing further to try and an ordinary miss is the honest answer. The
+client checks the mode too, but the two can disagree — a box reconfigured under
+a page that is still open — and the box's answer wins.
+
 ### A conversion that is still starting is not an abandoned one
 
 The next conversion to start sweeps away any other that nothing has fetched

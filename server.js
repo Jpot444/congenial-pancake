@@ -9028,6 +9028,80 @@ async function handleApi(req, res, pathname, query) {
     }
   }
 
+  /*
+   * ---- One title, by id, wherever it lives ----
+   *
+   * "Im still getting that title is no longer in library errors"
+   *
+   * That message is a strong claim — the provider has stopped carrying
+   * something — and until now the browser was in no position to make it. It
+   * looked in the FILTERED library it had been given, then in the wide
+   * catalogue only if that happened to be in hand, and said the title was gone
+   * when neither knew about it. A film outside the language filter, or on a
+   * category page nobody had opened yet, is not a film the provider has
+   * withdrawn.
+   *
+   * The browser could not fix this by fetching more: the wide catalogue is six
+   * figures of titles and pulling it into a Pi's memory to answer one press is
+   * how the portal ends up restarting mid-request. But the BOX can ask about
+   * one id — `get_vod_info`, `get_series_info` — which is a small call that
+   * costs no stream slot and answers exactly the question being asked.
+   *
+   * So: what the box already has, then the provider itself, then an honest
+   * 404 that really does mean withdrawn.
+   */
+  if (pathname === '/api/title') {
+    const kind = query.get('kind') === 'series' ? 'series' : 'movie';
+    const id = String(query.get('id') || '').trim();
+    if (!id) return json(res, 400, { error: 'id is required' });
+    if (mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
+
+    /* Free: every page of the library this box has ever fetched, folded
+       together. Most misses land here, because the title is usually one the
+       viewer's own filter hid rather than one nobody has ever asked for. */
+    const held = knownCatalogue(kind === 'series' ? 'series' : 'movies')
+      .find((item) => String(item.id) === id);
+    if (held) return json(res, 200, { item: held, from: 'cache' });
+
+    try {
+      const chosen = providers.forMeta(cfg) || cfg;
+      const url = xtreamApiUrl(chosen, kind === 'series'
+        ? { action: 'get_series_info', series_id: id }
+        : { action: 'get_vod_info', vod_id: id });
+      const upstream = await request(url, { timeout: 15000 });
+      if ((upstream.statusCode || 500) >= 400) {
+        upstream.resume();
+        return json(res, 502, { error: `The provider answered ${upstream.statusCode}` });
+      }
+      const body = JSON.parse((await readBody(upstream)).toString('utf8') || '{}');
+      const info = (body && body.info) || {};
+      /* A provider that does not carry this id answers with an empty info
+         block rather than an error, so "no name" is how a withdrawal looks. */
+      const data = kind === 'series'
+        ? { series_id: id, name: info.name, cover: info.cover,
+          category_id: info.category_id, genre: info.genre, rating: info.rating,
+          last_modified: info.last_modified }
+        : { ...(body.movie_data || {}), stream_id: id,
+          name: (body.movie_data && body.movie_data.name) || info.name,
+          stream_icon: (body.movie_data && body.movie_data.stream_icon)
+            || info.movie_image || info.cover_big || '',
+          container_extension: (body.movie_data && body.movie_data.container_extension)
+            || info.container_extension || 'mp4',
+          rating: info.rating };
+      if (!data.name) {
+        return json(res, 404, { error: 'The provider does not carry that title.' });
+      }
+      const item = projectItem(data, kind);
+      if (item.logo) item.logo = `/img?u=${encodeURIComponent(item.logo)}`;
+      return json(res, 200, { item, from: 'provider' });
+    } catch (err) {
+      /* Could not be asked is not the same as does not exist, and the caller
+         has to be able to tell them apart — that distinction is the whole
+         reason this endpoint is here. */
+      return json(res, 502, { error: err.message });
+    }
+  }
+
   /* ---- Filtered, compact library for one section ---- */
   if (pathname === '/api/library') {
     const tab = query.get('tab');

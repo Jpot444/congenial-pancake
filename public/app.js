@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '39.9';
+const VERSION = '40.0';
 
 const PAGE_SIZE = 60;
 
@@ -5662,12 +5662,59 @@ async function findTitle(tab, wantId, name = '') {
    * the portal ends up restarting mid-request and the next page reports the
    * library as empty.
    *
-   * So it stays opt-in. Press All languages and the catalogue is loaded, and
-   * from that moment everything found in it opens and plays; without that,
-   * a title the filter hides is reported missing, which is the same answer
-   * this gave before any of it existed and costs nothing to arrive at. */
-  return lookIn(state.libraryAll)
-    || named(state.library) || named(state.libraryAll) || null;
+   * So it stays opt-in for the BROWSER. What replaced the fetch is asking the
+   * box about the one id instead — see below. */
+  const wide = lookIn(state.libraryAll);
+  if (wide) return wide;
+
+  const byTheName = named(state.library) || named(state.libraryAll);
+  if (byTheName) return byTheName;
+
+  /*
+   * And last, the box.
+   *
+   * Everything above searches what this browser happens to be holding, which
+   * is a filtered view of a catalogue — so "not here" has never meant "not
+   * carried". A film outside the language filter, or on a category page nobody
+   * has opened, was reported as withdrawn.
+   *
+   * The box can settle it with one small call to the provider about this id
+   * alone, which costs no stream slot and does not put six figures of titles
+   * into a Pi's memory. Only reached when everything free has already failed,
+   * so an ordinary press never waits on it.
+   *
+   * A refusal is not an answer: if the box cannot ask, this throws rather than
+   * reporting a title as gone on the strength of a failed request.
+   */
+  /* Only where there is a provider to ask. An M3U box has one flat playlist
+     and no per-title endpoint behind it, so there is nothing further to try
+     and nothing to be gained by asking. */
+  if ((tab === 'movies' || tab === 'series') && state.config?.mode === 'xtream') {
+    const found = await api('/api/title', {
+      kind: tab === 'series' ? 'series' : 'movie',
+      id,
+    }).catch((err) => {
+      const said = err.message || '';
+      /* Two answers that are not failures.
+       *
+       * "does not carry" is the provider settling it: the title really is
+       * gone, which is an absence and reads as one.
+       *
+       * "not in Xtream mode" is the BOX saying it has no provider to ask —
+       * the client checks this too, but the two can disagree (a box
+       * reconfigured under a page that is still open), and when they do the
+       * honest reading is the same as an M3U box's: there is nothing further
+       * to try, so this is an ordinary miss rather than an error.
+       *
+       * Anything else — a refusal, a timeout — really is "could not be
+       * asked", and telling somebody their programme is gone on the strength
+       * of a failed request is the thing this endpoint exists to stop. */
+      if (/does not carry/i.test(said) || /not in xtream mode/i.test(said)) return null;
+      throw err;
+    });
+    if (found && found.item) return found.item;
+  }
+  return null;
 }
 
 /* ---------------------------------------------------------- movie rows ---
