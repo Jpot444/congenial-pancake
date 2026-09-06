@@ -2197,6 +2197,37 @@ Remux output lands in `hls/` and is deleted when the session ends or after five
 idle minutes. A full episode's segments are roughly the size of the source, so
 keep an eye on space on the Pi's SD card.
 
+### A conversion that is still starting is not an abandoned one
+
+The next conversion to start sweeps away any other that nothing has fetched
+from for twenty-five seconds — an abandoned remux really would keep ffmpeg
+grinding through a whole film and holding the provider connection with it.
+
+But nothing *can* fetch from a conversion until `startRemux` has handed back its
+session id, and that return waits for two segments to exist. Against this
+provider on a bad night that runs to tens of seconds, past the twenty-five that
+count as idle. So a conversion in its first half-minute looked exactly like one
+somebody had walked away from, and the next thing anybody pressed killed it —
+press an episode, it fails, press it again, it plays. Sessions now carry
+`starting` until they are handed to whoever asked, and the sweep leaves those
+alone.
+
+**A stopped conversion is not a broken one.** A process killed by a signal
+reports a null exit code, and `null !== 0`, so a conversion this box stopped on
+purpose was reported as one that had failed. It is a race, and the answer to a
+race is to run it again — once, because a retry that could retry would turn two
+viewers taking turns into a loop that never lands.
+
+**And the line shown is the one that says something.** The failure path used to
+print the last line of ffmpeg's stderr, which is only the right place to look
+when ffmpeg has actually complained. Stopped mid-run it has not, and what stands
+at the bottom of the log is the output header — whose last line is
+`encoder : Lavc61.19.101 aac`, ffmpeg naming the AAC encoder it was about to
+use. `ffmpegProblem()` skips everything ffmpeg prints to describe itself, its
+build, its inputs, outputs and progress, prefers a line that reads like a
+complaint, and where nothing survives says so plainly rather than reaching for a
+codec version.
+
 ## Live TV opens on its categories
 
 Live used to land on one flat grid of every station the provider carries. At a

@@ -3169,6 +3169,49 @@ const LANGUAGE_NAMES = {
   ron: 'Romanian', rum: 'Romanian', hun: 'Hungarian', ces: 'Czech', cze: 'Czech',
 };
 
+/*
+ * Most of what ffmpeg prints is ffmpeg describing itself.
+ *
+ * "I've been getting this error sometimes — Couldn't start episode: ffmpeg
+ *  failed: encoder : Lavc61.19.101 aac"
+ *
+ * That is not an error. It is the metadata line under the audio stream of the
+ * OUTPUT header, where ffmpeg names the encoder it is about to use, and it was
+ * on screen because the failure path took the last line of stderr and showed
+ * it. The last line is the right place to look only when ffmpeg has said
+ * something about what went wrong; when it is stopped mid-run, or when the
+ * complaint came earlier and the header followed it, the last line is a banner.
+ *
+ * So the banner is skipped. Everything ffmpeg emits to describe itself, its
+ * build, its inputs, its outputs and its progress is recognisable, and what is
+ * left after removing it is either the problem or nothing — and "nothing" is a
+ * more useful thing to be told than a codec version.
+ */
+const FFMPEG_NOISE = [
+  /^ffmpeg version /, /^\s*built with /, /^\s*configuration:/,
+  /^\s*lib(avutil|avcodec|avformat|avdevice|avfilter|swscale|swresample|postproc)\b/,
+  /^(Input|Output) #/, /^\s*Stream #/, /^\s*Metadata:/, /^Stream mapping:/,
+  /^\s*Side data:/, /^Press \[q\]/, /^(frame|size)=/, /^video:/, /^\s*$/,
+  /^\s*(encoder|handler_name|vendor_id|major_brand|minor_version|compatible_brands|title|comment|artist|album|date|description|language)\s*:/i,
+  /^\s*Duration:/, /^\s*Chapter #/, /^Last message repeated/,
+  /^\[hls @ [^\]]*\] Opening /,
+];
+
+/** The line that actually says what went wrong, or an honest admission. */
+function ffmpegProblem(stderr, exitCode) {
+  const lines = String(stderr || '').split('\n');
+  const said = lines.filter((line) => line.trim()
+    && !FFMPEG_NOISE.some((noise) => noise.test(line)));
+  /* An explicit complaint beats the merely-unrecognised last line: ffmpeg
+     often follows its error with another header before giving up. */
+  const named = said.filter((line) => /error|invalid|failed|unable|no such|denied|refused|not found|unrecognized|unknown|timed? ?out|end of file|protocol not|does not contain|conversion failed|immediate exit/i
+    .test(line));
+  const pick = (named.length ? named : said).pop();
+  return pick
+    ? pick.trim().slice(0, 200)
+    : `it stopped with exit ${exitCode} and said nothing about why`;
+}
+
 /**
  * Spawn a remux and resolve once the playlist has real segments in it. Only one
  * provider-backed session runs at a time — the account allows a single
@@ -3198,6 +3241,21 @@ async function startRemux(input, opts) {
   for (const [id, sess] of [...remuxSessions]) {
     if (sess.live) continue;
     if (id === replaces) { killSession(id); continue; }
+    /*
+     * A conversion nobody has fetched from YET is not an abandoned one.
+     *
+     * `lastAccess` starts at the moment the session is made and is moved on by
+     * segment fetches and by the client polling its status — but the client
+     * cannot do either until startRemux has returned it a session id, and that
+     * return waits for two segments to exist. On this provider that wait runs
+     * to tens of seconds, past the twenty-five that count as idle here. So a
+     * conversion still being born looked exactly like one somebody had walked
+     * away from, and the next thing anybody pressed killed it.
+     *
+     * Which is the "sometimes" in the report: the first press fails, the
+     * second works, and the error names an audio encoder.
+     */
+    if (sess.starting) continue;
     if (Date.now() - sess.lastAccess < SESSION_ACTIVE_MS) continue;
     killSession(id);
   }
@@ -3261,6 +3319,10 @@ async function startRemux(input, opts) {
     dir,
     proc,
     lastAccess: Date.now(),
+    /* Still being born — see the sweep above. Cleared the moment this session
+       is handed to whoever asked for it, which is also the moment they can
+       start keeping it alive themselves. */
+    starting: true,
     // When ffmpeg started, so the report can say how fast the conversion is
     // running against the clock. A stream copy runs at several times
     // realtime; anything re-encoded on this box does not, and telling those
@@ -3297,9 +3359,18 @@ async function startRemux(input, opts) {
   };
   remuxSessions.set(id, session);
 
-  proc.on('exit', (code) => {
+  proc.on('exit', (code, signal) => {
     session.exited = true;
     session.exitCode = code;
+    /* Which of the two ways it ended.
+     *
+     * A process stopped by a signal reports a null code, and `null !== 0` — so
+     * a conversion this box killed on purpose read as one that had broken, and
+     * was announced with whatever the last line of its output happened to be.
+     * Killed just after the stream header, that line is
+     * "encoder : Lavc61.19.101 aac", which is ffmpeg naming its own AAC
+     * encoder and says nothing about anything. */
+    session.exitSignal = signal || '';
     /* The provider connection ends with ffmpeg, not with the session. What
        outlives it is a directory being served off this box's own disk, and
        holding a login open for that would keep a slot spoken for through a
@@ -3318,12 +3389,29 @@ async function startRemux(input, opts) {
       const text = fs.readFileSync(playlist, 'utf8');
       // Wait for a couple of segments so playback doesn't start and stall.
       if ((text.match(/\.(ts|m4s)/g) || []).length >= 2) {
+        session.starting = false;
         return aligned ? session : realign(session, input, opts);
       }
     }
     if (session.exited && session.exitCode !== 0) {
-      const detail = stderr.split('\n').filter(Boolean).pop() || `exit ${session.exitCode}`;
+      const stopped = Boolean(session.exitSignal) || session.exitCode === null;
       killSession(id);
+      /*
+       * Taken away rather than broken.
+       *
+       * Something on this box stopped this conversion while it was still
+       * starting — the sweep at the top of this function, a viewer pressing
+       * something else, a seek superseding it. That is not a fault in the
+       * title and it is not worth showing anybody: it is a race, and the
+       * answer to a race is to run it again.
+       *
+       * Once. A retry that could retry would turn two viewers taking turns
+       * into a loop that never lands, and the second failure is worth
+       * reporting honestly.
+       */
+      if (stopped && !opts.restarted) {
+        return startRemux(input, { ...opts, restarted: true });
+      }
       // Captions are a bonus; the picture is not. If subtitle outputs were
       // attached and the command died, drop them and run the command that has
       // always worked rather than handing back a film that will not play. A
@@ -3332,7 +3420,11 @@ async function startRemux(input, opts) {
       if (wanted.length) {
         return startRemux(input, { ...opts, noSubs: true });
       }
-      throw new Error(`ffmpeg failed: ${detail}`);
+      if (stopped) {
+        throw new Error('the conversion was stopped before it could start — '
+          + 'something else on the box took the encoder');
+      }
+      throw new Error(`ffmpeg failed: ${ffmpegProblem(stderr, session.exitCode)}`);
     }
     await new Promise((r) => setTimeout(r, 300));
   }
