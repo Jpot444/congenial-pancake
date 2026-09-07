@@ -3487,36 +3487,110 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   font-size: .8rem;
   color: rgba(255, 255, 255, .55);
 }
+/*
+ * The room the grid is given, and the grid inside it.
+ *
+ * "There is wasted space on the top and bottom half during Multiview"
+ *
+ * The grid used to be the room: two cells side by side each took the whole
+ * height of the window, and since a cell is nearly always holding a 16:9
+ * picture, everything above and below that picture inside the cell was black.
+ * On an iPad in landscape that measured 207px of nothing at the top of each
+ * cell and the same again at the bottom, on both of them at once.
+ *
+ * So the grid is now shaped like the arrangement it is drawing — two 16:9
+ * pictures side by side is a 32:9 box, a 2x2 is a 16:9 box — sized to the
+ * largest that fits the stage and centred in it. The cells come out picture
+ * shaped, nothing letterboxes inside them, and whatever is left over is one
+ * band at the edge of the stage rather than a band inside every cell.
+ */
+.mv-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+}
+
 /* The layout follows the chosen count so there is never a blank square.
    minmax(0,1fr) throughout, so a long channel name cannot push a cell wider
    than its share. */
 .mv-grid {
-  flex: 1 1 auto;
   display: grid;
   gap: 8px;
-  padding: 8px;
   min-height: 0;
+  /* The fallback, and what a browser too old for container queries keeps:
+     fill the stage exactly as this did before. */
+  width: 100%;
+  height: 100%;
 }
 .mv-grid[data-count="2"] {
+  --mv-ar: 32/9;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
 }
 /* Three is one large beside two stacked. Three across in a single row leaves
    letterboxed slivers, and a 2x2 with a hole in it is what the count exists
-   to avoid. */
+   to avoid. In small-cell units that is three wide by two high, and a small
+   cell is 16:9, so the whole thing is a 8:3 box. */
 .mv-grid[data-count="3"] {
+  --mv-ar: 8/3;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
 }
 .mv-grid[data-count="3"] > .mv-cell:first-child { grid-row: span 2; }
 .mv-grid[data-count="4"] {
+  --mv-ar: 16/9;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
 }
 /* One cell blown up: the others are hidden, so a single track is all it needs
    and the span rule above must not drag it back into two rows. */
-.mv-grid.is-solo { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.mv-grid.is-solo {
+  --mv-ar: 16/9;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
 .mv-grid.is-solo > .mv-cell { grid-row: auto; }
+
+/*
+ * Sizing the grid to its own shape.
+ *
+ * Measured against the stage rather than the window, because the stage is what
+ * is actually left after the bar at the top and the panel at the side — the
+ * window would be the wrong number by exactly the amount that matters. Held in
+ * @supports so that a browser without container queries keeps the old
+ * fill-everything layout rather than a collapsed one.
+ */
+@supports (width: 1cqw) {
+  .mv-stage { container: mvstage / size; }
+  .mv-grid {
+    aspect-ratio: var(--mv-ar, 16/9);
+    /* As wide as the stage, or as wide as the stage is tall allows. Height
+       follows from the ratio, so the box is "contain", not "cover". */
+    width: min(100cqw, 100cqh * var(--mv-ar, 16/9));
+    height: auto;
+    max-height: 100cqh;
+  }
+
+  /*
+   * Two, on a screen that is not wide.
+   *
+   * Side by side and stacked are not a matter of taste: at any given stage,
+   * one of them puts more picture on the screen than the other, and the
+   * crossover is exactly 16:9. Wider than that and side by side wins; narrower
+   * — a tablet held in landscape is about 1.6 — and stacking wins, by about a
+   * fifth on the iPad this was reported from.
+   */
+  @container mvstage (aspect-ratio < 16/9) {
+    .mv-grid[data-count="2"]:not(.is-solo) {
+      --mv-ar: 8/9;
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    }
+  }
+}
 
 /* ---- the other games ------------------------------------------------------
    Out of the right-hand edge, over the grid rather than beside it — but with
@@ -3549,7 +3623,10 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 /* Wide enough to hold both: the grid gives up the width rather than being
    covered. Below this the panel simply sits over the picture. */
 @media (min-width: 900px) {
-  .multiview.has-suggest .mv-grid { padding-right: calc(min(88vw, var(--mv-suggest-w)) + 8px); }
+  /* On the stage, not on the grid: the grid is now shaped like its pictures,
+     so padding inside it would come out of the picture rather than out of the
+     room the picture is centred in. */
+  .multiview.has-suggest .mv-stage { padding-right: calc(min(88vw, var(--mv-suggest-w)) + 8px); }
 }
 /* The panel is chrome, and chrome on this screen fades with the rest of it —
    but only when there is nothing to read. An open list is being read. */
@@ -3994,10 +4071,14 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
    are, one per row, and drop the three-up span with them. */
 @media (max-width: 720px) {
   .mv-grid[data-count] { grid-template-columns: minmax(0, 1fr); }
-  .mv-grid[data-count="2"] { grid-template-rows: repeat(2, minmax(0, 1fr)); }
-  .mv-grid[data-count="3"] { grid-template-rows: repeat(3, minmax(0, 1fr)); }
-  .mv-grid[data-count="4"] { grid-template-rows: repeat(4, minmax(0, 1fr)); }
+  /* One column of 16:9 pictures: two of them is an 8:9 box, three 16:27, four
+     4:9 — the same rule as everywhere else, so a phone does not letterbox
+     inside its cells either. */
+  .mv-grid[data-count="2"] { --mv-ar: 8/9; grid-template-rows: repeat(2, minmax(0, 1fr)); }
+  .mv-grid[data-count="3"] { --mv-ar: 16/27; grid-template-rows: repeat(3, minmax(0, 1fr)); }
+  .mv-grid[data-count="4"] { --mv-ar: 4/9; grid-template-rows: repeat(4, minmax(0, 1fr)); }
   .mv-grid[data-count="3"] > .mv-cell:first-child { grid-row: auto; }
+  .mv-grid.is-solo { --mv-ar: 16/9; grid-template-rows: minmax(0, 1fr); }
   .mv-bar { flex-wrap: wrap; }
 }
 

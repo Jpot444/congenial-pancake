@@ -493,7 +493,12 @@
     <button class="btn btn-ghost btn-sm" id="mvSuggestBtn">Other games</button>
     <button class="btn btn-ghost btn-sm" id="mvStopAll">Stop all</button>
   </div>
-  <div class="mv-grid" id="mvGrid"></div>
+  <!-- The stage is the room the grid is allowed; the grid inside it is shaped
+       like the pictures it holds, so a cell is never taller than its own video
+       and nothing is letterboxed inside a cell. -->
+  <div class="mv-stage" id="mvStage">
+    <div class="mv-grid" id="mvGrid"></div>
+  </div>
 
   <!-- Slides in over the right-hand edge of the grid. Not a sheet and not a
        modal: the games it lists are about the games already on screen, so the

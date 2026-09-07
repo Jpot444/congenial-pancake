@@ -3009,6 +3009,43 @@ across with a hole where the fourth would be. The count is kept per device.
 Dropping it stops the cells it removes rather than hiding them: a cell playing
 off-screen still holds whatever the provider gave it.
 
+### The grid is the shape of the pictures in it
+
+> "There is wasted space on the top and bottom half during Multiview"
+
+The grid used to be the room it sat in: two cells side by side each took the
+whole height of the window, and since a cell is nearly always holding a 16:9
+picture, everything above and below that picture inside the cell was black. On
+an iPad in landscape that measured 207px of nothing at the top of each cell and
+the same again at the bottom — on both of them at once.
+
+So the grid is now **shaped like the arrangement it is drawing**, sized to the
+largest such box that fits, and centred in the room:
+
+| count | arrangement | box |
+| --- | --- | --- |
+| 2, wide screen | side by side | 32:9 |
+| 2, narrow screen | one above the other | 8:9 |
+| 3 | one large beside two stacked | 8:3 |
+| 4 | two by two | 16:9 |
+| one blown up | on its own | 16:9 |
+
+The cells come out picture-shaped, so nothing letterboxes inside a cell, and
+whatever is left over is a single band at the edge of the stage instead of a
+band inside every picture.
+
+**Side by side or stacked is not a matter of taste.** For two cells, one of
+them puts more picture on the screen than the other and the crossover is
+exactly 16:9 — wider than that, side by side wins; narrower, stacking does. A
+tablet held in landscape is about 1.6, which is why the report came from an
+iPad and not from a desktop. Stacking there is 475k px² of picture against
+376k, a quarter more, and it is chosen by a container query on the stage rather
+than by the window, because the window includes the bar at the top and the
+other-games panel at the side — furniture the grid was never going to get.
+
+Held inside `@supports (width: 1cqw)`, so a browser too old for container
+queries keeps the old fill-everything layout rather than a collapsed one.
+
 **Each cell has its own transport** — pause, and ten seconds either way. Live
 is not a film, so the skip is clamped to what the element reports as
 `seekable`: back reaches as far as the buffer still holds (`backBufferLength`
