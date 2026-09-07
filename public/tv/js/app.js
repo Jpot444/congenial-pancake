@@ -300,9 +300,10 @@ async function boot() {
   /*
    * Keeping up with the rest of the house.
    *
-   * Somebody picks a different profile on the phone and this television
-   * follows; somebody favourites a channel in the kitchen and it is on the
-   * Live screen here without anybody restarting anything. Same rule as the
+   * Somebody favourites a channel in the kitchen and it is on the Live screen
+   * here without anybody restarting anything. NOT the profile itself: that is
+   * a question about this screen, and a pick made in another room used to turn
+   * this television into somebody else mid-evening. Same rule as the
    * health poll — nothing competes with the thing being watched, so it stands
    * down while the player is up and catches up when it closes.
    */
@@ -310,12 +311,6 @@ async function boot() {
     const playing = state.screen === 'player' || state.screen === 'multi';
     const news = await followBox({ playing }).catch(() => null);
     if (!news) return;
-    if (news.switched) {
-      /* Every shelf on the screen belongs to the person who was watching a
-         moment ago. Starting again is the only way none of it is left over. */
-      location.reload();
-      return;
-    }
     paintProfile();
     /* Redraw whatever is showing, so a favourite or a rating made elsewhere
        lands rather than waiting for the next screen change. Keeping the

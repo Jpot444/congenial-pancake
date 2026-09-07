@@ -39,24 +39,27 @@ const EPG_MAX = 40;
 /* ------------------------------------------------------------- profile ── */
 
 /**
- * Pick up whoever the BOX says is watching.
+ * Pick up whoever last used THIS television.
  *
- * This used to read localStorage, which sounded like the same thing and is
- * not: the service answers on the Tailscale address and on the domain, and a
- * browser treats those as two unrelated origins with two separate stores. So
- * the Shield pointed at one of them knew nothing about the phone on the other,
- * and each remembered its own person. The box holds one answer and every way
- * in reads it.
+ * The box's `current` used to win here, which made every screen in the house
+ * open as whoever had chosen last anywhere in it. A television in the front
+ * room and a phone in a pocket are two people, not one viewer taking turns.
  *
- * localStorage is still consulted, but only as the fallback for a box that has
- * never been told — the upgrade case, where the device's own memory is the
- * best guess available.
+ * The box is still asked, as the fallback for a screen that has never chosen:
+ * a new device, or this service reached on an address it has not been opened
+ * on before, lands on whoever is actually watching rather than on a picker.
+ *
+ * What is shared between screens is what is IN a profile — the history, the
+ * favourites, the ratings, all held once on the Pi. That is untouched.
  */
 export async function loadProfile() {
   const data = await getProfiles();
   const list = data.profiles || [];
   if (!list.length) throw new Error('This box has no profiles yet. Make one in the browser portal first.');
-  const wanted = data.current || localStorage.getItem(PROFILE_KEY);
+  /* This television opens as whoever last used THIS television. The box's
+     answer is the fallback for a screen that has never chosen — see the note
+     on the same decision in the browser portal. */
+  const wanted = localStorage.getItem(PROFILE_KEY) || data.current;
   state.profile = list.find((p) => p.id === wanted) || list[0];
   state.rev = Number.isFinite(data.rev) ? data.rev : -1;
   localStorage.setItem(PROFILE_KEY, state.profile.id);
@@ -89,13 +92,15 @@ export async function followBox({ playing = false } = {}) {
   } catch {
     return null; // the box will still be there next time
   }
-  if (data.current && data.current !== state.profile.id) {
-    const next = (data.profiles || []).find((p) => p.id === data.current);
-    if (next) {
-      localStorage.setItem(PROFILE_KEY, next.id);
-      return { switched: next };
-    }
-  }
+  /*
+   * A pick made in another room is not a pick made here.
+   *
+   * This used to restart the app as whoever the box's `current` had become,
+   * so somebody choosing their own profile on the phone turned the television
+   * into them mid-evening. The profile is a question about this screen; what
+   * is shared between screens is what is IN a profile, which the rest of this
+   * function keeps up to date.
+   */
   if (Number.isFinite(data.rev) && data.rev !== state.rev) {
     state.rev = data.rev;
     const was = screenPrint();

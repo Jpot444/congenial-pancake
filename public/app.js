@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '40.2';
+const VERSION = '40.3';
 
 const PAGE_SIZE = 60;
 
@@ -160,21 +160,46 @@ const profiles = {
     this.locked = res.locked === true;
     if (Number.isFinite(res.rev)) this.rev = res.rev;
     /*
-     * The BOX decides who is watching, not this browser.
+     * THIS DEVICE opens as whoever last used THIS DEVICE.
      *
-     * The service answers on three addresses, and to a browser those are three
-     * different origins with three separate boxes of localStorage — so the
-     * television that remembered "Hunter" on one address knew nothing about it
-     * on another, and asked again. One answer, kept on the Pi, is the only way
-     * every address and every device agree.
+     * The box's `current` used to win here, so whoever picked a profile last —
+     * in any room, on any of the three addresses — decided what every other
+     * screen opened as:
      *
-     * localStorage is still read, but only as the fallback for a box that has
-     * never been told: an upgrade lands with a `current` of nothing, and the
-     * device that was already signed in is the best guess there is.
+     *     "whenever i open the app it looks like i load into the last users
+     *      profile. I should be loading into the last one i used"
+     *
+     * Which is right. A television in the front room and a phone in a pocket
+     * are not one viewer taking turns; they are two people, and the profile is
+     * a question about the screen rather than about the house.
+     *
+     * The box's answer is still worth having, as the fallback for a device
+     * that has never chosen. A new phone, or this service reached on an
+     * address it has not been opened on before, lands on whoever is actually
+     * watching rather than on the picker — which is the good half of what
+     * `current` was doing, kept.
+     *
+     * What is SHARED is unchanged and is the part that matters: one set of
+     * profiles on the Pi, one history, one set of favourites, one rating —
+     * every device reading and writing the same records. That was the ask, and
+     * none of it lives here.
      */
-    const wanted = res.current || localStorage.getItem('portal.profile');
+    const wanted = localStorage.getItem('portal.profile') || res.current;
     const match = this.all.find((p) => p.id === wanted);
-    if (match) await this.select(match, { silent: true });
+    /*
+     * Opening is not choosing.
+     *
+     * A screen waking up as its own remembered self says nothing about who is
+     * watching in the house, and republishing it here would make the box's
+     * record mean "whoever reloaded a page last" — which on this setup is the
+     * updater restarting things, not a person. Kept for what it is worth: the
+     * last profile anybody DELIBERATELY picked, which is the right thing for a
+     * screen with no memory of its own to open as.
+     *
+     * The exception is a box that has never been told, where this device's
+     * memory is the only answer anywhere and worth writing down.
+     */
+    if (match) await this.select(match, { silent: true, publish: !res.current });
   },
 
   async select(profile, { silent = false, publish = true } = {}) {
@@ -263,10 +288,19 @@ const profiles = {
       $('#chipName').textContent = mine.name;
     }
 
-    if (res.current && res.current !== this.current.id) {
-      const next = this.all.find((p) => p.id === res.current);
-      if (next) return this.handOver(next);
-    }
+    /*
+     * A pick made in another room is not a pick made here.
+     *
+     * This used to hand the screen over whenever the box's `current` moved,
+     * which is the same fault as the one in load() and worse: it undid a
+     * correct choice five seconds after somebody made it. Somebody choosing
+     * their own profile on the phone does not mean the television in front of
+     * you should become them.
+     *
+     * The one hand-over that stays is the one above: a profile DELETED
+     * elsewhere leaves nothing on this screen belonging to anybody, and that
+     * has to be acted on.
+     */
     if (Number.isFinite(res.rev) && res.rev !== this.rev) {
       /*
        * Not while something is playing.

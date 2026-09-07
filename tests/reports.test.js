@@ -142,22 +142,24 @@ error: 403 from http://cf.boffworld.com/live/hunter99/s3cr3tP@ss/12.ts`;
 
   const signIn = async (who) => {
     /*
-     * Told to the box, not clicked through the picker.
+     * Set, not clicked through the picker.
      *
-     * Who is watching lives on the box now — one answer for the whole house,
-     * because the service answers on three addresses and a browser keeps a
-     * separate store per origin, so no amount of clearing localStorage here
-     * would settle it. Setting it and loading the page is both the shortest
-     * way in and a truer test of the thing: the box says who, and the page
-     * opens as them.
+     * Clicking the tile is not usable for this: the page boots straight into
+     * somebody, and this suite has turned the one-time notice back on for
+     * EVERY profile a few lines up — so the picker would arrive behind a modal
+     * that swallows the click, and dismissing it would spend the very notice
+     * the checks below are waiting to see.
      *
-     * Clicking the tile is no longer usable for this anyway. The page now
-     * boots straight into whoever the box names, and this suite has turned the
-     * one-time notice back on for EVERY profile a few lines up — so the picker
-     * arrives behind a modal that swallows the click, and dismissing it would
-     * spend the very notice the checks below are waiting to see.
+     * Both halves are set, because that is what picking a profile now does.
+     * The SCREEN's own memory decides what it opens as — see whoami.test.js —
+     * and the box's record is the last deliberate pick, which is what a screen
+     * with no memory of its own follows. Setting only the box, as this used to,
+     * changed who the house thought was watching and left this device exactly
+     * as it was.
      */
     await putCurrent(who.id);
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.evaluate((id) => localStorage.setItem('portal.profile', id), who.id);
     await page.goto(BASE, { waitUntil: 'networkidle' });
     await page.waitForTimeout(2000);
   };

@@ -227,14 +227,26 @@ const portFree = async () => {
     /* ---- 7. both front ends actually use it ------------------------------ */
     /*
      * The API can be perfect and the televisions still disagree. These read
-     * the shipped source: the browser portal and the Shield app must both take
-     * the box's answer, tell it when they change, and poll.
+     * the shipped source: both front ends must tell the box when somebody
+     * picks, and poll it for what changed.
+     *
+     * What they must NOT do is open as whoever picked last somewhere else:
+     *
+     *     "whenever i open the app it looks like i load into the last users
+     *      profile. I should be loading into the last one i used"
+     *
+     * A television in the front room and a phone in a pocket are two people,
+     * not one viewer taking turns. The box's answer is the fallback for a
+     * screen that has never chosen — a new device, or an address this service
+     * has not been opened on before — which is the good half of what `current`
+     * was doing. What is SHARED is what is inside a profile, and that is what
+     * everything above this line is about.
      */
     console.log('\n  and both front ends are wired to it');
     const app = fs.readFileSync(PATHS.APP, 'utf8');
-    check('the portal prefers the box over its own storage',
-      /res\.current \|\| localStorage\.getItem\('portal\.profile'\)/.test(app),
-      'app.js still reads localStorage first');
+    check('the portal opens as whoever last used the portal',
+      /localStorage\.getItem\('portal\.profile'\) \|\| res\.current/.test(app),
+      'app.js still lets the box decide who this device is');
     check('the portal tells the box when somebody picks',
       /fetch\('\/api\/profiles\/current'/.test(app));
     check('and polls for what the other rooms did',
@@ -268,9 +280,15 @@ const portFree = async () => {
       /profiles\.follow\(\)\.catch/.test(app), 'closePlayer does not catch up');
 
     const tv = fs.readFileSync(path.join(ROOT, 'public/tv/js/state.js'), 'utf8');
-    check('the Shield prefers the box too',
-      /data\.current \|\| localStorage\.getItem\(PROFILE_KEY\)/.test(tv),
-      'tv/state.js still reads localStorage first');
+    check('the Shield opens as whoever last used the Shield',
+      /localStorage\.getItem\(PROFILE_KEY\) \|\| data\.current/.test(tv),
+      'tv/state.js still lets the box decide who this screen is');
+    /* And neither front end restarts itself as somebody else because a pick
+       was made in another room. The one hand-over that stays is a profile
+       DELETED elsewhere, which leaves nothing on screen belonging to anybody. */
+    check('and neither switches this screen for a pick made elsewhere',
+      !/switched/.test(tv) && !/return this\.handOver\(next\)/.test(app),
+      'a pick in another room still takes over this screen');
     check('and has something to poll with', /export async function followBox/.test(tv));
     const tvApp = fs.readFileSync(path.join(ROOT, 'public/tv/js/app.js'), 'utf8');
     check('which the Shield actually calls', /followBox\(\{ playing \}\)/.test(tvApp));

@@ -402,6 +402,35 @@ Netflix-style personas. Each carries its own favorites, pinned categories,
 watch history and ratings, all stored server-side in `profiles.json` so a
 profile is the same on every device.
 
+### What is shared, and what is not
+
+**What is inside a profile is shared.** One `profiles.json` on the Pi, one
+history, one set of favourites, one rating — every device reads and writes the
+same records, and a change counter tells the others to re-read. A series rated
+on the phone shows on the Shield without relaunching it, and a stale copy can
+no longer PUT its out-of-date favourites back over a fresh one.
+
+**Which profile a screen is showing is not.** Each device opens as whoever last
+used *that device*:
+
+> "whenever i open the app it looks like i load into the last users profile.
+>  I should be loading into the last one i used"
+
+The box's `current` used to decide that, so whoever picked last in any room
+chose for every screen in the house — and the five-second poll then re-decided
+it, so correcting a screen by hand did not stick. A television in the front room
+and a phone in a pocket are two people, not one viewer taking turns.
+
+`current` still exists and still earns its place: it is **the last profile
+anybody deliberately picked**, and it is what a screen with *no memory of its
+own* opens as. A new phone, or this service reached on an address it has not
+been opened on before, lands on whoever is actually watching rather than on a
+picker. Opening a screen does not republish it — a page reloading (which on this
+box is the updater, every two minutes) is not somebody choosing.
+
+The one hand-over that remains is a profile **deleted** elsewhere: nothing on
+that screen belongs to anybody any more, so it goes back to the picker.
+
 **The password is optional, and off by default.** Creating, deleting, renaming
 and switching are all open unless the **profile lock** is turned on, which is
 done from the link under *Manage profiles*. With the lock on, adding and
