@@ -830,6 +830,41 @@ svg {
   color: rgba(246, 241, 238, .62);
 }
 
+/*
+ * A line worth reading, on a wait long enough to read one.
+ *
+ * Wider and brighter than the mechanical sentence it replaced, because it is
+ * now the thing on the screen somebody is actually looking at. Two lines at
+ * most on a phone, centred, and it swaps with a fade rather than a cut —
+ * text that changes underneath a reader mid-sentence is worse than text that
+ * repeats.
+ */
+.loader.has-line .loader-label {
+  max-width: min(46ch, 88vw);
+  margin-left: auto;
+  margin-right: auto;
+  font-size: clamp(14px, 1.35vw, 18px);
+  line-height: 1.45;
+  color: rgba(246, 241, 238, .88);
+  transition: opacity .28s var(--ease);
+}
+.loader.has-line.is-turning .loader-label { opacity: 0; }
+
+/* The reason, kept. Small, dim and under the line: a viewer who wants to know
+   why the picture is not up yet can still find out in one glance. */
+.loader-why {
+  margin: var(--space-5) 0 0;
+  font-family: var(--display);
+  font-size: clamp(9px, .8vw, 10.5px);
+  text-transform: uppercase;
+  letter-spacing: .22em;
+  color: rgba(246, 241, 238, .34);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loader.has-line .loader-label { transition: none; }
+}
+
 /* ---- the meter ---- */
 .loader-progress {
   display: flex;
@@ -3223,6 +3258,81 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 /* ---- the walkthrough ---- */
 
 /* ---- what everyone else has sent in ---- */
+
+/* ---- what the buffering screens read ------------------------------------
+   Shaped like the Listings panel above it, because it is the same kind of
+   thing: one line saying whether it is working, and everything for changing
+   that folded away behind a summary. */
+.mkt {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.mkt h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+.mkt-count { font-size: 12.5px; font-weight: 500; color: var(--muted-dim); }
+/* Deliberately not .health-note, which is the alarm style. What this line
+   usually says is "11 facts from the book, read this morning" — good news, and
+   good news in a red box teaches people to ignore red boxes. It goes red only
+   when the book could not be read. */
+.mkt-note {
+  margin: 0 0 4px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .03);
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.mkt-note.is-bad {
+  border-color: rgba(255, 107, 94, .3);
+  background: rgba(255, 107, 94, .07);
+  color: var(--live);
+}
+.mkt-lead { margin: 12px 0 8px; font-size: 12.5px; line-height: 1.45; color: var(--muted-dim); }
+.mkt-more > summary {
+  cursor: pointer;
+  list-style: none;
+  margin-top: 8px;
+  padding: 7px 0;
+  font-size: 13px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.mkt-more > summary::-webkit-details-marker { display: none; }
+.mkt-more > summary::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--dur-hover, .16s) var(--ease, ease);
+}
+.mkt-more[open] > summary::before { transform: rotate(45deg); }
+.mkt-more > summary:hover { color: var(--text); }
+.mkt-field { margin-top: 12px; }
+.mkt-field textarea,
+.mkt-field input {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 12.5px;
+}
+.mkt-actions {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-top: 11px;
+  flex-wrap: wrap;
+}
 
 .reports {
   margin-top: 18px;

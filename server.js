@@ -114,6 +114,7 @@ const people = require('./people');
 const providers = require('./providers');
 const recordings = require('./recordings');
 const recommend = require('./recommend');
+const market = require('./market');
 const ARCHIVE_ROOT = process.env.ARCHIVE_ROOT || '/mnt/archive';
 const ARCHIVE_INDEX = path.join(ROOT, 'library-index.ndjson');
 
@@ -7165,6 +7166,7 @@ async function handleApi(req, res, pathname, query) {
          quietly dropped — and connecting a provider must not throw away a
          recommendation key somebody pasted a month ago. */
       if (held?.tmdbKey) next.tmdbKey = held.tmdbKey;
+      if (held?.market) next.market = held.market;
 
       if (next.mode === 'xtream') {
         if (!incoming.host || !incoming.username || !incoming.password) {
@@ -7390,6 +7392,86 @@ async function handleApi(req, res, pathname, query) {
          one. Both are the wrong answer now. */
       similarCache.clear();
       return json(res, 200, { set: Boolean(key) });
+    }
+    return json(res, 405, { error: 'Method not allowed' });
+  }
+
+  /*
+   * Something to read while the box buffers.
+   *
+   * Two routes: the deck, which any profile may have, and the settings, which
+   * only the owner's may.
+   *
+   * THE REDACTION IS HERE. A fact that names a dollar figure exists in two
+   * forms and market.js picks between them against this flag — so a browser
+   * signed in as anybody else is never sent the money version and asked not to
+   * draw it. Same rule the reports and the archive already follow, for the
+   * same reason: a rule enforced in a page is a rule enforced by whoever has
+   * the developer tools open.
+   */
+  if (pathname === '/api/market/lines') {
+    if (req.method !== 'GET') return json(res, 405, { error: 'Method not allowed' });
+    const owner = isOwnerProfile(ownerOf(query.get('profileId')));
+    /* Nudged, not waited on. A buffering screen asking for this must not wait
+       on somebody else's portfolio API — today's jokes are already here, and
+       today's numbers will be here for the next wait. */
+    market.refresh().catch(() => {});
+    const deck = market.lines({ owner });
+    const state = market.status();
+    res.setHeader('cache-control', 'no-store');
+    return json(res, 200, {
+      day: state.day || new Date().toISOString().slice(0, 10),
+      source: state.source,
+      owner,
+      lines: deck,
+    });
+  }
+
+  if (pathname === '/api/market') {
+    const owner = isOwnerProfile(ownerOf(query.get('profileId')));
+    if (!owner) {
+      return json(res, 403, { error: 'The market source is only shown to the owner profile.' });
+    }
+    if (req.method === 'GET') {
+      return json(res, 200, { ...market.status(), typed: market.typed() });
+    }
+    if (req.method === 'PUT') {
+      if (!cfg) return json(res, 400, { error: 'Connect a provider first.' });
+      let incoming;
+      try {
+        incoming = JSON.parse(await collectRequestBody(req));
+      } catch {
+        return json(res, 400, { error: 'Invalid JSON' });
+      }
+      if (Array.isArray(incoming.typed)) market.setTyped(incoming.typed);
+      if (incoming.source !== undefined) {
+        const source = String(incoming.source || '').trim().toLowerCase();
+        if (source && source !== 'kalshi' && source !== 'none') {
+          return json(res, 400, { error: 'That venue is not wired up yet.' });
+        }
+        const keyId = String(incoming.keyId || '').trim();
+        const privateKey = String(incoming.privateKey || '').trim();
+        /* Written, never read back — the same bargain the TMDB key gets. It
+           goes into config.json, which this box keeps at 0600, and the only
+           thing any screen is ever told about it is whether there is one. */
+        const held = cfg.market || {};
+        const next = source === 'none' || !source
+          ? { source: 'none' }
+          : {
+            source,
+            keyId: keyId || held.keyId || '',
+            /* A pasted PEM arrives with its newlines turned into \n by some
+               clients and kept by others. Both are the same key. */
+            privateKey: (privateKey || held.privateKey || '').replace(/\\n/g, '\n'),
+          };
+        writeConfig({ ...cfg, market: next });
+        if (next.source === 'kalshi' && next.keyId && next.privateKey) {
+          /* Straight away, so the settings screen can say whether the key
+             works rather than "check back tomorrow". */
+          await market.refresh({ force: true }).catch(() => {});
+        }
+      }
+      return json(res, 200, { ...market.status(), typed: market.typed() });
     }
     return json(res, 405, { error: 'Method not allowed' });
   }
@@ -9958,6 +10040,15 @@ reportDiskSpace();
 loadLibraryCache();
 archive.configure({ root: ARCHIVE_ROOT, indexPath: ARCHIVE_INDEX });
 guide.configure({ dir: ROOT, log: (line) => console.log(`  ${line}`), guard: privateAddress });
+/* Something to read while the box buffers. The jokes need nothing and are
+   ready the moment this returns; the firm's numbers are asked for on a slow
+   timer and lazily by the endpoint, so a box with no key simply never asks. */
+market.configure({
+  dir: ROOT,
+  log: (line) => console.log(`  ${line}`),
+  fetchJson,
+  config: readConfig,
+});
 people.load(PEOPLE_PATH, (line) => console.log(`  ${line}`));
 recordings.load(RECORDINGS_DIR, (line) => console.log(`  ${line}`));
 /* What the box has learned about dead fixture channels. Read at boot so a

@@ -1084,6 +1084,117 @@ what a seek, a prebuffer and a film-details fetch put up, and replaying a
 four-second lamp warm-up over a 300ms wait would feel like a reboot — so
 everything after the first one gets the same screen already at rest.
 
+### What a buffering screen says
+
+> "During the buffering screens where it says 'buffering ahead' I want that
+> replaced with a prediction market specific joke or a real fact from my
+> prediction market firm."
+
+A prebuffer is fifteen to sixty seconds of a progress bar and a sentence
+explaining a technical decision the viewer did not make. The bar earns its
+place — it says the wait is finite and how finite. The sentence had one reader,
+once, and it was the same sentence every time.
+
+So a long wait now **leads with a line worth reading**, and the mechanical
+reason moves to small print under it:
+
+```
+        Longshot bias: everyone overpays for 3% and underpays for 97%.
+                        Including here.
+        BUFFERING AHEAD · THE PROVIDER IS FEEDING THIS ONE SLOWLY
+        ───────────────────────────────  45s of 60s   75%
+```
+
+Replaced as the headline, not deleted: somebody who wants to know why the
+picture is not up yet can still find out in one glance, and the numbers beside
+the bar are untouched. A wait past sixteen seconds turns to the next line with
+a fade, because one sentence does not hold a minute.
+
+Three call sites use it — the two prebuffers and the whole-episode archive
+load. A seek and a library load do not: they are short, and a joke on a
+300ms wait is a joke nobody reads.
+
+**The lines come from `market.js` on the box**, in two kinds:
+
+- **Jokes**, forty of them, written in the module and shipped in the repo. They
+  need nothing, cannot fail, and are what the screen falls back to when
+  everything else does.
+- **Facts**, out of the firm's own book, read **once a day** and cached in
+  `market-facts.json` (gitignored, 0600). A source that is missing, refuses, or
+  changes shape ends as "no facts today" — a buffering screen is the worst
+  possible place to report that a portfolio API returned 403.
+
+Yesterday's numbers are kept when a refresh fails, up to 36 hours, because
+yesterday's true numbers beat no numbers. Past that they are dropped rather
+than shown as though they were today's.
+
+#### Who sees a dollar figure
+
+> "Other accounts should also see the messages, but not dollar figures only %"
+
+Every fact is written **twice** — once with money in it and once as a
+percentage — and the choice between them is made on the box, against the
+profile that asked:
+
+| | the owner's profile | everybody else |
+| --- | --- | --- |
+| a good week | Treasure State is up $5,000 this week. That is 12% on what was staked. | Treasure State is up 12% this week. |
+| the best call | …up 34% and $1,800. | …up 34%. |
+| a fact with no percentage form | shown | not sent at all |
+
+A browser is never sent a number it is not allowed to draw and then trusted to
+hide it — the same rule the reports panel and the archive already follow, for
+the same reason: a rule enforced in a page is a rule enforced by whoever has
+the developer tools open. The deck is also re-fetched when the profile changes,
+so a shared iPad cannot keep the owner's copy in memory for the next person.
+
+#### The rotation
+
+"A decent rotation so I don't see them repeated" is not a random pick. Random
+deals the same line twice running about one time in forty, and that is the only
+repeat anybody ever notices. So the deck is **shuffled and dealt**: every line
+comes up once before any line comes up twice, the position in the deck is kept
+in `localStorage` and survives a reload, and when a deck runs out it is
+reshuffled with the last eight held back so the seam does not repeat either.
+
+Only ids are stored, never the text — so a device the owner used cannot have a
+dollar figure sitting in its local storage waiting to be drawn for somebody
+else. A screen left open across midnight notices: the deck is stamped with the
+day it was dealt, and dealing from a stale one asks for a new one in the
+background.
+
+The Shield app draws from the same deck on its "REMUXING ON THE PI" screen,
+which is the one wait on that app long enough to be worth reading on.
+
+#### Wiring up the book
+
+The panel is in **Pi health → Buffering screens**, owner only, and so is the
+route behind it. It takes a Kalshi read-only API key (the key id and its PEM),
+which is stored in `config.json` beside the provider password — written, never
+read back, and the only thing any screen is ever told about it is whether there
+is one. It also takes lines typed in by hand, which need no key and no venue at
+all; a typed line with a `$` in it is treated as the owner's.
+
+From the settled history the box computes realised P&L over a day, a week, a
+month and a year, the return on what was staked, the best and worst call of the
+week, the win rate, the streak, contracts traded, the open position count and
+the biggest position. Realised rather than marked: an unrealised number that
+moves all day would make "up 12% this week" mean something different every time
+it was read.
+
+No query strings are sent on the signed calls: whether the signature covers
+them is the one detail of Kalshi's scheme different clients disagree about, and
+a page of settlements is plenty for a week's story — so the question is not
+asked.
+
+**The Kalshi adapter is written against the documented v2 shape and has not yet
+been run against a live key.** Every field is read defensively and any failure
+at all ends as no facts, so the worst case is that the screen shows jokes. The
+adapter is one function — `readKalshi` — and swapping venues means replacing
+it and nothing else.
+
+### The percentage
+
 The percentage is real, not decorative:
 
 - **Library loads** stream the response and report bytes received against

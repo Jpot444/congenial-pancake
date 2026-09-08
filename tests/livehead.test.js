@@ -295,7 +295,11 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
     meta: document.querySelector('.sc-meta')?.textContent,
     cards: [...document.querySelectorAll('.sc-card')].map((c) => ({
       cls: c.className,
-      chan: c.querySelector('.sc-tune')?.title || '',
+      /* The first line only. The tune button's tooltip carries the reason the
+         card was routed where it was underneath — added when college routing
+         learned to explain itself — and what is being checked here is WHERE it
+         goes, not why. */
+      chan: (c.querySelector('.sc-tune')?.title || '').split('\n')[0],
       dead: c.querySelector('.sc-tune').disabled,
       score: c.querySelector('.sc-score')?.textContent ?? null,
       half: c.querySelector('.sc-half, .sc-final')?.textContent ?? null,
@@ -533,7 +537,11 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
       .gridTemplateColumns.split(' ').length,
     cards: [...document.querySelectorAll('.sc-card')].map((c) => ({
       game: c.dataset.game,
-      chan: c.querySelector('.sc-tune')?.title || '',
+      /* The first line only. The tune button's tooltip carries the reason the
+         card was routed where it was underneath — added when college routing
+         learned to explain itself — and what is being checked here is WHERE it
+         goes, not why. */
+      chan: (c.querySelector('.sc-tune')?.title || '').split('\n')[0],
       dead: c.querySelector('.sc-tune').disabled,
       field: Boolean(c.querySelector('.sc-field')),
       down: c.querySelector('.sc-drive b')?.textContent ?? null,

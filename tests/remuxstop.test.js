@@ -153,7 +153,7 @@ console.log(JSON.stringify({ streams: [], format: { duration: '2531.3' } }));
 
   fs.cpSync(path.join(ROOT, 'public'), path.join(DIR, 'public'), { recursive: true });
   for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js',
-    'providers.js', 'recordings.js', 'recommend.js']) {
+    'providers.js', 'recordings.js', 'recommend.js', 'market.js']) {
     fs.copyFileSync(path.join(ROOT, f), path.join(DIR, f));
   }
   fs.copyFileSync(path.join(ROOT, 'college-teams.json'), path.join(DIR, 'college-teams.json'));

@@ -1392,6 +1392,18 @@ a { color: var(--text); text-decoration: none; }
   padding: 0 80px;
 }
 .tune-sub { font-size: 28px; color: rgba(255, 255, 255, .82); text-align: center; }
+
+/* A line worth reading while the Pi converts. Set narrow and quiet: the title
+   of the thing being started is still the headline on this screen, and this
+   sits under it the way a caption does. Ten feet away, so nothing under 30px. */
+.tune-line {
+  max-width: 1180px;
+  font-size: 32px;
+  line-height: 1.4;
+  text-align: center;
+  color: rgba(255, 255, 255, .66);
+  padding: 0 80px;
+}
 .tune-badge {
   display: inline-flex;
   align-items: center;

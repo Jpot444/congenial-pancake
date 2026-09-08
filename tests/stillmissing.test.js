@@ -152,7 +152,7 @@ async function serverSide() {
   fs.mkdirSync(path.join(BOX_DIR, 'downloads'), { recursive: true });
   fs.cpSync(path.join(PATHS.ROOT, 'public'), path.join(BOX_DIR, 'public'), { recursive: true });
   for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js',
-    'providers.js', 'recordings.js', 'recommend.js']) {
+    'providers.js', 'recordings.js', 'recommend.js', 'market.js']) {
     fs.copyFileSync(path.join(PATHS.ROOT, f), path.join(BOX_DIR, f));
   }
   fs.copyFileSync(path.join(PATHS.ROOT, 'college-teams.json'),

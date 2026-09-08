@@ -132,7 +132,7 @@ check('cfg.mode is read through a null-safe alias, so a missing config cannot th
   fs.mkdirSync(DIR, { recursive: true });
   fs.cpSync(path.join(ROOT, 'public'), path.join(DIR, 'public'), { recursive: true });
   for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js',
-    'providers.js', 'recordings.js', 'recommend.js']) {
+    'providers.js', 'recordings.js', 'recommend.js', 'market.js']) {
     fs.copyFileSync(path.join(ROOT, f), path.join(DIR, f));
   }
   fs.writeFileSync(path.join(DIR, 'config.json'), JSON.stringify({
@@ -238,7 +238,7 @@ check('cfg.mode is read through a null-safe alias, so a missing config cannot th
   fs.mkdirSync(DIR2, { recursive: true });
   fs.cpSync(path.join(ROOT, 'public'), path.join(DIR2, 'public'), { recursive: true });
   for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js',
-    'providers.js', 'recordings.js', 'recommend.js']) {
+    'providers.js', 'recordings.js', 'recommend.js', 'market.js']) {
     fs.copyFileSync(path.join(ROOT, f), path.join(DIR2, f));
   }
   const emptyPort = 8499;

@@ -11,7 +11,7 @@
 
 import {
   getProfiles, putCurrentProfile, getProfilePrefs, putProfilePrefs, getTaste,
-  getLibrary, getEpgNow, getHealth,
+  getLibrary, getEpgNow, getHealth, getMarketLines,
 } from './api.js';
 
 export const state = {
@@ -164,6 +164,63 @@ export async function loadTaste() {
 export async function refreshHealth() {
   state.health = await getHealth().catch(() => null);
   return state.health;
+}
+
+/* ---------------------------------------------------- the buffering lines ── */
+
+/*
+ * Something to read while the Pi converts an episode.
+ *
+ * The conversion screen sat on "45 second prebuffer · to fMP4" — true, and
+ * read once. It now leads with a line about prediction markets, the same deck
+ * the browser portal draws from and the same rule about who may see what: the
+ * BOX decides which form of a fact this profile gets, and this app could not
+ * undo that if it tried.
+ *
+ * Shuffled and dealt rather than picked at random, for the reason the portal
+ * spells out at length: random repeats often enough to be noticed, and a
+ * repeat is the one thing a line like this cannot survive.
+ */
+const deck = { lines: [], order: [], at: 0, who: '', day: '' };
+
+export async function loadMarketLines() {
+  const who = state.profile ? state.profile.id : '';
+  try {
+    const data = await getMarketLines(who);
+    deck.lines = Array.isArray(data.lines) ? data.lines : [];
+    deck.who = who;
+    deck.day = String(data.day || '');
+    deck.order = shuffled(deck.lines.map((l) => String(l.id)));
+    deck.at = 0;
+  } catch {
+    /* No deck is a conversion screen that says what it always said. */
+  }
+  return deck.lines.length;
+}
+
+/** The next line, or '' — in which case the caller keeps its own wording. */
+export function marketLine() {
+  if (!deck.order.length) return '';
+  if (deck.at >= deck.order.length) {
+    /* Dealt again, with the last one held back so the seam cannot repeat. */
+    const last = deck.order[deck.order.length - 1];
+    const rest = shuffled(deck.order.filter((id) => id !== last));
+    deck.order = [...rest, last];
+    deck.at = 0;
+  }
+  const id = deck.order[deck.at];
+  deck.at += 1;
+  const found = deck.lines.find((l) => String(l.id) === id);
+  return found ? String(found.text || '') : '';
+}
+
+function shuffled(list) {
+  const out = list.slice();
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------- library ── */

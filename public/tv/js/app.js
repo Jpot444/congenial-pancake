@@ -8,7 +8,9 @@
  */
 
 import { focus } from './focus.js';
-import { state, loadProfile, loadTaste, refreshHealth, followBox } from './state.js';
+import {
+  state, loadProfile, loadTaste, refreshHealth, followBox, loadMarketLines,
+} from './state.js';
 import { el, clear, toast } from './ui.js';
 
 import * as live from './screens/live.js';
@@ -67,7 +69,7 @@ export const app = {
   /* The loading screen between choosing something and watching it. The bison
      and the brand field are the portal's own, so the wait looks like the app
      rather than like nothing happening. */
-  tune({ eyebrow = 'TUNING IN', name = '', sub = '', hints = [], badge = null }) {
+  tune({ eyebrow = 'TUNING IN', name = '', sub = '', hints = [], badge = null, line = '' }) {
     const host = clear(dom.tuning);
     const wrap = el('div', 'tuning');
     const bison = el('img');
@@ -76,6 +78,10 @@ export const app = {
     bison.onerror = () => { bison.src = 'assets/bison.png'; bison.onerror = null; };
     wrap.append(bison, el('div', 'tune-eyebrow', eyebrow), el('div', 'tune-name', name));
     if (sub) wrap.append(el('div', 'tune-sub', sub));
+    /* A line worth reading on a wait long enough to read one — see the deck in
+       state.js. Under the technical sub-line rather than over it: on this
+       screen the thing being started is the headline, and it should stay. */
+    if (line) wrap.append(el('div', 'tune-line', line));
     if (badge) {
       const pill = el('span', 'tune-badge');
       if (badge.dot) pill.append(el('span', 'live-dot'));
@@ -291,6 +297,9 @@ async function boot() {
      neither is worth blocking the first paint on. */
   refreshHealth().then(paintHealth);
   loadTaste();
+  /* Something to read on the next conversion screen. Fetched now, because the
+     moment it is wanted is by definition a moment when the box is busy. */
+  loadMarketLines().catch(() => {});
   setInterval(() => {
     /* Never while something is playing: the chip is not worth a stutter. */
     if (state.screen === 'player' || state.screen === 'multi') return;

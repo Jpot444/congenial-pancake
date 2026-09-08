@@ -121,3 +121,10 @@ export const getArchivePlay = (profileId, path) => api('/api/archive/play', { pr
 /* --------------------------------------------------------------- health ── */
 
 export const getHealth = () => api('/api/health');
+
+/* ------------------------------------------------------- buffering lines ── */
+
+/* What to put on a conversion screen instead of a sentence about fMP4. The
+   box decides what this profile may be shown — the owner's copy names dollar
+   figures and nobody else's does — so the profile goes with the request. */
+export const getMarketLines = (profileId) => api('/api/market/lines', { profileId });

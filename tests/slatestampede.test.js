@@ -54,7 +54,7 @@ const UPSTREAM = 8488;
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stampede-'));
   for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js',
-    'providers.js', 'recordings.js', 'recommend.js', 'college-teams.json']) {
+    'providers.js', 'recordings.js', 'recommend.js', 'market.js', 'college-teams.json']) {
     fs.copyFileSync(path.join(ROOT, f), path.join(dir, f));
   }
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });

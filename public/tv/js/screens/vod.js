@@ -13,7 +13,7 @@
 
 import { el, clear, hms, plateText } from '../ui.js';
 import { getPlay, getArchivePlay, getProgress, postHistory } from '../api.js';
-import { state } from '../state.js';
+import { state, marketLine } from '../state.js';
 
 export const fullbleed = true;
 
@@ -61,6 +61,8 @@ export async function render(hostNode, app, params) {
       sub: `${stream.prebuffer || 45} second prebuffer · to fMP4`,
       badge: { text: 'CONVERTING', dot: true },
       hints: [['BACK', 'Cancel']],
+      /* The only wait on this app long enough to be worth reading on. */
+      line: marketLine(),
     });
   }
 

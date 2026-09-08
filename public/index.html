@@ -215,6 +215,64 @@
       </details>
     </div>
 
+    <!-- The buffering screens read from here. Owner only, because the source
+         behind it is a brokerage key and the lines it produces name money —
+         the panel is hidden outright for anybody else, and the box refuses
+         the route besides. -->
+    <div class="mkt" id="marketPanel" hidden>
+      <h3>
+        Buffering screens
+        <span class="mkt-count" id="marketCount"></span>
+      </h3>
+      <p class="mkt-note" id="marketNote">Reading…</p>
+
+      <details class="mkt-more">
+        <summary>Where the facts come from</summary>
+
+        <p class="mkt-lead">
+          The jokes ship with the app and need nothing. The facts are your
+          book, read once a day. Everyone in the house sees the same facts;
+          dollar figures are replaced with percentages for every profile but
+          yours, on the box, before they are sent.
+        </p>
+
+        <label class="field mkt-field">
+          <span>Kalshi API key ID <small>(read-only key)</small></span>
+          <input type="text" id="marketKeyId" spellcheck="false" autocomplete="off"
+                 placeholder="00000000-0000-0000-0000-000000000000" />
+        </label>
+        <label class="field mkt-field">
+          <span>Its private key <small>(the PEM block, pasted whole)</small></span>
+          <textarea id="marketKey" rows="3" spellcheck="false" autocomplete="off"
+                    placeholder="-----BEGIN RSA PRIVATE KEY-----"></textarea>
+        </label>
+        <div class="mkt-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="marketSave">
+            Save and read the book
+          </button>
+          <button type="button" class="btn btn-ghost btn-sm" id="marketClear">
+            Turn it off
+          </button>
+        </div>
+
+        <label class="field mkt-field">
+          <span>
+            Facts of your own <small>(one per line — a line with a $ in it is
+            yours alone)</small>
+          </span>
+          <textarea id="marketTyped" rows="3" spellcheck="false"
+                    placeholder="Treasure State has never taken the other side of a Bobcats game."></textarea>
+        </label>
+        <div class="mkt-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="marketTypedSave">
+            Save these lines
+          </button>
+        </div>
+
+        <p class="mkt-note is-bad" id="marketError" hidden></p>
+      </details>
+    </div>
+
     <!-- What everyone else has sent in. Sits outside #healthBody for the same
          reason the connection test does: that block is replaced wholesale by
          the poll every few seconds. -->
@@ -602,7 +660,12 @@
 
     <p class="loader-title" id="loaderTitle">Treasure Theater</p>
     <p class="loader-sub">Treasure State Technology Ventures</p>
+    <!-- On a long wait this holds a line about prediction markets instead of a
+         sentence about remuxing — see the market module in app.js. The
+         mechanical reason moves to the small print below, where it is still
+         true and no longer the headline. -->
     <p class="loader-label" id="loaderLabel">Loading…</p>
+    <p class="loader-why" id="loaderWhy" hidden></p>
 
     <div class="loader-progress">
       <div class="loader-track"><div class="loader-fill" id="loaderFill"></div></div>
