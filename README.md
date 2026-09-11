@@ -2849,18 +2849,112 @@ seconds. It turns one stall into a stall plus a jump.
 
 What is wanted from a channel is that it keeps playing. Forty seconds behind
 costs nothing except on a live score, and nothing about it is worth a jump or a
-message. So **nothing moves the playhead**: no correction of ours, and
+message. So **nothing SEEKS the playhead**: no correction of ours, and
 `liveMaxLatencyDuration` parked at 600 so hls.js does not do it either. The
 `LIVE` pill still shows the gap and still jumps to the edge when pressed —
-deliberately, by somebody who wanted it.
+deliberately, by somebody who wanted it. (The gap is recovered a different way,
+without seeking and without throwing anything away — see the next section.)
 
 hls.js's own **stall and gap recovery is left alone**, and that is a different
 thing: it steps over a hole in the media, which is the difference between a
 picture that continues and one frozen for good. Switching it off would freeze
-the stream, not steady it. A forced jump can still happen for a reason no
-client controls — if the playhead falls so far behind that the oldest segments
-expire out of the playlist, the material under it is gone and the player has
-nowhere to stand. That is the link, not a setting.
+the stream, not steady it.
+
+### Being late is free, until it isn't
+
+> "there was just a jump in the time of my live stream, but i dont think the
+> playback caught it"
+
+The paragraph above used to end by conceding the failure mode and calling it
+somebody else's problem: *if the playhead falls so far behind that the oldest
+segments expire out of the playlist, the material under it is gone and the
+player has nowhere to stand. That is the link, not a setting.* The report that
+came with this complaint is that concession being cashed in:
+
+```
+latency         72.0s behind the edge, asked for 33.0s
+  seat          364.8s, playhead -39.0s from it
+playlist        live, 6 segments of ~12s = 60s window
+measured rate   1.000x over 9s
+```
+
+A **60-second window** and a playhead **72 seconds** behind the edge. The
+segments under it had already been deleted. The engine's only remaining move
+was forward, onto something that still existed — and that is the jump, arriving
+minutes after the stalls that caused it, while every rate in the report read as
+perfect. A late playhead still advances at exactly one second per second.
+
+**Both earlier attempts tried to close the gap by seeking, and the objection to
+that still stands.** What neither tried is closing it by playing *slightly
+faster*. `maxLiveSyncPlaybackRate: 1.1` lets hls.js creep the rate up while it
+is behind its seat: a fifteen-second deficit is recovered over about two and a
+half minutes, inaudibly, throwing nothing away. It removes the jump instead of
+making it smaller, and it has no failure mode worth the name — if the latency
+reading was briefly wrong the rate goes back to 1 and nothing has been lost.
+
+**The hard chaser stays parked at 600 regardless**, and now for a sharper
+reason than "being late is free". `liveMaxLatencyDuration` is tested against
+hls.js's own `latency`, which adds an allowance for a playlist that has stopped
+refreshing — a single `levelLoadTimeOut` inflates it by fifteen or twenty
+seconds. A hard seek made on an inflated estimate jumps the viewer past real
+content: a new jump, invented to avoid one. The creep has no such problem, so
+the recovery is done there.
+
+The catch-up is deliberately **not** badged on screen. `#vodSpeed` exists to
+surface a rate an extension set, and offers a "reset to normal" button; during
+a catch-up that would be a button for fighting the engine. The report names it
+instead.
+
+### The report says when it is losing ground
+
+The other half of that complaint is that the report could not have shown any of
+this. Being behind live was read as **one instantaneous number** at the bottom
+of the report, and the fault is a *slide* — so the number was always a snapshot
+of a fall already in progress, with nothing to compare it against.
+
+It is sampled a row a second now, with everything else, and the report says:
+
+```
+behind live     72.0s now, 32.0s when it started, worst 72.0s (4s ago)
+                slipped 40.0s since it started — time lost to stalls that was never made back
+                asked to sit 32.0s back; the seat is at 364.8s
+                the window holds 60s; the playhead is 11.5s PAST THE BACK OF IT
+                >>> the segments under the playhead have expired — the engine
+                    has to jump forward, and that is the jump <<<
+```
+
+Three things that were missing, and each one matters on its own:
+
+- **Where it started.** "72s behind" alone can be a seat somebody chose; this
+  box asks to sit 32s back on purpose. "32s, then 72s" is time lost and never
+  made back, which is a different fault with a different cause.
+- **How much window is left behind the playhead.** This is the line that
+  *predicts* the jump. Under a segment of room and the next thing that happens
+  is a forced seek, whatever the rates say.
+- **A `bhd` column in the timeline**, so a hundred rows of flawless `1.00x`
+  with the number climbing through them read as what they are.
+
+The **verdict** was wrong about the present tense, which is worse than missing:
+it read `Running at 0.00× with 7 stalls — the stream is not arriving fast
+enough` about a stream that had been at `1.000x` for seventy seconds.
+`worstRate` is the low point of the whole viewing — kept deliberately, since
+the first thing anybody does about bad playback is reload — and it was being
+read out as the present. It now says `It is running at 1.00× now, but fell to
+0.00× with 7 stalls`, and a playhead near the back of the window outranks the
+rate verdicts entirely, because it is the one fault none of them can see.
+
+And a forced jump is **labelled for what it was**. It used to come out as
+`something seeked, and nothing here asked for it` — true, and the least useful
+of the available truths. Now: `the playhead had fallen 6s behind the oldest
+segment the provider still lists, so the engine jumped forward onto one that
+exists`. `expectMove` also consumes its expectation rather than leaving it
+lying about, so a label set for one move can no longer attach itself to the
+next one and stop anybody looking.
+
+`tests/fellbehind.test.js` drives the whole chain — three stalls with a perfect
+1.00x between them, the slide, the cliff called before it is reached, the jump,
+and the verdict's tense — against a stand-in engine, and checks that a film,
+which has no edge to be behind, grows none of these lines.
 
 ### Where to sit, and when to start
 

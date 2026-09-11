@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '40.5';
+const VERSION = '40.6';
 
 const PAGE_SIZE = 60;
 
@@ -723,9 +723,43 @@ const LIVE_HLS = {
   // room ahead to hold a real cushion, enough behind that segments do not
   // expire under the playhead.
   liveSyncDuration: 32,
-  // Parked out of reach on purpose. This is hls.js's own latency chaser, and
-  // a stream that keeps playing while running late is exactly what is wanted
-  // here — there is nothing for it to fix.
+  /*
+   * Creep the rate up to win back time a stall cost, rather than jumping for it.
+   *
+   * "there was just a jump in the time of my live stream"
+   *
+   * Here is the chain that produces one. A stall costs fifteen seconds. The
+   * player resumes at exactly 1.00x, so nothing measurable looks wrong
+   * afterwards — but the fifteen seconds are never made back, and the playhead
+   * is fifteen seconds further from the edge than it was. Do that four times in
+   * an evening and the playhead is further behind the edge than this provider's
+   * window is wide, at which point the segments underneath it have been
+   * deleted and the engine has no option left except to jump forward onto one
+   * that still exists. The viewer sees the time jump out of nowhere, minutes
+   * after the stall that caused it.
+   *
+   * 1.1x closes a fifteen-second deficit over about two and a half minutes,
+   * which is inaudible — well inside the range a pitch-corrected player moves
+   * through without anybody noticing — and it removes the jump rather than
+   * making it smaller. Self-correcting, too: if the latency reading was briefly
+   * wrong the rate simply goes back to 1 and nothing has been lost.
+   */
+  maxLiveSyncPlaybackRate: 1.1,
+  /*
+   * Still parked out of reach, and now for a sharper reason than before.
+   *
+   * This is hls.js's HARD chaser: past this many seconds behind, it seeks
+   * forward onto the seat. The temptation is to bring it inside the 60s window
+   * so a correction happens while the content still exists — but the number it
+   * tests is hls.js's own `latency`, which adds an allowance for a playlist
+   * that has stopped refreshing. A single levelLoadTimeOut inflates it by
+   * fifteen or twenty seconds, and a hard seek made on an inflated estimate
+   * jumps the viewer past real content: a new jump, invented to avoid one.
+   *
+   * The rate creep above has no such failure mode, so the recovery is done
+   * there and this stays where it was. If the creep turns out not to be
+   * enough, the report now says so in as many words — see behindLines().
+   */
   liveMaxLatencyDuration: 600,
   // Hold everything from the playhead to the edge. Costs no latency: the
   // playlist stops at the edge, so this can only fill the gap already there.
@@ -12779,6 +12813,30 @@ const playback = {
   playlistResets: [],
   /** Set by our own code just before it moves the playhead on purpose. */
   expected: null,
+  /*
+   * How far behind the live edge the playhead is, kept as a series.
+   *
+   * "there was just a jump in the time of my live stream, but i dont think the
+   *  playback caught it"
+   *
+   * It did not, and the reason is that being behind live was only ever read as
+   * one instantaneous number at the bottom of the report. That number cannot
+   * show the fault, because the fault is a SLIDE: a stall costs fifteen
+   * seconds, the player never makes them up, and forty minutes later the
+   * playhead is further behind the edge than the provider's window is wide. At
+   * that point the segments under the playhead have expired and the engine has
+   * no choice but to jump forward onto something that still exists — which is
+   * the jump, arriving as the consequence of something that happened minutes
+   * earlier and was never written down.
+   *
+   * So it is sampled a row a second with everything else, and the report says
+   * where it started, where it is now, and how close the playhead is to the
+   * back of the window. Kept for the whole viewing, like the moves: a slide is
+   * slow by nature and a two-minute window cannot hold one.
+   */
+  behindFirst: null,
+  behindWorst: null,
+  behindAt: 0,
   // The low point of this viewing, kept with the full report from that moment.
   //
   // Held across reset(), unlike everything above it. Reloading the stream or
@@ -12825,6 +12883,9 @@ const playback = {
     this.playlistWas = null;
     this.playlistResets = [];
     this.expected = null;
+    this.behindFirst = null;
+    this.behindWorst = null;
+    this.behindAt = 0;
   },
 
   reset() {
@@ -12878,6 +12939,23 @@ const playback = {
        there is — see bufferAhead(). The old number reported thirty seconds of
        cushion while the playhead was four tenths of a second from a wall. */
     const ahead = bufferAhead(video);
+
+    /*
+     * How far behind the edge this second is.
+     *
+     * Read before the move detection below, because it is what tells a forced
+     * correction apart from a mystery: a forward jump made by a playhead that
+     * was standing behind the back of the window is the engine rescuing
+     * playback, not something seeking for no reason.
+     */
+    const standing = this.liveStanding();
+    if (standing.behind !== null && !video.paused) {
+      if (this.behindFirst === null) this.behindFirst = standing.behind;
+      if (this.behindWorst === null || standing.behind > this.behindWorst) {
+        this.behindWorst = standing.behind;
+        this.behindAt = Date.now();
+      }
+    }
 
     /*
      * A hole stepped over, caught from the two rows either side of it.
@@ -12947,6 +13025,10 @@ const playback = {
       nw: video.networkState,
       buf: ahead.end,
       resumeAt: ahead.resumeAt,
+      /* How late this second was, and how much room was left behind the
+         playhead before the provider's window ran out from under it. */
+      behind: standing.behind,
+      backEdge: standing.backEdge,
       f: q ? q.total : 0,
       notes,
     });
@@ -13002,6 +13084,43 @@ const playback = {
 
   /* -- the playhead moving on its own ----------------------------------- */
 
+  /**
+   * Where the live edge is, where the seat is, and where the window ends.
+   *
+   * All three come off the engine and all three are needed together, because
+   * the question that matters is not "how late are we" but "is late now later
+   * than the provider is willing to keep". A window 60s wide and a playhead
+   * 72s behind the edge is a playhead standing on content that has already
+   * been deleted; the same 72s against a four-minute window is merely late.
+   *
+   * `null` for everything that cannot be read — a file, a conversion, native
+   * HLS — and every caller has to cope with that rather than assume zero.
+   */
+  liveStanding() {
+    const out = { behind: null, seat: null, windowEnds: null, backEdge: null, chasing: false };
+    if (engineKind !== 'hls.js' || !engine) return out;
+    try {
+      if (Number.isFinite(engine.latency)) out.behind = engine.latency;
+      if (Number.isFinite(engine.liveSyncPosition)) out.seat = engine.liveSyncPosition;
+      const details = engine.levels?.[engine.currentLevel]?.details;
+      if (details && details.live) {
+        const frags = details.fragments || [];
+        out.windowEnds = Number(details.totalduration) || null;
+        /* The oldest thing the provider still lists. Anything before this is
+           gone, whatever the media element still holds in its buffer. */
+        if (frags.length && Number.isFinite(frags[0].start)) out.backEdge = frags[0].start;
+      }
+      /* hls.js creeping the rate up to recover lost latency — see LIVE_HLS.
+         Worth naming, because a 1.08x reading in the report is otherwise a
+         mystery and reads like the conversion running fast. */
+      const video = $('#video');
+      out.chasing = Boolean(video && video.playbackRate > 1.01 && out.behind !== null);
+    } catch {
+      /* A report that cannot read the engine is still a report. */
+    }
+    return out;
+  },
+
   /** One second of the timeline, small enough to print a dozen of. */
   snap(video, now, ahead) {
     const reach = ahead || bufferAhead(video);
@@ -13029,20 +13148,46 @@ const playback = {
   noteMove(kind, prev, video, moved, seeked) {
     const now = performance.now();
     const asked = this.expected && now - this.expected.at < 2500 ? this.expected.why : '';
+    /* Consumed, not left lying about. An expectation that outlives the move it
+       was set for goes on to label the NEXT one — so a press followed within a
+       couple of seconds by a jump the app did not ask for would report that
+       jump as the press, which is the one label that stops anybody looking. */
+    if (asked) this.expected = null;
     /* A playlist that was replaced within the last few seconds is the reason,
        and a far more useful one than "something seeked": it means the picture
        did not move, the numbering did. */
     const reset = this.playlistResets[this.playlistResets.length - 1];
     const resetAgo = reset ? (Date.now() - reset.at) / 1000 : null;
-    /* The three answers this can give, in the order they are worth having.
-       The last two are the two faults that look identical from the sofa, and
-       the difference between them is whether a seek happened at all. */
+    /*
+     * Was the playhead standing on content the provider had already dropped?
+     *
+     * This is the reported jump, and until now it was reported as "something
+     * seeked, and nothing here asked for it" — true, and the least useful of
+     * the available truths. A live window is a minute wide here; a playhead
+     * that has fallen further behind the edge than that is sitting on
+     * segments that have expired, and the engine's only move is forward onto
+     * something that still exists. Read from the row BEFORE the jump, which is
+     * where the playhead actually was when the decision was made.
+     */
+    const standing = this.liveStanding();
+    const fellOut = kind === 'forward'
+      && Number.isFinite(prev.backEdge) && prev.backEdge !== null
+      && prev.t < prev.backEdge - 0.5;
+    /* Or it landed on the seat, which is the engine putting itself right
+       rather than the content running out. */
+    const ontoSeat = standing.seat !== null && Math.abs(video.currentTime - standing.seat) < 5;
+    /* The answers this can give, in the order they are worth having. The last
+       two are the two faults that look identical from the sofa, and the
+       difference between them is whether a seek happened at all. */
     const why = asked
-      || (resetAgo !== null && resetAgo < 8
-        ? `the playlist was replaced ${resetAgo.toFixed(0)}s earlier`
-        : seeked
-          ? 'something seeked, and nothing here asked for it'
-          : 'no seek at all — the timeline moved under the playhead');
+      || (fellOut
+        ? `the playhead had fallen ${(prev.backEdge - prev.t).toFixed(0)}s behind the oldest `
+          + 'segment the provider still lists, so the engine jumped forward onto one that exists'
+        : resetAgo !== null && resetAgo < 8
+          ? `the playlist was replaced ${resetAgo.toFixed(0)}s earlier`
+          : seeked
+            ? `something seeked, and nothing here asked for it${ontoSeat ? ' — it landed on the seat, so it was the engine correcting itself' : ''}`
+            : 'no seek at all — the timeline moved under the playhead');
     this.moves.push({
       at: Date.now(),
       kind,
@@ -13055,12 +13200,7 @@ const playback = {
       /* How far behind the live edge the playhead was when this happened. A
          backwards jump that lands on the seat is the engine correcting itself;
          one that lands nowhere near it is not. */
-      behindLive: (() => {
-        try {
-          return engineKind === 'hls.js' && engine && Number.isFinite(engine.latency)
-            ? engine.latency : null;
-        } catch { return null; }
-      })(),
+      behindLive: standing.behind,
       before: this.history.slice(-8).map((r) => ({
         at: r.at, t: r.t, buf: r.buf, rs: r.rs, nw: r.nw,
       })),
@@ -13183,13 +13323,19 @@ const playback = {
          read "+30s" like every row before it. */
       const wall = Number.isFinite(r.resumeAt) && r.resumeAt !== null
         ? `  hole→${r.resumeAt.toFixed(1)}` : '';
+      /* How late this second was. The column that makes a slide legible: a
+         hundred rows of a flawless 1.00x with this number climbing through
+         them is the whole of the fault that ends in a jump, and without it
+         every one of those rows reads as a healthy stream. */
+      const late = Number.isFinite(r.behind) && r.behind !== null
+        ? ` bhd${String(Math.round(r.behind)).padStart(4)}s` : '';
       return `  +${String(secs).padStart(3)}s ${r.pos.toFixed(1).padStart(8)} ` +
         `${rate.padStart(7)}  rs${r.rs}/${r.nw} buf${String(Math.round(bufFilm)).padStart(5)}` +
-        ` +${String(Math.round(cushion)).padStart(3)}s` + wall +
+        ` +${String(Math.round(cushion)).padStart(3)}s` + late + wall +
         (r.notes ? `  ${r.notes}` : '');
     });
     return ['',
-      'timeline  (film position, rate, readyState/networkState, buffered to, cushion)',
+      'timeline  (film position, rate, readyState/networkState, buffered to, cushion, behind live)',
       '          cushion is to the next HOLE, not to the end of everything held',
       ...rows];
   },
@@ -13508,6 +13654,85 @@ const playback = {
     return out;
   },
 
+  /**
+   * How far behind live this got, and whether the window can still hold it.
+   *
+   * "there was just a jump in the time of my live stream, but i dont think the
+   *  playback caught it"
+   *
+   * The jump is the last event in a chain, and every earlier link in it was
+   * missing from the report. A stall costs a few seconds; the player carries
+   * on at exactly 1.00x afterwards, so every rate in the report reads as
+   * perfect while the deficit stays on the books. Enough of those and the
+   * playhead is further behind the edge than the provider's window is wide, at
+   * which point the segments beneath it have been deleted and the engine must
+   * jump forward. From the sofa: the time jumped, out of nowhere, while
+   * everything measurable said the stream was healthy.
+   *
+   * So this is the chain, written down: where it started, where it is now, how
+   * much of that is slide rather than the seat, and — the line that actually
+   * predicts the jump — how much room is left between the playhead and the
+   * oldest segment the provider still lists.
+   */
+  behindLines() {
+    const standing = this.liveStanding();
+    if (standing.behind === null) return [];
+    const out = [];
+    const asked = Number(engine?.targetLatency ?? LIVE_HLS.liveSyncDuration);
+
+    out.push(`behind live     ${standing.behind.toFixed(1)}s now, `
+      + `${this.behindFirst === null ? 'unknown' : `${this.behindFirst.toFixed(1)}s`} when it started, `
+      + `worst ${this.behindWorst === null ? 'n/a' : `${this.behindWorst.toFixed(1)}s`}`
+      + `${this.behindAt ? ` (${Math.round((Date.now() - this.behindAt) / 1000)}s ago)` : ''}`);
+
+    /* The slide, named as such. A number that is merely large can be the seat
+       — this box asks to sit 32s back on purpose — and a number that has GROWN
+       is time the player lost and never made up, which is a different fault
+       with a different cause. */
+    if (this.behindFirst !== null) {
+      const slid = standing.behind - this.behindFirst;
+      if (slid > 3) {
+        out.push(`                slipped ${slid.toFixed(1)}s since it started — `
+          + 'time lost to stalls that was never made back');
+      } else if (slid < -3) {
+        out.push(`                pulled ${Math.abs(slid).toFixed(1)}s closer to the edge since it started`);
+      } else {
+        out.push('                holding steady — whatever it is behind by, it is not sliding');
+      }
+    }
+    out.push(`                asked to sit ${asked.toFixed(1)}s back`
+      + `${standing.seat !== null ? `; the seat is at ${standing.seat.toFixed(1)}s` : ''}`);
+
+    /*
+     * The cliff.
+     *
+     * This is the line the reported jump needed. The provider keeps a fixed
+     * window — a minute on every channel measured here — and everything older
+     * than that is gone from the playlist whatever the media element still
+     * holds in its own buffer. A playhead close to the back of it is a jump
+     * about to happen, and saying so BEFORE it happens is the difference
+     * between a report that explains the fault and one that records it.
+     */
+    const video = $('#video');
+    if (standing.backEdge !== null && standing.windowEnds) {
+      const room = video.currentTime - standing.backEdge;
+      out.push(`                the window holds ${Math.round(standing.windowEnds)}s; the playhead `
+        + `${room < 0 ? `is ${Math.abs(room).toFixed(1)}s PAST THE BACK OF IT` : `has ${room.toFixed(1)}s of it left behind`}`);
+      if (room < 0) {
+        out.push('                >>> the segments under the playhead have expired — the engine');
+        out.push('                    has to jump forward, and that is the jump <<<');
+      } else if (room < 12) {
+        out.push('                >>> less than a segment of room left — a forced jump forward is');
+        out.push('                    the next thing that will happen <<<');
+      }
+    }
+    if (standing.chasing) {
+      out.push(`                catching up on purpose at ${video.playbackRate.toFixed(2)}x — `
+        + 'hls.js recovering the latency rather than jumping for it');
+    }
+    return out;
+  },
+
   hlsLines() {
     if (engineKind !== 'hls.js' || !engine) return [];
     const video = $('#video');
@@ -13754,6 +13979,7 @@ const playback = {
          is the complaint. Everything below it describes a playhead moving
          forwards and will look perfect either way. */
       ...this.moveLines(),
+      ...this.behindLines(),
       `engine          ${engineKind || 'none'}`,
       ...this.hlsLines(),
       ...this.browserLines(),
@@ -13905,17 +14131,70 @@ const playback = {
         'That plays at the wrong speed however healthy the player looks.';
     }
 
-    const rate = this.worstRate ?? this.measuredRate();
+    /*
+     * Behind live, before the rate verdicts.
+     *
+     * "there was just a jump in the time of my live stream"
+     *
+     * Checked first among the playback faults because it is the one that
+     * cannot be seen in any of them: the rates below all describe a playhead
+     * moving forwards at 1.00x, which is exactly what a stream does while it
+     * sits a minute and a half behind an edge it can never reach again. The
+     * jump this produces arrives minutes after the stall that caused it, so
+     * the verdict has to lead with the state rather than with the event.
+     */
+    const standing = this.liveStanding();
+    if (standing.behind !== null && standing.backEdge !== null && standing.windowEnds) {
+      const room = video.currentTime - standing.backEdge;
+      const slid = this.behindFirst === null ? null : standing.behind - this.behindFirst;
+      if (room < 0) {
+        return `The playhead is ${standing.behind.toFixed(0)}s behind the live edge and the `
+          + `provider only keeps ${Math.round(standing.windowEnds)}s — the segments under it have `
+          + 'expired, so the engine has to jump forward onto one that still exists. That IS the '
+          + 'jump. See "behind live" below for how it got there.';
+      }
+      if (room < 12) {
+        return `The playhead is ${standing.behind.toFixed(0)}s behind the live edge with only `
+          + `${room.toFixed(0)}s of the provider's ${Math.round(standing.windowEnds)}s window left `
+          + 'behind it. A forced jump forward is the next thing that will happen'
+          + `${slid !== null && slid > 3 ? `; it has slipped ${slid.toFixed(0)}s since this started` : ''}.`;
+      }
+      if (slid !== null && slid > 20) {
+        return `Playback looks fine but it has slipped ${slid.toFixed(0)}s further behind live `
+          + `since it started — ${standing.behind.toFixed(0)}s behind now, against the `
+          + `${Math.round(standing.windowEnds)}s the provider keeps. Time lost to stalls that was `
+          + 'never made back; left alone it ends in a jump.';
+      }
+    }
+
+    /*
+     * The rate, in the right tense.
+     *
+     * `worstRate` is the low point of the whole viewing and was being read out
+     * as "Running at 0.00x" — present tense, of a stream that had been at
+     * 1.000x for the previous seventy seconds. That is the first line anybody
+     * reads, and it sent a diagnosis at the network when the network was fine
+     * and the real fault was a minute of accumulated latency.
+     */
+    const live = this.measuredRate();
+    const worst = this.worstRate;
+    const rate = worst ?? live;
     if (rate !== null && rate <= 0.9) {
       if (Math.abs(video.playbackRate - rate) < 0.15 && video.playbackRate < 0.9) {
         return `Playback RATE is ${video.playbackRate}× — something set it, this is not the stream.`;
       }
+      /* Whether this is happening NOW or happened earlier, said plainly. Both
+         are worth reporting and they are different problems: one is a stream
+         that is failing, the other is a stream that failed and recovered. */
+      const nowWords = live !== null && live > 0.9
+        ? `It is running at ${live.toFixed(2)}× now, but fell to ${rate.toFixed(2)}×`
+        : `Running at ${rate.toFixed(2)}×`;
       if (this.events.waiting > 3) {
         const starved = this.tooFatForTheLink();
-        return `Running at ${rate.toFixed(2)}× with ${this.events.waiting} stalls — `
+        return `${nowWords} with ${this.events.waiting} stalls — `
           + (starved || 'the stream is not arriving fast enough.');
       }
-      return `Running at ${rate.toFixed(2)}× with the rate at ${video.playbackRate} and few stalls — ` +
+      return `${nowWords} with the rate at ${video.playbackRate} and few stalls — ` +
         'the media itself is decoding slowly, which points at the conversion rather than the network.';
     }
 
@@ -15086,10 +15365,18 @@ $('#video').textTracks.addEventListener?.('removetrack', () => captions.paint())
  * on the rare occasion an extension has meddled, is enough.
  */
 function paintSpeed() {
-  const rate = $('#video').playbackRate;
+  const video = $('#video');
+  const rate = video.playbackRate;
   const off = Math.abs(rate - 1) > 0.01;
-  $('#vodSpeed').hidden = !off;
-  if (off) $('#vodSpeedLabel').textContent = `${Number(rate.toFixed(2))}×`;
+  /* A live stream creeping ABOVE 1 is this app's own doing — hls.js winning
+     back the time a stall cost, see LIVE_HLS.maxLiveSyncPlaybackRate — and it
+     must not be dressed up as an extension meddling. The badge offers a "reset
+     to normal" button, which during a catch-up would be a button for fighting
+     the engine over and over for as long as it lasted. The report says the
+     catch-up is happening; the picture does not need a badge for it. */
+  const chasing = off && rate > 1 && Boolean(currentLiveItem);
+  $('#vodSpeed').hidden = !off || chasing;
+  if (off && !chasing) $('#vodSpeedLabel').textContent = `${Number(rate.toFixed(2))}×`;
 }
 
 /** Put playback back to normal speed. */
@@ -15118,7 +15405,10 @@ let lastRateChange = null;
 
 $('#video').addEventListener('ratechange', () => {
   const rate = $('#video').playbackRate;
-  if (Math.abs(rate - 1) > 0.01) {
+  /* Above 1 on a live channel is the engine's catch-up, not a culprit — see
+     paintSpeed. Recording it here would fill this with hls.js stacks and bury
+     the one thing it exists to catch. */
+  if (Math.abs(rate - 1) > 0.01 && !(rate > 1 && currentLiveItem)) {
     lastRateChange = { rate, at: new Date().toISOString(), stack: new Error().stack || '' };
   }
 });
