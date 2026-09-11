@@ -39,6 +39,22 @@
  *
  *   AND THE FREE LOOKUPS STILL COME FIRST. An ordinary press must not start
  *   waiting on the provider.
+ *
+ * ── AND THEN IT CAME BACK, FOR CHANNELS ──────────────────────────────────
+ *
+ * "I still get that title is no longer in library errors on the homescreen"
+ *
+ * All of the above was built for movies and series, and LIVE was left out —
+ * the box was never asked about a channel at all. That is the half of the home
+ * screen this house actually uses: Continue watching is mostly games, and this
+ * provider renumbers its channel list and files each fixture as its own row.
+ * So a renumbered id, or a channel outside the language filter, produced
+ * exactly the same wrong sentence with nobody having asked anybody.
+ *
+ * A channel has no per-id call behind it — Xtream has get_vod_info and
+ * get_series_info and no equivalent for live — so the box settles it from the
+ * channel LIST, which it can afford: about 1,700 rows against six figures of
+ * films, through the same builder and the same cache as any library fetch.
  */
 const { chromium } = require('./playwright.js');
 const fs = require('fs');
@@ -75,7 +91,12 @@ const LIBRARY = {
     categories: [{ id: 's1', name: 'EN - DRAMA' }],
     items: [{ kind: 'series', id: 800, name: 'The Long Winter', categoryId: 's1', logo: '' }],
   },
-  live: { categories: [], items: [] },
+  /* One channel on the English shelf. The others the provider carries are
+     outside the filter, which is the whole point of this fixture. */
+  live: {
+    categories: [{ id: 'l1', name: 'US - SPORTS' }],
+    items: [{ kind: 'live', id: 500, name: 'US| ESPN', categoryId: 'l1', logo: '' }],
+  },
 };
 
 /*
@@ -91,6 +112,14 @@ const CARRIED = {
   series: {
     800: { name: 'The Long Winter' },
     801: { name: 'DE - Der Pass' },
+  },
+  /* Channels. 500 is on the shelf the browser was given; 501 is a channel the
+     filter hides, and 502 is the one that was renumbered out from under a
+     history row. */
+  live: {
+    500: { name: 'US| ESPN' },
+    501: { name: 'UK| BBC ONE HD' },
+    502: { name: 'US| NBC EAST' },
   },
 };
 
@@ -133,6 +162,22 @@ async function serverSide() {
       }
       /* Withdrawn: the shape a provider really answers with. */
       return res.end(JSON.stringify({ info: [], movie_data: [] }));
+    }
+    /* The channel list, which is how a live id gets settled: there is no
+       get_live_info to ask. Returned whole, the way the provider does. */
+    if (action === 'get_live_categories') {
+      return res.end(JSON.stringify([
+        { category_id: 'l1', category_name: 'US - SPORTS' },
+        { category_id: 'l2', category_name: 'UK - ENTERTAINMENT' },
+      ]));
+    }
+    if (action === 'get_live_streams') {
+      return res.end(JSON.stringify(Object.entries(CARRIED.live).map(([id, row]) => ({
+        stream_id: Number(id),
+        name: row.name,
+        category_id: id === '501' ? 'l2' : 'l1',
+        stream_icon: '',
+      }))));
     }
     if (action === 'get_series_info') {
       const id = url.searchParams.get('series_id');
@@ -204,6 +249,48 @@ async function serverSide() {
       show.status === 200 && show.body.item?.name === 'Der Pass',
       JSON.stringify(show.body).slice(0, 200));
 
+    /*
+     * A channel, which is the half that was missing.
+     *
+     * 501 is outside the language filter the browser was given, so every free
+     * lookup on that side fails — and the box can still settle it, because the
+     * list it fetches for this is deliberately unfiltered. Answering from an
+     * identically filtered list would only agree with the browser.
+     */
+    const channel = await boxGet('/api/title?kind=live&id=501');
+    console.log('   a channel outside the filter:', JSON.stringify(channel.body).slice(0, 150));
+    check('the box resolves a live id as well as a title',
+      channel.status === 200 && String(channel.body.item?.id) === '501',
+      JSON.stringify(channel.body).slice(0, 200));
+    check('shaped like a library item, so the player needs to know nothing new',
+      channel.body.item?.kind === 'live' && typeof channel.body.item?.name === 'string',
+      JSON.stringify(channel.body.item));
+
+    /* And a second miss costs nothing: the list it went and got is the same
+       cache an ordinary library fetch fills, so the provider is asked once. */
+    const askedBefore = asked.filter((a) => a === 'get_live_streams').length;
+    const again = await boxGet('/api/title?kind=live&id=502');
+    const askedAfter = asked.filter((a) => a === 'get_live_streams').length;
+    check('and the next one is answered without asking the provider again',
+      again.status === 200 && askedAfter === askedBefore,
+      `${askedBefore} → ${askedAfter}`);
+
+    /*
+     * And one that really is gone — the COMMON case on a home screen, where
+     * half of Continue watching is games that finished last night. The list
+     * this box holds is fresh and has already been searched, so re-reading it
+     * could only give the same answer: a provider with one connection must not
+     * be asked for the whole channel list on every one of those presses.
+     */
+    const listedBefore = asked.filter((a) => a === 'get_live_streams').length;
+    const noChannel = await boxGet('/api/title?kind=live&id=9999');
+    const listedAfter = asked.filter((a) => a === 'get_live_streams').length;
+    check('a channel that really is gone is a 404, like a title',
+      noChannel.status === 404 && /does not carry/i.test(noChannel.body.error || ''),
+      `${noChannel.status} ${JSON.stringify(noChannel.body)}`);
+    check('and answering that costs the provider nothing while the list is fresh',
+      listedAfter === listedBefore, `${listedBefore} → ${listedAfter}`);
+
     const withdrawn = await boxGet('/api/title?kind=movie&id=999');
     console.log('   one that is withdrawn:', JSON.stringify(withdrawn.body));
     /* An empty info block is how this provider says "no such id". Reading that
@@ -251,7 +338,8 @@ async function serverSide() {
       return r.fulfill({ status: 502, contentType: 'application/json',
         body: '{"error":"The provider answered 502"}' });
     }
-    const kind = q.get('kind') === 'series' ? 'series' : 'movie';
+    const asKind = q.get('kind');
+    const kind = asKind === 'series' ? 'series' : asKind === 'live' ? 'live' : 'movie';
     const row = CARRIED[kind][q.get('id')];
     if (!row) {
       return r.fulfill({ status: 404, contentType: 'application/json',
@@ -260,7 +348,8 @@ async function serverSide() {
     return r.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ from: 'provider', item: {
         kind, id: Number(q.get('id')), name: row.name,
-        categoryId: '', logo: '', ext: row.container_extension || 'mp4',
+        categoryId: '', logo: '',
+        ...(kind === 'live' ? {} : { ext: row.container_extension || 'mp4' }),
       } }) });
   });
 
@@ -333,6 +422,62 @@ async function serverSide() {
     gone.item === null, JSON.stringify(gone));
   check('reported as an absence rather than as a failure',
     !gone.threw, JSON.stringify(gone));
+
+  /* ---- 3b. the home screen, which is where this was reported ----------- */
+  /*
+   * "I still get that title is no longer in library errors on the homescreen"
+   *
+   * Driven through playFromHistory rather than findTitle, because the sentence
+   * the viewer reads is chosen there and the row it starts from is a history
+   * row, not a library item. A channel is the case that was missing outright.
+   */
+  console.log('\n  a channel on the home screen');
+  await page.evaluate(() => { state.config = { ...(state.config || {}), mode: 'xtream' }; });
+
+  /** What a press on a home-screen card says, and whether it opened anything. */
+  const press = (row) => page.evaluate(async (r) => {
+    const said = [];
+    const real = window.toast;
+    window.toast = (m) => { said.push(String(m)); };
+    let opened = null;
+    const realOpen = window.openPlayer;
+    window.openPlayer = async (item) => { opened = { id: item.id, kind: item.kind }; };
+    try { await playFromHistory(r); } catch (err) { said.push(`THREW ${err.message}`); }
+    window.toast = real;
+    window.openPlayer = realOpen;
+    return { said, opened };
+  }, row);
+
+  asks = 0;
+  const renumbered = await press({
+    key: 'live:502', kind: 'live', id: 502, name: 'US| NBC EAST', poster: '',
+  });
+  console.log('   ', JSON.stringify(renumbered), `asks=${asks}`);
+  check('the box is asked about a channel, which it never used to be',
+    asks === 1, String(asks));
+  check('and the channel opens instead of being called missing',
+    renumbered.opened && String(renumbered.opened.id) === '502',
+    JSON.stringify(renumbered));
+  check('with nothing said about a library', !renumbered.said.length,
+    JSON.stringify(renumbered.said));
+
+  /* And one that really has gone. The message a viewer gets for a channel is
+     not the message for a film: this provider files each fixture as its own
+     row and takes it down when the game ends, so "no longer in the library"
+     is a sentence about the wrong thing. */
+  console.log('\n  a game channel that has come down');
+  const ended = await press({
+    key: 'live:7777', kind: 'live', id: 7777,
+    name: 'US| NCAAF 07 | ALABAMA X GEORGIA', poster: '',
+  });
+  console.log('   ', JSON.stringify(ended.said));
+  check('nothing is opened', !ended.opened, JSON.stringify(ended));
+  check('and it is not called a library problem',
+    !/no longer in the library/i.test(ended.said.join(' ')), JSON.stringify(ended.said));
+  check('it says the channel is gone from the provider',
+    /not in the provider/i.test(ended.said.join(' ')), JSON.stringify(ended.said));
+  check('and why, which for a fixture row is that the event ended',
+    /event ends/i.test(ended.said.join(' ')), JSON.stringify(ended.said));
 
   /* ---- 4. a box that cannot ask ---------------------------------------- */
   /*

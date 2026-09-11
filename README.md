@@ -2412,8 +2412,9 @@ The browser cannot close that by fetching more, and the code said so: the wide
 catalogue is six figures of titles and pulling it into a Pi's memory to answer
 one press is how the portal ends up restarting mid-request. That trade stands.
 
-What closes it is `/api/title?kind=movie|series&id=N` — the **box** asking the
-provider about one id, with `get_vod_info` / `get_series_info`. That costs no
+What closes it is `/api/title?kind=movie|series|live&id=N` — the **box** asking
+the provider about one id, with `get_vod_info` / `get_series_info` (and for a
+channel, the list — see below). That costs no
 stream slot, puts nothing in memory, and answers exactly the question. It is
 reached only after every free lookup has failed, so an ordinary press never
 waits on it, and what comes back is shaped like any other library item so
@@ -2433,6 +2434,39 @@ third: an M3U box has one flat playlist and no per-title endpoint behind it, so
 there is nothing further to try and an ordinary miss is the honest answer. The
 client checks the mode too, but the two can disagree — a box reconfigured under
 a page that is still open — and the box's answer wins.
+
+#### And then it came back, for channels
+
+> "I still get that title is no longer in library errors on the homescreen"
+
+All of the above was built for **movies and series**, and live was left out —
+so the box was never asked about a channel at all. That is the half of the home
+screen this house actually uses: Continue watching is mostly games, and this
+provider renumbers its channel list and files each fixture as its own row. A
+renumbered id, or a channel outside the language filter, produced exactly the
+same wrong sentence with nobody having asked anybody.
+
+A channel has no per-id call behind it — Xtream has `get_vod_info` and
+`get_series_info` and no equivalent for live — so `/api/title?kind=live` settles
+it from the channel **list**, which it can afford where the VOD catalogue is
+out of the question: about 1,700 rows against six figures of films, through the
+same builder and the same cache as any ordinary library fetch. Fetched
+**unfiltered** on purpose, since the whole reason the browser's lookup failed is
+that its own copy is filtered.
+
+**A list that is still fresh is not re-read.** `knownCatalogue()` has already
+searched every live page the box holds, so re-fetching can only give the same
+answer — and a miss is the *common* case here, where half the row is games that
+finished last night. Firing a `get_live_streams` at a single-connection provider
+on every one of those presses is how the next channel comes to refuse to open.
+So a fresh cache answers the 404 for free, and only a stale or absent one goes
+to the provider.
+
+**And a channel gets its own sentence.** "No longer in the library" is a claim
+about a catalogue; what the home screen is holding is last night's game. The
+commonest true answer for a channel is not *withdrawn* but *that was a one-off
+and it is over*, so it now reads: "That channel is not in the provider's list
+any more — event channels come down when the event ends."
 
 ### A conversion that is still starting is not an abandoned one
 

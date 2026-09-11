@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '40.6';
+const VERSION = '40.7';
 
 const PAGE_SIZE = 60;
 
@@ -5897,6 +5897,21 @@ function missingWhy(tab, noun = 'title') {
      thing about the same trade beside its own fallback: a title the filter
      hides reports as missing, and that is the answer this gave before any of
      it existed. The strong claim stays a strong claim. */
+  /*
+   * A channel is not a title, and a channel that is gone is usually gone for a
+   * reason the viewer already knows.
+   *
+   * "no longer in the library" is a sentence about a catalogue, and what the
+   * home screen actually holds is last night's game. This provider files each
+   * fixture as its own row and takes it down when the game ends, so the
+   * commonest true answer here is not "withdrawn" but "that was a one-off and
+   * it is over" — and saying so is the difference between a viewer who
+   * understands their own screen and one who thinks the box lost something.
+   */
+  if (tab === 'live') {
+    return 'That channel is not in the provider\'s list any more — event channels '
+      + 'come down when the event ends.';
+  }
   return `That ${noun} is no longer in the library.`;
 }
 
@@ -6008,6 +6023,9 @@ function historyName(kind, id) {
   return row ? (row.seriesName || row.name || '') : '';
 }
 
+/** The sections the box can settle a single id for. */
+const LOOKS_UP = new Set(['movies', 'series', 'live']);
+
 async function findTitle(tab, wantId, name = '') {
   const id = String(wantId);
   const lookIn = (store) => (store[tab]?.items || []).find((i) => String(i.id) === id);
@@ -6068,10 +6086,17 @@ async function findTitle(tab, wantId, name = '') {
    */
   /* Only where there is a provider to ask. An M3U box has one flat playlist
      and no per-title endpoint behind it, so there is nothing further to try
-     and nothing to be gained by asking. */
-  if ((tab === 'movies' || tab === 'series') && state.config?.mode === 'xtream') {
+     and nothing to be gained by asking.
+
+     Live is here too, and was not the first time — which is the half of the
+     complaint that came back. The home screen's Continue-watching row is
+     mostly CHANNELS in this house, and a renumbered live id, or one outside
+     the language filter, went straight to "no longer in the library" with the
+     box never asked at all. The box has no per-id call for a channel, but it
+     does have the channel list, which is small enough to settle it. */
+  if (LOOKS_UP.has(tab) && state.config?.mode === 'xtream') {
     const found = await api('/api/title', {
-      kind: tab === 'series' ? 'series' : 'movie',
+      kind: tab === 'series' ? 'series' : tab === 'live' ? 'live' : 'movie',
       id,
     }).catch((err) => {
       const said = err.message || '';

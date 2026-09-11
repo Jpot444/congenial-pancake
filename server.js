@@ -9131,9 +9131,17 @@ async function handleApi(req, res, pathname, query) {
    *
    * So: what the box already has, then the provider itself, then an honest
    * 404 that really does mean withdrawn.
+   *
+   * LIVE was left out of this the first time, and that is the half of the
+   * complaint that came back. The home screen's Continue-watching row is
+   * mostly channels — this house watches games — and a provider that renumbers
+   * its live list, or a channel sitting outside the viewer's language filter,
+   * produced exactly the same wrong sentence with the box never asked at all.
    */
   if (pathname === '/api/title') {
-    const kind = query.get('kind') === 'series' ? 'series' : 'movie';
+    const asked = String(query.get('kind') || '');
+    const kind = asked === 'series' ? 'series' : asked === 'live' ? 'live' : 'movie';
+    const tab = kind === 'movie' ? 'movies' : kind;
     const id = String(query.get('id') || '').trim();
     if (!id) return json(res, 400, { error: 'id is required' });
     if (mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
@@ -9141,9 +9149,49 @@ async function handleApi(req, res, pathname, query) {
     /* Free: every page of the library this box has ever fetched, folded
        together. Most misses land here, because the title is usually one the
        viewer's own filter hid rather than one nobody has ever asked for. */
-    const held = knownCatalogue(kind === 'series' ? 'series' : 'movies')
-      .find((item) => String(item.id) === id);
+    const held = knownCatalogue(tab).find((item) => String(item.id) === id);
     if (held) return json(res, 200, { item: held, from: 'cache' });
+
+    /*
+     * A live channel, which has no per-id call behind it.
+     *
+     * `get_vod_info` and `get_series_info` answer about one title; Xtream has
+     * no equivalent for a channel, so the only way to settle a live id is the
+     * channel list. That is affordable in a way the VOD catalogue is not —
+     * this account lists about 1,700 channels against six figures of films —
+     * and it goes through the same builder and the same cache as an ordinary
+     * library fetch, so a second miss a moment later costs nothing at all.
+     *
+     * Fetched WITHOUT the language filter on purpose. The whole reason a
+     * browser's lookup failed is that the copy it holds is filtered, and
+     * answering from an identically filtered list would just agree with it.
+     */
+    if (kind === 'live') {
+      /*
+       * But only when the list is worth re-reading.
+       *
+       * knownCatalogue() has already searched every live page this box holds
+       * and come up empty, so re-fetching a list that is still fresh can only
+       * produce the same answer — and this is the COMMON case on a home screen,
+       * where half the Continue-watching row is games that finished last night.
+       * Firing a get_live_streams at a single-connection provider on every one
+       * of those presses is exactly the sort of thing that makes the next
+       * channel refuse to open.
+       */
+      const key = `v${LIBRARY_SHAPE}:live:`;
+      const hit = libraryCache.get(key);
+      if (hit && Date.now() - hit.at < LIBRARY_TTL && (hit.payload.items || []).length) {
+        return json(res, 404, { error: 'The provider does not carry that title.' });
+      }
+      try {
+        const payload = await rebuildLibrary(cfg, 'live', '', key);
+        const found = (payload.items || []).find((item) => String(item.id) === id);
+        if (found) return json(res, 200, { item: found, from: 'provider' });
+        return json(res, 404, { error: 'The provider does not carry that title.' });
+      } catch (err) {
+        return json(res, 502, { error: err.message });
+      }
+    }
 
     try {
       const chosen = providers.forMeta(cfg) || cfg;
