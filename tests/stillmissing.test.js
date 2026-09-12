@@ -55,6 +55,31 @@
  * get_series_info and no equivalent for live — so the box settles it from the
  * channel LIST, which it can afford: about 1,700 rows against six figures of
  * films, through the same builder and the same cache as any library fetch.
+ *
+ * ── AND THEN IT CAME BACK AGAIN, IN THE GAP BETWEEN THE TWO FIXES ────────
+ *
+ * "I got the exact same error on 40.7"
+ *
+ * Two rounds of this each went round one side of the same case and neither
+ * covered it:
+ *
+ *   the FIRST taught the browser to fall back to the NAME — across the copy it
+ *   holds, which is filtered.
+ *
+ *   the SECOND taught it to ask the BOX — by ID.
+ *
+ * A title that has been RENUMBERED and is ALSO outside the filter fails both.
+ * The name never reaches anything that holds the whole catalogue, and the id
+ * the box is asked about is a number that no longer exists — so `get_vod_info`
+ * comes back "does not carry", which is true of the number and false of the
+ * film. It is sitting there under a new one, with exactly the name the history
+ * row remembers.
+ *
+ * So the box takes a name as well as an id and matches it against everything
+ * it has ever fetched, using the same rule the browser uses out of the same
+ * file — title-match.js, loaded by the page as a script and required by the
+ * box as a module, because two copies of "when are these the same title" drift
+ * and then disagree for reasons nobody can find.
  */
 const { chromium } = require('./playwright.js');
 const fs = require('fs');
@@ -62,6 +87,9 @@ const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 const PATHS = require('./paths.js');
+/* The shipped matcher, so the stub agrees with the box by construction rather
+   than by a second implementation that can drift from it. */
+const titleMatch = require('../public/title-match.js');
 
 const BASE = 'http://127.0.0.1:8481';
 /* The server half stands up its own box and its own provider, on ports of
@@ -162,6 +190,25 @@ async function serverSide() {
       }
       /* Withdrawn: the shape a provider really answers with. */
       return res.end(JSON.stringify({ info: [], movie_data: [] }));
+    }
+    /* The catalogue, so the box has a knownCatalogue to match a NAME against.
+       9901 is the renumbered one: the same film the history row calls Trading
+       Places, filed under a number that row has never seen. */
+    if (action === 'get_vod_categories') {
+      return res.end(JSON.stringify([{ category_id: 'm1', category_name: 'EN - WESTERNS' }]));
+    }
+    if (action === 'get_vod_streams') {
+      return res.end(JSON.stringify([
+        { stream_id: 700, name: 'Redwood Gulch', category_id: 'm1',
+          container_extension: 'mp4', stream_icon: '' },
+        { stream_id: 9901, name: 'Trading Places', category_id: 'm1',
+          container_extension: 'mkv', stream_icon: '' },
+        /* Two of these, so the ambiguity guard has something to refuse. */
+        { stream_id: 9910, name: 'The Office US', category_id: 'm1',
+          container_extension: 'mp4', stream_icon: '' },
+        { stream_id: 9911, name: 'The Office UK', category_id: 'm1',
+          container_extension: 'mp4', stream_icon: '' },
+      ]));
     }
     /* The channel list, which is how a live id gets settled: there is no
        get_live_info to ask. Returned whole, the way the provider does. */
@@ -291,6 +338,34 @@ async function serverSide() {
     check('and answering that costs the provider nothing while the list is fresh',
       listedAfter === listedBefore, `${listedBefore} → ${listedAfter}`);
 
+    /*
+     * The gap between the two earlier fixes: a RENUMBERED title.
+     *
+     * 4321 is what the watch history wrote down months ago and the provider
+     * has since renumbered it to 9901. Asking about 4321 cannot succeed —
+     * get_vod_info answers "does not carry" about a number that is genuinely
+     * gone — and that was being read out as the film having been withdrawn.
+     * The name outlives the number.
+     */
+    await boxGet('/api/library?tab=movies');   // so the box has a catalogue at all
+    const byIdAlone = await boxGet('/api/title?kind=movie&id=4321');
+    check('asking by a renumbered id alone still fails, as it must',
+      byIdAlone.status === 404, `${byIdAlone.status}`);
+
+    const byTheName = await boxGet('/api/title?kind=movie&id=4321&name=Trading%20Places');
+    console.log('   renumbered, found by name:', JSON.stringify(byTheName.body).slice(0, 140));
+    check('but the name finds it under its new number',
+      byTheName.status === 200 && String(byTheName.body.item?.id) === '9901',
+      JSON.stringify(byTheName.body).slice(0, 200));
+    check('and says that is how it was found',
+      byTheName.body.from === 'name', String(byTheName.body.from));
+
+    /* The guard that keeps this honest. Quietly starting the wrong programme
+       is worse than saying it could not be found. */
+    const ambiguous = await boxGet('/api/title?kind=movie&id=4322&name=The%20Office');
+    check('an ambiguous name is refused rather than guessed at',
+      ambiguous.status === 404, `${ambiguous.status} ${JSON.stringify(ambiguous.body)}`);
+
     const withdrawn = await boxGet('/api/title?kind=movie&id=999');
     console.log('   one that is withdrawn:', JSON.stringify(withdrawn.body));
     /* An empty info block is how this provider says "no such id". Reading that
@@ -340,14 +415,24 @@ async function serverSide() {
     }
     const asKind = q.get('kind');
     const kind = asKind === 'series' ? 'series' : asKind === 'live' ? 'live' : 'movie';
-    const row = CARRIED[kind][q.get('id')];
+    let row = CARRIED[kind][q.get('id')];
+    /* By name when the id finds nothing — a renumbered title, which is what
+       the box itself now does against everything it holds. Matched with the
+       shipped rule rather than a second copy of it. */
+    let renumberedTo = null;
+    if (!row && q.get('name')) {
+      const rows = Object.entries(CARRIED[kind])
+        .map(([id, r]) => ({ id, name: r.name, ...r }));
+      const hit = titleMatch.byName(rows, q.get('name'));
+      if (hit) { row = hit; renumberedTo = hit.id; }
+    }
     if (!row) {
       return r.fulfill({ status: 404, contentType: 'application/json',
         body: '{"error":"The provider does not carry that title."}' });
     }
     return r.fulfill({ status: 200, contentType: 'application/json',
-      body: JSON.stringify({ from: 'provider', item: {
-        kind, id: Number(q.get('id')), name: row.name,
+      body: JSON.stringify({ from: renumberedTo ? 'name' : 'provider', item: {
+        kind, id: Number(renumberedTo || q.get('id')), name: row.name,
         categoryId: '', logo: '',
         ...(kind === 'live' ? {} : { ext: row.container_extension || 'mp4' }),
       } }) });
@@ -478,6 +563,41 @@ async function serverSide() {
     /not in the provider/i.test(ended.said.join(' ')), JSON.stringify(ended.said));
   check('and why, which for a fixture row is that the event ended',
     /event ends/i.test(ended.said.join(' ')), JSON.stringify(ended.said));
+
+  /* ---- 3c. renumbered AND out of sight, which is the gap --------------- */
+  /*
+   * "I got the exact same error on 40.7"
+   *
+   * The case neither earlier round covered. 702 is a number the provider has
+   * moved on from, and the film is not in the filtered library this browser
+   * holds — so the client's own name fallback has nothing to search and the
+   * box's id lookup is asking about a number that is genuinely gone. Only a
+   * NAME, matched against everything the box holds, can answer it.
+   */
+  console.log('\n  a film the provider renumbered, on a shelf this profile filters out');
+  CARRIED.movie[9901] = { name: 'Trading Places', container_extension: 'mkv' };
+  asks = 0;
+  const renum = await press({
+    key: 'movie:702', kind: 'movie', id: 702, name: 'Trading Places', poster: '',
+  });
+  console.log('   ', JSON.stringify(renum), `asks=${asks}`);
+  check('the film opens under the number it has now',
+    renum.opened && String(renum.opened.id) === '9901', JSON.stringify(renum));
+  check('with nothing said about a library', !renum.said.length, JSON.stringify(renum.said));
+
+  /* And the guard. Two programmes that could be meant is a question this
+     cannot answer, and answering it anyway starts the wrong one. */
+  console.log('\n  and a name that could mean two different programmes');
+  CARRIED.series[9920] = { name: 'The Office US' };
+  CARRIED.series[9921] = { name: 'The Office UK' };
+  const guessy = await press({
+    key: 'series:9000', kind: 'series', id: 9000, seriesId: 9000,
+    seriesName: 'The Office', name: 'The Office S01E01', season: 1, episode: 1, poster: '',
+  });
+  console.log('   ', JSON.stringify(guessy.said));
+  check('nothing is opened on a guess', !guessy.opened, JSON.stringify(guessy));
+  check('and it says so rather than starting the wrong one',
+    /no longer in the library/i.test(guessy.said.join(' ')), JSON.stringify(guessy.said));
 
   /* ---- 4. a box that cannot ask ---------------------------------------- */
   /*

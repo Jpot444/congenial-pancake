@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '40.7';
+const VERSION = '40.8';
 
 const PAGE_SIZE = 60;
 
@@ -5935,77 +5935,16 @@ function missingWhy(tab, noun = 'title') {
  * Throws if a library cannot be loaded, so callers can tell "the box did
  * not answer" from "there is no such title" — which the old code could not.
  */
-/**
- * A title reduced to what a person would call it, for matching one record
- * against another. The provider's filing prefix, the year, the punctuation and
- * the case all come off — everything that can differ between two listings of
- * the same film.
- */
 /*
- * Words that describe the FILE, not the programme.
+ * `foldName`, `byName` and `trimTag` live in title-match.js, loaded before
+ * this file and required by the box as an ordinary module.
  *
- * A provider stamps these on and takes them off between ingests, so two
- * records of the same show disagree about them constantly. The report that
- * forced this was one line long and contained both halves of the problem:
- *
- *   the history said   Breaking Bad US
- *   the library said   AR - Breaking Bad 4K
- *
- * The filing prefix comes off already. "4K" is this list. "US" is why an
- * equality test is not enough on its own — see byName below.
+ * One copy, on purpose. The box now answers the same question against the
+ * whole catalogue — the part this side cannot see — and two copies of a rule
+ * about when two records are the same title drift: one gains a word on the
+ * stop list, the other does not, and a title matches in one place and not the
+ * other for reasons nobody can find.
  */
-const NOT_THE_TITLE = new Set([
-  '4k', 'uhd', 'fhd', 'hd', 'sd', 'hq', 'hevc', 'h264', 'h265', 'x264', 'x265',
-  '1080p', '1080', '720p', '720', '2160p', '2160', 'hdr', 'dv', 'dolby',
-  'multi', 'vip', 'raw', 'dub', 'dubbed', 'sub', 'subbed', 'vost', 'vf',
-]);
-
-function foldName(raw) {
-  const bare = trimTag(raw)
-    .toLowerCase()
-    .replace(/\(\s*\d{4}\s*\)/g, ' ')
-    // S01E02, S1 E2, 1x02 — an episode tag on a name that is meant to name
-    // the SHOW, which is what a history row's own title often carries.
-    .replace(/\bs\d{1,2}\s*[ex]\d{1,3}\b/g, ' ')
-    .replace(/\b\d{1,2}x\d{1,3}\b/g, ' ')
-    .replace(/[^\w\d]+/g, ' ')
-    .trim();
-  const kept = bare.split(' ').filter((w) => w && !NOT_THE_TITLE.has(w)).join(' ');
-  // A title made only of those words is a title made of those words.
-  return kept || bare;
-}
-
-const titleWords = (raw) => new Set(foldName(raw).split(' ').filter(Boolean));
-const covers = (big, small) => [...small].every((w) => big.has(w));
-
-/**
- * The one item whose name is this name, or nothing.
- *
- * Equality first. When that finds nothing, the same title spelled with a word
- * the other side does not have — "Breaking Bad US" against "Breaking Bad" —
- * is accepted, but ONLY when exactly one item in the library could be meant.
- * Two candidates is not a near miss, it is a question this cannot answer: The
- * Office US and The Office UK are different programmes, and quietly playing
- * the wrong one is worse than saying so. Ambiguity gives up.
- *
- * One-word names are never matched loosely. "Dune" inside "Dune Part Two" is
- * the kind of match that looks clever and starts the wrong film.
- */
-function byName(items, name) {
-  const want = foldName(name);
-  if (!want) return null;
-  const exact = items.filter((i) => foldName(i.name) === want);
-  if (exact.length) return exact[0];
-
-  const wanted = new Set(want.split(' ').filter(Boolean));
-  if (wanted.size < 2) return null;
-  const near = items.filter((i) => {
-    const has = titleWords(i.name);
-    if (has.size < 2) return false;
-    return covers(wanted, has) || covers(has, wanted);
-  });
-  return near.length === 1 ? near[0] : null;
-}
 
 /**
  * What the watch history called this title, if it has seen it.
@@ -6026,8 +5965,28 @@ function historyName(kind, id) {
 /** The sections the box can settle a single id for. */
 const LOOKS_UP = new Set(['movies', 'series', 'live']);
 
+/*
+ * What the last few failed lookups actually tried.
+ *
+ * This message has now been reported three times, and each round of fixing it
+ * was a guess about which of the six steps below had come up empty — twice
+ * wrong, because the report in hand was one sentence with nothing behind it.
+ * A lookup that fails writes down what it asked and what each thing answered,
+ * and the playback report carries it. The next one of these is a reading
+ * rather than a guess.
+ *
+ * Ids and names only. There is nothing here a provider password could be in.
+ */
+const titleMisses = [];
+
+function noteTitleMiss(tab, id, name, tried, outcome) {
+  titleMisses.push({ at: Date.now(), tab, id, name, tried, outcome });
+  if (titleMisses.length > 6) titleMisses.shift();
+}
+
 async function findTitle(tab, wantId, name = '') {
   const id = String(wantId);
+  const tried = [];
   const lookIn = (store) => (store[tab]?.items || []).find((i) => String(i.id) === id);
   /*
    * And if the id finds nothing, the name.
@@ -6047,6 +6006,9 @@ async function findTitle(tab, wantId, name = '') {
   const named = (store) => (name ? byName(store[tab]?.items || [], name) : null);
 
   if (!state.library[tab]) await loadTab(tab);
+  const shelf = (state.library[tab]?.items || []).length;
+  const wideHeld = (state.libraryAll[tab]?.items || []).length;
+  tried.push(`held ${shelf} ${tab}${wideHeld ? ` + ${wideHeld} wide` : ''}`);
   const near = lookIn(state.library);
   if (near) return near;
 
@@ -6064,9 +6026,11 @@ async function findTitle(tab, wantId, name = '') {
    * box about the one id instead — see below. */
   const wide = lookIn(state.libraryAll);
   if (wide) return wide;
+  tried.push(`by id ${id}: not held`);
 
   const byTheName = named(state.library) || named(state.libraryAll);
   if (byTheName) return byTheName;
+  tried.push(name ? `by name "${name}": no match held` : 'by name: the row carried none');
 
   /*
    * And last, the box.
@@ -6098,6 +6062,15 @@ async function findTitle(tab, wantId, name = '') {
     const found = await api('/api/title', {
       kind: tab === 'series' ? 'series' : tab === 'live' ? 'live' : 'movie',
       id,
+      /* The NAME as well as the id, which is the half that was missing.
+       *
+       * This provider renumbers, and asking about a number that no longer
+       * exists is not a lookup that can succeed — it is one guaranteed to come
+       * back "does not carry", which was then read out as a withdrawal. The
+       * name outlives the number, and the box can match it against the whole
+       * of what it holds rather than against the filtered slice this side has.
+       */
+      name,
     }).catch((err) => {
       const said = err.message || '';
       /* Two answers that are not failures.
@@ -6114,12 +6087,36 @@ async function findTitle(tab, wantId, name = '') {
        * Anything else — a refusal, a timeout — really is "could not be
        * asked", and telling somebody their programme is gone on the strength
        * of a failed request is the thing this endpoint exists to stop. */
-      if (/does not carry/i.test(said) || /not in xtream mode/i.test(said)) return null;
+      if (/does not carry/i.test(said) || /not in xtream mode/i.test(said)) {
+        tried.push(`the box: ${said}`);
+        return null;
+      }
+      tried.push(`the box: ${said}`);
+      noteTitleMiss(tab, id, name, tried, 'could not be asked');
       throw err;
     });
     if (found && found.item) return found.item;
+  } else {
+    tried.push(state.config?.mode === 'xtream'
+      ? `the box: not asked — ${tab} has no per-title lookup`
+      : `the box: not asked — this box is in ${state.config?.mode || 'unknown'} mode`);
   }
+  noteTitleMiss(tab, id, name, tried, 'nothing carried it');
   return null;
+}
+
+/** The failed lookups, for the report — see titleMisses. */
+function titleMissLines() {
+  if (!titleMisses.length) return [];
+  const out = ['', 'title lookups that failed  (newest last)'];
+  for (const m of titleMisses) {
+    const ago = Math.round((Date.now() - m.at) / 1000);
+    out.push(`  ${ago}s ago  ${m.tab} id ${m.id}`
+      + `${m.name ? ` named "${String(m.name).slice(0, 60)}"` : ' with no name on the row'}`
+      + `  — ${m.outcome}`);
+    for (const step of m.tried) out.push(`             ${step}`);
+  }
+  return out;
 }
 
 /* ---------------------------------------------------------- movie rows ---
@@ -7499,19 +7496,7 @@ async function playFromHistory(row) {
  * the same shape rule the box uses, applied at the point of display only:
  * what is stored stays what was starred.
  */
-const TRIM_TAG = /^([A-Za-z0-9+&]{1,5})\s*[-|:\u2013\u2022]\s*/;
-function trimTag(raw) {
-  let name = String(raw || '').trim();
-  for (let i = 0; i < 4; i += 1) {
-    const m = TRIM_TAG.exec(name);
-    if (!m) break;
-    const token = m[1].toUpperCase();
-    if (token === 'XXX') break;
-    if (!/^[A-Z0-9][A-Z0-9+&]*$/.test(m[1])) break;
-    name = name.slice(m[0].length).trimStart();
-  }
-  return name || String(raw || '').trim();
-}
+/* trimTag lives in title-match.js — see the note beside findTitle. */
 
 /** How many channels the guide shows. The box caps it too; this is the row. */
 const GUIDE_CHANNELS = 6;
@@ -14029,6 +14014,10 @@ const playback = {
             `${sp.start.pos.toFixed(0)}, down to ${sp.worst.toFixed(2)}x`).join('; ')
         : `none in the last ${this.history.length}s`}`,
       ...this.serverLines(),
+      /* Why a title could not be opened, when one could not. Sits with the
+         playback report because that is the block people copy — see
+         titleMisses. Empty, and therefore invisible, the rest of the time. */
+      ...titleMissLines(),
       ...this.timelineLines(),
     ];
     return lines.join('\n');

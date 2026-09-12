@@ -115,6 +115,9 @@ const providers = require('./providers');
 const recordings = require('./recordings');
 const recommend = require('./recommend');
 const market = require('./market');
+/* When two records are the same title. The page loads the very same file as a
+   script — see the note at the top of it. */
+const titles = require('./public/title-match.js');
 const ARCHIVE_ROOT = process.env.ARCHIVE_ROOT || '/mnt/archive';
 const ARCHIVE_INDEX = path.join(ROOT, 'library-index.ndjson');
 
@@ -9149,8 +9152,40 @@ async function handleApi(req, res, pathname, query) {
     /* Free: every page of the library this box has ever fetched, folded
        together. Most misses land here, because the title is usually one the
        viewer's own filter hid rather than one nobody has ever asked for. */
-    const held = knownCatalogue(tab).find((item) => String(item.id) === id);
+    const catalogue = knownCatalogue(tab);
+    const held = catalogue.find((item) => String(item.id) === id);
     if (held) return json(res, 200, { item: held, from: 'cache' });
+
+    /*
+     * And then by NAME, which is the case the id can never answer.
+     *
+     * "I got the exact same error on 40.7"
+     *
+     * This provider renumbers its catalogue. When it does, every id written
+     * into a watch history points at nothing — and asking `get_vod_info` about
+     * a number that no longer exists is not a lookup that can succeed, it is a
+     * lookup guaranteed to come back "does not carry". Which is then reported
+     * to somebody as their film having been withdrawn, while it sits in the
+     * catalogue under a new number with exactly the name their history row
+     * remembers.
+     *
+     * The browser already tries the name, and could not close this: the copy
+     * it searches is the FILTERED one, so a renumbered title that is also
+     * outside the language filter — or simply on a category page nobody has
+     * opened — misses on both counts. That is the intersection two rounds of
+     * fixing this each went round one side of.
+     *
+     * The box has the whole of what it has ever fetched, and matching is the
+     * same rule the browser uses, out of the same file, so the two cannot
+     * disagree. Ambiguity still gives up: The Office US and The Office UK are
+     * different programmes and quietly playing the wrong one is worse than
+     * saying so.
+     */
+    const wanted = String(query.get('name') || '').trim();
+    if (wanted) {
+      const named = titles.byName(catalogue, wanted);
+      if (named) return json(res, 200, { item: named, from: 'name' });
+    }
 
     /*
      * A live channel, which has no per-id call behind it.
@@ -9185,7 +9220,11 @@ async function handleApi(req, res, pathname, query) {
       }
       try {
         const payload = await rebuildLibrary(cfg, 'live', '', key);
-        const found = (payload.items || []).find((item) => String(item.id) === id);
+        const rows = payload.items || [];
+        const found = rows.find((item) => String(item.id) === id)
+          /* A renumbered channel, same as a renumbered film — and on live this
+             is the ordinary case rather than the exception. */
+          || (wanted ? titles.byName(rows, wanted) : null);
         if (found) return json(res, 200, { item: found, from: 'provider' });
         return json(res, 404, { error: 'The provider does not carry that title.' });
       } catch (err) {

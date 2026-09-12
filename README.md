@@ -2468,6 +2468,57 @@ commonest true answer for a channel is not *withdrawn* but *that was a one-off
 and it is over*, so it now reads: "That channel is not in the provider's list
 any more — event channels come down when the event ends."
 
+#### And again, in the gap between the two fixes
+
+> "I got the exact same error on 40.7"
+
+Two rounds each went round one side of the same case, and neither covered it:
+
+| | searched | by |
+| --- | --- | --- |
+| the first fix | the browser's copy — **filtered** | id, then **name** |
+| the second fix | the **box's** whole catalogue | **id** only |
+
+A title that has been **renumbered** *and* is **outside the filter** fails both.
+The name never reaches anything holding the whole catalogue, and the id the box
+is asked about is a number that no longer exists — so `get_vod_info` answers
+"does not carry", which is true of the number and false of the film. It is
+sitting there under a new one, with exactly the name the history row remembers.
+Reproduced against 40.7, which produced the reported sentence verbatim for both
+a film and a show.
+
+So `/api/title` takes a **name** as well as an id and matches it against
+everything the box has ever fetched. Ambiguity still gives up — The Office US
+and The Office UK are different programmes and quietly starting the wrong one
+is worse than saying so — and the answer says `from: "name"` when that is how
+it was found.
+
+**One copy of the rule.** "When are these two records the same title" now lives
+in `public/title-match.js`, loaded by the page as an ordinary script and
+required by the box as an ordinary module. Two copies of a rule like that drift
+— one gains a word on the stop list, the other does not — and then a title
+matches in one place and not the other for reasons nobody can find. It travels
+with `public/`, so every suite that stands up a box already has it.
+
+#### And the next one will not be a guess
+
+This message was reported three times, and each round of fixing it was a guess
+about which of six steps had come up empty — twice wrong, because the report in
+hand was one sentence with nothing behind it. A failed lookup now writes down
+what it asked and what each thing answered, and the playback report carries it:
+
+```
+title lookups that failed  (newest last)
+  0s ago  movies id 4321 named "Trading Places"  — nothing carried it
+             held 1 movies
+             by id 4321: not held
+             by name "Trading Places": no match held
+             the box: The provider does not carry that title.
+```
+
+Ids and names only — there is nothing in it a provider password could be in —
+and the block is absent entirely when nothing has failed.
+
 ### A conversion that is still starting is not an abandoned one
 
 The next conversion to start sweeps away any other that nothing has fetched

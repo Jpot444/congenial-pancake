@@ -1215,6 +1215,10 @@
   <p class="save-bar-note" id="saveBarNote"></p>
 </div>
 
+<!-- When two records are the same title. Loaded before app.js because app.js
+     calls into it, and required by the box as a module — one copy of the rule,
+     not one per side. -->
+<script src="/title-match.js"></script>
 <script src="/app.js"></script>
 <!-- Layered on top of app.js, never in place of it: app.js still decides what
      is on the page and where the data came from, and this dresses the result.
