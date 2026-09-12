@@ -1,0 +1,192 @@
+/*
+ * Treasure Theater, on a television.
+ *
+ * A laptop on an HDMI cable. The browser reports a perfectly ordinary desktop
+ * — often a LARGER one than the laptop's own screen — so the portal lays itself
+ * out for a mouse a foot from your face while the person reading it is on a
+ * sofa across the room. Nothing in a browser announces that its output is
+ * going to a television, so this is chosen by hand in "This device", exactly
+ * as the car layer is.
+ *
+ * Like the car layer it sits ON TOP of the desktop one: `.desk` keeps drawing
+ * the shell, the header and the rails, and everything here is the difference
+ * between those two distances. Unlike the car layer it keeps the POINTER —
+ * there is a trackpad, hover works, and `touch` stays off, because the
+ * phone-shaped layouts that hang off that class are the wrong answer on a
+ * fifty-inch screen.
+ *
+ * TWO SIZES, NOT ONE. A 4K television hands the page 3840 CSS pixels and a
+ * 1080p one hands it 1920, at the same physical size and the same viewing
+ * distance — so a layer pinned to one set of pixel numbers is half the right
+ * size on one of them. Everything below is `clamp(floor, vw, ceiling)`: the
+ * floor is what a 1080p panel gets, the vw term carries a 4K one up, and the
+ * ceiling stops a very wide window from becoming a poster.
+ *
+ * WHAT THIS IS FOR. Multi-view. Everything else growing is table stakes; the
+ * screen somebody puts a laptop on a television to use is four games at once,
+ * and the parts of it that matter across a room are the cell chrome, the count
+ * control, and knowing which cell the keyboard is on.
+ */
+
+html.tv {
+  /* Controls grow more than text does. At this distance the failure is never
+     "I could not read that", it is "I could not hit that" — and on a trackpad
+     from a sofa, the pointer is the least accurate it ever is. */
+  --control-h: clamp(52px, 3.1vw, 84px);
+  --control-h-lg: clamp(64px, 3.8vw, 104px);
+  --control-h-sm: clamp(46px, 2.7vw, 74px);
+  --field-h: clamp(60px, 3.6vw, 96px);
+
+  --text-xs: clamp(13px, 0.72vw, 19px);
+  --text-sm: clamp(15px, 0.83vw, 22px);
+  --text-sm-plus: clamp(15.5px, 0.86vw, 23px);
+  --text-base: clamp(17px, 0.94vw, 25px);
+  --text-md: clamp(18px, 1vw, 26px);
+  --text-lg: clamp(20px, 1.1vw, 29px);
+  --text-xl: clamp(23px, 1.25vw, 33px);
+
+  --display-nav: clamp(20px, 1.1vw, 29px);
+  --display-eyebrow: clamp(15px, 0.83vw, 22px);
+  --display-caps: clamp(14px, 0.78vw, 20px);
+
+  --radius: clamp(14px, 0.8vw, 22px);
+  --radius-sm: clamp(10px, 0.55vw, 15px);
+  --header-h: clamp(86px, 5vw, 132px);
+  --gutter: clamp(34px, 2.2vw, 64px);
+
+  /* Fewer, larger posters. Eleven across a 4K panel is a contact sheet; the
+     point of a shelf across a room is that you can read the covers. */
+  --poster-min: clamp(190px, 13vw, 340px);
+  --rail-card-w: clamp(230px, 15vw, 380px);
+
+  /* The portal caps its own width for readability at a desk. A television has
+     no such problem and the cap just wastes the sides of the screen. */
+  --wrap-max: none;
+}
+
+/* Body copy at this distance. The rest is in the tokens above. */
+html.tv body { font-size: clamp(17px, 0.94vw, 25px); }
+
+/* ---- the bar ------------------------------------------------------------ */
+
+.tv .site-header.lifted { height: var(--header-h); }
+.tv .brand-bison,
+.tv .site-header.lifted .brand-bison { width: clamp(56px, 3.4vw, 92px); }
+
+/* The search field is a fixed 210px at a desk, which at this text size holds
+   about "Search everythi". It grows with everything else. */
+.tv .search { height: var(--control-h); padding: 0 clamp(18px, 1.1vw, 30px); gap: clamp(10px, 0.6vw, 16px); }
+.tv .search svg { width: clamp(20px, 1.1vw, 28px); height: clamp(20px, 1.1vw, 28px); }
+.tv .search input { width: clamp(300px, 19vw, 480px); font-size: var(--text-lg); }
+
+/* The profile chip and the round buttons beside it are how you change who is
+   watching and reach the health panel — both worth hitting first time. */
+.tv .profile-chip { height: var(--control-h); }
+.tv .icon-btn { width: var(--control-h); height: var(--control-h); }
+.tv .icon-btn svg { width: clamp(22px, 1.2vw, 30px); height: clamp(22px, 1.2vw, 30px); }
+
+/* ---- multi-view, which is what this layer is for ------------------------ */
+
+/*
+ * The grid's SHAPE is deliberately untouched.
+ *
+ * Cells stay exactly picture-shaped and the leftover space stays at the edge
+ * of the screen — see "The grid is the shape of the pictures in it". On a 16:9
+ * television only four cells (or one) fill the panel; two leave bands however
+ * they are arranged, and the alternative is cropping the sides off both games,
+ * which is where a scoreboard lives. Bands, then, and no cell letterboxes
+ * inside itself.
+ */
+
+/*
+ * The bar floats, so the grid gets the whole panel.
+ *
+ * "Multiview that takes up the full screen of a TV"
+ *
+ * In a row of its own the bar costs about 96px of height — and on a 16:9
+ * screen height is the scarce dimension, so those 96px cost another 170px off
+ * the WIDTH of a grid that has to stay picture-shaped. Lifted over the picture
+ * it costs nothing, and it already fades with the rest of the chrome when
+ * nothing is happening, which is the same bargain the cell bars make.
+ *
+ * Only here. At a desk the bar in a row is right — there is no shortage of
+ * screen, and chrome over the picture is worse than chrome beside it.
+ */
+.tv .mv-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  border-bottom: 0;
+  gap: clamp(18px, 1.2vw, 34px);
+  padding: clamp(14px, 0.9vw, 26px) clamp(20px, 1.4vw, 40px);
+  /* Readable over whatever is behind it, without a hard edge across the top
+     of two pictures. */
+  background: linear-gradient(180deg, rgba(8, 5, 5, .92) 0%, rgba(8, 5, 5, .72) 55%, transparent 100%);
+  padding-bottom: clamp(26px, 1.8vw, 50px);
+  transition: opacity .25s ease;
+}
+.tv .mv-top h2 { font-size: clamp(22px, 1.2vw, 32px); }
+.tv .mv-top p { font-size: clamp(15px, 0.85vw, 22px); }
+
+/* The count is the control this screen is driven by: two games or four is the
+   decision somebody makes half a dozen times an evening. */
+.tv .mv-count-seg button {
+  min-width: clamp(56px, 3.2vw, 88px);
+  height: var(--control-h);
+  font-size: clamp(19px, 1.05vw, 28px);
+}
+
+/* Named across a room. The cell's own bar is how you know which game is which
+   when both are showing a wide shot of a field. */
+.tv .mv-name { font-size: clamp(17px, 0.95vw, 25px); }
+.tv .mv-tag { font-size: clamp(14px, 0.78vw, 20px); }
+.tv .mv-bar { gap: clamp(10px, 0.7vw, 20px); padding: clamp(10px, 0.7vw, 20px); }
+.tv .mv-btn {
+  min-width: clamp(44px, 2.6vw, 70px);
+  height: clamp(44px, 2.6vw, 70px);
+  font-size: clamp(17px, 0.95vw, 25px);
+}
+
+/* The prompt on an empty cell is a target the size of a quarter of the screen
+   already; what it needed was to be readable from the sofa. */
+.tv .mv-empty { font-size: clamp(18px, 1vw, 26px); gap: clamp(10px, 0.7vw, 18px); }
+.tv .mv-plus { font-size: clamp(40px, 2.6vw, 72px); }
+
+/* The ring, which is how you know what Enter is about to do. Heavier here than
+   elsewhere: at this distance a three-pixel outline is a hairline. */
+.tv .mv-cell.is-focused {
+  outline-width: clamp(4px, 0.3vw, 8px);
+  outline-offset: calc(-1 * clamp(4px, 0.3vw, 8px));
+}
+
+/* The other-games panel is read from the sofa too, so it is wider and its rows
+   are taller — and it still gives the grid the width rather than covering it. */
+.tv { --mv-suggest-w: clamp(400px, 24vw, 620px); }
+.tv .mv-sg-title { font-size: clamp(17px, 0.95vw, 25px); }
+.tv .mv-sg-line { font-size: clamp(14px, 0.78vw, 20px); }
+.tv .mv-sg-chan { font-size: clamp(13px, 0.72vw, 18px); }
+.tv .mv-sg-mark { width: clamp(46px, 2.8vw, 74px); height: clamp(46px, 2.8vw, 74px); }
+
+/* ---- the picker --------------------------------------------------------- */
+
+/* Opened from a cell, and the one place on this screen with a lot of small
+   rows in it. */
+.tv .mv-picker input[type="search"] { height: var(--field-h); font-size: var(--text-lg); }
+/* The results are the portal's own cards and tiles, which already size
+   themselves off --poster-min and --rail-card-w — both raised at the root
+   above, so this needs nothing of its own. */
+.tv .mv-results { gap: clamp(14px, 0.9vw, 26px); }
+
+/* ---- everything else ---------------------------------------------------- */
+
+/* Hover still exists here — there is a trackpad — but a highlight that only
+   appears under the pointer is no use to somebody reading the screen from six
+   feet away while their hand is somewhere else. Focus rings are kept visible
+   for the same reason. */
+.tv :focus-visible { outline: 3px solid var(--text); outline-offset: 3px; }
+
+/* The scrollbars a desktop draws are hairlines at this distance and there is
+   no edge of a window to grab them by. */
+.tv ::-webkit-scrollbar { width: clamp(12px, 0.7vw, 20px); height: clamp(12px, 0.7vw, 20px); }

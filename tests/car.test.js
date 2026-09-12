@@ -124,8 +124,14 @@ const HISTORY = [
   const offered = await page.evaluate(() =>
     [...document.querySelectorAll('#layoutSeg button')].map((b) => b.textContent.trim()));
   console.log('   offered:', JSON.stringify(offered));
-  check('the layout control offers a third shape',
-    offered.length === 3 && offered.includes('Tesla'), JSON.stringify(offered));
+  /* That Tesla is on the list, not how long the list is. A fourth shape was
+     added for a laptop on a television and this suite is not about the count —
+     an assertion that broke every time the portal learned a new kind of screen
+     would be testing the arithmetic rather than the car. */
+  check('the layout control offers Tesla as a shape of its own',
+    offered.includes('Tesla'), JSON.stringify(offered));
+  check('beside the ordinary two, which it does not replace',
+    offered.includes('Phone') && offered.includes('Desktop'), JSON.stringify(offered));
 
   await page.evaluate(() => {
     [...document.querySelectorAll('#layoutSeg button')]

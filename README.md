@@ -760,9 +760,10 @@ than the phone it was on.
 
 ## Two layouts, not one that stretches
 
-The phone button in the header opens **This device**, which chooses between a
-phone layout and a desktop one and remembers it in `localStorage` — the same
-profile is used from both, and only one of them wants any of this.
+The phone button in the header opens **This device**, which chooses between
+four layouts — phone, desktop, Tesla, TV — and remembers it in `localStorage`,
+per device. The same profile is used from all of them and only some of them
+want any of this.
 
 **Two questions, not one.** They used to be the same question, and an iPad is
 the device that shows why they are not:
@@ -937,6 +938,88 @@ The class behind it is still `.touch`, because every sizing rule in the
 stylesheet already hangs off that name and phone layout is what it has always
 meant. It auto-enables on a coarse pointer, so a phone and an iPad get it
 without being asked; the panel overrides that either way.
+
+### Four shapes, two of which have to be chosen
+
+| | what it is | how it is decided |
+| --- | --- | --- |
+| `phone` | a finger on something pocket-sized | a coarse pointer under 820px |
+| `desk` | a pointer, at a desk | everything else |
+| `car` | a finger on a dashboard | chosen |
+| `tv` | a pointer, across a room | chosen |
+
+The last two are not sizes a breakpoint could have found. A Tesla's centre
+screen is as wide as a laptop's and a laptop on an HDMI cable reports a
+perfectly ordinary desktop — **often a larger one than the laptop's own
+screen**. Nothing in a browser announces either. Both layers sit *on top of*
+`.desk` rather than beside it: `.desk` keeps drawing the shell, the header and
+the rails, and each layer is only the difference.
+
+Where they part company is the pointer. The car has a finger on it and sets
+`touch`; the television has a trackpad, so `touch` stays **off** — hover works,
+and the phone-shaped layouts that hang off that class would be the wrong answer
+on a fifty-inch screen.
+
+### A laptop on an HDMI cable
+
+> "The main concern of this should be to have easy to use Multiview that takes
+> up the full screen of a TV when I full screen my browser on the computer."
+
+**Two sizes, not one.** A 4K panel hands the page 3840 CSS pixels and a 1080p
+one hands it 1920 — the same physical screen, at the same viewing distance. A
+layer pinned to one set of pixel numbers is half the right size on the other,
+so every value in `tv-mode.css` is `clamp(floor, vw, ceiling)`: the floor is
+what 1080p gets, the `vw` term carries 4K up, the ceiling stops a very wide
+window becoming a poster. Measured on both: the count buttons are 60px on a
+1080p panel and 84px on a 4K one, the cell names 18px and 25px.
+
+**The multi-view bar floats.** In a row of its own it costs about 96px of
+height — and on a 16:9 panel height is the scarce dimension, so those 96px cost
+another ~170px off the *width* of a grid that has to stay picture-shaped. Over
+the picture it costs nothing, and it already fades with the rest of the chrome
+when nothing is happening, which is the same bargain the cell bars make. The
+difference, measured: **96% of a 1080p panel is picture on a television against
+84% at a desk**. Only here — at a desk there is no shortage of screen and
+chrome over the picture is worse than chrome beside it.
+
+**The grid's shape is untouched.** Cells stay exactly picture-shaped and the
+leftover space stays at the edge of the screen. Only four cells (or one) fill a
+16:9 panel; two leave bands however they are arranged, and the alternative is
+cropping the sides off both games — which is where a scoreboard lives. That was
+asked and answered: leave the bands.
+
+### Arrows, without taking the trackpad away
+
+Aiming a trackpad at a quarter of a television from six feet is the awkward
+part of an otherwise good screen. Arrows move a ring between cells and Enter
+acts on the one they land on — an empty cell opens the picker, a full one blows
+up. Escape was already right: it closes the picker first, then a blown-up cell,
+then the grid.
+
+The move is worked out from **where the cells actually are**, not from a table
+of rows and columns, because the arrangement is not fixed: two cells sit side
+by side on a wide screen and stacked on a narrow one, three is one large beside
+two, and a blown-up cell is on its own. A map would have to be kept in step
+with the grid's CSS and would be wrong the first time it was not.
+
+**Nothing here replaces the pointer.** Hovering a cell brings the ring with it,
+so a hand that reaches for the trackpad mid-evening does not have to work out
+where the keyboard had got to; every button still does what it did; and a
+session that never touches an arrow key never grows a ring. The ring is drawn
+*inside* the cell — the cells are packed against each other and an outside ring
+would be half-hidden by its neighbour — and in white, because red is what a
+cell being dragged onto is marked with.
+
+It is on in every layout, not just on a television. Arrows did nothing in
+multi-view before, so it takes nothing away, and gating it to one layout would
+mean the feature was untested in the one most people use.
+
+`tests/tvmode.test.js` checks all of it: that a laptop is not *guessed* to be a
+television, that the choice survives a reload, that the grid beats a desk's for
+picture and still fits the panel, that two and three cells are not cropped to
+fill it, that the arrows move and stop at the edges and stay out of the picker,
+that hovering still moves the ring and clicking still opens things — at 1920×1080
+and again at 3840×2160.
 
 ## Reordering pins uses pointer events, not drag-and-drop
 

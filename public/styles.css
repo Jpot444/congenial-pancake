@@ -4064,6 +4064,24 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .mv-grip:active { cursor: grabbing; }
 
 /* Where it came from, and where it is going. */
+/*
+ * Where the keyboard is.
+ *
+ * Drawn inside the cell rather than around it, because the cells are packed
+ * against each other and a ring on the outside would be half-hidden by its
+ * neighbour. Bright rather than brand red: red is what a cell being DRAGGED
+ * onto is marked with, and the two must not be mistaken for each other.
+ */
+.mv-cell.is-focused {
+  outline: 3px solid rgba(255, 255, 255, .9);
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 6px rgba(0, 0, 0, .45);
+}
+/* The chrome on a cell the keyboard is on stays up while the rest fades: it is
+   the cell being talked about, and the name on it is the confirmation that the
+   next press will act on the right one. */
+.multiview.is-idle .mv-cell.is-focused .mv-bar { opacity: 1; }
+
 .mv-cell.is-dragging { opacity: .55; }
 .mv-cell.is-target { outline: 2px solid var(--brand-red); outline-offset: -2px; }
 /* The one that is doing something right now reads as the primary control. */

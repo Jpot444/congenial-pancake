@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '40.8';
+const VERSION = '40.9';
 
 const PAGE_SIZE = 60;
 
@@ -910,8 +910,9 @@ const PHONE_MAX = 820;
  *   phone    a finger on something pocket-sized: a tab bar, one column
  *   desk     a pointer and room: the nav in a row, rails, hover
  *   car      a finger on a screen bolted to a dashboard
+ *   tv       a pointer, across a room, on a television
  *
- * The third is not a size the other two could have covered by a breakpoint.
+ * The last two are not sizes the first two could have covered by a breakpoint.
  * A Tesla's centre screen is as wide as a laptop's, so it reads as a desktop
  * and gets the desktop's hit targets — which are sized for a mouse, at a desk,
  * with the screen a foot from your face. In a car the screen is an arm's
@@ -919,8 +920,19 @@ const PHONE_MAX = 820;
  * nobody in a car has any use for. That is a different design, not a smaller
  * one, and it is chosen rather than guessed at: nothing in a browser announces
  * that it is bolted to a dashboard.
+ *
+ * A television is the same argument at a different distance. A laptop on the
+ * HDMI cable reports a perfectly ordinary desktop — often a LARGER one than
+ * the laptop's own screen — and gets controls sized for a mouse a foot away
+ * while the person reading them is on a sofa across the room. Everything has
+ * to grow, and it has to grow with the panel rather than to one number: a 4K
+ * television hands the page 3840 CSS pixels and a 1080p one hands it 1920, at
+ * the same viewing distance and the same physical size.
+ *
+ * It keeps the POINTER, which is what separates it from `car`: there is a
+ * trackpad, hover works, and nothing that hangs off `touch` applies.
  */
-const LAYOUTS = ['phone', 'desk', 'car'];
+const LAYOUTS = ['phone', 'desk', 'car', 'tv'];
 
 const device = {
   layout: 'desk',
@@ -931,6 +943,7 @@ const device = {
   /* Kept as a property name because the whole app asks `device.phone`. */
   get phone() { return this.layout === 'phone'; },
   get car() { return this.layout === 'car'; },
+  get tv() { return this.layout === 'tv'; },
 
   /* A finger, or a layout that is built like one. Either is enough. */
   get touch() { return this.coarse || this.phone || this.car; },
@@ -987,6 +1000,11 @@ const device = {
        changes the parts a dashboard needs changed. The desktop screen was
        already most of the way there; this is the difference. */
     root.classList.toggle('car', this.car);
+    /* The same arrangement for the television: `.desk` keeps drawing the
+       shell and this changes the sizes. Unlike the car it keeps `touch` off —
+       there is a trackpad here, hover works, and the phone-shaped layouts that
+       hang off that class would be the wrong answer on a 55-inch screen. */
+    root.classList.toggle('tv', this.tv);
 
     const btn = $('#touchToggle');
     btn.classList.toggle('is-on', this.layout !== 'desk');
@@ -1287,6 +1305,21 @@ const multiview = {
   picking: -1,
   solo: -1,
   idleTimer: null,
+  /*
+   * Which cell the keyboard is on, or -1 for none.
+   *
+   * Multi-view is the one screen somebody drives from across a room — a laptop
+   * on the HDMI cable, a trackpad on the arm of a sofa — and aiming a pointer
+   * at a quarter of a television from there is the awkward part. Arrows move
+   * between cells, Enter opens the empty one or blows the full one up.
+   *
+   * The pointer is not replaced by any of it. Moving the mouse over a cell
+   * moves this with it, so the two never disagree about which cell is being
+   * talked about, and every button on every cell does exactly what it always
+   * did. -1 until something asks for it, so a mouse-only session never grows a
+   * ring nobody put there.
+   */
+  focused: -1,
   /** What the picker is offering — one of MV_SOURCES. */
   source: 'live',
   /** Which category the picker is inside, or null at the top level. */
@@ -1483,6 +1516,15 @@ const multiview = {
     for (const evt of ['timeupdate', 'progress', 'durationchange', 'seeked']) {
       video.addEventListener(evt, () => this.paintTrack(rec));
     }
+
+    /* The pointer and the keyboard agree about which cell is being talked
+       about. Moving the mouse over a cell brings the ring with it, so a hand
+       that reaches for the trackpad mid-evening does not have to first work
+       out where the keyboard had got to. */
+    box.addEventListener('pointerenter', (event) => {
+      if (event.pointerType === 'touch') return;
+      this.setFocus(this.at(rec));
+    });
 
     Object.assign(rec, {
       box, video, empty, bar, name, tag, play, sound, note,
@@ -1710,6 +1752,7 @@ const multiview = {
 
   close() {
     if ($('#multiview').hidden) return;
+    this.setFocus(-1);
     this.unexpand({ silent: true });
     this.stopAll();
     clearTimeout(this.idleTimer);
@@ -1878,6 +1921,75 @@ const multiview = {
    * fullscreen while we are at it. Backing out of either returns to the grid
    * rather than closing multi-view, which is the whole point of the button.
    */
+  /* -- driving it from across the room ---------------------------------- */
+
+  /** The cells a viewer can actually see, with where they are on the glass. */
+  onScreen() {
+    return this.cells
+      .map((cell, i) => ({ i, cell, box: cell.box.getBoundingClientRect() }))
+      .filter((c) => !c.cell.box.hidden && c.box.width > 0);
+  },
+
+  setFocus(index) {
+    if (index === this.focused) return;
+    this.focused = index;
+    this.cells.forEach((cell, i) => cell.box.classList.toggle('is-focused', i === index));
+  },
+
+  /**
+   * Move the ring one cell in a direction.
+   *
+   * Worked out from where the cells actually ARE rather than from a table of
+   * rows and columns, because the arrangement is not fixed: two cells sit side
+   * by side on a wide screen and stacked on a narrow one, three is one large
+   * beside two, and a blown-up cell is on its own. A map would have to be kept
+   * in step with the grid's CSS and would be wrong the first time it was not.
+   *
+   * Nearest in the direction asked for, preferring the closest along that axis
+   * and using the other axis to break ties — which is what picks the top of the
+   * two stacked cells when moving right out of the large one.
+   */
+  moveFocus(dx, dy) {
+    const seen = this.onScreen();
+    if (!seen.length) return;
+    const centre = (b) => ({ x: b.left + b.width / 2, y: b.top + b.height / 2 });
+
+    const from = seen.find((c) => c.i === this.focused);
+    /* Nothing focused yet: the first press lands on the top-left cell rather
+       than on whichever was built first. */
+    if (!from) {
+      const first = seen.slice().sort((a, b) =>
+        (a.box.top - b.box.top) || (a.box.left - b.box.left))[0];
+      this.setFocus(first.i);
+      this.wake();
+      return;
+    }
+
+    const here = centre(from.box);
+    const want = seen
+      .filter((c) => c.i !== from.i)
+      .map((c) => ({ c, p: centre(c.box) }))
+      .filter(({ p }) => (dx > 0 ? p.x > here.x + 1 : dx < 0 ? p.x < here.x - 1 : true)
+        && (dy > 0 ? p.y > here.y + 1 : dy < 0 ? p.y < here.y - 1 : true))
+      .sort((a, b) => {
+        const along = (p) => Math.abs(dx ? p.x - here.x : p.y - here.y);
+        const across = (p) => Math.abs(dx ? p.y - here.y : p.x - here.x);
+        return (along(a.p) - along(b.p)) || (across(a.p) - across(b.p));
+      })[0];
+    if (!want) return;
+    this.setFocus(want.c.i);
+    this.wake();
+  },
+
+  /** OK on the focused cell: fill an empty one, blow up a full one. */
+  enter() {
+    const index = this.focused;
+    const cell = this.cells[index];
+    if (!cell || cell.box.hidden) return;
+    if (!cell.item) return this.pick(index);
+    return this.expand(index);
+  },
+
   expand(index) {
     const cell = this.cells[index];
     if (!cell?.item) return;
@@ -1934,6 +2046,10 @@ const multiview = {
       // square is exactly what choosing a count is meant to avoid.
       cell.box.hidden = !inUse || (this.solo >= 0 && this.solo !== i);
       cell.box.classList.toggle('is-solo', this.solo === i);
+      /* A ring on a cell nobody can see is a keypress that appears to do
+         nothing — dropping the count from four to two, or blowing one cell up,
+         both take cells off the screen underneath it. */
+      if (cell.box.hidden && this.focused === i) this.setFocus(-1);
       // `pending` is a cell that has been given something but has nothing to
       // show for it yet — a history row being turned into an episode id. The
       // prompt to add something would be inviting a second choice over the top
@@ -16920,6 +17036,43 @@ $('#playerClose').addEventListener('click', closePlayer);
 $('#playerOverlay').addEventListener('click', (event) => {
   if (event.target === $('#playerOverlay')) closePlayer();
 });
+/*
+ * Multi-view, from across the room.
+ *
+ * A laptop on the HDMI cable is driven with a trackpad from a sofa, and aiming
+ * at a quarter of a television from there is the awkward part of an otherwise
+ * good screen. Arrows move between cells and Enter acts on the one they land
+ * on — the same two gestures the Shield app's remote gives, on the keyboard
+ * that is already in your lap.
+ *
+ * Nothing here replaces the pointer: every button still works, hovering still
+ * moves the ring, and a session that never touches an arrow key never sees
+ * one. Escape is deliberately NOT handled here — the chain below already gets
+ * it right, closing the picker first, then a blown-up cell, then the grid.
+ */
+const MV_ARROWS = {
+  ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+};
+
+document.addEventListener('keydown', (event) => {
+  if ($('#multiview').hidden) return;
+  /* Not while a menu is over the top of it, and never over a search box. */
+  if (!$('#mvPicker').hidden) return;
+  if (event.target.matches('input, textarea, select')) return;
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+  const move = MV_ARROWS[event.key];
+  if (move) {
+    event.preventDefault();
+    multiview.moveFocus(move[0], move[1]);
+    return;
+  }
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    multiview.enter();
+  }
+});
+
 document.addEventListener('keydown', (event) => {
   // Providers sits on top of health, so it is the one Escape closes first.
   if (event.key === 'Escape' && !$('#providerModal').hidden) return providerPanel.close();
