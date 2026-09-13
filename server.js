@@ -3995,6 +3995,81 @@ function joinRecording(row) {
 }
 
 /**
+ * What is holding the provider's connections right now, in words.
+ *
+ * "I have a multiview going that is streaming fine. I have another window
+ *  with only redzone on it and it keeps pausing."
+ *
+ * The box knew the answer to that and said nothing. A live ingest holds one
+ * connection for as long as it runs, so a four-cell multiview in one window
+ * takes four of them, and the fifth channel — in another window, on the same
+ * account — cannot start. From the second window that is invisible: the cells
+ * that are working are somewhere else on the desk.
+ *
+ * So this is the sentence that was missing. It is the same courtesy the
+ * recording refusal below already pays — name the thing, and the viewer can
+ * decide what to close — extended to the case that actually happens on a
+ * Sunday afternoon.
+ *
+ * Ordered by what a person is most likely to be able to act on: the channels
+ * they can see and close first, then the recording nobody is watching, then
+ * the download that costs only time.
+ */
+function connectionHolders() {
+  const held = [];
+  const channels = knownCatalogue('live');
+  const nameOf = (channelId) => channels.find((c) => String(c.id) === String(channelId))?.name
+    || `channel ${channelId}`;
+
+  for (const session of remuxSessions.values()) {
+    if (session.exited || !session.fromProvider) continue;
+    if (session.live) {
+      /* `live-123` and `live-lo-123` are the full-size and shrunk ingests of
+         the same channel — different connections, so both are listed, but the
+         name is the channel either way. */
+      const channelId = String(session.id).replace(/^live-(lo-)?/, '');
+      held.push({ kind: 'live', what: nameOf(channelId), id: session.id });
+    } else {
+      /* A film or episode being converted from the provider. The session
+         carries no title — it is keyed by stream id — and looking one up in
+         the catalogue for a sentence about connections is not worth a library
+         scan, so it is named by what it is. */
+      held.push({ kind: 'converting', what: 'a film or episode', id: session.id });
+    }
+  }
+
+  for (const row of recordings.active()) {
+    held.push({ kind: 'recording', what: `${row.title} on ${row.channelName}`, id: row.id });
+  }
+
+  if (activeJob && activeJob.status === 'downloading' && !activeJob.archivePath) {
+    held.push({ kind: 'download', what: activeJob.name, id: activeJob.id });
+  }
+
+  return held;
+}
+
+/** The holders as one sentence, or '' when there is nothing to name. */
+function holdersSentence(held) {
+  if (!held.length) return '';
+  const watching = held.filter((h) => h.kind === 'live').map((h) => h.what);
+  const rest = held.filter((h) => h.kind !== 'live');
+  const parts = [];
+  if (watching.length) {
+    parts.push(watching.length === 1
+      ? `${watching[0]} is open`
+      : `${watching.slice(0, -1).join(', ')} and ${watching[watching.length - 1]} are open`);
+  }
+  for (const one of rest) {
+    if (one.kind === 'recording') parts.push(`${one.what} is recording`);
+    else if (one.kind === 'download') parts.push(`${one.what} is downloading`);
+    else parts.push(`${one.what} is converting`);
+  }
+  if (parts.length === 1) return `${parts[0]}.`;
+  return `${parts.slice(0, -1).join('; ')}; and ${parts[parts.length - 1]}.`;
+}
+
+/**
  * Free a provider slot for a recording, by stopping something that matters less.
  *
  * The order is what it costs the person in the room, cheapest first. A
@@ -4298,8 +4373,20 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
   // still start — multiview and a recording already in progress are the
   // cases that need a second window — but take() the first login anyway so
   // the pool is not left reading idle while ffmpeg is pulling.
-  const account = providers.pick(cfg, { reserve: true }) || providers.accounts(cfg)[0] || null;
+  const spare = providers.pick(cfg, { reserve: true });
+  const account = spare || providers.accounts(cfg)[0] || null;
   if (!account) throw new Error('No free provider connection for live ingest');
+  /*
+   * Whether this ingest is starting into a full pool, which is the difference
+   * between the two ways it can fail.
+   *
+   * Nothing free means the provider is being asked for one more stream than
+   * the account has, and if this start then fails that is why. A free slot
+   * that fails is a different fault — a slow or dead feed — and belongs on the
+   * direct path exactly as it always has. Recorded here because this is the
+   * only place that knows, and read at the two throws below.
+   */
+  const crowded = !spare;
   const input = buildStreamUrl(account, 'live', channelId, 'm3u8');
 
   const session = {
@@ -4350,12 +4437,12 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
     if (session.exited && session.exitCode !== 0) {
       const detail = session._stderr.split('\n').filter(Boolean).pop() || `exit ${session.exitCode}`;
       killSession(id);
-      throw new Error(`Live ingest failed: ${redactUrl(detail)}`);
+      throw Object.assign(new Error(`Live ingest failed: ${redactUrl(detail)}`), { crowded });
     }
     await new Promise((r) => setTimeout(r, 250));
   }
   killSession(id);
-  throw new Error('Live ingest timed out starting');
+  throw Object.assign(new Error('Live ingest timed out starting'), { crowded });
 }
 
 /* ---- archive thumbnails ---- */
@@ -10200,7 +10287,45 @@ async function handleApi(req, res, pathname, query) {
             url: `/hls/${session.id}/index.m3u8`, format: 'm3u8', dvr: true,
             low: lowWanted, swapped,
           });
-        } catch {
+        } catch (err) {
+          /*
+           * An ingest that failed with the pool already full is out of
+           * connections, and the direct proxy is not a smaller version of what
+           * it wanted — it is a worse thing.
+           *
+           * The ingest holds ONE upstream connection for the life of the
+           * channel, so the playlist it publishes is continuous. The direct
+           * proxy has no pinned upstream: every refresh is a fresh request,
+           * and a provider that answers them from different backend nodes
+           * hands the player a media sequence that goes BACKWARDS. A real
+           * report of this, four resets in 140 seconds:
+           *
+           *   seq 3325→3288 · 3332→3298 · 3335→3300 · 3301→2037
+           *
+           * hls.js cannot survive that. The timeline is invalidated, the
+           * buffer with it, and playback becomes a loop of stall, a seek
+           * nobody asked for, a reload, two seconds of picture, stall. From
+           * the sofa that is "it keeps pausing", with nothing said about why.
+           *
+           * So say why. A viewer told which channels are holding the
+           * connections can close one; a viewer handed a thrashing player can
+           * only conclude the box is broken.
+           *
+           * Only when crowded. A free slot that failed is a slow or dead feed,
+           * and the direct path is the right answer for it — that fallback is
+           * deliberate and measured, and is left exactly as it was.
+           */
+          if (err && err.crowded) {
+            const held = connectionHolders();
+            const said = holdersSentence(held);
+            return json(res, 503, {
+              error: `No connection free for this channel.${said ? ` ${said}` : ''}`
+                + ' Close one and try again.',
+              crowded: true,
+              holders: held,
+              capacity: providers.capacity(cfg),
+            });
+          }
           /* direct proxy below */
         }
       }
@@ -10219,12 +10344,21 @@ async function handleApi(req, res, pathname, query) {
        * nobody in the room started and nobody can see. So say what is
        * running, until when, and hand back its id: the screen turns that into
        * one press that stops it. */
+      /* Who gets refused is unchanged — a recording, and only a recording.
+         What they are TOLD now includes everything else holding a connection,
+         because "Recording X" while three channels are also open names one
+         thing out of four and reads like the only one. This path still carries
+         VOD, which a busy login serves perfectly well, so nothing new is
+         turned away here. */
       if (!chosen) {
         const held = recordings.blocking();
         if (held) {
+          const others = connectionHolders().filter((h) => h.kind !== 'recording');
+          const said = holdersSentence(others);
           return json(res, 503, {
-            error: `Recording ${held.title} on ${held.channelName}.`,
+            error: `Recording ${held.title} on ${held.channelName}.${said ? ` ${said}` : ''}`,
             recording: held,
+            holders: connectionHolders(),
           });
         }
       }

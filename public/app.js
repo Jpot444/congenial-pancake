@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '41.1';
+const VERSION = '41.2';
 
 const PAGE_SIZE = 60;
 
@@ -596,7 +596,14 @@ async function api(path, params) {
   }
   const res = await fetch(url);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) {
+    /* The body travels with the error, not just its first sentence. A refusal
+       that names what is holding the provider's connections carries the list
+       as well as the words, and throwing the message alone dropped it on the
+       floor — every caller had the explanation and none had the facts. */
+    throw Object.assign(new Error(data.error || `Request failed (${res.status})`),
+      { status: res.status, payload: data });
+  }
   return data;
 }
 

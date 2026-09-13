@@ -127,8 +127,15 @@ const get = (p) => new Promise((resolve, reject) => {
   check('the ingest reads the provider playlist, not the realtime push feed',
     /buildStreamUrl\([^)]+, 'live', channelId, 'm3u8'\)/.test(SERVER)
     && !/buildStreamUrl\([^)]+, 'live', channelId, 'ts'\)/.test(SERVER));
+  /* Still true, and now also REMEMBERED. A full pool no longer only decides
+     which login to start on, it decides what a failure means — see the pair
+     of checks on the fallback below, and crowded.test.js for the behaviour. */
   check('and a new ingest still starts when the pool is full, but it is counted',
-    /providers\.pick\(cfg, \{ reserve: true \}\) \|\| providers\.accounts\(cfg\)\[0\]/.test(SERVER));
+    /const spare = providers\.pick\(cfg, \{ reserve: true \}\);/.test(SERVER)
+    && /const account = spare \|\| providers\.accounts\(cfg\)\[0\]/.test(SERVER));
+  check('and whether it started into a full pool is carried to the failure',
+    /const crowded = !spare;/.test(SERVER)
+    && /\{ crowded \}\)/.test(SERVER));
   check('and banks a published run of it rather than trickling in from the edge',
     /'-live_start_index', resumed \? '-1' : `-\$\{COLD_START_SEGMENTS\}`,\s*'-i', input/
       .test(SERVER));
@@ -205,8 +212,28 @@ const get = (p) => new Promise((resolve, reject) => {
 
   /* ---- the wiring ------------------------------------------------------- */
   console.log('\n  the wiring');
-  check('the DVR is tried first and ANY failure falls back to the direct proxy',
-    /try \{\s*const session = await ensureLiveDvr[\s\S]{0,220}catch \{\s*\/\* direct proxy below \*\//.test(SERVER));
+  /*
+   * This assertion used to read "ANY failure falls back to the direct proxy",
+   * and the reversal is the point of the change it now guards.
+   *
+   * A viewer reported a second window pausing over and over while a multiview
+   * played fine, and the report named it: the media sequence went BACKWARDS
+   * four times in 140 seconds. That is the direct proxy — no pinned upstream,
+   * so a provider answering from different backend nodes hands the player a
+   * timeline that cannot be followed. It was on the direct proxy because the
+   * ingest had failed for want of a connection, and the catch said nothing.
+   *
+   * So the fallback is now split by WHY. Out of connections is refused, in
+   * words, naming what is open. Anything else — a slow or dead feed with a
+   * slot going spare — still takes the direct path, which is deliberate and
+   * measured and must not be taken away. crowded.test.js drives both against
+   * a real box; these two keep the shape honest.
+   */
+  check('the DVR is tried first, and a crowded failure is refused rather than faked',
+    /try \{\s*const session = await ensureLiveDvr[\s\S]{0,260}catch \(err\) \{/.test(SERVER)
+    && /if \(err && err\.crowded\)[\s\S]{0,400}503/.test(SERVER));
+  check('while any other failure still falls back to the direct proxy',
+    /\/\* direct proxy below \*\//.test(SERVER));
   const playHandler = SERVER.slice(SERVER.indexOf("pathname === '/api/play'"));
   check('and a successful DVR tune does not first reserve a proxy slot it will never use',
     playHandler.indexOf('ensureLiveDvr') < playHandler.indexOf("pick(cfg, { reserve: true })"),

@@ -3377,6 +3377,71 @@ catch up, so a speed-controller extension keeps full control. Your chosen rate
 is preserved across channel changes, which a plain `load()` would otherwise
 reset to 1×.
 
+## Which channels are holding the connections
+
+> "i have a multiview going that is streaming fine. I have another window with
+> only redzone on it and it keeps pausing."
+
+The playback report that came with it named the fault in a line nobody had had
+to read before:
+
+```
+playlist reset  seq 3325→3288 · 3332→3298 · 3335→3300 · 3301→2037
+```
+
+**A media sequence does not go backwards.** Four different upstream nodes did.
+The player was talking to four of them because it was on the **direct proxy**,
+which has no pinned upstream — every playlist refresh is an independent
+request, and a provider free to answer each from a different backend hands the
+player a timeline it cannot follow. hls.js does not survive that: the timeline
+is invalidated, the buffer with it, and playback becomes a loop of stall, a
+seek nobody asked for, a reload, two seconds of picture, stall.
+
+From the sofa, that is "it keeps pausing".
+
+### Why it was on the direct proxy
+
+A live channel normally goes through the box's own ingest, which holds **one**
+provider connection for the life of the channel and publishes a continuous
+~2-minute window. A four-cell multiview is therefore four connections, and the
+fifth channel — in the other window, on the same account — had none left. Its
+ingest failed, and:
+
+```js
+} catch {
+  /* direct proxy below */
+}
+```
+
+The box knew exactly why and said nothing. That silence is the bug; the
+pausing was only its symptom.
+
+### Saying it
+
+A failure with the pool already full is now **refused, in words**:
+
+> No connection free for this channel. FOX and ESPN are open. Close one and
+> try again.
+
+The holders travel with it as data, not just as a sentence — channels by name,
+a recording by programme, a download by title. This is the courtesy the
+recording refusal already paid, extended to the case that actually happens on a
+Sunday afternoon: a multiview in another window is exactly as invisible as a
+recording, and the viewer can act on either once told.
+
+**The slow-feed fallback is untouched**, and that distinction is the whole
+design. An ingest that fails with a connection *going spare* is a slow or dead
+feed, and the direct path is the right answer for it — chosen deliberately,
+measured, and left alone. Only a failure that is *out of connections* refuses,
+because for that one the direct proxy is not a lesser version of what was
+wanted, it is a worse thing. `ensureLiveDvr` records which case it started in
+and the two throws carry it out.
+
+`tests/crowded.test.js` drives both against a real box with a one-connection
+account: one channel takes the connection, the second is refused by name, and —
+the check that matters as much — a feed that fails with nothing holding
+anything still gets the direct proxy exactly as before.
+
 ## The DVR keeps trying
 
 > "We need to fix the DVR because it just does not work... if something is
