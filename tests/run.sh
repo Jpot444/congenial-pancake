@@ -5,6 +5,27 @@
 #   ./tests/run.sh                 every suite
 #   ./tests/run.sh home titles     just those (name or filename, both work)
 #
+#   SUITE_TIMEOUT=300 ./tests/run.sh    longer leash for a slow machine
+#
+# NO SUITE MAY HANG THE RUN.
+#
+# "the sweeps that go on for hours never finish I always have to cancel them"
+#
+# Every suite used to be run as a bare `node suite.js` with nothing watching
+# it, so one that never exited — a browser that would not close, a box that
+# never answered, a promise that never settled — stopped the sweep dead. From
+# outside that is indistinguishable from a slow test, so the whole run got
+# cancelled and NOTHING was learned, including from the ninety suites that had
+# already passed. A hang is now a result: the suite is killed, reported as
+# TIMEOUT, and the run carries on.
+#
+# The other half is leaked processes. Suites spawn boxes, and boxes spawn
+# ffmpeg; a box killed with SIGKILL does not take its grandchildren with it,
+# and those survivors hold ports the next run needs. A sweep found eleven of
+# them from a single suite, and others still running twelve hours later. They
+# are swept up before the run and after it — only ever under the test scratch
+# directories, which nothing but these suites ever writes to.
+#
 # Each suite drives a real browser against a real portal, so this starts one
 # on port 8481 out of a scratch directory — a throwaway config, a throwaway
 # profile, no provider — and stops it again at the end. Nothing here touches
@@ -22,6 +43,33 @@ DIR="${TEST_DIR:-${TMPDIR:-/tmp}/portal-test}"
 # only really stored if it is on disk — so they need the directory, not just
 # the URL.
 export TEST_DIR="$DIR"
+# Long enough for the slowest honest suite with room to spare — the slowest
+# measured is around half a minute — and short enough that a hung one costs
+# the run three minutes rather than the evening.
+SUITE_TIMEOUT="${SUITE_TIMEOUT:-180}"
+
+# --- anything left over from a previous run --------------------------------
+#
+# Scoped to the scratch directories these suites create and nothing else: the
+# pattern is the path a test box was started from, so this can only ever match
+# a process one of these suites spawned.
+# The shared box lives under one of these paths too, so it is spared by name:
+# a pattern broad enough to catch a suite's leftovers is broad enough to shoot
+# the portal every other suite is testing against.
+sweep_strays() {
+  local pid
+  for pid in $(pgrep -f '/portal-[a-z]' 2>/dev/null); do
+    [ "$pid" = "$$" ] && continue
+    # Read the real argv rather than matching ps output, so this cannot match
+    # itself through the pattern it is searching for.
+    if tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -qF -- "$DIR"; then
+      continue
+    fi
+    kill -9 "$pid" 2>/dev/null
+  done
+  return 0
+}
+sweep_strays
 
 # --- nothing else on this port --------------------------------------------
 #
@@ -96,7 +144,7 @@ else
   SUITES=(*.test.js)
 fi
 
-pass=0; fail=0; failed=()
+pass=0; fail=0; failed=(); times=()
 for suite in "${SUITES[@]}"; do
   [ -f "$suite" ] || { echo "no such suite: $suite"; fail=$((fail+1)); continue; }
 
@@ -122,15 +170,34 @@ for suite in "${SUITES[@]}"; do
     "http://127.0.0.1:$PORT/api/profiles/own1/prefs" || true
 
   printf '%-24s ' "$suite"
-  if out=$(node "$suite" 2>&1); then
-    echo 'PASS'; pass=$((pass+1))
+  started=$SECONDS
+  # `timeout` returns 124 when it had to kill the suite. That is reported as
+  # its own outcome rather than as a failing assertion, because it is a
+  # different thing to go and look at: nothing was disproved, something stopped
+  # answering.
+  out=$(timeout "$SUITE_TIMEOUT" node "$suite" 2>&1); code=$?
+  took=$(( SECONDS - started ))
+  times+=("$(printf '%5ds  %s' "$took" "$suite")")
+  if [ "$code" -eq 0 ]; then
+    printf 'PASS  %3ds\n' "$took"; pass=$((pass+1))
+  elif [ "$code" -eq 124 ]; then
+    printf 'TIMEOUT after %ds\n' "$SUITE_TIMEOUT"; fail=$((fail+1)); failed+=("$suite (timed out)")
+    echo "$out" | tail -4 | sed 's/^/    /'
   else
-    echo 'FAIL'; fail=$((fail+1)); failed+=("$suite")
+    printf 'FAIL  %3ds\n' "$took"; fail=$((fail+1)); failed+=("$suite")
     echo "$out" | grep -E '^[[:space:]]*FAIL|FAILED|Error' | head -8 | sed 's/^/    /'
   fi
+  # Whatever this suite spawned and did not clean up dies here rather than
+  # holding a port the next one needs.
+  sweep_strays
 done
 
 echo
-echo "$pass passed, $fail failed"
+echo "$pass passed, $fail failed   (${SECONDS}s total)"
 [ "$fail" -eq 0 ] || printf '  %s\n' "${failed[@]}"
+# The five slowest, always — a sweep that is creeping towards the timeout is
+# worth seeing before it starts tripping it.
+echo
+echo 'slowest:'
+printf '%s\n' "${times[@]}" | sort -rn | head -5 | sed 's/^/  /'
 exit $(( fail > 0 ))

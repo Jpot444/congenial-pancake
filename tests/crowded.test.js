@@ -136,8 +136,18 @@ function box() {
   fs.writeFileSync(path.join(DIR, 'profiles.json'), JSON.stringify({
     profiles: [{ id: 'own1', name: 'Hunter', emoji: '', color: '', prefs: {}, history: [] }],
   }));
+  /*
+   * Its own process group, so the whole tree can be taken down together.
+   *
+   * The fake ffmpeg below holds its connection with a sleep loop, the way a
+   * real ingest holds one — and SIGKILL on the box does not reach a
+   * grandchild. Eleven of them were found still running long after this suite
+   * had finished, holding ports and slowing every sweep after it. Killing the
+   * GROUP is what actually ends them.
+   */
   return spawn('node', ['server.js'], {
     cwd: DIR,
+    detached: true,
     env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1',
       PATH: `${path.join(DIR, 'fakebin')}:${process.env.PATH}`,
       DOWNLOADS_ROOT: path.join(DIR, 'store') },
@@ -234,7 +244,10 @@ const call = (p) => new Promise((resolve, reject) => {
       second.data.crowded === true, JSON.stringify(second.data.crowded));
 
   } finally {
-    server.kill('SIGKILL');
+    /* The group, not the process: see the note by box(). A negative pid is
+       the group, and the fallback covers a box that died on its own and took
+       its group id with it. */
+    try { process.kill(-server.pid, 'SIGKILL'); } catch { server.kill('SIGKILL'); }
     panel.close();
   }
 
