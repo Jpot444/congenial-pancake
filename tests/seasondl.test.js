@@ -97,7 +97,11 @@ const EPISODES = {
 
   // Clean up what this test queued.
   for (const r of [first, otherKind, doomed, retry]) {
-    try { await del(`/api/downloads/${JSON.parse(r.body).id}`); } catch { /* gone */ }
+    /* With the profile on it: a DELETE that does not say who is asking is a
+       404 now, and this cleanup would quietly stop cleaning up. */
+    try {
+      await del(`/api/downloads/${JSON.parse(r.body).id}?profileId=p1`);
+    } catch { /* gone */ }
   }
 
   /* ---- the client: card button, marks, and the guard -------------------- */

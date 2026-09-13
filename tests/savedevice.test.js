@@ -83,7 +83,10 @@ const BIG = 3.2 * 1024 ** 3;   // the kind of file that shows nothing for a whil
       body: JSON.stringify({ items: jobs, active: null, queued: 0, freeBytes: 9e9 }) }));
   // The file itself is never actually fetched here; what matters is the
   // anchor that would fetch it.
-  await page.route('**/api/downloads/*/save', (r) =>
+  // On the path, not by glob: the save carries a profileId now, and `*` in a
+  // Playwright glob does not match across a query string.
+  await page.route(
+    (url) => /^\/api\/downloads\/[\w-]+\/save$/.test(new URL(url).pathname), (r) =>
     r.fulfill({ status: 200, contentType: 'video/mp4', body: 'PRETEND' }));
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
@@ -452,8 +455,15 @@ const BIG = 3.2 * 1024 ** 3;   // the kind of file that shows nothing for a whil
   check('while still offering the save, because it does work',
     installed.offered.tag === 'BUTTON' && /Save anyway/.test(installed.offered.button),
     JSON.stringify(installed.offered));
+  /* Read as a URL rather than matched as a string: the save carries a
+     profileId as well as the track id now, and query order is not a promise. */
+  const savesBig1 = (href) => {
+    if (!href) return false;
+    const u = new URL(href, 'http://x');
+    return u.pathname === '/api/downloads/big1/save' && !!u.searchParams.get('track');
+  };
   check('and taking it up really starts the transfer',
-    /\/api\/downloads\/big1\/save\?track=/.test(installed.anyway.seen[0]?.href || ''),
+    savesBig1(installed.anyway.seen[0]?.href),
     JSON.stringify(installed.anyway.seen));
   check('with no target on it, so no second browser window is born',
     !installed.anyway.seen[0]?.target, JSON.stringify(installed.anyway.seen[0]));
@@ -545,7 +555,7 @@ const BIG = 3.2 * 1024 ** 3;   // the kind of file that shows nothing for a whil
   });
   console.log('   ', JSON.stringify(fromCard));
   check('pressing it goes through the same hand-over as everything else',
-    /\/api\/downloads\/big1\/save\?track=/.test(fromCard.hrefs[0] || ''),
+    savesBig1(fromCard.hrefs[0]),
     JSON.stringify(fromCard.hrefs));
   check('and puts a bar up', fromCard.bar === true, JSON.stringify(fromCard));
   await page.evaluate(() => saveBar.stop());
@@ -661,7 +671,7 @@ const BIG = 3.2 * 1024 ** 3;   // the kind of file that shows nothing for a whil
      * takes a whole file off the box's hands in milliseconds; a phone on
      * wifi does not, which is the case this bar exists for. */
     const MB = 1024 * 1024;
-    await range('/api/downloads/huge/save?track=sv-test', 0, 2 * MB - 1);
+    await range('/api/downloads/huge/save?profileId=own1&track=sv-test', 0, 2 * MB - 1);
     const first = JSON.parse((await get('/api/save-progress?id=sv-test')).body);
     console.log('   after 2 MB:', JSON.stringify({ sent: first.sent, total: first.total,
       done: first.done, ended: first.ended }));
@@ -684,14 +694,14 @@ const BIG = 3.2 * 1024 ** 3;   // the kind of file that shows nothing for a whil
       typeof first.idleMs === 'number' && first.idleMs < 6000, String(first.idleMs));
     console.log('       connection mid-download is normal, not a failure');
 
-    await range('/api/downloads/huge/save?track=sv-test', 2 * MB, 6 * MB - 1);
+    await range('/api/downloads/huge/save?profileId=own1&track=sv-test', 2 * MB, 6 * MB - 1);
     const second = JSON.parse((await get('/api/save-progress?id=sv-test')).body);
     check('and the next piece of the same save adds to it rather than',
       second.sent === 6 * MB, `${first.sent} → ${second.sent}`);
     console.log('       starting the count again');
 
     // The rest of it, and the whole thing is on the device.
-    const rest = await range('/api/downloads/huge/save?track=sv-test', 6 * MB, 96 * MB - 1);
+    const rest = await range('/api/downloads/huge/save?profileId=own1&track=sv-test', 6 * MB, 96 * MB - 1);
     const end2 = JSON.parse((await get('/api/save-progress?id=sv-test')).body);
     console.log('   finished: ', JSON.stringify({ sent: end2.sent, done: end2.done,
       ended: end2.ended }));
@@ -701,7 +711,7 @@ const BIG = 3.2 * 1024 ** 3;   // the kind of file that shows nothing for a whil
 
     // A plain, unranged save is counted too — that is the desktop shape.
     const whole = await new Promise((resolve) => {
-      http.get(`http://127.0.0.1:${PORT}/api/downloads/big/save?track=sv-plain`, (res) => {
+      http.get(`http://127.0.0.1:${PORT}/api/downloads/big/save?profileId=own1&track=sv-plain`, (res) => {
         let got = 0;
         res.on('data', (c) => { got += c.length; });
         res.on('end', () => resolve(got));

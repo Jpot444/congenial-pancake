@@ -71,7 +71,10 @@ const READY = { ...RUNNING, status: 'done', bytes: 1.8e9, total: 1.8e9,
     r.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ items: jobs, active: null, queued: 0 }) }));
   // The save itself, stubbed so nothing has to move gigabytes to prove it.
-  await page.route('**/api/downloads/*/save', (r) =>
+  // Matched on the PATH rather than by glob: these routes carry a profileId
+  // now, and `*` in a Playwright glob does not survive a query string.
+  await page.route(
+    (url) => /^\/api\/downloads\/[\w-]+\/save$/.test(new URL(url).pathname), (r) =>
     r.fulfill({ status: 200, contentType: 'video/mp4',
       headers: { 'content-disposition': 'attachment; filename="The Long Ride Home.mp4"' },
       body: 'not really a film' }));
@@ -260,7 +263,8 @@ const READY = { ...RUNNING, status: 'done', bytes: 1.8e9, total: 1.8e9,
   // those in would re-run known-broken downloads on every press.
   console.log('\n  resume all');
   const retried = [];
-  await page.route('**/api/downloads/*/retry', (r) => {
+  await page.route(
+    (url) => /^\/api\/downloads\/[\w-]+\/retry$/.test(new URL(url).pathname), (r) => {
     retried.push(r.request().url().match(/downloads\/([\w-]+)\/retry/)[1]);
     return r.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
   });

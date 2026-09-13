@@ -36,6 +36,11 @@ const scope = new Function('downloads', `
   const OWNER_PROFILE = 'hunter';
   ${lift('function isOwnerProfile(profile) {')}
   ${lift('function downloadLimitFor(profile) {')}
+  /* Lifted too, because the allowance is counted from who HOLDS a download
+     rather than from who asked for it first — two profiles can share one
+     file and both are charged for it. */
+  ${lift('function holdersOf(job) {')}
+  ${lift('function heldBy(job, profileId) {')}
   ${lift('function downloadBytesFor(profileId, exceptId = null) {')}
   return { downloadLimitFor, downloadBytesFor };
 `)(downloads);
@@ -73,9 +78,26 @@ check('a running one counts what it will weigh, not what has landed',
   downloadBytesFor('p1') === 2.5 * GB, `${downloadBytesFor('p1') / GB} GB`);
 check('another profile\'s downloads are not charged to you',
   downloadBytesFor('p2') === 2 * GB);
+/*
+ * An unowned job is now charged to NOBODY, where it used to be charged to the
+ * empty profile id — `''` matched `''`, so asking about nobody returned their
+ * total. The name of this check was always the intent; it is literally true
+ * now. On a real box the case is a boot away from gone anyway: adoptDownloads
+ * gives every job a holder at startup, handing strays to the owner.
+ */
 check('a download from before this shipped is charged to nobody',
-  downloadBytesFor('') === 4 * GB && downloadBytesFor('p1') === 2.5 * GB,
-  'an unowned job leaked into a profile');
+  downloadBytesFor('') === 0 && downloadBytesFor('p1') === 2.5 * GB,
+  `${downloadBytesFor('') / GB} GB went somewhere`);
+
+/* And the other half of the same rule: one file two people hold is one file on
+   the drive, and both of them are charged for it — otherwise the second gets
+   20GB of anything somebody else fetched first, free. */
+job({ id: 'f', profileId: 'p1', profiles: ['p1', 'p2'], bytes: 3 * GB, total: 3 * GB,
+  status: 'done' });
+check('a shared file counts against everybody holding it',
+  downloadBytesFor('p1') === 5.5 * GB && downloadBytesFor('p2') === 5 * GB,
+  `p1 ${downloadBytesFor('p1') / GB} GB · p2 ${downloadBytesFor('p2') / GB} GB`);
+downloads.delete('f');
 check('a profile with nothing is at zero', downloadBytesFor('p9') === 0);
 check('the job being checked can exclude itself, or it blocks on its own size',
   downloadBytesFor('p1', 'b') === 1 * GB, `${downloadBytesFor('p1', 'b') / GB} GB`);

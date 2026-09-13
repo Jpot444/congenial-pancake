@@ -516,8 +516,13 @@ function ownerOf(profileId) {
  * somebody sensible rather than to nobody.
  */
 /** Who holds this, in words, for the owner's view of everybody's. */
-function nameOfHolders(job) {
-  const known = readProfiles().profiles;
+/*
+ * `known` is passed in rather than read here. readProfiles() is a synchronous
+ * disk read and a JSON.parse, and this is called once PER ROW — the owner's
+ * everyone view would have re-read and re-parsed profiles.json for every
+ * download on the box, inside the response. One read per request instead.
+ */
+function nameOfHolders(job, known = readProfiles().profiles) {
   const names = holdersOf(job)
     .map((id) => known.find((p) => p.id === id))
     .filter(Boolean)
@@ -548,7 +553,10 @@ function heldBy(job, profileId) {
 function adoptDownloads() {
   const data = readProfiles();
   const known = new Set(data.profiles.map((p) => p.id));
-  const house = data.profiles.find((p) => isOwnerProfile(p));
+  /* The owner if there is one, and otherwise simply the first profile: a box
+     where nobody happens to be called hunter must not be one where the strays
+     are handed to nobody and sit on the drive in no list at all. */
+  const house = data.profiles.find((p) => isOwnerProfile(p)) || data.profiles[0];
   let moved = 0;
   let strays = 0;
   for (const job of downloads.values()) {
@@ -557,7 +565,10 @@ function adoptDownloads() {
     if (had && known.has(had)) {
       job.profiles = [had];
     } else {
-      job.profiles = house ? [house.id] : [];
+      /* No profiles at all yet — first run, gate not passed. Left alone rather
+         than emptied, so the next boot can place it once somebody exists. */
+      if (!house) continue;
+      job.profiles = [house.id];
       strays += 1;
     }
     moved += 1;
@@ -8603,13 +8614,16 @@ async function handleApi(req, res, pathname, query) {
        * Downloads than somebody else's.
        */
       const me = String(query.get('profileId') || '');
-      const owner = isOwnerProfile(ownerOf(me));
+      /* Once, for the whole response — both the "who is asking" question and
+         every name in the everyone view come out of this one read. */
+      const known = readProfiles().profiles;
+      const owner = isOwnerProfile(known.find((p) => p.id === me));
       const everyone = owner && query.get('all') === '1';
       const rows = [...downloads.values()]
         .filter((job) => everyone || (me && heldBy(job, me)))
         .sort((a, b) => b.createdAt - a.createdAt)
         .map((job) => (everyone && !heldBy(job, me)
-          ? { ...job, whose: nameOfHolders(job) }
+          ? { ...job, whose: nameOfHolders(job, known) }
           : job));
       return json(res, 200, {
         items: rows,

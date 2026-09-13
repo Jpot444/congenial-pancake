@@ -3036,8 +3036,6 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 /* ---- what the two download steps are for ---- */
 
-/* A heading inside the downloads grid, so recordings and downloads can share
-   the page without being one undifferentiated wall of cards. */
 /*
  * The owner's switch between their own downloads and the whole drive.
  *
@@ -3062,6 +3060,8 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   letter-spacing: .06em;
 }
 
+/* A heading inside the downloads grid, so recordings and downloads can share
+   the page without being one undifferentiated wall of cards. */
 .dl-section {
   grid-column: 1 / -1;
   display: flex;

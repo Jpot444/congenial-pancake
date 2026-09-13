@@ -164,8 +164,16 @@ const EPISODES = {
     kind: 'series', id: ep, ext: 'mp4',
   }), { show: SHOW, ep: 5002 });
   console.log('   resolved to:', JSON.stringify(local));
+  /* The path is the claim. Downloads are each profile's own now, so the URL
+     also names who is asking — the box 404s a file that is not theirs. */
   check('and it resolves to the file on the box',
-    /^\/api\/downloads\/dl1\/file$/.test(local.url || ''), JSON.stringify(local));
+    new URL(local.url || '', 'http://x').pathname === '/api/downloads/dl1/file',
+    JSON.stringify(local));
+  const whoAsked = await page.evaluate(() => profiles.current?.id || '');
+  check('and says who is asking, because the box will not hand over',
+    new URL(local.url || '', 'http://x').searchParams.get('profileId') === whoAsked
+    && !!whoAsked, JSON.stringify(local));
+  console.log('       somebody else\'s download');
   check('marked as coming from the box', local.local === true, JSON.stringify(local));
 
   /* ---- 2. and the same title with nothing saved still streams ----------- */

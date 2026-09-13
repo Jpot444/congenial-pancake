@@ -560,10 +560,18 @@ exit 0
       /-movflags \+faststart/.test(args), args.slice(0, 200));
     check('and audio a phone can decode', /-c:a aac/.test(args), args.slice(0, 200));
 
-    const saved = await req5(`/api/downloads/${queued.id}/save`);
+    /* Naming who is asking, like every other per-job call: Downloads are each
+       profile's own, and the box answers 404 to anyone who has not said. */
+    const saved = await req5(`/api/downloads/${queued.id}/save?profileId=own1`);
     check('and then it saves to the device like any other download',
       saved.status === 200 && /attachment/.test(saved.headers['content-disposition'] || ''),
       `${saved.status} ${saved.headers['content-disposition']}`);
+
+    /* And the converse, here because this is the suite that has a real box
+       with a real file: a stranger cannot fetch it by knowing the id. */
+    const stranger = await req5(`/api/downloads/${queued.id}/save?profileId=nobody9`);
+    check('while somebody it does not belong to is told there is no such thing',
+      stranger.status === 404, String(stranger.status));
 
     // The index is the boundary here as everywhere else.
     const nowhere = await post5('/api/downloads', {

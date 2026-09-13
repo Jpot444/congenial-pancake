@@ -148,14 +148,37 @@ exit 0
       going.convertDuration === 1200, String(going.convertDuration));
     check('and the file really is growing', going.bytes > 0, String(going.bytes));
 
+    /*
+     * Watched for the climb rather than sampled at a guessed moment.
+     *
+     * The fake encoder runs ten steps of 0.4s and then exits, so a fixed
+     * `wait(1500)` on top of the 2500 above read it at 4000ms of a 4000ms
+     * run — a coin toss, and one this suite has been winning by luck. Anything
+     * that shifts the box by a few milliseconds flips it, and the failure
+     * looks exactly like the bug this section is about.
+     *
+     * Polling asks the real question instead: did it move while somebody was
+     * watching, and was it ever put on ice. Both are answered from samples
+     * taken while it is genuinely still running.
+     */
     const first = going.convertSeconds;
-    await wait(1500);
-    const later = await jobs();
+    let later = going;
+    const parked = [];
+    for (let i = 0; i < 20; i += 1) {
+      await wait(150);
+      const now = await jobs();
+      if (now.status === 'paused' || now.status === 'queued') parked.push(now.status);
+      if (now.status !== 'downloading') break;
+      later = now;
+      if (later.convertSeconds > first) break;
+    }
     check('and the position keeps climbing', later.convertSeconds > first,
       `${first} → ${later.convertSeconds}`);
 
     // Playing something must not put it on ice either.
-    check('watching does not pause it', later.status === 'downloading', later.status);
+    check('watching does not pause it',
+      later.status === 'downloading' && !parked.length,
+      parked.length ? parked.join(',') : later.status);
 
     let done = null;
     for (let i = 0; i < 20; i += 1) {
