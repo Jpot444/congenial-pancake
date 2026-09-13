@@ -104,10 +104,15 @@ export const getPlay = (kind, id, ext) => api('/api/play', { kind, id, ext });
 
 /* ------------------------------------------------------------ downloads ── */
 
-export const getDownloads = () => api('/api/downloads');
+/* Downloads are each profile's own — the box answers with this profile's and
+   refuses a call that does not say whose it is, on the list and on every one
+   of the per-job routes below. */
+export const getDownloads = (profileId) => api('/api/downloads', { profileId });
 export const queueDownload = (body) => api('/api/downloads', null, { method: 'POST', body });
-export const pauseDownload = (id) => api(`/api/downloads/${id}/pause`, null, { method: 'POST' });
-export const retryDownload = (id) => api(`/api/downloads/${id}/retry`, null, { method: 'POST' });
+export const pauseDownload = (id, profileId) =>
+  api(`/api/downloads/${id}/pause`, { profileId }, { method: 'POST' });
+export const retryDownload = (id, profileId) =>
+  api(`/api/downloads/${id}/retry`, { profileId }, { method: 'POST' });
 
 /* -------------------------------------------------------------- archive ── */
 

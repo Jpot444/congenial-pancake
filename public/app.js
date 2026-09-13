@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '40.9';
+const VERSION = '41.0';
 
 const PAGE_SIZE = 60;
 
@@ -71,6 +71,10 @@ const state = {
   visible: PAGE_SIZE,
   filtered: [],
   downloads: { items: [], active: null, queued: 0 },
+  /* The owner looking at the whole drive rather than at their own downloads.
+     Never persisted and cleared on a profile change: it is a thing you do for
+     a minute to clear space, not a setting. */
+  downloadsAll: false,
   /** The archive drive: current folder, what's in it, and how much is shown. */
   archive: { dir: '', data: null, status: null, visible: PAGE_SIZE, searching: false },
   recentlyWatched: [],
@@ -235,6 +239,12 @@ const profiles = {
        thrown away here rather than being allowed to outlive them. */
     marketLines.text = new Map();
     marketLines.load({ force: true }).catch(() => {});
+    /* And a different Downloads. Both halves matter: the list belongs to
+       whoever was signed in a moment ago, and the everyone view is the owner's
+       alone — leaving either in place would show one profile another's. */
+    state.downloads = { items: [], active: null, queued: 0 };
+    state.downloadsAll = false;
+    refreshDownloads({ rerender: state.tab === 'downloads' }).catch(() => {});
     if (!silent) toast(`Watching as ${profile.name}.`);
   },
 
@@ -3210,7 +3220,7 @@ const multiview = {
     await ensureDownloads();
     const local = findLocalCopy(kind, id);
     if (local && !needsRemux(local.ext)) {
-      return { url: `/api/downloads/${local.id}/file`, format: 'file' };
+      return { url: jobUrl(local.id, '/file'), format: 'file' };
     }
 
     // `replaces` is this cell's own previous conversion, if it had one. The
@@ -10510,7 +10520,14 @@ async function ensureDownloads() {
 async function refreshDownloads({ rerender = false } = {}) {
   const was = new Map((state.downloads.items || []).map((j) => [j.id, j]));
   try {
-    state.downloads = await api('/api/downloads');
+    /* Whose downloads. The box answers with this profile's own, and with the
+       whole box only for the owner and only when asked — see the note on the
+       route. A page that does not say who it is gets nothing, which is the
+       right answer to an unsigned question about somebody's library. */
+    state.downloads = await api('/api/downloads', {
+      profileId: profiles.current?.id || '',
+      all: state.downloadsAll ? '1' : '',
+    });
   } catch {
     return;
   }
@@ -11075,7 +11092,7 @@ $('#saveBarClose').addEventListener('click', () => {
 
 function saveToDevice(job) {
   handOverFile({
-    url: `/api/downloads/${job.id}/save`,
+    url: jobUrl(job.id, '/save'),
     filename: `${job.name}.${job.ext}`,
     bytes: job.total || job.bytes || 0,
     name: job.name,
@@ -11240,7 +11257,30 @@ function renderDownloads() {
   const done = items.filter((j) => j.status === 'done').length;
   $('#contentMeta').textContent =
     `${done} ready${state.downloads.queued ? ` · ${state.downloads.queued} queued` : ''}`
-    + `${recs.some((r) => r.status === 'recording') ? ' · recording now' : ''}`;
+    + `${recs.some((r) => r.status === 'recording') ? ' · recording now' : ''}`
+    + `${state.downloads.showingAll ? ' · everyone’s' : ''}`;
+
+  /*
+   * The owner's way to see the whole drive.
+   *
+   * Downloads are each profile's own, which leaves one problem: somebody has
+   * to be able to clear a drive a child has filled, and on this box that is
+   * whoever runs it. So the owner — and nobody else, here and on the box —
+   * gets a switch to the whole of it, with whose each row is written on it.
+   * Off by default: the point of the change is that your Downloads are yours.
+   */
+  if (state.downloads.canSeeAll) {
+    const seeAll = el('button', `btn btn-ghost dl-everyone${state.downloadsAll ? ' is-on' : ''}`);
+    seeAll.textContent = state.downloadsAll ? 'Just mine' : 'Everyone’s';
+    seeAll.title = state.downloadsAll
+      ? 'Show only your own downloads'
+      : 'Show every profile’s downloads, to clear space on the box';
+    seeAll.addEventListener('click', async () => {
+      state.downloadsAll = !state.downloadsAll;
+      await refreshDownloads({ rerender: true });
+    });
+    grid.append(seeAll);
+  }
 
   // Paused work gets one button back to running, not a hunt through the
   // cards. Paused only: failed jobs have a Retry of their own, and sweeping
@@ -11256,7 +11296,7 @@ function renderDownloads() {
         // Sequential on purpose: the queue runs one at a time anyway, and
         // this keeps its order the order the cards show.
         // eslint-disable-next-line no-await-in-loop
-        const res = await fetch(`/api/downloads/${job.id}/retry`, { method: 'POST' });
+        const res = await fetch(jobUrl(job.id, '/retry'), { method: 'POST' });
         if (res.ok) woke += 1;
       }
       await refreshDownloads({ rerender: true });
@@ -11303,7 +11343,7 @@ async function playDownload(job) {
     id: `dl-${job.id}`,
     name: job.name,
     logo: poster,
-    directUrl: `/api/downloads/${job.id}/file`,
+    directUrl: jobUrl(job.id, '/file'),
     sourceUrl: `x.${job.ext}`,
     localOnly: true,
     downloadId: job.id,
@@ -11421,7 +11461,7 @@ function seriesFolderCard(key, episodes) {
     // One at a time: every removal rewrites the download index, and firing
     // them together races that write.
     for (const episode of episodes) {
-      await fetch(`/api/downloads/${episode.id}`, { method: 'DELETE' });
+      await fetch(jobUrl(episode.id), { method: 'DELETE' });
     }
     toast(`Deleted ${count} episode${count === 1 ? '' : 's'} of “${show}”.`);
     await refreshDownloads({ rerender: true });
@@ -11733,7 +11773,7 @@ function downloadCard(job) {
       pause.title = 'Frees your single provider connection so you can watch';
       pause.addEventListener('click', async () => {
         pause.disabled = true;
-        await fetch(`/api/downloads/${job.id}/pause`, { method: 'POST' });
+        await fetch(jobUrl(job.id, '/pause'), { method: 'POST' });
         await refreshDownloads({ rerender: true });
       });
       actions.append(pause);
@@ -11747,7 +11787,7 @@ function downloadCard(job) {
       resume.textContent = 'Resume';
       resume.addEventListener('click', async () => {
         resume.disabled = true;
-        await fetch(`/api/downloads/${job.id}/retry`, { method: 'POST' });
+        await fetch(jobUrl(job.id, '/retry'), { method: 'POST' });
         await refreshDownloads({ rerender: true });
       });
       actions.append(resume);
@@ -11759,12 +11799,37 @@ function downloadCard(job) {
     remove.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
     remove.addEventListener('click', async (event) => {
       event.stopPropagation();
+      /* Three different sentences, because three different things happen.
+         Somebody else's row in the everyone view really does delete the file —
+         that screen exists for clearing the drive. A title somebody else also
+         holds only loses your claim. Yours alone goes. */
+      const mine = !job.whose;
       const verb = job.status === 'done' ? 'Delete' : 'Cancel';
-      if (!confirm(`${verb} “${job.name}”?`)) return;
-      await fetch(`/api/downloads/${job.id}`, { method: 'DELETE' });
+      const ask = !mine
+        ? `Delete “${job.name}” from the box? It belongs to ${job.whose}.`
+        : `${verb} “${job.name}”?`;
+      if (!confirm(ask)) return;
+      const res = await fetch(jobUrl(job.id, '', { all: mine ? '' : '1' }),
+        { method: 'DELETE' });
+      const said = await res.json().catch(() => ({}));
+      if (said.keptFile) {
+        toast(`Removed from your Downloads. ${said.stillHeldBy} still has it, `
+          + 'so the file stays on the box.');
+      }
       await refreshDownloads({ rerender: true });
     });
     art.append(remove);
+
+    /* Whose it is, but only on somebody else's — the owner's everyone view is
+       the one place this appears, and a label on every one of your own rows
+       saying "yours" would be noise on the screen you use every day. */
+    if (job.whose) {
+      const whose = el('p', 'card-sub dl-whose');
+      whose.textContent = job.whose;
+      card.append(art, title, sub, whose, actions);
+      card.classList.add('is-someone-elses');
+      return card;
+    }
 
     card.append(art, title, sub, actions);
     return card;
@@ -11786,6 +11851,20 @@ let currentSeason = null;
  * counts — a failed one does not, because failing is exactly when asking
  * again should work.
  */
+/**
+ * Any call about one download, with who is asking on it.
+ *
+ * Downloads are each profile's own now, and the box checks that on every one
+ * of these — pause, retry, delete and the file itself. A call that forgets to
+ * say who it is gets a 404, so the profile goes on here rather than at a dozen
+ * call sites where one of them would eventually be missed.
+ */
+function jobUrl(id, suffix = '', extra = {}) {
+  const params = new URLSearchParams({ profileId: profiles.current?.id || '' });
+  for (const [k, v] of Object.entries(extra)) if (v) params.set(k, String(v));
+  return `/api/downloads/${id}${suffix}?${params}`;
+}
+
 function downloadJobFor(kind, streamId) {
   const want = kind === 'series' ? 'series' : 'movie';
   return (state.downloads.items || []).find(
@@ -16232,7 +16311,7 @@ async function playLocalCopy(job, startAt = 0) {
   }
   lastRemux = {};
   // Plays natively, so the file seeks itself once metadata is in.
-  return { url: `/api/downloads/${job.id}/file`, format: 'file', local: true, seekTo: startAt };
+  return { url: jobUrl(job.id, '/file'), format: 'file', local: true, seekTo: startAt };
 }
 
 function needsRemux(ext) {

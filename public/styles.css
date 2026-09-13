@@ -3038,6 +3038,30 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 /* A heading inside the downloads grid, so recordings and downloads can share
    the page without being one undifferentiated wall of cards. */
+/*
+ * The owner's switch between their own downloads and the whole drive.
+ *
+ * Spans the grid so it reads as a control over the page rather than as another
+ * card in it, and sits at the top because the question it answers — "why can I
+ * not see the film I know is on there" — is asked before anything is scrolled.
+ */
+.dl-everyone {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-bottom: 4px;
+}
+.dl-everyone.is-on { border-color: var(--text); color: var(--text); }
+
+/* Somebody else's, in the everyone view. Dimmed rather than hidden: the point
+   of the screen is to see what is taking up the drive, and the point of the
+   dimming is that it is not yours to watch. */
+.card.is-someone-elses .card-art { opacity: .62; }
+.dl-whose {
+  color: var(--live);
+  font-variant-caps: all-small-caps;
+  letter-spacing: .06em;
+}
+
 .dl-section {
   grid-column: 1 / -1;
   display: flex;

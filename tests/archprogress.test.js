@@ -108,7 +108,7 @@ exit 0
     r.end();
   });
   const jobs = async () => {
-    const list = JSON.parse((await req('/api/downloads')).body);
+    const list = JSON.parse((await req('/api/downloads?profileId=own1')).body);
     return (list.items || [])[0] || {};
   };
 
@@ -197,7 +197,13 @@ exit 0
     ],
     active: 'a1', queued: 1, freeBytes: 9e9,
   };
-  await page.route('**/api/downloads', (r) =>
+  await page.route(
+    // The LIST, and only the list. Downloads are each profile's own now, so the
+    // page asks with a profileId on the URL and the old bare glob stopped
+    // matching it — and a glob loose enough to match would also swallow the
+    // per-job routes, which several of these suites stub separately. The
+    // pathname is the unambiguous thing to test.
+    (url) => new URL(url).pathname === '/api/downloads', (r) =>
     r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(list) }));
 
   await page.goto(UI, { waitUntil: 'networkidle' });

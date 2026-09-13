@@ -85,7 +85,13 @@ async function resolve(request) {
     return getArchivePlay(state.profile.id, request.path);
   }
   if (request.kind === 'download') {
-    return { url: `/api/downloads/${request.id}/file`, format: 'file' };
+    /* Downloads are each profile's own and the box checks that on the file
+       itself, so the profile goes on the URL the same as it does on the list. */
+    return {
+      url: `/api/downloads/${request.id}/file`
+        + `?profileId=${encodeURIComponent(state.profile ? state.profile.id : '')}`,
+      format: 'file',
+    };
   }
   if (request.kind === 'series') {
     return getPlay('series', request.streamId, request.ext);

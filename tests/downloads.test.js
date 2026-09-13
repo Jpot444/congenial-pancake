@@ -61,7 +61,13 @@ const READY = { ...RUNNING, status: 'done', bytes: 1.8e9, total: 1.8e9,
       body: '{"recentlyWatched":[],"categoryAffinity":[],"ratings":{}}' }));
 
   let jobs = [RUNNING];
-  await page.route('**/api/downloads', (r) =>
+  await page.route(
+    // The LIST, and only the list. Downloads are each profile's own now, so the
+    // page asks with a profileId on the URL and the old bare glob stopped
+    // matching it — and a glob loose enough to match would also swallow the
+    // per-job routes, which several of these suites stub separately. The
+    // pathname is the unambiguous thing to test.
+    (url) => new URL(url).pathname === '/api/downloads', (r) =>
     r.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ items: jobs, active: null, queued: 0 }) }));
   // The save itself, stubbed so nothing has to move gigabytes to prove it.

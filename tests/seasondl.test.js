@@ -112,7 +112,13 @@ const EPISODES = {
   // seeding page state alone gets wiped mid-test. Stub the API instead: the
   // fixture IS the server as far as this page knows, and POSTs are counted.
   const posted = [];
-  await page.route('**/api/downloads', (r) => {
+  await page.route(
+    // The LIST, and only the list. Downloads are each profile's own now, so the
+    // page asks with a profileId on the URL and the old bare glob stopped
+    // matching it — and a glob loose enough to match would also swallow the
+    // per-job routes, which several of these suites stub separately. The
+    // pathname is the unambiguous thing to test.
+    (url) => new URL(url).pathname === '/api/downloads', (r) => {
     if (r.request().method() === 'POST') {
       posted.push(JSON.parse(r.request().postData()));
       return r.fulfill({ status: 200, contentType: 'application/json',

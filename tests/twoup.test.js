@@ -142,7 +142,7 @@ function watch(url) {
 }
 
 async function jobs() {
-  const list = await call('/api/downloads');
+  const list = await call('/api/downloads?profileId=own1');
   return Object.fromEntries((list.data.items || []).map((j) => [j.id, j]));
 }
 

@@ -470,7 +470,11 @@ function downloadLimitFor(profile) {
 function downloadBytesFor(profileId, exceptId = null) {
   let total = 0;
   for (const job of downloads.values()) {
-    if (job.profileId !== profileId || job.id === exceptId) continue;
+    /* Everyone HOLDING it is charged for it, not only whoever asked first.
+       Two profiles sharing a film share the disk, and if the allowance only
+       counted the first of them the second would have a free 20GB of anything
+       somebody else had already fetched. */
+    if (!heldBy(job, profileId) || job.id === exceptId) continue;
     total += Math.max(Number(job.bytes) || 0, Number(job.total) || 0);
   }
   return total;
@@ -480,6 +484,79 @@ function downloadBytesFor(profileId, exceptId = null) {
 function ownerOf(profileId) {
   if (!profileId) return undefined;
   return readProfiles().profiles.find((p) => p.id === profileId);
+}
+
+/* ------------------------------------------------ whose download is this ── */
+
+/*
+ * "the downloads folder should be profile specific not a shared downloads
+ *  folder"
+ *
+ * Every job has always recorded the profile that queued it — the allowance is
+ * counted from it — but nothing ever READ that when handing the list back, so
+ * Downloads was one pile shared by the house.
+ *
+ * A job is owned by a LIST of profiles rather than by one, because the Pi has
+ * one copy of each file and two people wanting the same film should not cost
+ * the drive twice. Both hold it, both see it in their own Downloads, both are
+ * charged for it, and the file goes when the last of them lets go.
+ *
+ * `profileId` stays written as whoever asked first: an older build reads that
+ * field and nothing else, so a rollback still charges the allowance to
+ * somebody sensible rather than to nobody.
+ */
+/** Who holds this, in words, for the owner's view of everybody's. */
+function nameOfHolders(job) {
+  const known = readProfiles().profiles;
+  const names = holdersOf(job)
+    .map((id) => known.find((p) => p.id === id))
+    .filter(Boolean)
+    .map((p) => p.name);
+  if (!names.length) return 'nobody';
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+function holdersOf(job) {
+  if (Array.isArray(job.profiles) && job.profiles.length) return job.profiles.map(String);
+  return job.profileId ? [String(job.profileId)] : [];
+}
+
+function heldBy(job, profileId) {
+  return holdersOf(job).includes(String(profileId));
+}
+
+/**
+ * Give every job an owner list, once, at boot.
+ *
+ * Downloads already on the box predate this and have only the single field —
+ * and some predate PROFILES, or name one that has since been deleted, in which
+ * case nobody would be able to see them at all. Those fall to the owner, who
+ * is the only profile guaranteed to exist and the one who has to be able to
+ * clear the drive. Nothing disappears from every list at once.
+ */
+function adoptDownloads() {
+  const data = readProfiles();
+  const known = new Set(data.profiles.map((p) => p.id));
+  const house = data.profiles.find((p) => isOwnerProfile(p));
+  let moved = 0;
+  let strays = 0;
+  for (const job of downloads.values()) {
+    if (Array.isArray(job.profiles) && job.profiles.length) continue;
+    const had = String(job.profileId || '');
+    if (had && known.has(had)) {
+      job.profiles = [had];
+    } else {
+      job.profiles = house ? [house.id] : [];
+      strays += 1;
+    }
+    moved += 1;
+  }
+  if (moved) {
+    persistDownloads();
+    console.log(`  downloads: ${moved} given an owner`
+      + `${strays ? `, ${strays} of them stray and handed to the owner profile` : ''}`);
+  }
 }
 
 /**
@@ -8308,12 +8385,38 @@ async function handleApi(req, res, pathname, query) {
 
   if (pathname === '/api/downloads') {
     if (req.method === 'GET') {
-      const rows = [...downloads.values()].sort((a, b) => b.createdAt - a.createdAt);
+      /*
+       * Whose downloads these are.
+       *
+       * The list is the profile's own. `all=1` is the one exception and it is
+       * the owner's alone: somebody has to be able to clear a drive that a
+       * child has filled, and on this box that is whoever runs it. Every row
+       * in that view carries `whose`, so it reads as other people's rather
+       * than as more of your own.
+       *
+       * No profileId at all answers with nothing rather than with everything.
+       * A caller that has not said who it is has not earned the whole box, and
+       * an older page asking the old way is better off showing an empty
+       * Downloads than somebody else's.
+       */
+      const me = String(query.get('profileId') || '');
+      const owner = isOwnerProfile(ownerOf(me));
+      const everyone = owner && query.get('all') === '1';
+      const rows = [...downloads.values()]
+        .filter((job) => everyone || (me && heldBy(job, me)))
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .map((job) => (everyone && !heldBy(job, me)
+          ? { ...job, whose: nameOfHolders(job) }
+          : job));
       return json(res, 200, {
         items: rows,
         active: activeJob ? activeJob.id : null,
         queued: queue.length,
+        /* The drive is the drive whoever is asking. */
         freeBytes: Number.isFinite(diskFree(DOWNLOAD_DIR)) ? diskFree(DOWNLOAD_DIR) : null,
+        /* So the page knows whether to offer the switch at all. */
+        canSeeAll: owner,
+        showingAll: everyone,
       });
     }
 
@@ -8369,6 +8472,24 @@ async function handleApi(req, res, pathname, query) {
         const dup = [...downloads.values()].find((j) => j.kind === wantKind
           && j.streamId === wantId && j.status !== 'error');
         if (dup) {
+          /*
+           * Somebody else already has it, so this profile gets it too — the
+           * same file, not a second copy.
+           *
+           * The Pi holds one of each and the allowance is 20GB a head; two
+           * people wanting the same film should not cost the drive twice. And
+           * a flat refusal is worse than useless now that the list is each
+           * profile's own: "already downloaded" about something they cannot
+           * see is a dead end with nothing to press.
+           *
+           * It counts against both allowances from here — see
+           * downloadBytesFor — because both of them are holding it.
+           */
+          if (!heldBy(dup, profileId) && profileId) {
+            dup.profiles = [...holdersOf(dup), profileId];
+            persistDownloads();
+            return json(res, 200, { ...dup, shared: true });
+          }
           return json(res, 409, {
             error: dup.status === 'done'
               ? 'Already downloaded — it\'s in Downloads.'
@@ -8401,9 +8522,11 @@ async function handleApi(req, res, pathname, query) {
         season: Number(incoming.season) || 0,
         episode: Number(incoming.episode) || 0,
         subtitle: incoming.subtitle || '',
-        // Who this counts against. Downloads are shared — anyone can play
-        // anything that is on the box — but the allowance is per profile.
+        // Whose this is. Downloads used to be one pile the house shared and
+        // are each profile's own now; `profiles` is the list that decides who
+        // sees it, and grows when somebody else asks for the same title.
         profileId,
+        profiles: profileId ? [profileId] : [],
         bytes: 0,
         total: 0,
         status: 'queued',
@@ -8423,6 +8546,26 @@ async function handleApi(req, res, pathname, query) {
     const job = downloads.get(downloadMatch[1]);
     if (!job) return json(res, 404, { error: 'No such download' });
     const suffix = downloadMatch[2] || '';
+
+    /*
+     * And whose it is, on every one of these.
+     *
+     * Filtering the LIST and leaving these open would be a rule that only
+     * holds while nobody looks: the ids are right there in anybody's list,
+     * and pause, retry, delete and the file itself all took one without
+     * asking who was holding it. 404 rather than 403 for a job that is not
+     * yours — "no such download" is true from where you are standing, and
+     * telling somebody a title exists but is not theirs is itself a thing
+     * about somebody else's Downloads.
+     *
+     * The owner passes this on everything, for the same reason they can see
+     * everything: they are the one who has to be able to clear the drive.
+     */
+    const asking = String(query.get('profileId') || '');
+    const isOwner = isOwnerProfile(ownerOf(asking));
+    if (!isOwner && !heldBy(job, asking)) {
+      return json(res, 404, { error: 'No such download' });
+    }
 
     if (suffix === '/file' || suffix === '/save') {
       if (job.status !== 'done') return json(res, 409, { error: 'Download not finished' });
@@ -8489,6 +8632,29 @@ async function handleApi(req, res, pathname, query) {
     }
 
     if (req.method === 'DELETE') {
+      /*
+       * Letting go of it, which is not the same as deleting the file.
+       *
+       * A title two profiles hold is ONE file on the drive. Somebody clearing
+       * it out of their own Downloads is saying they are done with it, not
+       * that the other person is — so the claim goes and the file stays until
+       * the last holder drops it.
+       *
+       * The owner clearing space from the everyone view is a different
+       * sentence, and `all=1` is how it is said: that really does take the
+       * file, because freeing the drive is the whole point of that screen.
+       */
+      const sweeping = isOwner && query.get('all') === '1';
+      const left = sweeping ? [] : holdersOf(job).filter((id) => id !== asking);
+      if (left.length) {
+        job.profiles = left;
+        persistDownloads();
+        return json(res, 200, {
+          removed: true,
+          keptFile: true,
+          stillHeldBy: nameOfHolders(job),
+        });
+      }
       cancelJob(job, { removeFile: true });
       return json(res, 200, { removed: true });
     }
@@ -10121,6 +10287,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 loadDownloads();
+/* Read straight after, so a box that has been running since before Downloads
+   knew about profiles comes up with every file belonging to somebody. */
+adoptDownloads();
 sweepScratch();
 recoverOrphanedDownloads();
 reportDiskSpace();
