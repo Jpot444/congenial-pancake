@@ -200,6 +200,16 @@ function writeJsonAtomic(file, value, opts = {}) {
 // reaches it — the SD card can never be crowded to the brim by this app.
 const SPACE_RESERVE = 2 * 1024 * 1024 * 1024;
 
+/*
+ * Room enough to get a recording going, above the reserve the box keeps.
+ *
+ * About twenty minutes of a generous stream. A recording is not refused for
+ * want of the whole programme's worth — see the note in beginRecording — but
+ * starting one onto a drive with nothing left is not a promise either, it is
+ * a file that stops in ninety seconds.
+ */
+const RECORDING_FLOOR = 1024 * 1024 * 1024;
+
 function diskFree(dir) {
   try {
     if (typeof fs.statfsSync === 'function') {
@@ -1885,8 +1895,12 @@ function providerBusy() {
  * film can run side by side, and pausing one for the other out of habit would
  * throw away the connection that was paid for.
  */
-function autoPauseActiveDownload() {
-  if (!providerBusy()) return;
+function autoPauseActiveDownload({ force = false } = {}) {
+  /* `force` is a recording asking. It has already established that every slot
+     is busy — that is why it is here — and providerBusy() would answer about
+     the moment after the recording's own ffmpeg has taken one, which is too
+     late to be the question. */
+  if (!force && !providerBusy()) return;
   const job = activeJob;
   if (!job || job.status !== 'downloading') return;
   // This exists to hand the provider's one connection back to playback. A
@@ -3784,6 +3798,154 @@ function recordArgs(input, out, local) {
 }
 
 /**
+ * Join a recording's parts into the one file it was always meant to be.
+ *
+ * A recording that was picked back up has several files on disk, in order.
+ * Concatenated with `-c copy`, so nothing is re-encoded and a Pi can do three
+ * hours of it in a few seconds — the gap where the feed was down is simply not
+ * there, which is the honest result: those seconds were never broadcast to us.
+ *
+ * Failure is survivable and deliberately quiet about it. The parts stay where
+ * they are and stay playable on their own, and `/file` keeps serving the
+ * newest; a recording nobody can watch would be a worse outcome than one that
+ * is in two pieces.
+ */
+const joining = new Set();
+
+function joinRecording(row) {
+  if (joining.has(row.id)) return;
+  const parts = recordings.partsOf(row).filter(
+    (f) => recordings.fileSize(path.join(RECORDINGS_DIR, f)) > 0);
+  if (parts.length < 2) {
+    /* One part is the ordinary case: name it what the row says and be done. */
+    if (parts.length === 1 && parts[0] !== row.file) {
+      try {
+        fs.renameSync(path.join(RECORDINGS_DIR, parts[0]), path.join(RECORDINGS_DIR, row.file));
+        row.parts = [row.file];
+      } catch (err) {
+        console.log(`  recordings: could not name the file — ${err.message}`);
+      }
+    }
+    return;
+  }
+  if (!hasFfmpeg()) return;
+
+  joining.add(row.id);
+  const listFile = path.join(RECORDINGS_DIR, `${row.id}.parts.txt`);
+  const final = path.join(RECORDINGS_DIR, row.file);
+  /*
+   * Joined to one side and moved into place, never written over the parts.
+   *
+   * A row from the build before parts existed has `file` ITSELF as its first
+   * part — that is what partsOf falls back to — so joining straight onto
+   * row.file would hand ffmpeg its own first input with `-y` and truncate two
+   * hours of it at open. Which is precisely the recording that is running when
+   * this version deploys. The rename also means a join that is killed halfway
+   * leaves the parts untouched rather than row.file a stub.
+   */
+  const out = path.join(RECORDINGS_DIR, `${row.id}.joining.mp4`);
+  try {
+    /* ffmpeg's concat demuxer reads a list of files. The quoting is its own —
+       a single quote inside a name has to be escaped for it, and these names
+       are built by fileName() so they cannot contain one, but a file the box
+       did not name could. */
+    fs.writeFileSync(listFile, parts
+      .map((f) => `file '${path.join(RECORDINGS_DIR, f).replace(/'/g, "'\\''")}'`)
+      .join('\n'));
+  } catch (err) {
+    joining.delete(row.id);
+    console.log(`  recordings: could not write the join list — ${err.message}`);
+    return;
+  }
+
+  const proc = spawn('ffmpeg', [
+    '-v', 'error', '-nostats', '-hide_banner', '-y',
+    '-f', 'concat', '-safe', '0', '-i', listFile,
+    '-c', 'copy',
+    '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
+    '-f', 'mp4', out,
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  onStderr(proc, (d) => { stderr = (stderr + d.toString()).slice(-500); });
+  proc.on('exit', (code) => safely('joining a recording', () => {
+    joining.delete(row.id);
+    try { fs.unlinkSync(listFile); } catch { /* already gone */ }
+    const live = recordings.get(row.id);
+    if (!live) return;
+    if (code === 0 && recordings.fileSize(out) > 0) {
+      try {
+        /* The parts go only once the whole file is in place under the name the
+           row promises — an unlink before this would be the one order in which
+           a crash loses everything. */
+        fs.renameSync(out, final);
+      } catch (err) {
+        try { fs.unlinkSync(out); } catch { /* already gone */ }
+        live.error = live.error || `Kept in ${parts.length} pieces — ${err.message}`;
+        console.log(`  recordings: could not put the joined file in place — ${err.message}`);
+        return;
+      }
+      for (const f of parts) {
+        if (f === live.file) continue;
+        try { fs.unlinkSync(path.join(RECORDINGS_DIR, f)); } catch { /* already gone */ }
+      }
+      live.parts = [live.file];
+      live.bytes = recordings.fileSize(final);
+      console.log(`  recording: joined ${parts.length} parts of ${live.title}`);
+    } else {
+      /* Left in pieces, and left playable. Said out loud in the row so the
+         screen can be honest about it rather than showing a size that does
+         not match the file it is about to serve. */
+      try { fs.unlinkSync(out); } catch { /* never got that far */ }
+      live.error = live.error
+        || `Kept in ${parts.length} pieces — they would not join${stderr ? `: ${stderr.split('\n')[0]}` : ''}.`;
+    }
+  }));
+  proc.on('error', () => safely('joining a recording', () => {
+    joining.delete(row.id);
+    try { fs.unlinkSync(listFile); } catch { /* already gone */ }
+  }));
+}
+
+/**
+ * Free a provider slot for a recording, by stopping something that matters less.
+ *
+ * The order is what it costs the person in the room, cheapest first. A
+ * conversion nobody has fetched from in a minute is a browser tab somebody
+ * closed. A live window nobody is watching is the same. A download is work
+ * that resumes by itself and loses nothing but time.
+ *
+ * What is deliberately NOT on the list is a stream somebody is watching right
+ * now. The recording still goes ahead — it was asked for in advance and the
+ * viewer is present and can be told — but taking the picture off somebody
+ * mid-sentence is a worse trade than one more stream on a busy login.
+ */
+function makeRoomForRecording(row) {
+  const idleFor = (session) => Date.now() - session.lastAccess;
+
+  /* A conversion nobody is reading. `live` sessions are the channel windows;
+     the rest are films and episodes being converted for somebody. */
+  const cold = [...remuxSessions.values()]
+    .filter((session) => !session.exited && idleFor(session) > 60_000)
+    .sort((a, b) => idleFor(b) - idleFor(a));
+  for (const session of cold) {
+    console.log(`  recording: taking the connection from an idle conversion `
+      + `(${Math.round(idleFor(session) / 1000)}s cold) for ${row.title}`);
+    killSession(session.id);
+    return true;
+  }
+
+  /* The running download. It picks itself back up when a slot frees — that is
+     what autoPaused is for — so this costs minutes, not a file. */
+  if (activeJob && activeJob.status === 'downloading' && !activeJob.archivePath) {
+    console.log(`  recording: pausing the download of ${activeJob.name} for ${row.title}`);
+    autoPauseActiveDownload({ force: true });
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Open the file and start writing to it.
  *
  * The choice of source is the whole of the connection story. A live session
@@ -3803,7 +3965,6 @@ function beginRecording(row) {
     return;
   }
 
-  const out = path.join(recordings.dir(), row.file);
   try {
     fs.mkdirSync(recordings.dir(), { recursive: true });
   } catch (err) {
@@ -3811,15 +3972,30 @@ function beginRecording(row) {
     return;
   }
 
-  /* Enough room for the programme at a generous bitrate, plus the floor the
-     rest of the box keeps. Refusing now with a reason beats filling the disk
-     at two in the morning. */
-  const minutes = Math.max(1, (recordings.closesAt(row) - recordings.opensAt(row)) / 60000);
-  const need = minutes * 60 * 1024 * 1024 * (6 / 8);
+  /* Its own file, so picking a recording back up cannot destroy what it
+     already has — ffmpeg is given `-y` and would truncate. See the note above
+     partName in recordings.js. */
+  const out = path.join(recordings.dir(), recordings.nextPart(row));
+
+  /*
+   * Room to START, not room for the whole programme.
+   *
+   * This used to demand the worst case up front — six megabits for the full
+   * window, so an eight-hour overnight booking asked for twenty-one gigabytes
+   * before it would write a byte, and a Pi that did not have them refused the
+   * recording outright. Every twenty seconds, all night, with the same
+   * sentence, because a refusal with nothing written retries.
+   *
+   * Which is exactly backwards. Most channels are nothing like six megabits,
+   * a half-recorded game is worth having, and the disk is watched WHILE it
+   * records anyway — see the sweep below. So the question here is only
+   * "is there room to get going", and the answer to a drive that fills later
+   * is to stop cleanly with what was caught.
+   */
   const free = diskFree(recordings.dir());
-  if (Number.isFinite(free) && free < need + SPACE_RESERVE) {
+  if (Number.isFinite(free) && free < SPACE_RESERVE + RECORDING_FLOOR) {
     recordings.noteFailure(row,
-      `Not enough room — this needs about ${Math.round(need / 1024 ** 3)} GB.`);
+      `Not enough room to start — the drive is down to ${Math.round(free / 1024 ** 3)} GB.`);
     return;
   }
 
@@ -3834,11 +4010,29 @@ function beginRecording(row) {
     input = `http://127.0.0.1:${PORT}/hls/${existing.id}/index.m3u8`;
     existing.lastAccess = Date.now();
   } else {
-    const account = providers.pick(cfg);
-    /* No free slot and nothing already ingesting this channel. The recording
-       still goes ahead on whichever login is least busy — it was asked for in
-       advance, and a provider that refuses is a better answer than a box that
-       refused on its behalf. */
+    /*
+     * A slot, and the recording is first in the queue for one.
+     *
+     * "if something is being recorded on DVR, ever anything else should be
+     *  pumped secondary"
+     *
+     * This used to say the recording wins and then not do it: when every slot
+     * was busy it went ahead on the busiest login anyway, which does not take
+     * a connection — it asks the provider to hand out one more than it has,
+     * and the provider decides which of the two streams dies. Half the time
+     * that was the recording, in an empty room, at two in the morning.
+     *
+     * So the box makes the room itself, in order of what it costs somebody:
+     * a conversion nobody is fetching from, then a live window nobody is
+     * watching, then the running download. Only a person actually watching
+     * something is left alone — and they get told, in words, what is holding
+     * the connection and until when.
+     */
+    let account = providers.pick(cfg);
+    if (!account) {
+      makeRoomForRecording(row);
+      account = providers.pick(cfg);
+    }
     const chosen = account || providers.accounts(cfg)[0] || cfg;
     input = buildStreamUrl(chosen, 'live', row.channelId, 'm3u8');
     if (chosen && chosen.id) release = providers.take(chosen.id);
@@ -7249,7 +7443,10 @@ async function handleApi(req, res, pathname, query) {
          one for a number somebody is watching climb. */
       const live = new Set(recordings.active().map((r) => r.id));
       const items = recordings.all().map((row) => (live.has(row.id)
-        ? { ...row, bytes: recordings.fileSize(path.join(RECORDINGS_DIR, row.file)) }
+        /* Across every part: a recording that has been picked back up twice
+           has three files on disk and the number somebody is watching climb
+           is the whole of what has been caught, not the current attempt. */
+        ? { ...row, bytes: recordings.bytesOf(row) }
         : row));
       return json(res, 200, {
         items,
@@ -7284,7 +7481,7 @@ async function handleApi(req, res, pathname, query) {
       }
       /* Already in progress by the time somebody pressed record — a
          programme half over is still worth the rest of it. */
-      recordings.tick(Date.now(), { begin: beginRecording });
+      recordings.tick(Date.now(), { begin: beginRecording, join: joinRecording });
       return json(res, 200, { recording: recordings.get(row.id) });
     }
 
@@ -7302,11 +7499,17 @@ async function handleApi(req, res, pathname, query) {
        plays — which is what makes "start watching the game from the beginning
        while it is still on" work at all. */
     if (recMatch[2]) {
-      if (!row.file || !recordings.fileSize(path.join(RECORDINGS_DIR, row.file))) {
+      /* The joined file once there is one; the part being written while there
+         is not. A recording picked back up mid-programme has its parts joined
+         when the window closes — until then, the newest part is what is
+         growing and what somebody watching along wants. */
+      const joined = row.file && recordings.fileSize(path.join(RECORDINGS_DIR, row.file))
+        ? row.file : recordings.newestPart(row);
+      if (!joined || !recordings.fileSize(path.join(RECORDINGS_DIR, joined))) {
         return json(res, 409, { error: 'Nothing has been recorded yet' });
       }
       localPlaybackAt = Date.now();
-      return serveLocalFile(req, res, path.join(RECORDINGS_DIR, row.file), {
+      return serveLocalFile(req, res, path.join(RECORDINGS_DIR, joined), {
         attachmentName: recMatch[2] === '/save' ? `${row.title}.mp4` : null,
       });
     }
@@ -10138,6 +10341,10 @@ market.configure({
 });
 people.load(PEOPLE_PATH, (line) => console.log(`  ${line}`));
 recordings.load(RECORDINGS_DIR, (line) => console.log(`  ${line}`));
+/* How a finished recording's parts become the one file the row promises —
+   called the moment it ends rather than on the next scheduler pass, so
+   somebody who stops one and presses play is not told to wait. */
+recordings.whenFinished(joinRecording);
 /* What the box has learned about dead fixture channels. Read at boot so a
    restart — and the updater restarts this process whenever there is a commit
    to take — does not send somebody back to a channel already known to be a
@@ -10157,7 +10364,7 @@ if (knownBad.size) {
  * so rather than sitting as "scheduled" for ever. */
 setInterval(() => {
   try {
-    recordings.tick(Date.now(), { begin: beginRecording });
+    recordings.tick(Date.now(), { begin: beginRecording, join: joinRecording });
   } catch (err) {
     console.error(`  recordings: scheduler stumbled — ${err.message}`);
   }

@@ -3313,6 +3313,124 @@ catch up, so a speed-controller extension keeps full control. Your chosen rate
 is preserved across channel changes, which a plain `load()` would otherwise
 reset to 1×.
 
+## The DVR keeps trying
+
+> "We need to fix the DVR because it just does not work... if something is
+> being recorded on DVR, ever anything else should be pumped secondary. It
+> should be always recorded. And even if the pie goes down, whatever was
+> recorded should be saved. And whenever the pie regains connectivity, it
+> should start the recording again."
+
+A recording had exactly **one life**. It started, and the first thing to go
+wrong ended it for good — because `partial` was a final state and nothing in
+the scheduler ever looked at one again:
+
+| what happened | what it became | what happened next |
+| --- | --- | --- |
+| the feed dropped for ten seconds | `partial` | nothing, ever |
+| the box restarted | `partial` | nothing, ever |
+| the provider hiccuped at 2am | `partial` | nothing, ever |
+
+So a three-hour game came back as eleven minutes and a sentence about the feed.
+Nobody is in the room when that happens, which is the whole point of recording.
+Driving the shipped module through the reported failure — a drop twenty minutes
+into a three-hour booking — gives the number plainly:
+
+```
+SHIPPED   after the drop: partial · restarts in 2.5h: 0 · final: 20 min of a 3 hour game
+NOW       after the drop: interrupted — picking it back up · restarts: every one
+```
+
+### A window, not an attempt
+
+A recording now has a **window** — from the lead before it starts to the tail
+after it ends — and while that window is open the box's job is to be writing.
+Anything that stops it is a pause:
+
+- **`interrupted`** is the new state and the whole of the fix. A dropped feed,
+  a stall, a box that restarted: all of them land here while the window is
+  open, and the scheduler starts them again within seconds.
+- **`partial`** now means what it says — the window closed and we have some of
+  it. An outcome, not a wound.
+- **`missed`** is only for a window that closed with nothing caught at all.
+
+**Two ladders, because they answer different questions.** A start that wrote
+*nothing* may be a channel that does not exist, so it backs off in minutes —
+polite to the provider, and there is nothing to miss while waiting. A recording
+that *was* writing and dropped comes back in **seconds**, because every one of
+them is programme on the floor; a part that writes something resets the ladder,
+so a feed that drops all evening keeps being picked up fast instead of sliding
+into five-minute gaps. Measured in the suite: a dead channel gets 4 attempts in
+ten minutes, a flaky one is back in 5 seconds every time.
+
+A recording that has written **nothing at all** after 90 seconds is cut and
+retried rather than given the full five-minute stall grace — it is holding a
+provider slot on a connection that never delivered. Ninety rather than thirty
+because an HLS recording legitimately spends twenty or thirty seconds fetching
+a playlist and its first segments.
+
+### Nothing already written is ever overwritten
+
+This is what makes resuming safe. ffmpeg is given `-y`; starting again on the
+same filename would truncate two hours of a game the moment the feed blipped —
+a worse failure than the one being fixed. So **each attempt writes its own
+part** (`…part-1.mp4`, `-2`, `-3`), and the parts are joined with `-c copy`
+when the window closes. The gap where the feed was down is simply not in the
+file, which is the honest result: those seconds were never broadcast to us.
+
+Joining happens the **moment** a recording finishes rather than on the next
+scheduler pass, so somebody who stops one and presses play is not told to come
+back in twenty seconds. The sweep in `tick()` stays as the safety net for
+anything that misses — a box that stopped in between. If the join fails the
+parts are left alone and left playable, and `/file` keeps serving the newest:
+a recording in two pieces beats one nobody can watch. `remove()` takes every
+part, not just the one the row names, or the drive fills with the pieces of
+things somebody deleted.
+
+### The recording actually gets the connection
+
+The old code *said* the recording wins and then did not do it: when every slot
+was busy it went ahead on the busiest login anyway, which does not take a
+connection — it asks the provider for one more than it has and lets the
+provider decide which of the two streams dies. Half the time that was the
+recording, in an empty room, at two in the morning.
+
+The box makes the room itself now, in order of what it costs somebody:
+
+1. a conversion nobody has fetched from in a minute — a browser tab somebody
+   closed;
+2. the running download, which resumes by itself and loses time, not a file.
+
+What is deliberately **not** on that list is a stream somebody is watching right
+now. The recording still goes ahead, but taking the picture off somebody
+mid-sentence is a worse trade than one more stream on a busy login — and they
+get told, in words, what is holding the connection and until when.
+
+### It stopped refusing long bookings
+
+The disk check demanded the **worst case up front**: six megabits for the full
+window, so an eight-hour overnight booking asked for twenty-one gigabytes
+before it would write a byte, and a Pi without them refused it — every twenty
+seconds, all night, with the same sentence, because a refusal with nothing
+written retries. Exactly backwards: most channels are nothing like six
+megabits, a half-recorded game is worth having, and the disk is watched while
+it records anyway. The question at the start is now only whether there is room
+to *get going*.
+
+`tests/dvrresume.test.js` drives the lifecycle directly — the right level, since
+what was wrong is which states are endings and which are pauses, and a test that
+spawned real encoders would be testing ffmpeg while the bug sat in a state
+machine. It covers the feed dropping, the box restarting mid-programme and
+after it, a person stopping it (which must *not* be picked back up — that would
+be the box arguing with the button), a channel that never comes up, a feed that
+drops five times, and the parts being handed over to be joined.
+
+One thing the module gained along the way: **a single notion of now**. `tick(now)`
+was handed a time by the caller while everything that *recorded* a time reached
+for `Date.now()` itself. In the box they are the same clock and it never
+mattered; the moment anything drives the scheduler on its own clock the two
+disagree, and the backoff is measured between them.
+
 ## The archive drive
 
 The **Archive** tab plays a 2 TB external drive plugged into the Pi — 5,853

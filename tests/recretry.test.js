@@ -135,13 +135,22 @@ const MIN = 60 * 1000;
   check('it is not started again behind their back',
     handStarted.length === wasStarted, `${handStarted.length} vs ${wasStarted}`);
 
-  /* ---- and one that recorded something is left alone -------------------- */
+  /* ---- and one that recorded something is picked back up ---------------- */
   /*
-   * The safety this rests on. A fresh attempt overwrites the file, so it may
-   * only ever run when there is nothing in it — half a programme is worth
-   * more than a retry.
+   * This assertion used to run the other way, and the reversal is the point of
+   * the change it now guards.
+   *
+   * The old rule was a safety: a fresh attempt reopened the same file, so
+   * restarting a half-written recording would have thrown away the half. It
+   * was therefore left alone at `partial`, and a feed that dropped twenty
+   * minutes into a three-hour game gave you twenty minutes.
+   *
+   * Each attempt now writes its own part and the parts are joined when the
+   * window closes, so a restart costs nothing and there is nothing left to
+   * protect. A drop inside an open window is `interrupted` — the footage is
+   * kept, and the next tick starts the next part on top of it.
    */
-  console.log('\n  and a half-written one is not started over the top of itself');
+  console.log('\n  and a half-written one is picked back up where it stopped');
   const partial = recordings.schedule({
     channelId: '702', channelName: 'FOX', title: 'The Half One',
     startsAt: Date.now(), endsAt: Date.now() + 4 * 60 * MIN,
@@ -151,16 +160,21 @@ const MIN = 60 * 1000;
   recordings.tick(Date.now(), partHooks);
   recordings.began(recordings.get(partial.id), { proc: { kill() {} }, release: null });
   /* Something on disk, and then the feed dies. */
-  fs.writeFileSync(path.join(dir, recordings.get(partial.id).file), Buffer.alloc(4096));
+  const halfFile = path.join(dir, recordings.get(partial.id).file);
+  fs.writeFileSync(halfFile, Buffer.alloc(4096));
   recordings.ended(partial.id, 1);
   const half = recordings.get(partial.id);
   console.log('   ', JSON.stringify({ status: half.status, bytes: half.bytes }));
-  check('what was written makes it a partial, not a failure',
-    half.status === 'partial' && half.bytes > 0, JSON.stringify(half.status));
+  check('what was written leaves it interrupted, not failed',
+    half.status === 'interrupted' && half.bytes > 0, JSON.stringify(half.status));
   const wasPart = partStarted.length;
   recordings.tick(Date.now() + 10 * MIN, partHooks);
-  check('and nothing restarts on top of it',
-    partStarted.length === wasPart, `${partStarted.length} vs ${wasPart}`);
+  console.log('   attempts after the drop:', partStarted.length);
+  check('and it is started again while the window is open',
+    partStarted.length > wasPart, `${partStarted.length} vs ${wasPart}`);
+  check('with what was already recorded still on disk',
+    fs.existsSync(halfFile) && fs.statSync(halfFile).size === 4096,
+    fs.existsSync(halfFile) ? String(fs.statSync(halfFile).size) : 'gone');
 
   console.log(`\n  ${fails.length ? `FAILED: ${fails.join(', ')}` : 'all good'}`);
   process.exit(fails.length ? 1 : 0);
