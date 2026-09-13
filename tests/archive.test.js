@@ -543,7 +543,7 @@ exit 0
     let done = null;
     for (let i = 0; i < 40; i += 1) {
       await wait(300);
-      const list = JSON.parse((await req5('/api/downloads')).body);
+      const list = JSON.parse((await req5('/api/downloads?profileId=own1')).body);
       done = (list.items || []).find((j) => j.id === queued.id);
       if (done && (done.status === 'done' || done.status === 'error')) break;
     }

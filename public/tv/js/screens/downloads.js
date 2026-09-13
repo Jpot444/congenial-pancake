@@ -22,7 +22,7 @@ let queued = 0;
 export async function render(host, app) {
   let data;
   try {
-    data = await getDownloads();
+    data = await getDownloads(state.profile ? state.profile.id : '');
   } catch (err) {
     clear(host).append(el('div', 'empty', `Downloads did not load: ${err.message}`));
     return;
@@ -178,7 +178,7 @@ export async function activate(node, app) {
     if (!stopped.length) { app.toast('Nothing is paused.'); return; }
     for (const job of stopped) {
       // eslint-disable-next-line no-await-in-loop
-      await retryDownload(job.id).catch(() => {});
+      await retryDownload(job.id, state.profile ? state.profile.id : '').catch(() => {});
     }
     app.toast(`Woke ${stopped.length} download${stopped.length === 1 ? '' : 's'}. The box still takes them one at a time.`);
     app.refresh();
@@ -217,10 +217,10 @@ export async function activate(node, app) {
 
   try {
     if (job.status === 'downloading' || job.status === 'queued') {
-      await pauseDownload(job.id);
+      await pauseDownload(job.id, state.profile ? state.profile.id : '');
       app.toast(`Paused “${job.name}”. The bytes so far stay on the box.`);
     } else {
-      await retryDownload(job.id);
+      await retryDownload(job.id, state.profile ? state.profile.id : '');
       app.toast(`Resuming “${job.name}” from where it stopped.`);
     }
   } catch (err) {

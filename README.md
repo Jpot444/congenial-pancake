@@ -240,11 +240,75 @@ What the box copy *is* is a **cache**, and a good one:
 - several people can watch the same title at once, which a one-connection
   account otherwise forbids.
 
+Downloads are **per profile** — see below.
+
 **The offline copy is the second step: Save to device.** That is the one that
 lives on your phone and survives airplane mode. It is now offered the moment a
 download is ready, as an action on the toast, rather than waiting in a list
 nobody had a reason to go back to — and Downloads itself carries a short note
 saying which step is which, dismissible and remembered per profile.
+
+### Downloads belong to a profile
+
+> "the downloads folder should be profile specific not a shared downloads
+> folder"
+
+Every job has always recorded the profile that queued it — the 20GB allowance
+is counted from it — but nothing ever **read** that when handing the list back.
+So Downloads was one pile shared by the house: everybody saw everybody's, and
+every per-job route took an id without asking who held it, so anyone could
+pause, retry, delete or play anyone's.
+
+It is per profile now, on both halves. Filtering the list and leaving the
+routes open would be a rule that only holds while nobody looks — the ids are
+right there in anybody's list — so the profile goes on `/file`, `/save`,
+`/pause`, `/retry`, `/optimize` and `DELETE` too. A job that is not yours
+answers **404**, not 403: "no such download" is true from where you are
+standing, and telling somebody a title exists but is not theirs is itself a
+fact about somebody else's Downloads. A request that does not say who it is
+gets nothing rather than everything.
+
+**One file, several holders.** A job is owned by a *list* of profiles, not by
+one. The Pi keeps one copy of each title and the allowance is per head, so two
+people wanting the same film must not cost the drive twice:
+
+| | |
+| --- | --- |
+| asking for something somebody else has | you are given a claim on the same file, not a second copy |
+| the allowance | counts against everyone holding it — you are holding it |
+| removing it from your Downloads | drops your claim; the file stays |
+| the last holder removing it | takes the file with it |
+
+A flat refusal was what happened before and is worse than useless now:
+"already downloaded" about something you cannot see is a dead end with nothing
+to press. `profileId` is still written as whoever asked first, so a rollback to
+an older build still charges the allowance to somebody sensible.
+
+**The owner can still clear the drive.** Strict separation has one problem on a
+Pi: a child's 20GB would be invisible to the person who has to free the disk.
+So the owner — and nobody else, in the page and on the box — gets a switch to
+everyone's, with whose each row is on it and the row dimmed so it reads as
+somebody else's. Off by default, never persisted, and cleared on a profile
+change. Deleting from that view really does take the file, because freeing the
+drive is the whole point of the screen.
+
+**Nothing already on the box disappeared.** Jobs written before this have the
+single field, and some predate profiles entirely or name one since deleted.
+`adoptDownloads()` runs once at boot: each goes to the profile that queued it,
+and strays fall to the owner — who is the only profile guaranteed to exist and
+the one who has to be able to clear the drive.
+
+The files themselves stay in one directory. The separation is about who holds
+what, not about where the bytes sit; per-profile folders would mean migrating
+every file already on the drive to buy nothing.
+
+`tests/dlprofiles.test.js` stands up a box with four downloads already on it —
+the owner's, another profile's, one from a deleted profile and one from before
+jobs recorded a profile at all — and checks where each lands, that neither
+profile is shown the other's, that the routes refuse an id that is not yours,
+that a second profile asking for the same film is given it rather than refused,
+that letting go keeps the file while somebody still holds it and deletes it
+when nobody does, and that all of it survives a restart.
 
 ### Why it cannot go straight to the device
 

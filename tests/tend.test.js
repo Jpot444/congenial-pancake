@@ -106,7 +106,7 @@ exit 0
     }).on('error', reject);
   });
   const jobs = async () => {
-    const list = JSON.parse((await get('/api/downloads')).body);
+    const list = JSON.parse((await get('/api/downloads?profileId=own1')).body);
     return Object.fromEntries((list.items || []).map((j) => [j.id, j]));
   };
 
