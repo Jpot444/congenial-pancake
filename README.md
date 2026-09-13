@@ -3377,6 +3377,66 @@ catch up, so a speed-controller extension keeps full control. Your chosen rate
 is preserved across channel changes, which a plain `load()` would otherwise
 reset to 1×.
 
+## A live channel has to keep going forwards
+
+> "the red zone screen will just pause and never start playing unless I press
+> restart stream"
+>
+> "a stream will go back in time and replay stuff it has already played"
+
+Two reports, one cause, and the playback report caught the end state exactly:
+
+```
+currentTime  0.00      buffered  20.0-30.0
+paused/seeking  false / true     readyState 1
+```
+
+The playhead is at zero and the only video in hand starts at twenty seconds.
+It is standing in a gap, with nothing to play and nothing that will ever move
+it. **That is not a stall** — a stall ends when the next segment lands — it is
+a *wedge*, and it does not end at all. Reload cleared it because re-resolving
+lands at the live edge, which is exactly why the report was "unless I press
+restart stream".
+
+Nothing was watching for it. The live loop drew the delay pill and nothing
+else, on the deliberate principle that this code never chases latency — and
+that principle is untouched: being a minute behind is still fine and still
+silent. hls.js's own gap recovery steps over *small* holes near the playhead;
+a playhead twenty seconds in front of the buffer, after the playlist was
+renumbered underneath it, is not one of those.
+
+The same renumbering is the replay. When a live playlist restarts the timeline
+is re-based, and the playhead can land far back inside video already shown —
+154 seconds of it in the captured report.
+
+So one rule is added, the only one a live channel actually needs: **it must
+keep going forwards.** Not "stay near the edge". Just never frozen, and never
+replaying. Three steps, cheapest first, each given a tick to work before the
+next:
+
+| state | what happens |
+| --- | --- |
+| playhead outside everything held | step into the video already in hand — costs nothing, asks for nothing |
+| frozen with video either side | ask the engine to fetch from the edge |
+| still stopped, or a seek that never lands | reopen the channel — the button the viewer was pressing |
+
+**A pause is never argued with.** Somebody who stopped the picture on purpose
+looks identical to a wedge on every measure except that one, so a paused
+element resets the clock and nothing else happens.
+
+**A seek is not treated as progress**, which is the subtle half. The captured
+wedge was stuck *inside* a seek — to a position with nothing behind it — so
+counting "seeking" as activity would have made the watchdog blind to the one
+state it exists for. An honest seek finishes well inside the twelve seconds;
+one that has not is hung, and seeking again is no answer when a seek is the
+thing that is stuck.
+
+And the escalation **stops**. A channel that is simply off the air is reopened
+once, not for ever.
+
+`tests/livewedge.test.js` drives the shipped decision with a stand-in media
+element, because what is under test is the judgement, not the decoder.
+
 ## Which channels are holding the connections
 
 > "i have a multiview going that is streaming fine. I have another window with

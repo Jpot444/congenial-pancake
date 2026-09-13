@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '41.2';
+const VERSION = '41.3';
 
 const PAGE_SIZE = 60;
 
@@ -12775,6 +12775,169 @@ function currentLag() {
   return video.buffered.end(video.buffered.length - 1) - video.currentTime;
 }
 
+/* ------------------------------------------------- live keeps going ------
+ *
+ * "the red zone screen will just pause and never start playing unless I press
+ *  restart stream"
+ * "a stream will go back in time and replay stuff it has already played"
+ *
+ * Two reports, one cause, and the playback report caught the end state
+ * exactly:
+ *
+ *     currentTime  0.00      buffered  20.0-30.0
+ *     paused/seeking  false / true     readyState 1
+ *
+ * The playhead is at zero and the only video in hand starts at twenty
+ * seconds. It is standing in a gap, with nothing to play and nothing that
+ * will ever move it. That is not a stall — a stall ends when the next segment
+ * lands — it is a WEDGE, and it does not end at all. Pressing Reload cleared
+ * it because re-resolving lands at the live edge.
+ *
+ * Nothing was watching for it. The live loop below only drew the delay pill;
+ * everything else deliberately leaves the playhead alone (see the long note
+ * by stopLiveTracking, which is still right — no latency chasing here) and
+ * leans on hls.js's own gap recovery. But hls.js steps over SMALL holes near
+ * the playhead. A playhead twenty seconds in front of the buffer, after the
+ * playlist was renumbered under it, is not a hole it will step over.
+ *
+ * The same renumbering is the replay: when a live playlist restarts, the
+ * timeline is re-based and the playhead can land far back inside content that
+ * has already been shown — 154 seconds of it in the captured report.
+ *
+ * So this adds ONE rule, the only one a live channel actually needs: it must
+ * keep going forwards. Not "stay near the edge" — being a minute back is
+ * fine and always has been — just never frozen, and never replaying. Three
+ * steps, cheapest first, each given a tick to work before the next is tried,
+ * and the last is the button the viewer was pressing by hand.
+ */
+const LIVE_STUCK = {
+  /* Long enough that an ordinary stall on a lumpy feed clears itself first.
+     The provider's segments are ~11s, so anything under one of those would
+     fight normal delivery rather than rescue it. */
+  stuckSeconds: 12,
+  /* A backward move bigger than this on a live stream is a replay, not a
+     nudge. hls.js re-seats by fractions of a second routinely; it does not
+     move you two minutes into the past on purpose. */
+  backJump: 20,
+  /* How close to the end of what is held to sit after a correction — far
+     enough in that the next segment has somewhere to land. */
+  edgeBack: 6,
+};
+
+function liveKeepsGoing(video, state) {
+  if (video.paused) {
+    /* A pause is a decision — possibly the viewer's — and this never argues
+       with one. The clock starts again from here, so sitting paused through
+       an advert break is not later read as a wedge. */
+    state.at = video.currentTime;
+    state.since = Date.now();
+    state.tries = 0;
+    return;
+  }
+
+  const now = Date.now();
+  const at = video.currentTime;
+
+  /*
+   * Seeking is deliberately NOT treated as progress.
+   *
+   * The captured wedge was `paused/seeking false / true` — stuck INSIDE a
+   * seek, because the position asked for had no video behind it and never
+   * would. Letting a seek reset the clock would have made this watchdog blind
+   * to the one state it exists for. A seek that is really in flight finishes
+   * in well under the twelve seconds below, so an honest one is never
+   * interrupted; one that is still going after that is hung, and the steps
+   * below are what clear it.
+   */
+  if (video.seeking) {
+    if (!state.since) state.since = now;
+    if (now - state.since < LIVE_STUCK.stuckSeconds * 1000) return;
+    state.tries += 1;
+    state.since = now;
+    /* No point seeking again — a seek is exactly what is stuck. Refetch, and
+       then reopen. */
+    if (state.tries <= 2 && engineKind === 'hls.js' && engine) {
+      try {
+        engine.startLoad(-1);
+        return;
+      } catch {
+        /* fall through */
+      }
+    }
+    if (state.tries <= 3) {
+      toast('The channel stopped — reopening it.');
+      reloadStream();
+    }
+    return;
+  }
+
+  /* ---- went backwards: already-seen video, being shown again ---------- */
+  if (at < state.at - LIVE_STUCK.backJump) {
+    const ranges = video.buffered;
+    const end = ranges.length ? ranges.end(ranges.length - 1) : 0;
+    const to = Math.max(at, end - LIVE_STUCK.edgeBack);
+    if (to > at + 1) {
+      playback.expectMove('the stream was renumbered and put the playhead in '
+        + 'video already shown; moved back to the front of what is held');
+      try { video.currentTime = to; } catch { /* not seekable yet */ }
+    }
+    state.at = video.currentTime;
+    state.since = now;
+    state.tries = 0;
+    return;
+  }
+
+  /* ---- moving forwards, which is all that is asked ------------------- */
+  if (at > state.at + 0.25) {
+    state.at = at;
+    state.since = now;
+    state.tries = 0;
+    return;
+  }
+
+  if (!state.since) state.since = now;
+  if (now - state.since < LIVE_STUCK.stuckSeconds * 1000) return;
+
+  /* ---- stopped, and long enough that it is not going to start ---------- */
+  state.tries += 1;
+  state.since = now;
+
+  /* 1. Standing outside everything held. This is the wedge from the report,
+     and a seek into the video we already have is both the cheapest fix and
+     the one that loses nothing. */
+  const ranges = video.buffered;
+  let inside = false;
+  let nextStart = null;
+  for (let i = 0; i < ranges.length; i += 1) {
+    if (at >= ranges.start(i) - 0.25 && at <= ranges.end(i)) inside = true;
+    if (nextStart === null && ranges.start(i) > at) nextStart = ranges.start(i);
+  }
+  if (!inside && nextStart !== null) {
+    playback.expectMove('the playhead was stranded outside everything held; '
+      + 'moved to the start of the video in hand');
+    try { video.currentTime = nextStart + 0.1; } catch { /* not seekable yet */ }
+    return;
+  }
+
+  /* 2. Inside the buffer and still not moving, or nothing held at all. Ask
+     the engine to fetch again from the live edge before throwing the
+     connection away. */
+  if (state.tries <= 2 && engineKind === 'hls.js' && engine) {
+    try {
+      engine.startLoad(-1);
+      return;
+    } catch {
+      /* fall through to the reload */
+    }
+  }
+
+  /* 3. What the viewer was doing by hand. */
+  if (state.tries <= 3) {
+    toast('The channel stopped — reopening it.');
+    reloadStream();
+  }
+}
+
 function startLiveTracking() {
   stopLiveTracking();
   const pill = $('#livePill');
@@ -12782,7 +12945,17 @@ function startLiveTracking() {
   pill.hidden = false;
   reservePlayerActions();
 
+  /* Looked up per tick rather than captured: a re-attach can hand the page a
+     different element, and a watchdog holding the old one would be watching
+     something nobody is looking at. */
+  const going = { at: $('#video').currentTime, since: Date.now(), tries: 0 };
+
   liveTimer = setInterval(() => {
+    /* Before the pill, because a frozen picture matters more than the number
+       written on it — and because currentLag() gives up early when there is
+       nothing buffered, which is one of the states being rescued. */
+    liveKeepsGoing($('#video'), going);
+
     const behind = currentLag();
     if (behind === null) return;
     // The seat is 30-45 seconds back BY DESIGN, so "behind" is the normal,
