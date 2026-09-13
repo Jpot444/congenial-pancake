@@ -4253,7 +4253,86 @@ function segNumber(name) {
  * media sequence or the first segment going BACKWARDS, which is a player's
  * cue to treat the whole thing as a new stream and join it at the beginning.
  */
+/*
+ * Is the box keeping up with the broadcast?
+ *
+ * "I'm still getting lagging streams even on low data mode."
+ *
+ * Low data mode is the one place a LIVE channel is re-encoded rather than
+ * copied — libx264 on a Pi, in realtime, for as long as the channel is on.
+ * The note above liveDvrArgs has always said what happens if that cannot keep
+ * up: "a channel that falls behind its own feed never catches up". What it
+ * did not say is whether this box, on this channel, actually does — and
+ * nothing measured it, so the one mode a viewer turns on when a stream is
+ * struggling could be the thing making it struggle, invisibly.
+ *
+ * A film conversion has reported its speed for months (`at 2.4× realtime`).
+ * A live ingest never has. This is that number, measured the only way that
+ * needs no extra ffmpeg plumbing: how many seconds of MEDIA the ingest
+ * published, against how many seconds of WALL CLOCK went past while it did.
+ *
+ *   1.00  keeping up exactly, which is all a live encode can ever do
+ *   0.80  losing twelve seconds a minute, for ever — the failure above
+ *
+ * It can only be measured while somebody is fetching, which is precisely when
+ * it matters.
+ */
+const PACE_WINDOW_MS = 30_000;
+
+function notePace(session, rows) {
+  if (!session.pace) {
+    session.pace = { since: Date.now(), media: 0, last: null, rate: null, seen: 0 };
+  }
+  const pace = session.pace;
+  const numbered = rows
+    .map((row) => ({ n: segNumber(row.name), seconds: row.seconds }))
+    .filter((row) => Number.isFinite(row.n) && Number.isFinite(row.seconds));
+  if (!numbered.length) return;
+
+  const newest = Math.max(...numbered.map((row) => row.n));
+  if (pace.last === null) {
+    /* The first window seen is a backlog, not work done in front of us —
+       counting it would read as several times realtime and mean nothing. */
+    pace.last = newest;
+    pace.since = Date.now();
+    return;
+  }
+  /*
+   * Counted from the segment NUMBER, not from the durations still visible.
+   *
+   * Summing the EXTINFs in the window was the obvious way and it is wrong:
+   * the window holds thirty segments and rolls, so anything that scrolled off
+   * between two fetches is gone from the text and gets counted as never
+   * having existed. A viewer whose player asked twice a minute would have
+   * read as a third of realtime while the box was keeping up perfectly — the
+   * measurement would have accused the Pi of exactly the fault it exists to
+   * detect. The numbers do not roll off, so the gap between them is the
+   * honest count of what was produced.
+   */
+  const gained = newest - pace.last;
+  if (gained > 0) {
+    const average = numbered.reduce((sum, row) => sum + row.seconds, 0) / numbered.length;
+    pace.media += gained * average;
+  }
+  pace.last = Math.max(pace.last, newest);
+
+  const elapsed = Date.now() - pace.since;
+  if (elapsed >= PACE_WINDOW_MS) {
+    pace.rate = pace.media / (elapsed / 1000);
+    pace.seen += 1;
+    pace.since = Date.now();
+    pace.media = 0;
+  }
+}
+
 function watchLivePlaylist(session, text) {
+  /* Durations as well as names now — the pace above is measured in media
+     seconds, and EXTINF is where the real ones are. Segments land on
+     keyframes, so the nominal 4s is not what any of them actually hold. */
+  const rows = [...text.matchAll(/#EXTINF:\s*([\d.]+)[^\n]*\n\s*([^#\s][^\n]*\.(?:m4s|ts))/g)]
+    .map((m) => ({ seconds: Number(m[1]), name: m[2].trim() }));
+  if (rows.length) notePace(session, rows);
+
   const segments = [...text.matchAll(/^([^#\s].*\.(?:m4s|ts))\s*$/gm)].map((m) => m[1]);
   if (!segments.length) return;
   const sequence = Number((/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(text) || [])[1] ?? -1);
@@ -4268,6 +4347,10 @@ function watchLivePlaylist(session, text) {
     || (seen.sequence >= 0 && sequence >= 0 && sequence < seen.sequence);
   session.window = { first, last, sequence, count: segments.length };
   if (wentBack) {
+    /* Numbering that went backwards makes "segments newer than the last one"
+       meaningless, so the pace starts over rather than reading a restart as
+       an hour of work done in a second. */
+    session.pace = null;
     liveNote(session, 'window-restarted', {
       was: { first: seen.first, last: seen.last, sequence: seen.sequence },
       now: { first, last, sequence },
@@ -9096,6 +9179,17 @@ async function handleApi(req, res, pathname, query) {
         restarts: s.restarts || 0,
         idleSeconds: Math.round((Date.now() - s.lastAccess) / 1000),
         window: s.window || null,
+        /*
+         * Whether the box is keeping up with the broadcast. Only interesting
+         * when it is doing work — a copied channel is always 1.00 because
+         * nothing is being computed — but on a `low` session this is the
+         * difference between "the wire is slow" and "the Pi cannot shrink
+         * this fast enough", which no reading anywhere else can tell apart.
+         */
+        pace: s.pace && s.pace.rate !== null
+          ? { rate: Number(s.pace.rate.toFixed(3)), windows: s.pace.seen }
+          : null,
+        encoding: Boolean(s.low),
         notes: (s.notes || []).map((note) => ({ ...note, ago: `${Math.round((Date.now() - note.at) / 1000)}s` })),
       }));
     return json(res, 200, { sessions, now: Date.now() });

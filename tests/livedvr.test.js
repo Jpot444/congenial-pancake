@@ -177,9 +177,12 @@ const get = (p) => new Promise((resolve, reject) => {
     return SERVER.slice(start, i + 1);
   };
   // eslint-disable-next-line no-new-func
+  /* notePace comes with it: watchLivePlaylist calls it, and a harness that
+     lifted one without the other would fail at the call rather than at the
+     lift — which is exactly how this suite broke when the pace was added. */
   const watch = new Function(
-    `${lift('liveNote')}\n${lift('segNumber')}\n${lift('watchLivePlaylist')}\n`
-    + 'const LIVE_NOTES = 60; return watchLivePlaylist;'
+    `${lift('liveNote')}\n${lift('segNumber')}\n${lift('notePace')}\n${lift('watchLivePlaylist')}\n`
+    + 'const LIVE_NOTES = 60; const PACE_WINDOW_MS = 30000; return watchLivePlaylist;'
   )();
   const playlist = (sequence, from, count) => ['#EXTM3U', '#EXT-X-VERSION:7',
     '#EXT-X-TARGETDURATION:4', `#EXT-X-MEDIA-SEQUENCE:${sequence}`,
@@ -201,6 +204,82 @@ const get = (p) => new Promise((resolve, reject) => {
     box.notes[box.notes.length - 1].was.first === 1
       && box.notes[box.notes.length - 1].now.first === 0,
     JSON.stringify(box.notes[box.notes.length - 1]));
+
+  /* ---- is the box keeping up with the broadcast? ------------------------ */
+  /*
+   * "I'm still getting lagging streams even on low data mode."
+   *
+   * Low data mode is the one place a LIVE channel is re-encoded rather than
+   * copied — x264 on a Pi, in realtime, for as long as the channel is on. The
+   * note above liveDvrArgs has always said what happens when that cannot keep
+   * up: "a channel that falls behind its own feed never catches up". Nothing
+   * measured whether it does, so the mode a viewer turns ON to rescue a
+   * struggling stream could be the thing starving it, invisibly.
+   *
+   * Measured as media seconds published against wall seconds elapsed, which
+   * needs no extra ffmpeg plumbing: 1.00 is keeping up, and a live encode can
+   * never do better for long.
+   */
+  console.log('\n  whether the box is keeping up with the broadcast');
+  const paced = watch;
+
+  /* The clock is moved rather than waited on: a suite that measured a real
+     30-second window would take 30 seconds to say one thing. */
+  const realNow = Date.now;
+  const at = (ms, fn) => { Date.now = () => ms; try { return fn(); } finally { Date.now = realNow; } };
+
+  const keeping = {};
+  /* First sight is a backlog, not work done in front of us. */
+  at(0, () => paced(keeping, playlist(0, 0, 3)));
+  check('the first window seen is not counted as work',
+    keeping.pace.rate === null, JSON.stringify(keeping.pace));
+  /* Ten more segments — 40s of media — in 40s of wall clock: keeping up. */
+  at(40_000, () => paced(keeping, playlist(10, 10, 3)));
+  console.log('   keeping up:', JSON.stringify(keeping.pace));
+  check('publishing 40s of video in 40s reads as 1.00x',
+    Math.abs(keeping.pace.rate - 1) < 0.05, String(keeping.pace.rate));
+
+  const losing = {};
+  at(0, () => paced(losing, playlist(0, 0, 3)));
+  /* Five segments — 20s of media — in 40s of wall clock: half speed, which is
+     the Pi failing to shrink the channel as fast as it arrives. */
+  at(40_000, () => paced(losing, playlist(5, 5, 3)));
+  console.log('   falling behind:', JSON.stringify(losing.pace));
+  check('and half as much video as wall clock reads as 0.50x',
+    Math.abs(losing.pace.rate - 0.5) < 0.06, String(losing.pace.rate));
+  check('which is the number that says the box is the bottleneck',
+    losing.pace.rate < 0.95, String(losing.pace.rate));
+
+  /*
+   * The flaw this measurement started with, kept as a test because it would
+   * have made the instrument accuse the box of the exact fault it exists to
+   * detect.
+   *
+   * Summing the durations still VISIBLE in the window undercounts everything
+   * that rolled off between two fetches. A player polling slowly — or a
+   * window of thirty segments moving faster than one poll — would have read a
+   * healthy box as running at a third of realtime. Segment numbers do not
+   * roll off, so the gap between them is what is counted.
+   */
+  const rolling = {};
+  at(0, () => paced(rolling, playlist(0, 0, 3)));
+  /* Forty seconds later the window has moved ten segments but still shows
+     only three: seven of them are no longer in the text at all. */
+  at(40_000, () => paced(rolling, playlist(10, 10, 3)));
+  console.log('   after a window that rolled past itself:', JSON.stringify(rolling.pace));
+  check('video that scrolled out of the window still counts as produced',
+    Math.abs(rolling.pace.rate - 1) < 0.05, String(rolling.pace.rate));
+
+  /* A restart renumbers everything, so "newer than the last one" stops
+     meaning anything and the measurement has to start over rather than read
+     the jump as an hour of work in a second. */
+  const restarted = {};
+  at(0, () => paced(restarted, playlist(40, 40, 3)));
+  at(20_000, () => paced(restarted, playlist(45, 45, 3)));
+  at(21_000, () => paced(restarted, playlist(0, 0, 3)));
+  check('a renumbered window starts the measurement again rather than lying',
+    restarted.pace === null || restarted.pace.rate === null,
+    JSON.stringify(restarted.pace));
 
   const seg = Number((/segmentSeconds: (\d+)/.exec(SERVER) || [])[1]);
   const win = Number((/windowSegments: (\d+)/.exec(SERVER) || [])[1]);

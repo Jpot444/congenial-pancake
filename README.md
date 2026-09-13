@@ -3377,6 +3377,50 @@ catch up, so a speed-controller extension keeps full control. Your chosen rate
 is preserved across channel changes, which a plain `load()` would otherwise
 reset to 1×.
 
+## Is the box keeping up with the broadcast?
+
+> "I'm still getting lagging streams even on low data mode."
+
+Low data mode is the **one place a live channel is re-encoded rather than
+copied** — x264 on a Pi, in realtime, for as long as the channel is on. The
+note above `liveDvrArgs` has always said what happens if that cannot keep up:
+
+> a channel that falls behind its own feed never catches up
+
+What it never said is whether *this* box, on *this* channel, actually does —
+because nothing measured it. So the mode a viewer turns on to rescue a
+struggling stream could be the thing starving it, with every other reading in
+the report describing a hungry player and none of them naming the cause.
+
+Worth being plain about the asymmetry: **the full-size feed is `-c:v copy`**
+and costs the Pi essentially nothing. Low data mode decodes the channel and
+re-encodes it to 480p. On a Pi 4 that is real work, every second, for ever.
+
+A film conversion has reported its speed for months (`at 2.4× realtime`). The
+live ingest never has. It does now:
+
+```
+ingest          shrinking on the box at 0.62× realtime
+  >>> the box is not keeping up with this channel — losing about 23s a minute,
+      which it can never win back. Low data mode is what is costing this: the
+      full-size feed is copied, not re-encoded, and costs the Pi nothing <<<
+```
+
+Measured as **media seconds published against wall seconds elapsed**, which
+needs no extra ffmpeg plumbing — the box already watches every playlist it
+serves. 1.00 is keeping up, and a live encode can never do better for long.
+
+**Counted from segment numbers, not from the durations still in the window.**
+Summing the visible `EXTINF`s was the obvious way and it is wrong: the window
+rolls, so anything that scrolled off between two fetches reads as never having
+existed. A player polling slowly would have shown a healthy box at a third of
+realtime — the instrument would have accused the Pi of precisely the fault it
+exists to detect. Segment numbers do not roll off. The test suite found this,
+and the roll-off case is kept as a check.
+
+A renumbered window resets the measurement rather than reading the jump as an
+hour of work in a second.
+
 ## A live channel has to keep going forwards
 
 > "the red zone screen will just pause and never start playing unless I press

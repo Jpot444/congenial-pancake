@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '41.3';
+const VERSION = '41.4';
 
 const PAGE_SIZE = 60;
 
@@ -13260,6 +13260,10 @@ const playback = {
     this.probe = null;
     this.probedAt = 0;
     this.probedSession = '';
+    /* The live ingest's own pace. Cleared with everything else: it describes
+       the channel that was playing, not the one about to. */
+    this.livePace = null;
+    this.livePaceAt = 0;
     this.rescues = 0;
     this.lastRescueAt = 0;
     this.gaps = [];
@@ -13779,7 +13783,34 @@ const playback = {
    * session in question has usually been closed or replaced. Held back for a
    * few seconds so there is enough written to be worth measuring.
    */
+  /**
+   * And the same question for a live channel, which has no remux session at
+   * all and so never reached askServer's body below.
+   *
+   * Only interesting while the box is doing work — a copied channel runs at
+   * 1× by definition — but that is exactly the case a viewer creates when
+   * they turn low data mode on to fix a stream that is struggling.
+   */
+  askLive() {
+    if (film.active || !currentLiveItem) return;
+    if (Date.now() - (this.livePaceAt || 0) < 20_000) return;
+    this.livePaceAt = Date.now();
+    api('/api/live/report', { id: String(currentLiveItem.id || '') })
+      .then((data) => {
+        const all = data.sessions || [];
+        /* Both feeds of one channel can be running — somebody else on the
+           full-size one while this player is on the shrunk one — and they are
+           different ingests with different answers. Pick the one this player
+           is actually watching. */
+        const want = lowMode();
+        const mine = all.find((s) => Boolean(s.low) === want) || all[0] || null;
+        this.livePace = mine ? { pace: mine.pace, encoding: mine.encoding } : null;
+      })
+      .catch(() => { /* the report is a bonus, never a requirement */ });
+  },
+
   askServer() {
+    this.askLive();
     const session = lastRemux.session;
     if (!session) return;
     // Re-asked as the session grows. The first answer is taken twelve seconds
@@ -14374,6 +14405,7 @@ const playback = {
       `film            active ${film.active}, offset ${Math.round(film.offset)}, ` +
         `ready ${Math.round(film.ready)}, duration ${film.duration}`,
       `remux session   ${lastRemux.session || 'none (playing directly)'}`,
+      ...this.paceLines(),
       `watching since  ${Math.round((Date.now() - this.startedAt) / 1000)}s ago`,
       /* The engine's own complaints, non-fatal ones included — see
          noteEngineError(). A fragment that would not load is what puts a hole
@@ -14403,6 +14435,45 @@ const playback = {
    * `timeline` is the one that matters: the playlist's claimed running time
    * divided by the running time the segments really hold. 1.00 is honest.
    */
+  /**
+   * Whether the box is keeping up with the broadcast it is re-encoding.
+   *
+   * "I'm still getting lagging streams even on low data mode."
+   *
+   * Low data mode is the one place a LIVE channel is re-encoded rather than
+   * copied — x264 on a Pi, in realtime, for as long as the channel is on. If
+   * that cannot run at 1× the ingest falls behind its own feed permanently,
+   * and every other reading in this report describes a starving player
+   * without ever saying that the box is the reason.
+   *
+   * So the one number that separates "the wire is slow" from "the Pi cannot
+   * shrink this fast enough", in the form that needs no interpretation.
+   */
+  paceLines() {
+    const live = this.livePace;
+    if (!live) return [];
+    if (live.pace === null || live.pace === undefined) {
+      return [`ingest          ${live.encoding ? 'shrinking on the box' : 'copying'} `
+        + '· pace not measured yet'];
+    }
+    const rate = live.pace.rate;
+    const how = live.encoding ? 'shrinking on the box' : 'copying';
+    const lost = Math.round((1 - rate) * 60);
+    return [
+      `ingest          ${how} at ${rate.toFixed(2)}× realtime`,
+      ...(rate < 0.95
+        ? [`  >>> the box is not keeping up with this channel — losing about `
+          + `${lost}s a minute,`,
+        `      which it can never win back${live.encoding
+          ? '. Low data mode is what is costing this: the'
+          : '.'}`,
+        ...(live.encoding
+          ? ['      full-size feed is copied, not re-encoded, and costs the Pi nothing <<<']
+          : [])]
+        : []),
+    ];
+  },
+
   serverLines() {
     const p = this.probe;
     if (!p) return ['conversion      not asked yet'];
