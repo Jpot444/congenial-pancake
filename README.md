@@ -3377,6 +3377,58 @@ catch up, so a speed-controller extension keeps full control. Your chosen rate
 is preserved across channel changes, which a plain `load()` would otherwise
 reset to 1×.
 
+## A retry you can check
+
+> "One of my downloads was aborted but I don't know why. It says it is going
+> to retry on its own but I don't think that's true."
+
+It *was* true. The box has retried failed downloads on a backoff for months,
+and `tend.test.js` has proved it against a real provider for just as long —
+"a download that failed tries itself again", "and really went back to the
+provider for it". Nothing was broken.
+
+What was missing is **any evidence of it**. The card read:
+
+```
+aborted — trying again shortly
+```
+
+and it read exactly that whether the box had tried once or seven times. It
+never said when the next attempt was due. It stopped mentioning the subject
+entirely once the box gave up. Watched for an hour, a promise that never
+visibly happens is indistinguishable from a lie — and the reasonable
+conclusion is the one that was reached.
+
+The word `aborted` is not the box's, either: it is Node's own socket error
+surfacing through `job.error`, which is why it explains nothing.
+
+So the ladder is computed where it is defined and handed to the page:
+
+```
+aborted — trying again in 3 min, attempt 3 of 8
+That is 9 GB and you have 1 GB left. — not trying again, because trying again cannot fix it
+Provider returned HTTP 502 — gave up after 8 attempts        [ Try again ]
+```
+
+**One button comes back.** Removing Retry was right while the box is still
+working — a button that duplicates what is already happening only invites you
+to press it and wonder whether it helped. But after eight failures the
+automation is finished, and until now there was nothing left to press at all:
+asking again meant deleting the download and finding the title a second time.
+It appears exactly when the automation stops, and never for a permanent
+failure, where asking the provider again cannot change the answer.
+
+**The eight is the box's number now.** The page carried its own copy, which is
+two places to change and one of them forgotten.
+
+One trap worth recording, because it put the original bug back the other way
+round: making the card trust a server-computed `givingUp` meant a row without
+that field — an older box, a cached page — announced "trying again in under a
+minute" over a spent allowance that will never be retried. The suite caught
+it. `permanent` is honoured with no help from the box; only the try *limit*
+needs asking, and an unknown one declines to state a number rather than
+inventing a second copy.
+
 ## Is the box keeping up with the broadcast?
 
 > "I'm still getting lagging streams even on low data mode."

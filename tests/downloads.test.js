@@ -338,11 +338,25 @@ const READY = { ...RUNNING, status: 'done', bytes: 1.8e9, total: 1.8e9,
   check('a failed download offers no Retry either',
     !cards['Failed Retryable']?.buttons.some((b) => /Retry/.test(b)),
     JSON.stringify(cards['Failed Retryable']));
-  check('it says it will have another go by itself',
-    /trying again shortly/.test(cards['Failed Retryable']?.sub || ''),
+  /*
+   * "It says it is going to retry on its own but I don't think that's true."
+   *
+   * It was true, and the card was the reason nobody could tell: "trying again
+   * shortly" read the same after one attempt and after seven, and never said
+   * when. It says WHEN now, which is the difference between a promise and a
+   * claim you can check against a clock.
+   */
+  check('it says it will have another go by itself, and when',
+    /trying again in/.test(cards['Failed Retryable']?.sub || ''),
     cards['Failed Retryable']?.sub);
-  check('while one that cannot be fixed by trying says only what went wrong',
-    !/trying again/.test(cards['Failed For Good']?.sub || '')
+  /*
+   * And the opposite case says why there will not be one. This used to assert
+   * bare silence — the error and nothing else — which left "is it coming back
+   * to this or not?" for the viewer to guess. Saying it outright is the same
+   * fix as the line above, pointed the other way.
+   */
+  check('while one that cannot be fixed by trying says it will not',
+    /not trying again/.test(cards['Failed For Good']?.sub || '')
     && /GB left/.test(cards['Failed For Good']?.sub || ''),
     cards['Failed For Good']?.sub);
   check('and every one of them can still be removed',

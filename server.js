@@ -1131,6 +1131,39 @@ const MAX_DOWNLOAD_TRIES = 8;
 
 const backoffFor = (steps, tries) => steps[Math.min(tries, steps.length - 1)];
 
+/**
+ * What the automatic retry is actually going to do, said out loud.
+ *
+ * "One of my downloads was aborted but I don't know why. It says it is going
+ *  to retry on its own but I don't think that's true."
+ *
+ * It was true — tend.test.js has proved the retry against a real box for
+ * months — but nothing ever SHOWED it. The card said "trying again shortly"
+ * identically whether the box had tried once or seven times, never said when
+ * the next attempt was due, and went quiet about the whole business the
+ * moment it gave up. A promise with no evidence behind it is indistinguishable
+ * from a lie, and after a few hours of watching nothing happen the reasonable
+ * conclusion is the one that was reached.
+ *
+ * So the ladder is computed HERE, where it is defined, and handed over. The
+ * client used to carry its own copy of the eight-try limit — two places to
+ * change, one of which nobody would remember.
+ */
+function withRetryState(job) {
+  if (job.status !== 'error') return job;
+  const tries = job.tries || 0;
+  const givingUp = Boolean(job.permanent) || tries >= MAX_DOWNLOAD_TRIES;
+  return {
+    ...job,
+    tries,
+    triesMax: MAX_DOWNLOAD_TRIES,
+    givingUp,
+    /* When the next automatic attempt is due. Absent once it has stopped, so
+       the card has nothing to count down to and says so instead. */
+    retryAt: givingUp ? null : (job.failedAt || 0) + backoffFor(RETRY_BACKOFF, tries),
+  };
+}
+
 function tendDownloads() {
   let changed = false;
   for (const job of downloads.values()) {
@@ -8794,7 +8827,8 @@ async function handleApi(req, res, pathname, query) {
         .sort((a, b) => b.createdAt - a.createdAt)
         .map((job) => (everyone && !heldBy(job, me)
           ? { ...job, whose: nameOfHolders(job, known) }
-          : job));
+          : job))
+        .map(withRetryState);
       return json(res, 200, {
         items: rows,
         active: activeJob ? activeJob.id : null,

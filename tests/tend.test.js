@@ -153,6 +153,24 @@ exit 0
     check('a download that has failed eight times stops being retried',
       after.d?.status === 'error' && (after.d?.tries || 0) >= 8, JSON.stringify(after.d));
 
+    /* ---- and the box says what it is going to do ---------------------- */
+    /*
+     * The half that was missing, and the whole of the report behind it: the
+     * retry was real and invisible. A card cannot be honest about an attempt
+     * it is not told about, so the ladder is computed where it is defined and
+     * handed over — when the next try is due, which attempt it will be, and
+     * whether there is going to be one at all.
+     */
+    console.log('\n  and it says what it is going to do about it');
+    check('one that has given up says so, with nothing to count down to',
+      after.d?.givingUp === true && after.d?.retryAt === null,
+      JSON.stringify({ givingUp: after.d?.givingUp, retryAt: after.d?.retryAt }));
+    check('a permanent failure is not counted down to either',
+      after.c?.givingUp === true && after.c?.retryAt === null,
+      JSON.stringify({ givingUp: after.c?.givingUp, retryAt: after.c?.retryAt }));
+    check('and the limit travels with it, so the page keeps no copy of eight',
+      after.d?.triesMax === 8, JSON.stringify(after.d?.triesMax));
+
     // The conversion really was a conversion, not a copy.
     const args = fs.readFileSync(path.join(DIR, 'ffmpeg-calls.log'), 'utf8');
     check('the optimize pass puts the index up front, which is the whole point',
@@ -170,13 +188,39 @@ exit 0
   const APP = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
   check('no Optimize button', !/textContent = .?(Retry optimize|Optimize).?;/.test(APP)
     && !/\/optimize'/.test(APP), 'an optimize control is still built');
-  check('no Retry button on a failed download',
+  check('no Retry button while the box is still trying by itself',
     !/retry\.textContent = job\.status === 'paused'/.test(APP)
     && !/'Retry'/.test(APP), 'a retry control is still built');
   check('but Resume stays, because a manual pause is a decision of yours',
     /resume\.textContent = 'Resume';/.test(APP));
+  /*
+   * And one button back, for the one moment it is the only thing that helps.
+   *
+   * "It says it is going to retry on its own but I don't think that's true."
+   *
+   * It was true, and the box really does stop after eight — at which point
+   * there was nothing left to press at all, and asking again meant deleting
+   * the download and finding the title a second time. The control appears
+   * exactly when the automation stops, and not for a permanent failure, where
+   * asking the provider again cannot change the answer.
+   */
+  check('but a way back once the box has given up',
+    /job\.givingUp && !job\.permanent/.test(APP) && /'Try again'/.test(APP),
+    'nothing to press after the retries run out');
   check('and the card says the box is handling it',
-    /Optimizing shortly/.test(APP) && /trying again shortly/.test(APP));
+    /Optimizing shortly/.test(APP) && /trying again in/.test(APP));
+  /*
+   * The evidence that was missing. "trying again shortly" read the same after
+   * one attempt and after seven, never said when the next one was due, and
+   * said nothing at all once the box had stopped — so an hour of watching
+   * nothing happen was indistinguishable from a box that was lying.
+   */
+  check('the card counts the attempts and says when the next one is',
+    /attempt \$\{job\.tries \+ 1\} of/.test(APP) && /trying again in \$\{/.test(APP),
+    'the retry is still invisible on the card');
+  check('and the eight-try limit is the box’s number, not a second copy',
+    /job\.triesMax/.test(APP) && !/>= 8\b/.test(APP),
+    'the client is still carrying its own copy of the limit');
 
   console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(', ')}` : '\nall passed');
   process.exit(fails.length ? 1 : 0);

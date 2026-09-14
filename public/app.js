@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '41.4';
+const VERSION = '41.5';
 
 const PAGE_SIZE = 60;
 
@@ -11655,6 +11655,56 @@ function playRecording(row) {
   });
 }
 
+/**
+ * What a failed download is going to do next, in words a person can check.
+ *
+ * "It says it is going to retry on its own but I don't think that's true."
+ *
+ * It was true. The box has retried failed downloads on a backoff for months
+ * and tend.test.js proves it against a real provider. What was missing is any
+ * EVIDENCE: this line read "trying again shortly" whether the box had tried
+ * once or seven times, never said when the next attempt was due, and stopped
+ * mentioning the subject at all once it had given up. Watched for an hour, a
+ * promise that never visibly happens is indistinguishable from a lie.
+ *
+ * Every number here comes from the box — see withRetryState — because the
+ * ladder lives there. This used to carry its own copy of the eight-try limit,
+ * which is two places to change and one of them forgotten.
+ */
+function retryWords(job) {
+  const why = job.error || 'Failed';
+  /*
+   * Worked out here too when the box did not say.
+   *
+   * Trusting `givingUp` alone put the original bug back the other way round:
+   * a row without the field — an older box, a cached page — read as "trying
+   * again in under a minute" over an allowance failure that will never be
+   * retried. A spent allowance is the one a viewer most needs the truth
+   * about, since the fix is theirs to make.
+   *
+   * `permanent` is honoured without any help from the box. The try limit
+   * cannot be, so an unknown one simply does not claim a number rather than
+   * inventing a second copy of it.
+   */
+  const max = Number(job.triesMax) || 0;
+  const givingUp = job.givingUp !== undefined
+    ? job.givingUp
+    : Boolean(job.permanent) || (max > 0 && (job.tries || 0) >= max);
+  if (givingUp) {
+    return job.permanent
+      ? `${why} — not trying again, because trying again cannot fix it`
+      : `${why} — gave up after ${job.tries || 0} attempts`;
+  }
+  /* Only when both halves are known: "attempt 2 of 8" is worth reading and
+     "attempt 2" on its own only raises the question it cannot answer. */
+  const attempt = job.tries && max ? `attempt ${job.tries + 1} of ${max}` : '';
+  const left = job.retryAt ? job.retryAt - Date.now() : 0;
+  const when = left > 45_000
+    ? `trying again in ${Math.round(left / 60_000)} min`
+    : 'trying again in under a minute';
+  return `${why} — ${when}${attempt ? `, ${attempt}` : ''}`;
+}
+
 function downloadCard(job) {
   {
     const card = el('div', `card dl-card dl-${job.status}`);
@@ -11735,9 +11785,7 @@ function downloadCard(job) {
               : 'Optimizing shortly…'
             : formatBytes(job.total)
         : job.status === 'error'
-          ? job.permanent || (job.tries || 0) >= 8
-            ? job.error || 'Failed'
-            : `${job.error || 'Failed'} — trying again shortly`
+          ? retryWords(job)
           : job.status === 'downloading'
             // A conversion off the drive is not fetching anything, so "X of
             // Y megabytes" would be describing the wrong thing entirely.
@@ -11798,6 +11846,33 @@ function downloadCard(job) {
         await refreshDownloads({ rerender: true });
       });
       actions.append(resume);
+    }
+
+    /*
+     * And a way back once the box has stopped trying.
+     *
+     * Removing the Retry button was right while the box is still working on
+     * it — a button that duplicates what is already happening only invites
+     * you to press it and wonder whether it helped. But after eight failures
+     * the automation is finished, and until now there was nothing left to
+     * press at all: the only way to ask again was to delete the download and
+     * find the title a second time.
+     *
+     * So it appears exactly when the automation stops, which is the one
+     * moment it is the only thing that can help. Not offered for a permanent
+     * failure — a spent allowance is fixed by deleting something, and asking
+     * the provider again cannot change it.
+     */
+    if (job.status === 'error' && job.givingUp && !job.permanent) {
+      const again = el('button', 'btn btn-ghost btn-sm');
+      again.textContent = 'Try again';
+      again.title = 'The box has stopped retrying this one — start it over';
+      again.addEventListener('click', async () => {
+        again.disabled = true;
+        await fetch(jobUrl(job.id, '/retry'), { method: 'POST' });
+        await refreshDownloads({ rerender: true });
+      });
+      actions.append(again);
     }
 
     const remove = el('button', 'icon-btn dl-remove');
