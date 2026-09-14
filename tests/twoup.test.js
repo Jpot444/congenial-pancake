@@ -239,7 +239,65 @@ const LONG_ENOUGH = 14000;
   check('with each login carrying one connection, never two on the same one',
     provider.peak <= 1, String(provider.peak));
 
+  /* ─── and two downloads, with nobody watching ─────────────────────────── */
+  /*
+   * "When I'm trying to download multiple it does one at a time, but I have
+   *  two connections so it should be able to download multiple things at one
+   *  time."
+   *
+   * The queue ran one job to completion before looking at the next, on a
+   * reason written when there was one login — "a parallel queue would just
+   * produce a pile of failures" — which stopped being true the day a second
+   * was added. Half of what the second subscription bought was never spent.
+   */
+  console.log('\n  two logins, nobody watching, two downloads');
   held.stop();
+  /* Let the film's slot come back and the grace window pass, so what follows
+     is about the queue and not about a connection still settling. */
+  await wait(12000);
+
+  provider.peak = 0;
+  for (const name of ['First Thing', 'Second Thing']) {
+    // eslint-disable-next-line no-await-in-loop
+    await call('/api/downloads', 'POST', {
+      name, kind: 'movie', streamId: name === 'First Thing' ? 'endless2' : 'endless3',
+      ext: 'mp4', profileId: 'own1',
+    });
+  }
+  await wait(6000);
+  const both = await call('/api/downloads?profileId=own1');
+  const live = (both.data.items || []).filter((j) => j.status === 'downloading');
+  console.log('   downloading at once:', JSON.stringify(live.map((j) => j.name)));
+  check('both run at the same time, because both logins are free',
+    live.length === 2, JSON.stringify((both.data.items || [])
+      .map((j) => `${j.name}:${j.status}`)));
+  check('and the box says so, rather than naming one of them',
+    (both.data.activeIds || []).length === 2, JSON.stringify(both.data.activeIds));
+  /* Still one connection per login — running two downloads must not mean
+     running two on the same account, which is the failure the pool exists to
+     prevent and the one a naive parallel queue would cause. */
+  console.log('   the provider\'s own peak per login:', provider.peak);
+  check('with one connection per login still, never two on the same one',
+    provider.peak <= 1, String(provider.peak));
+  check('and the page is told what the account really has',
+    both.data.slots?.capacity === 2, JSON.stringify(both.data.slots));
+
+  /* And a viewer arriving takes priority over exactly one of them. */
+  console.log('\n  and somebody pressing play gets a connection back');
+  const late = await call('/api/play?kind=movie&id=endless1&ext=mp4');
+  const watching = await watch(late.data.url);
+  await wait(4000);
+  const during = await call('/api/downloads?profileId=own1');
+  const stillGoing = (during.data.items || []).filter((j) => j.status === 'downloading');
+  const parked = (during.data.items || []).filter((j) => j.status === 'paused');
+  console.log('   while watching:', JSON.stringify((during.data.items || [])
+    .map((j) => `${j.name}:${j.status}`)));
+  check('one download steps aside for the viewer',
+    parked.length === 1, JSON.stringify(parked.map((j) => j.name)));
+  check('and the other keeps going, because there was a second login for it',
+    stillGoing.length === 1, JSON.stringify(stillGoing.map((j) => j.name)));
+  watching.stop();
+
   box.kill();
   provider.close();
 

@@ -962,19 +962,46 @@ function buildStreamUrl(cfg, kind, streamId, ext) {
 /* ---------------------------------------------------------------- downloads
 
  * Pulls a movie or episode to local disk so it can be copied onto a device and
- * watched offline. Jobs run strictly one at a time: the provider account only
- * permits a single concurrent connection, so a parallel queue would just
- * produce a pile of failures.
+ * watched offline.
+ *
+ * AS MANY AT ONCE AS THERE ARE CONNECTIONS.
+ *
+ * "When I'm trying to download multiple it does one at a time, but I have two
+ *  connections so it should be able to download multiple things at one time."
+ *
+ * This used to say jobs run strictly one at a time "because the provider
+ * account only permits a single concurrent connection, so a parallel queue
+ * would just produce a pile of failures". That was true of a one-login
+ * account and stopped being true the day a second was added — but the queue
+ * went on obeying the old reason, so half of what the second subscription
+ * bought was simply never spent.
+ *
+ * The limit is the pool's, not a number written down here: a provider
+ * download takes a slot the moment it starts, so starting another while
+ * `providerBusy()` is false is exactly "while a login is still free". Two
+ * logins run two downloads; one runs one; and a viewer arriving still takes
+ * priority, because the same slot accounting pauses a download for them.
  */
 
 /** id → job record. Mirrored to downloads/index.json after every change. */
 const downloads = new Map();
 const queue = [];
-let activeJob = null;
-let activeRequest = null;
-/* The pool slot the running download is holding, if it is a provider one. An
-   archive conversion reads the drive and holds nothing. */
-let releaseJobSlot = null;
+/*
+ * What is running right now: id → { job, request, release }.
+ *
+ * The socket and the pool slot live here rather than in module-level globals,
+ * which is what made one-at-a-time structural. With one download the three of
+ * them could be single variables; with several, `activeRequest` would be
+ * whichever job opened its socket last, and pausing any one of them would
+ * tear down that one's connection instead.
+ */
+const running = new Map();
+
+/** The running jobs, for the several places that want to look at them. */
+const activeJobs = () => [...running.values()].map((r) => r.job);
+/** Downloads actually pulling from the provider — archive conversions do not. */
+const providerDownloads = () =>
+  activeJobs().filter((j) => j.status === 'downloading' && !j.archivePath);
 
 function ensureDownloadDir() {
   fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
@@ -1471,7 +1498,9 @@ async function readHealth() {
        is the one answer this box should never have to give. */
     crashes: recentCrashes(),
     downloads: {
-      active: activeJob ? { name: activeJob.name, bytes: activeJob.bytes, total: activeJob.total } : null,
+      /* All of them: more than one runs at a time now, and a health page that
+         showed only the first would under-report the box's own load. */
+      active: activeJobs().map((j) => ({ name: j.name, bytes: j.bytes, total: j.total })),
       queued: queue.length,
       stored: jobs.filter((j) => j.status === 'done').length,
       failed: jobs.filter((j) => j.status === 'error').length,
@@ -1627,7 +1656,7 @@ function jobSourceUrl(job) {
  * a byte offset, so pausing one and starting it again starts it again. It is
  * a local file, which is the one case where that costs only time.
  */
-async function runArchiveJob(job) {
+async function runArchiveJob(job, run) {
   if (!hasFfmpeg()) throw new Error('ffmpeg is not installed, so this cannot be converted.');
   if (!archive.mounted()) throw new Error('The archive drive is not plugged in.');
   const abs = archive.resolve(job.archivePath);
@@ -1703,10 +1732,12 @@ async function runArchiveJob(job) {
   );
 
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  // Pause, cancel and the auto-pause when a stream starts all reach a
-  // running download by destroying `activeRequest`. Wearing the same shape
-  // means every one of those paths works here without knowing what this is.
-  activeRequest = { destroy: () => { try { proc.kill('SIGKILL'); } catch { /* gone */ } } };
+  // Pause, cancel and the auto-pause when a stream starts all reach a running
+  // download by destroying its `request`. Wearing the same shape means every
+  // one of those paths works here without knowing what this is — and it is
+  // kept on THIS job's entry, so stopping one conversion cannot reach into
+  // another download that happens to be running beside it.
+  run.request = { destroy: () => { try { proc.kill('SIGKILL'); } catch { /* gone */ } } };
 
   let stderr = '';
   onStderr(proc, (d) => { stderr = (stderr + d).slice(-2000); });
@@ -1745,7 +1776,7 @@ async function runArchiveJob(job) {
     proc.on('error', () => resolve(-1));
   });
   clearInterval(ticker);
-  activeRequest = null;
+  run.request = null;
 
   // Stopped on purpose: the half-written file is no use to anybody, and
   // unlike a partial download it cannot be continued.
@@ -1783,10 +1814,10 @@ async function runArchiveJob(job) {
   // No queuePrepare: this came out as mp4 by construction.
 }
 
-async function runJob(job) {
+async function runJob(job, run) {
   // A title off the archive drive has no provider URL behind it — it is
   // converted from the file itself.
-  if (job.archivePath) return runArchiveJob(job);
+  if (job.archivePath) return runArchiveJob(job, run);
 
   const { part, final } = jobPaths(job);
   const start = partSize(job);
@@ -1806,9 +1837,12 @@ async function runJob(job) {
      one. */
   const source = jobSourceUrl(job);
   const holding = providers.forUrl(readConfig(), source);
-  releaseJobSlot = holding ? providers.take(holding.id) : null;
+  /* Taken synchronously, BEFORE the first await — which is what makes starting
+     several safe. The queue checks providerBusy() between starts, so a slot
+     claimed here is already counted when the next job is considered. */
+  run.release = holding ? providers.take(holding.id) : null;
   const upstream = await request(source, { headers, timeout: 60000 });
-  activeRequest = upstream;
+  run.request = upstream;
 
   const code = upstream.statusCode || 0;
   if (code >= 400) {
@@ -2022,17 +2056,29 @@ function autoPauseActiveDownload({ force = false } = {}) {
      the moment after the recording's own ffmpeg has taken one, which is too
      late to be the question. */
   if (!force && !providerBusy()) return;
-  const job = activeJob;
-  if (!job || job.status !== 'downloading') return;
-  // This exists to hand the provider's one connection back to playback. A
-  // conversion off the archive drive is not holding it, so pausing that one
-  // buys nothing and costs the viewer their progress.
-  if (job.archivePath) return;
+  /*
+   * ONE of them, not all of them.
+   *
+   * Several downloads can be running now, and a viewer needs one connection,
+   * not every connection. Pausing the lot would hand back two slots to fill
+   * one and cost the other download its place for nothing.
+   *
+   * The newest is the one that goes: it is the one with least progress banked,
+   * and the one whose partial file is cheapest to pick up again later.
+   *
+   * A conversion off the archive drive is never a candidate — it holds no
+   * connection at all, so pausing it buys the viewer nothing and costs
+   * somebody their progress.
+   */
+  const candidates = providerDownloads();
+  if (!candidates.length) return;
+  const job = candidates[candidates.length - 1];
+  const run = running.get(job.id);
   job.status = 'paused';
   job.autoPaused = true; // resumes by itself, unlike a manual pause
-  if (activeRequest) {
+  if (run && run.request) {
     try {
-      activeRequest.destroy();
+      run.request.destroy();
     } catch {
       /* already torn down */
     }
@@ -2079,84 +2125,119 @@ function drainQueueForSpace(reason) {
   return stalled;
 }
 
-let queuePumping = false;
+/*
+ * Which queued job may start right now, and why the answer changed.
+ *
+ * The old loop took the head of the queue, ran it to completion, and only then
+ * looked again — so a second login sat idle behind the first download for as
+ * long as it took. Starting is now a question asked per job, and the pump
+ * keeps asking until the answer is no.
+ *
+ * A PROVIDER download needs a login with room. Because the slot is taken
+ * synchronously inside runJob, providerBusy() already accounts for everything
+ * started a moment ago, so "while a login is free" needs no counter of its own
+ * and cannot over-commit.
+ *
+ * An ARCHIVE conversion holds no connection at all — it reads the drive — so
+ * it never waits for the provider. It does hold a core of the Pi, though, and
+ * two ffmpeg encodes racing each other finish no sooner than one after the
+ * other while making everything else stutter. One at a time.
+ */
+const ARCHIVE_AT_ONCE = 1;
 
-async function processQueue() {
-  if (queuePumping) return;
-  queuePumping = true;
+function startableNow() {
+  const archiveRunning = activeJobs().filter((j) => j.archivePath).length;
+  /* The grace window stays, and still measures from the last moment the box
+     was FULL rather than the last moment anything played: a slot given back a
+     second ago is usually about to be taken again by the same viewer changing
+     their mind. On one login those are the same instant; on two they are not. */
+  const providerFree = !providerBusy()
+    && Date.now() - lastSlotsFullAt >= RESUME_GRACE_MS;
+  for (let i = 0; i < queue.length; i += 1) {
+    const job = downloads.get(queue[i]);
+    if (!job || job.status === 'cancelled' || job.status === 'paused') {
+      queue.splice(i, 1);
+      i -= 1;
+      continue;
+    }
+    if (job.archivePath ? archiveRunning < ARCHIVE_AT_ONCE : providerFree) {
+      queue.splice(i, 1);
+      return job;
+    }
+  }
+  return null;
+}
+
+let topUpTimer = null;
+
+/** Ask again shortly, for the jobs that could not start yet. */
+function scheduleTopUp() {
+  if (topUpTimer || !queue.length) return;
+  topUpTimer = setTimeout(() => {
+    topUpTimer = null;
+    processQueue();
+  }, 3000);
+  topUpTimer.unref?.();
+}
+
+/**
+ * Start everything that can start, and come back when something frees up.
+ *
+ * No longer async: it launches runners and returns. Awaiting a job here is
+ * precisely what serialised the queue.
+ */
+function processQueue() {
+  for (;;) {
+    const job = startableNow();
+    if (!job) break;
+    void startJob(job);
+  }
+  scheduleTopUp();
+}
+
+async function startJob(job) {
+  const run = { job, request: null, release: null };
+  running.set(job.id, run);
   try {
-    while (queue.length) {
-      // Hold while anything streams, plus a grace window so channel-flipping
-      // doesn't bounce the download up and down between every change.
-      //
-      // Except for the archive drive. That queue waits on the provider's
-      // single connection, and a title being converted off a local disk does
-      // not use it — so a viewer who asked for one while watching something
-      // saw it sit at "Waiting for the connection", with no connection to
-      // wait for and no sign of progress. Those are pulled out of the queue
-      // and run regardless; everything else still waits its turn.
-      let id;
-      /* The rule that used to be "wait until nothing is streaming" is now
-         "wait until a login has room". With one account those are the same
-         sentence; with two, a download runs happily beside somebody watching
-         a film, which is the whole point of the second login. The grace
-         period stays: a slot released a moment ago is often about to be
-         taken again by the same viewer changing their mind — which is why it
-         waits on the last moment the box was FULL, not on the last moment
-         anything was playing. Those are the same instant on one account and
-         very different ones on two. */
-      if (providerBusy() || Date.now() - lastSlotsFullAt < RESUME_GRACE_MS) {
-        const at = queue.findIndex((qid) => downloads.get(qid)?.archivePath);
-        if (at < 0) {
-          await new Promise((r) => setTimeout(r, 3000));
-          continue;
-        }
-        id = queue.splice(at, 1)[0];
-      } else {
-        id = queue.shift();
-      }
-      const job = downloads.get(id);
-      if (!job || job.status === 'cancelled' || job.status === 'paused') continue;
-
-      activeJob = job;
-      try {
-        await runJob(job);
-      } catch (err) {
-        // A deliberate pause/cancel aborts the socket too — don't report those
-        // as failures. Partial data stays on disk so a retry resumes.
-        if (job.status !== 'cancelled' && job.status !== 'paused') {
-          job.status = 'error';
-          job.error = err.message;
-          // What the automatic retry needs to know: when this happened, how
-          // many times it has now happened, and whether trying again could
-          // ever help. An allowance that is spent stays spent until somebody
-          // deletes something, so that one is left alone.
-          job.failedAt = Date.now();
-          job.tries = (job.tries || 0) + 1;
-          job.permanent = Boolean(err.permanent);
-          persistDownloads();
-        }
-        // A full disk fails every remaining job identically, and each one
-        // leaves its own half-written .part behind — which is exactly how
-        // several GB of unusable fragments accumulated. Stop the whole queue
-        // on the first one and say so, rather than grinding through the rest.
-        if (isNoSpace(err)) {
-          const stalled = drainQueueForSpace(err.message);
-          console.error(`\n  Disk full — download queue stopped (${stalled} waiting).\n`);
-          break;
-        }
-      } finally {
-        activeJob = null;
-        activeRequest = null;
-        if (releaseJobSlot) {
-          releaseJobSlot();
-          releaseJobSlot = null;
-        }
-      }
+    await runJob(job, run);
+  } catch (err) {
+    // A deliberate pause/cancel aborts the socket too — don't report those
+    // as failures. Partial data stays on disk so a retry resumes.
+    if (job.status !== 'cancelled' && job.status !== 'paused') {
+      job.status = 'error';
+      job.error = err.message;
+      // What the automatic retry needs to know: when this happened, how
+      // many times it has now happened, and whether trying again could
+      // ever help. An allowance that is spent stays spent until somebody
+      // deletes something, so that one is left alone.
+      job.failedAt = Date.now();
+      job.tries = (job.tries || 0) + 1;
+      job.permanent = Boolean(err.permanent);
+      persistDownloads();
+    }
+    // A full disk fails every remaining job identically, and each one
+    // leaves its own half-written .part behind — which is exactly how
+    // several GB of unusable fragments accumulated. Stop the whole queue
+    // on the first one and say so, rather than grinding through the rest.
+    if (isNoSpace(err)) {
+      /* No cleanup here: the finally below owns the slot and the entry, and
+         releasing a pool slot twice would leave the count believing a login
+         is free that is not. drainQueueForSpace has emptied the queue, so the
+         processQueue() at the end finds nothing to start. */
+      const stalled = drainQueueForSpace(err.message);
+      console.error(`\n  Disk full — download queue stopped (${stalled} waiting).\n`);
     }
   } finally {
-    queuePumping = false;
+    running.delete(job.id);
+    if (run.release) {
+      run.release();
+      run.release = null;
+    }
+    run.request = null;
   }
+  /* A finished job means a free slot, so the next one goes now rather than
+     waiting out the top-up timer. */
+  processQueue();
 }
 
 function enqueue(job) {
@@ -2169,12 +2250,13 @@ function enqueue(job) {
 }
 
 function cancelJob(job, { removeFile }) {
-  const wasActive = activeJob && activeJob.id === job.id;
+  const run = running.get(job.id);
   job.status = 'cancelled';
 
-  if (wasActive && activeRequest) {
+  /* This job's own socket, not whichever one happened to open last. */
+  if (run && run.request) {
     try {
-      activeRequest.destroy();
+      run.request.destroy();
     } catch {
       /* already torn down */
     }
@@ -4075,8 +4157,8 @@ function connectionHolders() {
     held.push({ kind: 'recording', what: `${row.title} on ${row.channelName}`, id: row.id });
   }
 
-  if (activeJob && activeJob.status === 'downloading' && !activeJob.archivePath) {
-    held.push({ kind: 'download', what: activeJob.name, id: activeJob.id });
+  for (const job of providerDownloads()) {
+    held.push({ kind: 'download', what: job.name, id: job.id });
   }
 
   return held;
@@ -4132,8 +4214,10 @@ function makeRoomForRecording(row) {
 
   /* The running download. It picks itself back up when a slot frees — that is
      what autoPaused is for — so this costs minutes, not a file. */
-  if (activeJob && activeJob.status === 'downloading' && !activeJob.archivePath) {
-    console.log(`  recording: pausing the download of ${activeJob.name} for ${row.title}`);
+  const pullable = providerDownloads();
+  if (pullable.length) {
+    console.log(`  recording: pausing the download of `
+      + `${pullable[pullable.length - 1].name} for ${row.title}`);
     autoPauseActiveDownload({ force: true });
     return true;
   }
@@ -7349,7 +7433,7 @@ function crawlCredits() {
   if (!cfg || cfg.mode !== 'xtream') return Promise.resolve(null);
   return people.crawl({
     items: cachedMovies(),
-    busy: () => providerBusy() || Boolean(activeJob && activeJob.status === 'downloading'),
+    busy: () => providerBusy() || providerDownloads().length > 0,
     fetchInfo: async (id) => {
       const url = xtreamApiUrl(providers.forMeta(cfg) || cfg, { action: 'get_vod_info', vod_id: id });
       const upstream = await request(url, { timeout: 15000 });
@@ -8752,7 +8836,7 @@ async function handleApi(req, res, pathname, query) {
   if (pathname === '/api/activity') {
     const streaming = providerStreams > 0;
     const watching = [...remuxSessions.values()].some((s) => Date.now() - s.lastAccess < 60_000);
-    const downloading = Boolean(activeJob && activeJob.status === 'downloading');
+    const downloading = providerDownloads().length > 0;
     // Generous window: Safari can leave a real gap between range requests while
     // it chews through what it already has, and a false idle here costs someone
     // their film.
@@ -8831,7 +8915,13 @@ async function handleApi(req, res, pathname, query) {
         .map(withRetryState);
       return json(res, 200, {
         items: rows,
-        active: activeJob ? activeJob.id : null,
+        /* Kept as one id for anything that still reads it, and the full list
+           beside it: several downloads run at once now. */
+        active: activeJobs()[0] ? activeJobs()[0].id : null,
+        activeIds: activeJobs().map((j) => j.id),
+        /* What the account actually has, so the page can stop asserting that
+           one connection is the rule the box is built around. */
+        slots: { free: providers.free(cfg), capacity: providers.capacity(cfg) },
         queued: queue.length,
         /* The drive is the drive whoever is asking. */
         freeBytes: Number.isFinite(diskFree(DOWNLOAD_DIR)) ? diskFree(DOWNLOAD_DIR) : null,
@@ -9005,14 +9095,15 @@ async function handleApi(req, res, pathname, query) {
         return json(res, 409, { error: 'That download is not running' });
       }
       // Partial bytes stay on disk; /retry resumes from the current offset.
-      const wasActive = activeJob && activeJob.id === job.id;
+      const wasActive = running.has(job.id);
       job.status = 'paused';
       job.autoPaused = false; // a manual pause sticks until manually resumed
       const at = queue.indexOf(job.id);
       if (at >= 0) queue.splice(at, 1);
-      if (wasActive && activeRequest) {
+      const liveRun = running.get(job.id);
+      if (wasActive && liveRun && liveRun.request) {
         try {
-          activeRequest.destroy();
+          liveRun.request.destroy();
         } catch {
           /* already torn down */
         }

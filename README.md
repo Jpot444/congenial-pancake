@@ -3377,6 +3377,62 @@ catch up, so a speed-controller extension keeps full control. Your chosen rate
 is preserved across channel changes, which a plain `load()` would otherwise
 reset to 1×.
 
+## As many downloads at once as there are connections
+
+> "When I'm trying to download multiple it does one at a time, but I have two
+> connections so it should be able to download multiple things at one time."
+
+The queue ran one job to completion before it looked at the next, and the
+reason was written at the top of the file:
+
+> Jobs run strictly one at a time: the provider account only permits a single
+> concurrent connection, so a parallel queue would just produce a pile of
+> failures.
+
+That was true of a one-login account. It stopped being true the day a second
+was added — but the queue went on obeying the old reason, so **half of what
+the second subscription bought was never spent**.
+
+### The limit is the pool's, not a number
+
+There is no concurrency setting. A provider download takes a slot the moment
+it starts, so "start another while `providerBusy()` is false" *is* "while a
+login is still free". Two logins run two downloads; one runs one; and if a
+third login is ever added nothing here needs editing.
+
+That works because `providers.take()` runs **synchronously**, before the first
+`await` in `runJob` — so a slot claimed by the job that just started is
+already counted when the next one is considered. Two jobs cannot both see the
+same free login.
+
+An **archive conversion** is exempt from the provider question entirely — it
+reads the drive and holds no connection — but it is capped at one at a time
+for a different reason: two ffmpeg encodes racing on a Pi finish no sooner
+than one after the other, while making everything else stutter.
+
+### A viewer still wins, but only takes what they need
+
+The auto-pause used to stop "the download". With several running it stops
+**one** — the newest, which has the least progress banked and the cheapest
+partial file to resume. Pausing all of them would hand back two connections to
+fill one, and cost the other download its place for nothing.
+
+### What had to stop being a global
+
+One-at-a-time was structural, not a policy: the running socket, the pool slot
+and the active job were single module-level variables. With several running,
+`activeRequest` would be whichever job opened its socket last — so pausing any
+one download would tear down a different one's connection. Each runner owns
+its own now.
+
+`tests/twoup.test.js` proves it against a real two-login box and a provider
+that counts connections per login: both downloads run at once, neither login
+ever carries two, and a viewer arriving pauses exactly one while the other
+keeps going.
+
+The health page also stops asserting that one connection is the rule the box
+is built around — it asks the box how many there are.
+
 ## A retry you can check
 
 > "One of my downloads was aborted but I don't know why. It says it is going

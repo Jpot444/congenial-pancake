@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '41.5';
+const VERSION = '41.6';
 
 const PAGE_SIZE = 60;
 
@@ -4352,12 +4352,19 @@ const health = {
     const parts = [`${dl.stored} stored`];
     if (dl.queued) parts.push(`${dl.queued} queued`);
     if (dl.failed) parts.push(`${dl.failed} failed`);
+    /* A list now, not one job: as many downloads run as there are provider
+       connections. An empty array is truthy, so reading this the old way
+       showed "Downloading" on a box doing nothing at all. */
+    const live = Array.isArray(dl.active) ? dl.active : (dl.active ? [dl.active] : []);
+    const first = live[0];
     rows.push(row('Downloads', {
-      value: dl.active ? dl.active.name : parts.join(' · '),
-      sub: dl.active && dl.active.total
-        ? `${((dl.active.bytes / dl.active.total) * 100).toFixed(0)}% — ${parts.join(' · ')}`
-        : (dl.active ? parts.join(' · ') : ''),
-      pill: dl.active ? ['ok', 'Downloading'] : null,
+      value: first
+        ? (live.length > 1 ? `${first.name} +${live.length - 1} more` : first.name)
+        : parts.join(' · '),
+      sub: first && first.total
+        ? `${((first.bytes / first.total) * 100).toFixed(0)}% — ${parts.join(' · ')}`
+        : (first ? parts.join(' · ') : ''),
+      pill: live.length ? ['ok', live.length > 1 ? `${live.length} downloading` : 'Downloading'] : null,
     }));
 
     rows.push(row('Uptime', {
@@ -9482,10 +9489,15 @@ function filmCard(item) {
     figures.append(row);
     return row;
   };
-  // One connection is the rule the whole box is built around: a download
-  // pauses itself when somebody presses play, and this is where you find out
-  // whether that is about to happen to you.
-  figure('Provider connection', state.downloads.active ? '0 of 1 free' : '1 of 1 free');
+  /* How many connections there are, and how many are spare. This said "0 of 1"
+     or "1 of 1" whatever the account actually had — written when one login was
+     the rule the box was built around, and left behind when a second was
+     added. The box knows the real numbers; asking it is the only way this can
+     stay true of whatever the subscription becomes next. */
+  const slots = state.downloads.slots;
+  figure('Provider connections', slots
+    ? `${slots.free} of ${slots.capacity} free`
+    : (state.downloads.active ? 'in use' : 'free'));
   figure('Your allowance', numbers.label);
   const allowanceBar = el('div', `film-bar is-${numbers.tone}`);
   const allowanceFill = el('i');
