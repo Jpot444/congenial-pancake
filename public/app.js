@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '41.6';
+const VERSION = '41.7';
 
 const PAGE_SIZE = 60;
 
@@ -12902,13 +12902,6 @@ const LIVE_STUCK = {
      The provider's segments are ~11s, so anything under one of those would
      fight normal delivery rather than rescue it. */
   stuckSeconds: 12,
-  /* A backward move bigger than this on a live stream is a replay, not a
-     nudge. hls.js re-seats by fractions of a second routinely; it does not
-     move you two minutes into the past on purpose. */
-  backJump: 20,
-  /* How close to the end of what is held to sit after a correction — far
-     enough in that the next segment has somewhere to land. */
-  edgeBack: 6,
 };
 
 function liveKeepsGoing(video, state) {
@@ -12958,24 +12951,34 @@ function liveKeepsGoing(video, state) {
     return;
   }
 
-  /* ---- went backwards: already-seen video, being shown again ---------- */
-  if (at < state.at - LIVE_STUCK.backJump) {
-    const ranges = video.buffered;
-    const end = ranges.length ? ranges.end(ranges.length - 1) : 0;
-    const to = Math.max(at, end - LIVE_STUCK.edgeBack);
-    if (to > at + 1) {
-      playback.expectMove('the stream was renumbered and put the playhead in '
-        + 'video already shown; moved back to the front of what is held');
-      try { video.currentTime = to; } catch { /* not seekable yet */ }
-    }
-    state.at = video.currentTime;
-    state.since = now;
-    state.tries = 0;
-    return;
-  }
-
-  /* ---- moving forwards, which is all that is asked ------------------- */
-  if (at > state.at + 0.25) {
+  /*
+   * ---- moving at all, which is the whole of what is asked -------------
+   *
+   * EITHER DIRECTION. This counted only forward motion for one version, and
+   * that was wrong twice over.
+   *
+   * It meant a backward jump smaller than the correction threshold reset
+   * nothing: the playhead then needed as many seconds to climb back over its
+   * old high-water mark as the jump had cost it, and for a jump of thirteen
+   * seconds or more that outlasted the stuck timer. So the watchdog declared a
+   * wedge, refetched, and reopened the channel — on a stream that was playing
+   * perfectly well, which is a jump this code CAUSED while trying to prevent
+   * one.
+   *
+   * And the version that seeked forward out of a backward jump was fighting
+   * the engine. hls.js seats the playhead `liveSyncDuration` back from the
+   * edge — thirty-two seconds — and a correction to six seconds off the edge
+   * is twenty-six seconds in front of where it is going to be put back. The
+   * earlier report named it: "it landed on the seat, so it was the engine
+   * correcting itself". Each round of that argument is a visible jump, so
+   * trying to stop one jump produced two.
+   *
+   * Where the playhead SITS is the engine's business — the long note by
+   * stopLiveTracking has always said so, and it is right. This watchdog's only
+   * claim is that the picture must not be frozen, and a playhead that moved,
+   * whichever way it went, is not frozen.
+   */
+  if (Math.abs(at - state.at) > 0.25) {
     state.at = at;
     state.since = now;
     state.tries = 0;

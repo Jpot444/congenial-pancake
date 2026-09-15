@@ -156,25 +156,67 @@ const check = (name, ok, detail) => {
   check('and the wedge clock is reset, so unpausing does not look like a fault',
     paused.tries === 0, String(paused.tries));
 
-  /* ---- 4. going back in time ------------------------------------------- */
+  /* ---- 4. a playhead that moved backwards is still a playhead moving --- */
   /*
-   * "a stream will go back in time and replay stuff it has already played" —
-   * 154 seconds of it in the captured report, when the playlist was
-   * renumbered underneath the playhead.
+   * This asserted the opposite for one version, and the reversal is the point.
+   *
+   * It used to seek FORWARD out of a backward jump, to six seconds off the end
+   * of the buffer. hls.js seats the playhead liveSyncDuration — thirty-two
+   * seconds — back from the edge, so that correction landed twenty-six seconds
+   * in front of where the engine was about to put it back, and the engine did
+   * put it back. The earlier report had already named the mechanism: "it
+   * landed on the seat, so it was the engine correcting itself". Each round of
+   * that argument is a visible jump, so a fix aimed at one jump produced two.
+   *
+   * Where the playhead sits is the engine's business. This watchdog's only
+   * claim is that the picture is not FROZEN, and one that moved — whichever
+   * way — is not frozen. The replay itself is a broken playlist and has to be
+   * fixed where the playlist is made.
    */
-  console.log('\n  video already shown is not shown again');
+  console.log('\n  a backward jump is left to the engine, not argued with');
   const back = await run(() => {
     window.__ran = { loads: 0, reloads: 0, toasts: [] };
     const v = window.__video({ currentTime: 26.1, buffered: window.__ranges([[20, 180]]) });
     const state = { at: 180.1, since: Date.now(), tries: 0 };
     liveKeepsGoing(v, state);
-    return { at: v.currentTime, reloads: window.__ran.reloads };
+    return { at: v.currentTime, reloads: window.__ran.reloads,
+      loads: window.__ran.loads, since: state.since, at0: state.at };
   });
   console.log('   ', JSON.stringify(back));
-  check('the playhead is put back to the front of what is held',
-    back.at > 170 && back.at <= 180, String(back.at));
-  check('rather than throwing the connection away for it',
-    back.reloads === 0, String(back.reloads));
+  check('the playhead is left exactly where the engine put it',
+    back.at === 26.1, String(back.at));
+  check('and nothing is refetched or reopened over it',
+    back.reloads === 0 && back.loads === 0, JSON.stringify(back));
+  check('while counting as alive, so it is not then called a wedge',
+    back.at0 === 26.1, JSON.stringify(back.at0));
+
+  /* ---- 4b. and the bug that caused ----------------------------------- */
+  /*
+   * The defect this suite did not catch the first time. Counting only FORWARD
+   * motion meant a backward jump smaller than the old correction threshold
+   * reset nothing — so the playhead needed as many seconds to climb back over
+   * its old high-water mark as the jump had cost, and a jump of thirteen
+   * seconds or more outlasted the stuck timer. The watchdog then refetched and
+   * reopened a stream that was playing perfectly well, which is a jump this
+   * code caused while trying to prevent one.
+   */
+  console.log('\n  and a small backward jump is not mistaken for a wedge');
+  const smallBack = await run(() => {
+    window.__ran = { loads: 0, reloads: 0, toasts: [] };
+    /* Thirteen seconds back, then playing on normally — and stuck for longer
+       than the timer, which is exactly the shape that used to trip it. */
+    const v = window.__video({ currentTime: 167, buffered: window.__ranges([[20, 180]]) });
+    const state = window.__stuckFor({ at: 180, since: 0, tries: 0 }, 13);
+    liveKeepsGoing(v, state);
+    return { loads: window.__ran.loads, reloads: window.__ran.reloads,
+      toasts: window.__ran.toasts, at: v.currentTime };
+  });
+  console.log('   ', JSON.stringify(smallBack));
+  check('nothing is refetched, reopened, or said about it',
+    smallBack.loads === 0 && smallBack.reloads === 0 && !smallBack.toasts.length,
+    JSON.stringify(smallBack));
+  check('and the playhead is not moved either',
+    smallBack.at === 167, String(smallBack.at));
 
   /* ---- 5. a seek that hangs -------------------------------------------- */
   /*

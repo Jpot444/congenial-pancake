@@ -4958,6 +4958,98 @@ function pipeLive(upstream, res, capSeconds, holdSeconds = 0) {
   upstream.on('error', () => res.end());
 }
 
+/* ------------------------------------- a live playlist that only goes on ── */
+
+/*
+ * "There are still so many jumps back to previous spots when I'm watching
+ *  live tv."
+ *
+ * The cause, caught in a playback report:
+ *
+ *   playlist reset  seq 3325→3288 · 3332→3298 · 3335→3300 · 3301→2037
+ *
+ * A media sequence does not go backwards. The provider answers the same URL
+ * from several backend nodes, each numbering its own output, so consecutive
+ * refreshes of one channel can come from encoders minutes or hours apart. The
+ * box proxied that faithfully — and a player handed a timeline that jumps
+ * backwards has no choice but to treat it as a new stream: it discards the
+ * buffer, re-seats the playhead, and shows video already watched. That is the
+ * jump, and no amount of client-side correction can undo it, because by then
+ * the timeline the buffer was built on is gone.
+ *
+ * Fixing it in the player was the wrong layer and was tried: seeking out of
+ * the jump only fought the engine's own seat and produced two jumps instead of
+ * one. The fix is to stop handing over the regression at all. The box already
+ * reads every playlist it proxies, so it keeps the last one it served per
+ * channel and serves that again rather than a playlist that has gone
+ * backwards. From the player's side the stream simply has nothing new for a
+ * moment, which is a thing every HLS client already handles.
+ *
+ * With a bound, because "never go backwards" cannot mean "never move again":
+ * a channel genuinely restarted — a new programme, an encoder replaced — goes
+ * backwards and STAYS there, and holding the old playlist for ever would
+ * freeze the picture waiting for numbers that are never coming back.
+ */
+const LAST_PLAYLIST_MS = 45_000;
+const lastPlaylists = new Map();
+
+/** Which channel a provider URL is for, whichever login is carrying it. */
+function playlistKey(url) {
+  try {
+    const parts = new URL(url).pathname.split('/').filter(Boolean);
+    return parts[parts.length - 1] || url;
+  } catch {
+    return url;
+  }
+}
+
+const mediaSequence = (text) => {
+  const hit = /#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(text);
+  return hit ? Number(hit[1]) : null;
+};
+
+/**
+ * The playlist to serve: this one, or the last one if this one went backwards.
+ */
+function forwardOnlyPlaylist(url, text) {
+  /* A finished playlist is not a live one and has no edge to protect. */
+  if (/#EXT-X-ENDLIST/.test(text)) return text;
+  const seq = mediaSequence(text);
+  if (seq === null) return text;
+
+  const key = playlistKey(url);
+  const seen = lastPlaylists.get(key);
+  const now = Date.now();
+
+  if (seen && seq < seen.seq && now - seen.at < LAST_PLAYLIST_MS) {
+    /* Backwards, and recently enough that the provider is probably rotating
+       rather than restarting. Hand back what the player already has. */
+    seen.held = (seen.held || 0) + 1;
+    if (seen.held === 1 || seen.held % 10 === 0) {
+      console.log(`  live: ${key} came back renumbered (${seen.seq} → ${seq}) — `
+        + `serving the playlist the player already has (${seen.held})`);
+    }
+    return seen.text;
+  }
+
+  if (seen && seq < seen.seq) {
+    /* Still behind after the window: the channel really did start over, and
+       holding the old one any longer would freeze it. */
+    console.log(`  live: ${key} has stayed renumbered (${seen.seq} → ${seq}) — `
+      + 'taking it as a genuine restart');
+  }
+
+  lastPlaylists.set(key, { seq, text, at: now, held: 0 });
+  /* Nothing here is worth a leak: a box left running for weeks would collect
+     an entry per channel ever opened. */
+  if (lastPlaylists.size > 200) {
+    for (const [k, v] of lastPlaylists) {
+      if (now - v.at > LAST_PLAYLIST_MS * 4) lastPlaylists.delete(k);
+    }
+  }
+  return text;
+}
+
 function isPlaylist(url, contentType) {
   const ct = (contentType || '').toLowerCase();
   return (
@@ -5010,7 +5102,11 @@ async function handleStream(req, res, query) {
     } catch (err) {
       return send(res, 502, `Upstream error: ${err.message}`);
     }
-    const rewritten = rewritePlaylist(body.toString('utf8'), upstream.finalUrl);
+    /* Checked for a sequence that went backwards BEFORE the URLs are
+       rewritten, so the comparison is against the provider's own numbering
+       rather than against a string this box has already edited. */
+    const forward = forwardOnlyPlaylist(upstream.finalUrl, body.toString('utf8'));
+    const rewritten = rewritePlaylist(forward, upstream.finalUrl);
     res.writeHead(upstream.statusCode || 200, {
       'content-type': 'application/vnd.apple.mpegurl',
       'cache-control': 'no-store',

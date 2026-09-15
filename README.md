@@ -3529,6 +3529,77 @@ and the roll-off case is kept as a check.
 A renumbered window resets the measurement rather than reading the jump as an
 hour of work in a second.
 
+## A live playlist that only ever goes on
+
+> "There are still so many jumps back to previous spots when I'm watching
+> live tv."
+
+Still, because the previous attempt was aimed at the wrong layer — mine. Worth
+recording both the cause and the wrong turn.
+
+### The cause
+
+```
+playlist reset  seq 3325→3288 · 3332→3298 · 3335→3300 · 3301→2037
+```
+
+A media sequence does not go backwards. The provider answers one URL from
+several backend nodes, each numbering its own output, so two refreshes of one
+channel arrive from encoders minutes or hours apart. The box proxied that
+faithfully. A player handed a timeline that jumps backwards has no choice: it
+treats the stream as new, discards the buffer, re-seats the playhead, and shows
+video already watched. **That is the jump.**
+
+### The wrong turn
+
+The first fix seeked *forward* out of the backward jump. Two things were wrong
+with it, and both made matters worse:
+
+- hls.js seats the playhead `liveSyncDuration` — **32 seconds** — back from the
+  edge. Correcting to six seconds off the edge landed 26 seconds in front of
+  where the engine was about to put it back, and the engine did put it back.
+  The report had already named the mechanism: *"it landed on the seat, so it
+  was the engine correcting itself."* Each round of that argument is a visible
+  jump, so a fix aimed at one jump produced two.
+- Counting only *forward* motion as being alive meant a backward jump smaller
+  than the correction threshold reset nothing. The playhead then needed as many
+  seconds to climb back over its old high-water mark as the jump had cost it —
+  and a jump of thirteen seconds or more outlasted the twelve-second stuck
+  timer. So the watchdog declared a wedge, refetched, and reopened the channel
+  **on a stream that was playing perfectly well.**
+
+Where the playhead sits is the engine's business; the long note by
+`stopLiveTracking` always said so. The watchdog's only claim is that the
+picture must not be **frozen**, and a playhead that moved — whichever way — is
+not frozen. It is back to exactly that.
+
+### The fix
+
+By the time the player sees the regression, the timeline its buffer was built
+on is gone; there is nothing left to correct. So the regression is never handed
+over. The box reads every playlist it proxies anyway — it has to rewrite the
+segment URLs — so it keeps the last one it served for that channel and serves
+that again rather than one that has gone backwards:
+
+```
+provider sent: 3325 → 3288 → 3332 → 3298 → 3335 → 3300 → 3301 → 2037
+player saw:    3332 → 3332 → 3332 → 3332 → 3335 → 3335 → 3335 → 3335
+```
+
+To the player the stream simply has nothing new for a moment, which every HLS
+client already handles. Nothing is invented: every sequence it sees is one the
+provider really published.
+
+**The bound matters as much as the rule.** "Never backwards" must not become
+"never moves again" — a channel that genuinely restarted stays renumbered, and
+holding the old playlist for ever would freeze the picture waiting for numbers
+that are never coming. After 45 seconds of a regression persisting, it is taken
+as a real restart.
+
+Keyed on the channel file rather than the URL, because the pool can hand out
+either login for the same feed and the numbering problem is the provider's
+either way.
+
 ## A live channel has to keep going forwards
 
 > "the red zone screen will just pause and never start playing unless I press
