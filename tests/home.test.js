@@ -90,15 +90,33 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
     r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await page.route('**/progress*', (r) =>
     r.fulfill({ status: 200, contentType: 'application/json', body: '{"found":false}' }));
+  /*
+   * Served from variables rather than from constants, so a section can empty
+   * them instead of only emptying the page's copy.
+   *
+   * This suite was flaky at about one run in five, and this is why: the
+   * "nothing watched or starred" section cleared state.recentlyWatched and
+   * profiles.data.favorites and then read the page 600ms later, while these
+   * two routes went on answering with a full history and a full favourites
+   * list. Any refresh that landed inside that window put back exactly what
+   * had just been cleared, and the billboard came back with three slides.
+   *
+   * A flaky test is worse than a failing one: it taught me to dismiss this
+   * suite's failures as noise, which I did — twice — while it was telling the
+   * truth about a race in itself.
+   */
+  let recentRows = RECENT;
+  let favoriteRows = null;   // null = the default list below
   await page.route('**/api/profiles/*/taste', (r) =>
     r.fulfill({ status: 200, contentType: 'application/json',
-      body: JSON.stringify({ recentlyWatched: RECENT, categoryAffinity: [], ratings: {} }) }));
+      body: JSON.stringify({ recentlyWatched: recentRows, categoryAffinity: [], ratings: {} }) }));
   await page.route('**/api/profiles/*/prefs', (r) => {
     if (r.request().method() === 'PUT') {
       return r.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
     }
     return r.fulfill({ status: 200, contentType: 'application/json',
-      body: JSON.stringify({ favorites: [...CHANNELS, ...TITLES], pinnedCategories: [],
+      body: JSON.stringify({ favorites: favoriteRows || [...CHANNELS, ...TITLES],
+        pinnedCategories: [],
         pinOrder: {}, deletedItems: [], deletedCategories: [],
         tourDone: true, liveTourDone: true, livePinsSeeded: true }) });
   });
@@ -422,6 +440,11 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
   // said so. This one also carries what the box holds, so a new profile still
   // opens on a library rather than on an apology.
   console.log('\n  with nothing watched or starred');
+  /* The BOX has nothing either, so a refresh landing mid-section cannot put
+     back what is being cleared. Clearing only the page's copy is what made
+     this section flaky — see the note by the taste route. */
+  recentRows = [];
+  favoriteRows = [];
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.evaluate(() => {
     device.set('desk');
