@@ -1497,6 +1497,10 @@ async function readHealth() {
        a file nobody can reach: "the portal went down and I do not know why"
        is the one answer this box should never have to give. */
     crashes: recentCrashes(),
+    /* Whether the box would come back on its own after a reboot. Reported for
+       the same reason crashes are: the alternative is finding out when it is
+       already down and nobody knows why. */
+    boot: bootSurvival(),
     downloads: {
       /* All of them: more than one runs at a time now, and a health page that
          showed only the first would under-report the box's own load. */
@@ -10883,6 +10887,65 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   noteCrash('unhandledRejection', reason);
 });
+
+/* ------------------------------------------- will it come back by itself? ── */
+
+/*
+ * "it is back up. Make sure this never happens again"
+ *
+ * What happened: the Pi rebooted and pm2 came back with an EMPTY process
+ * list. Not a crash — `pm2 list` had no rows at all — so the portal was not
+ * restarted, and neither was the updater, which meant nothing was pulling
+ * main either. The box was simply absent until somebody noticed and started
+ * it by hand.
+ *
+ * pm2 only restores what two things give it: a saved list (`pm2 save`, which
+ * writes dump.pm2) and a boot service to replay it (`pm2 startup`, which
+ * installs a systemd unit). Miss either and everything looks perfectly
+ * healthy right up until the next reboot, which is the worst shape a fault
+ * can have.
+ *
+ * The self-healing that exists cannot cover this: the updater is itself a pm2
+ * app, so when the list is gone the thing that would fix it is gone too. The
+ * only fix is to check BEFORE the reboot — which is what this is. Read off
+ * disk rather than by shelling out to systemctl: two file reads on a poll
+ * beat spawning a process, and the files are the state.
+ */
+const PM2_HOME = process.env.PM2_HOME || path.join(os.homedir(), '.pm2');
+
+function bootSurvival() {
+  const out = { saved: null, service: false, ok: false, missing: [] };
+
+  /* The saved list, and WHICH apps are in it. A dump written before the
+     updater existed restores a portal with nothing keeping it current. */
+  try {
+    const dump = JSON.parse(fs.readFileSync(path.join(PM2_HOME, 'dump.pm2'), 'utf8'));
+    out.saved = (Array.isArray(dump) ? dump : [])
+      .map((app) => app && app.name)
+      .filter(Boolean);
+  } catch {
+    out.saved = null;   // never saved, or not readable from here
+  }
+
+  /* The boot service. `pm2 startup` installs a unit and enables it, and
+     enabling is a symlink under multi-user.target.wants — so the symlink is
+     the honest test, not the unit file, which can sit there disabled. */
+  try {
+    const wants = '/etc/systemd/system/multi-user.target.wants';
+    out.service = fs.readdirSync(wants).some((f) => /^pm2-/.test(f));
+  } catch {
+    out.service = false;
+  }
+
+  const want = ['iptv-portal', 'iptv-updater'];
+  if (!out.saved) out.missing.push('nothing has been saved with `pm2 save`');
+  else for (const name of want) {
+    if (!out.saved.includes(name)) out.missing.push(`${name} is not in the saved list`);
+  }
+  if (!out.service) out.missing.push('pm2 has no boot service (`pm2 startup`)');
+  out.ok = out.missing.length === 0;
+  return out;
+}
 
 /** The last few, newest first, for the health panel. */
 function recentCrashes(limit = 3) {

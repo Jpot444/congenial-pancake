@@ -3529,6 +3529,60 @@ and the roll-off case is kept as a check.
 A renumbered window resets the measurement rather than reading the jump as an
 hour of work in a second.
 
+## It comes back on its own
+
+> "it is back up. Make sure this never happens again"
+
+The Pi rebooted and pm2 came back with an **empty process list**. Not a crash —
+`pm2 list` printed headers and no rows. So the portal was never restarted, and
+neither was `iptv-updater`, which meant nothing was pulling `main` either. The
+box was simply absent until somebody noticed and started it by hand.
+
+pm2 restores a process list only when **both** of these exist:
+
+| | |
+| --- | --- |
+| a saved list | `pm2 save` → `~/.pm2/dump.pm2` |
+| a boot service to replay it | `pm2 startup` → a systemd unit, enabled |
+
+Miss either and everything reads perfectly healthy right up until the next
+reboot. That is the worst shape a fault can take: no symptom at all, then total
+absence.
+
+**Nothing in the box could have caught it**, and that is the part worth
+understanding. The self-healing that exists — the updater that repairs a bad
+deploy within two minutes — is *itself a pm2 app*. When the list is gone, the
+thing that would fix it is gone too. There is no arrangement of retries inside
+the portal that survives its own absence.
+
+So the only place it can be noticed is **before** the reboot, and that is now a
+row in the health panel:
+
+```
+Survives a reboot    NO — it would stay down          [ Fix this ]
+                     iptv-updater is not in the saved list; pm2 has no
+                     boot service — run scripts/ensure-boot.sh on the Pi
+```
+
+Read off disk rather than by shelling out to `systemctl`: two file reads on a
+poll beat spawning a process, and those files *are* the state. The **symlink**
+under `multi-user.target.wants` is what is tested, not the unit file — a unit
+sitting there disabled would restore nothing. And an unreadable pm2 home reads
+as "no", never as a cheerful yes; the failure direction matters more than the
+happy path.
+
+`scripts/ensure-boot.sh` is the one-command fix, idempotent, and it **checks
+its own work** rather than trusting that four steps which each printed success
+added up to a box that comes back. It also handles the trap in `pm2 startup`:
+that command does not install anything, it *prints* a sudo line for you to run
+— so run unattended it would log advice nobody reads and leave the problem
+exactly as it was.
+
+Two half-fixes it deliberately refuses to accept: a saved list with no service
+to replay it (feels fixed, reboots identically), and a list containing the
+portal but not the updater — which comes back up and then silently stops taking
+deploys, which is how a fault hides for a week.
+
 ## A live playlist that only ever goes on
 
 > "There are still so many jumps back to previous spots when I'm watching

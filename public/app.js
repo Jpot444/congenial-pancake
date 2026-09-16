@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '41.7';
+const VERSION = '41.8';
 
 const PAGE_SIZE = 60;
 
@@ -4371,6 +4371,30 @@ const health = {
       value: duration(d.uptime.host),
       sub: `portal ${duration(d.uptime.server)}`,
     }));
+
+    /* ---- would it come back on its own? ----
+     *
+     * "it is back up. Make sure this never happens again"
+     *
+     * The Pi rebooted and pm2 came back with an empty process list — no
+     * portal, and no updater either, so nothing was even pulling main. It
+     * stayed down until somebody noticed.
+     *
+     * pm2 restores a list only if one was SAVED and a boot service exists to
+     * replay it. Miss either and everything reads perfectly healthy until the
+     * next reboot, which is the worst shape a fault can take. So it is a row
+     * here, worded as what it costs rather than as the name of a setting, and
+     * it names the command that fixes it — this is read on a phone, usually
+     * nowhere near a terminal. */
+    if (d.boot) {
+      rows.push(row('Survives a reboot', {
+        value: d.boot.ok ? 'Yes' : 'NO — it would stay down',
+        sub: d.boot.ok
+          ? `pm2 restores ${(d.boot.saved || []).join(' and ')} at boot`
+          : `${d.boot.missing.join('; ')} — run scripts/ensure-boot.sh on the Pi`,
+        pill: d.boot.ok ? ['ok', 'Ready'] : ['bad', 'Fix this'],
+      }));
+    }
 
     /* ---- where a pushed update has got to ----
      *
