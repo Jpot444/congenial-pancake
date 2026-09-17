@@ -166,10 +166,38 @@ const rows = (page) => page.evaluate(() =>
   });
   console.log('   ', JSON.stringify(open));
   check('multi-view opened', open.mv === true, JSON.stringify(open));
-  check('and the panel came with it', open.hidden === false && open.openClass === true,
-    JSON.stringify(open));
-  check('out of the right-hand edge', open.right === 0 && open.width > 0
-    && open.width < open.viewport / 2, JSON.stringify(open));
+  /*
+   * And the panel does NOT come with it, which is the reversal.
+   *
+   * It used to, on the reasoning that arriving here from inside a game is
+   * usually the question "what else is on". Asked for directly: "Get rid of
+   * the auto popup of 'other games' but keep the button there." A panel that
+   * opens itself over the grid just asked for is answering a question nobody
+   * put — and the button is one press away for when it has been.
+   */
+  check('and the panel does not come with it, unasked',
+    open.hidden === true && open.openClass === false, JSON.stringify(open));
+
+  /* Pressed, because everything below is about what it OFFERS and that is
+     unchanged. The button is the feature now. */
+  await page.evaluate(() => document.querySelector('#mvSuggestBtn').click());
+  await wait(1200);
+  const pressed = await page.evaluate(() => {
+    const panel = document.querySelector('#mvSuggest');
+    const r = panel.getBoundingClientRect();
+    return {
+      hidden: panel.hidden,
+      openClass: panel.classList.contains('is-open'),
+      right: Math.round(window.innerWidth - r.right),
+      width: Math.round(r.width),
+      viewport: window.innerWidth,
+    };
+  });
+  console.log('   pressed:', JSON.stringify(pressed));
+  check('but the button still opens it', pressed.hidden === false
+    && pressed.openClass === true, JSON.stringify(pressed));
+  check('out of the right-hand edge', pressed.right === 0 && pressed.width > 0
+    && pressed.width < pressed.viewport / 2, JSON.stringify(pressed));
 
   /* ---- 2. what it offers ------------------------------------------------ */
   console.log('\n  what it offers');

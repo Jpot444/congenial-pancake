@@ -364,8 +364,19 @@ exit 0
       convRuns().join(' | ').slice(0, 200));
 
     const status3 = JSON.parse((await get3(`/api/remux/status?id=${first.session}`)).body);
+    /*
+     * How far it has got, and deliberately NOT whether it has finished.
+     *
+     * This pinned `complete === false` and failed in a sweep reading
+     * {"seconds":8,"complete":true} — the fake encoder had run to its end
+     * before the question was asked. That is a fact about how busy the
+     * machine is, not about the code: the claim is that a client can WATCH
+     * the conversion go past the point it resumed from, and eight seconds of
+     * progress is that claim whether or not the last segment has landed. The
+     * section below owns "it runs to its end".
+     */
     check('the client can watch the conversion pass its resume point',
-      status3.seconds === 8 && status3.complete === false, JSON.stringify(status3));
+      status3.seconds >= 8, JSON.stringify(status3));
 
     // Nobody fetches a segment from here on — the viewer has walked away —
     // and the conversion still runs to its end.
