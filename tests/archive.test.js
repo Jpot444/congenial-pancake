@@ -84,10 +84,30 @@ const get = (p, headers = {}) => new Promise((resolve, reject) => {
     rec('2023/Beta_Game.avi', { container: 'avi', vcodec: 'mpeg4', acodec: 'mp3', playback: 'transcode' }),
   ].join('\n') + '\n');
 
-  const server = spawn('node', ['server.js'], {
+  /*
+   * This box has NO ffmpeg, and that is arranged rather than assumed.
+   *
+   * Two checks below are about what a box without it says — a convert-on-play
+   * title and a thumbnail both have to refuse in words rather than 500. They
+   * passed for years because this container happened not to have ffmpeg
+   * installed, which made them a fact about the machine and not about the
+   * code: the moment one got installed here they failed, and on the Pi — where
+   * ffmpeg is always present — they were never testing anything at all.
+   *
+   * hasFfmpeg() probes PATH, so an empty PATH is the condition stated outright
+   * — and node is started by ABSOLUTE path, because the first thing an empty
+   * PATH breaks is finding node itself. Absolute rather than "keep node's
+   * directory on PATH": the two happen to be in different directories on this
+   * machine, but that is a fact about this machine and betting on it is what
+   * got this box into trouble in the first place. The boxes further down
+   * inject a FAKE ffmpeg the same way, for the opposite reason.
+   */
+  fs.mkdirSync(path.join(DIR, 'nobin'), { recursive: true });
+  const server = spawn(process.execPath, ['server.js'], {
     cwd: DIR,
     env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1',
-      ARCHIVE_ROOT: path.join(DIR, 'drive') },
+      ARCHIVE_ROOT: path.join(DIR, 'drive'),
+      PATH: path.join(DIR, 'nobin') },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let serverLog = '';
@@ -144,12 +164,13 @@ const get = (p, headers = {}) => new Promise((resolve, reject) => {
     check('another profile is refused', asGuest.status === 403, String(asGuest.status));
     check('and no profile at all is refused too', asNobody.status === 403, String(asNobody.status));
 
-    // No ffmpeg on this box, so a transcode title must say so rather than 500.
+    // No ffmpeg on this box — see the empty PATH above — so a transcode title
+    // must say so rather than 500.
     const enc = await get(`/api/archive/play?path=${encodeURIComponent('2023/Beta_Game.avi')}&profileId=own1`);
     check('a convert-on-play title without ffmpeg fails with a plain reason',
       enc.status === 501 && /ffmpeg/.test(enc.body), `${enc.status}: ${enc.body}`);
 
-    // Thumbnails, on a box with no ffmpeg: refused in words, not a 500.
+    // Thumbnails, on the same box with no ffmpeg: refused in words, not a 500.
     console.log('\n  thumbnails');
     const thumbNo = await get(`/api/archive/thumb?path=${encodeURIComponent('2024/Alpha_Game.mp4')}&profileId=own1`);
     check('a thumbnail without ffmpeg fails with a plain reason',
