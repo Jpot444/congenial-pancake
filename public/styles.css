@@ -4205,6 +4205,106 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 }
 .mv-picker .show-note { padding: 8px 4px; color: var(--muted-dim); }
 
+/* ---- the set being assembled ----
+ *
+ * Above the catalogue and below the sources, because it is the thing being
+ * made and the list underneath is the material. It does not scroll with the
+ * results: a set you cannot see while choosing the next thing for it is a set
+ * you have to remember, and the whole point of building one first is not
+ * having to.
+ */
+.mv-basket {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 18px 14px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+}
+.mv-basket-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.mv-basket-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: .01em;
+}
+/* Horizontal, so four picks cost one row rather than four — the catalogue
+   below is what the height is for. Wraps to two on a phone. */
+.mv-basket-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.mv-basket-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  min-width: 0;
+  flex: 1 1 220px;
+  max-width: 320px;
+}
+.mv-basket-art {
+  flex: 0 0 auto;
+  width: 64px;
+  aspect-ratio: 16 / 9;
+  border-radius: 7px;
+  overflow: hidden;
+  background: #000;
+}
+.mv-basket-art img { width: 100%; height: 100%; object-fit: cover; }
+.mv-basket-words { min-width: 0; flex: 1 1 auto; }
+.mv-basket-words h4 {
+  margin: 0;
+  font-size: .92rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mv-basket-words .card-sub { margin: 1px 0 0; font-size: .74rem; }
+.mv-basket-x {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mv-basket-x:hover { background: rgba(255, 255, 255, .1); color: var(--text); }
+.mv-basket-x svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* Pinned under the results, so the way out is in the same place however far
+   the catalogue has been scrolled. */
+.mv-basket-go {
+  flex: 0 0 auto;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+}
+.mv-basket-go .btn { width: 100%; justify-content: center; }
+.mv-basket-go .btn:disabled { opacity: .45; cursor: default; }
+
+@media (max-width: 560px) {
+  .mv-basket-row { flex: 1 1 100%; max-width: none; }
+}
+
 /* Five sources and a search box is more than a narrow window holds on one
    line. Wrapping well before it has to beats the segment squeezing its labels
    down to nothing. */

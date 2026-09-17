@@ -3529,6 +3529,80 @@ and the roll-off case is kept as a check.
 A renumbered window resets the measurement rather than reading the jump as an
 hour of work in a second.
 
+## Build a multiview
+
+From a screen recording of another app, with an exact ask: *"I want my player
+to match that function of 'build a multiview'."*
+
+What it does there: your picks along the top of a sheet, each removable; the
+catalogue underneath with its own filters; one pinned button that puts the
+whole lot on screen at once.
+
+What this player did instead: **the grid exists first**, and every empty cell
+has a `+` that opens a picker scoped to *that cell*. Starting a multiview was
+four trips through the same picker with a grid of holes staring back between
+them.
+
+### Both, because they are for different jobs
+
+The per-cell `+` stays. For **swapping one picture** while the other three keep
+playing it is the better control — one press on the cell you want to change,
+one pick, and nothing else stops. Removing it would make changing a channel
+cost a rebuild.
+
+The builder is for **starting** one: assemble the set, then press play once.
+
+```
+Building a multiview — 2 of 4 picked                        [ Clear ]
+┌──────────────────────────┐  ┌──────────────────────────┐
+│ ▣  US| NFL PPV 01     ×  │  │ ▣  US| NBC East       ×  │
+│    Remove                │  │    Remove                │
+└──────────────────────────┘  └──────────────────────────┘
+        …the ordinary picker, unchanged, underneath…
+┌────────────────────────────────────────────────────────┐
+│                   Start watching 2                     │
+└────────────────────────────────────────────────────────┘
+```
+
+### One place where a tap changes meaning
+
+The picker underneath is *the same picker* — same sources, same search, same
+categories, same episode step. The only thing that differs is what choosing a
+result **means**, and that was the whole risk: there were three separate commit
+points (a result card, an episode, a Recent row), and a mode that only three
+places agree about is a mode that will be missed in one of them.
+
+So they all funnel through one `take()`. Building or not is decided there,
+once.
+
+Decisions worth naming:
+
+- **Nothing plays until you press the button.** A set that started each pick as
+  it was chosen would be the old behaviour wearing a list.
+- **It can be pressed from two.** Two pictures is a multiview; requiring four
+  would be the screen deciding how you watch.
+- **The grid becomes the size of the set** — two picks and two holes beside
+  them would be the screen arguing with the choice just made. The count
+  control is still there afterwards.
+- **A fifth is refused out loud**, naming the way out. A `+` that silently does
+  nothing reads as broken rather than as full. Same for the same channel twice,
+  which would be two connections spent on one picture.
+- **Reopening edits what is playing.** The set arrives holding what is on
+  screen, and a picture that survives the edit is *not restarted* — its buffer
+  and its provider slot are worth more than the tidiness of rebuilding it.
+- **Cancelling throws the set away**, so a half-built one cannot reappear
+  behind the next single-cell pick.
+
+One thing deliberately not copied: the recommended-combination presets that sit
+*above* that button in the original. They are a separate feature and a separate
+question — what a good preset is for a channel-based library is not obvious,
+and guessing would be worse than asking.
+
+The mode label lives in the set's own heading rather than the picker's title.
+That title is the **location** — "Sports", "Favorites", "Search results", a
+show's name — set in seven places that are all right to set it; putting a fact
+about the set there was fighting them.
+
 ## It comes back on its own
 
 > "it is back up. Make sure this never happens again"

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '41.8';
+const VERSION = '41.9';
 
 const PAGE_SIZE = 60;
 
@@ -1339,6 +1339,11 @@ const multiview = {
   focused: -1,
   /** What the picker is offering — one of MV_SOURCES. */
   source: 'live',
+  /* Assembling a set rather than filling one cell. The picker is the same
+     either way; this is what a tap on a result MEANS. */
+  building: false,
+  /** The set being assembled: [{ item, override, label }], at most MV_MAX. */
+  basket: [],
   /** Which category the picker is inside, or null at the top level. */
   browsing: null,
   /** Which folder of the archive drive the picker is inside, '' at the top. */
@@ -2400,16 +2405,207 @@ const multiview = {
 
   pick(index) {
     this.picking = index;
+    this.building = false;
     this.browsing = null;
     this.show = null;
     $('#mvSearch').value = '';
     $('#mvPicker').hidden = false;
+    this.paintBasket();
     this.results('');
     $('#mvSearch').focus();
   },
 
+  /* -- building the whole set before watching any of it ------------------
+   *
+   * Filling cells one at a time is still how a single picture is SWAPPED, and
+   * for that it is the right shape: one press on the cell you want to change,
+   * one pick, and the other three never stop. But it is the wrong shape for
+   * STARTING a multiview, which is four trips through the same picker with a
+   * grid of holes staring back in between.
+   *
+   * So the set is assembled first — add, remove, see what you have, then press
+   * play once. The picker underneath is the same picker: the same sources, the
+   * same search, the same categories. Only what a tap MEANS changes, and that
+   * goes through take() so there is one place it can change rather than three
+   * that have to agree.
+   */
+
+  /** What the picker chose: into the set if one is being built, else a cell. */
+  take(item, override) {
+    if (this.building) return this.basketAdd(item, override);
+    this.closePicker();
+    return this.start(this.picking, item, override);
+  },
+
+  /** Open the picker with the set showing, seeded from whatever is on now. */
+  buildSet() {
+    this.building = true;
+    this.picking = -1;
+    this.browsing = null;
+    this.show = null;
+    /* Seeded from the grid, so "Change multiview" opens on what is playing
+       rather than on an empty list — the set is being EDITED, and starting
+       from nothing would mean re-picking three channels to change one. */
+    this.basket = this.cells
+      .slice(0, this.count)
+      .filter((cell) => cell && cell.item)
+      .map((cell) => ({ item: cell.item, override: cell.override || null,
+        label: cell.label || cell.item.name || '' }));
+    $('#mvSearch').value = '';
+    $('#mvPicker').hidden = false;
+    this.paintBasket();
+    this.results('');
+  },
+
+  /** The key a set entry is recognised by, so the same thing is not added twice. */
+  basketKey(item, override) {
+    const kind = override?.kind || item.kind || '';
+    const id = override?.id ?? item.id ?? '';
+    return `${kind}:${id}`;
+  },
+
+  basketAdd(item, override) {
+    const key = this.basketKey(item, override);
+    if (this.basket.some((row) => this.basketKey(row.item, row.override) === key)) {
+      return toast(`“${item.name}” is already in this multiview.`);
+    }
+    if (this.basket.length >= MV_MAX) {
+      /* Said rather than silently refused, and it names the way out. A + that
+         does nothing is the one outcome worth avoiding: it reads as broken
+         rather than as full. */
+      return toast(`That is ${MV_MAX} already — remove one to add another.`);
+    }
+    this.basket.push({ item, override: override || null,
+      label: override?.label || item.name || '' });
+    /* Back to the top of the picker after each add: the next thing wanted is
+       almost never the one next to the one just taken, and being left deep
+       inside a category with a set half built is a walk back. */
+    this.browsing = null;
+    this.show = null;
+    this.paintBasket();
+    this.results($('#mvSearch').value || '');
+  },
+
+  basketRemove(at) {
+    this.basket.splice(at, 1);
+    this.paintBasket();
+  },
+
+  paintBasket() {
+    const wrap = $('#mvBasket');
+    const go = $('#mvBasketGo');
+    if (!wrap || !go) return;
+    wrap.hidden = !this.building;
+    go.hidden = !this.building;
+    if (!this.building) return;
+
+    /*
+     * The heading carries the mode, and the picker's own title is left alone.
+     *
+     * Putting "Build a multiview" in #mvPickerTitle was fighting seven other
+     * places that set it — and they are right to: it is the LOCATION label,
+     * and reads "Sports", "Favorites", "Search results" or a show's name as
+     * you move around. The set's own heading is where a fact about the set
+     * belongs, and it is on screen the whole time the sheet is.
+     */
+    const n = this.basket.length;
+    $('#mvBasketCount').textContent = n
+      ? `Building a multiview — ${n} of ${MV_MAX} picked`
+      : `Build a multiview — pick up to ${MV_MAX}`;
+    $('#mvBasketClear').hidden = !n;
+    /* Enabled from one, not from four. Two pictures is a multiview; making
+       somebody fill all four before the button works would be this screen
+       deciding how they watch. */
+    $('#mvBasketWatch').disabled = n === 0;
+    $('#mvBasketWatch').textContent = n > 1
+      ? `Start watching ${n}`
+      : 'Start watching';
+
+    const rows = $('#mvBasketRows');
+    rows.innerHTML = '';
+    this.basket.forEach((row, at) => {
+      const line = el('div', 'mv-basket-row');
+      const art = el('div', 'mv-basket-art');
+      const src = row.item.logo || row.item.poster || '';
+      if (src) {
+        /* The raw URL, and dropped if it will not load — exactly what the
+           result cards above do. Routing it through img() instead put a
+           broken thumbnail on every row whose art is not a plain http URL,
+           and a row that already carries the name loses nothing by showing
+           no picture. */
+        const image = el('img');
+        image.loading = 'lazy';
+        image.alt = '';
+        image.src = src;
+        image.addEventListener('error', () => image.remove());
+        art.append(image);
+      }
+      const words = el('div', 'mv-basket-words');
+      words.append(el('h4', null));
+      words.lastChild.textContent = row.label || row.item.name || '';
+      const sub = el('p', 'card-sub');
+      sub.textContent = 'Remove';
+      words.append(sub);
+      const drop = el('button', 'mv-basket-x');
+      drop.setAttribute('aria-label', `Remove ${row.label || row.item.name || 'this'}`);
+      drop.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+      drop.addEventListener('click', () => this.basketRemove(at));
+      line.append(art, words, drop);
+      rows.append(line);
+    });
+  },
+
+  /** Put the set on screen: the grid becomes exactly what was assembled. */
+  async basketWatch() {
+    const set = this.basket.slice(0, MV_MAX);
+    if (!set.length) return;
+    this.building = false;
+    this.closePicker();
+
+    /* The grid becomes the size of the set. Picking two and being given two
+       pictures beside two holes is the screen arguing with the choice just
+       made — and the count control is still there to change it afterwards. */
+    const want = Math.min(MV_MAX, Math.max(2, set.length));
+    if (want !== this.count) this.setCount(want);
+
+    /* Anything already playing that is not in the new set goes, and anything
+       that IS in it is left alone — a picture that survives an edit must not
+       blink, and restarting it would cost its buffer and its provider slot
+       for no reason. */
+    const keep = new Map(set.map((row) => [this.basketKey(row.item, row.override), row]));
+    for (let i = 0; i < MV_MAX; i += 1) {
+      const cell = this.cells[i];
+      if (!cell || !cell.item) continue;
+      if (!keep.has(this.basketKey(cell.item, cell.override))) this.stop(i);
+    }
+
+    const already = new Map();
+    for (let i = 0; i < this.count; i += 1) {
+      const cell = this.cells[i];
+      if (cell && cell.item) already.set(this.basketKey(cell.item, cell.override), i);
+    }
+
+    for (const row of set) {
+      const key = this.basketKey(row.item, row.override);
+      if (already.has(key)) continue;
+      const free = this.cells.findIndex((cell, i) => i < this.count && cell && !cell.item);
+      if (free < 0) break;
+      /* Awaited one at a time rather than fired together: each start may take
+         a provider slot and may start a conversion, and four at once is how
+         you get four failures instead of the two the account can carry. */
+      // eslint-disable-next-line no-await-in-loop
+      await this.start(free, row.item, row.override || undefined);
+    }
+    this.basket = [];
+  },
+
   closePicker() {
     $('#mvPicker').hidden = true;
+    /* Cancelling out of a half-built set throws the set away rather than
+       leaving it to reappear behind the next single-cell pick. */
+    this.building = false;
+    this.basket = [];
+    this.paintBasket();
     this.wake();
   },
 
@@ -2658,8 +2854,7 @@ const multiview = {
       if (onPick) return onPick();
       // A show is not a thing you can play — it is a list of things you can.
       if (item.kind === 'series') return this.openShow(item);
-      this.closePicker();
-      this.start(this.picking, item);
+      this.take(item);
     });
     return card;
   },
@@ -2829,8 +3024,7 @@ const multiview = {
      * of Recent was told. Its id carries its own path; that plus the row's
      * name is everything a cell needs. */
     if (String(row.id || '').startsWith('archive:')) {
-      this.closePicker();
-      return this.start(index, {
+      return this.take({
         kind: 'movie',
         id: row.id,
         name: row.name || '',
@@ -2842,9 +3036,23 @@ const multiview = {
 
     /* A copy on the box needs no catalogue — see savedCopy(). */
     const onTheBox = savedCopy(row);
-    if (onTheBox) {
-      this.closePicker();
-      return this.start(index, onTheBox);
+    if (onTheBox) return this.take(onTheBox);
+
+    /* Anything past here goes looking in the catalogue and draws its progress
+       in a CELL, which a set being assembled does not have yet. Resolved
+       first, then handed to take() like everything else. */
+    if (this.building) {
+      const tabFor = row.kind === 'series' ? 'series' : row.kind === 'live' ? 'live' : 'movies';
+      const wanted = String(row.kind === 'series' ? row.seriesId ?? row.id : row.id);
+      let found;
+      try {
+        found = await findTitle(tabFor, wanted, row.seriesName || row.name || '');
+      } catch (err) {
+        return toast(`Couldn't find “${row.name || 'that'}”: ${err.message}`);
+      }
+      if (!found) return toast(`“${row.name || 'That'}” is not in the library any more.`);
+      if (found.kind === 'series') return this.openShow(found);
+      return this.take(found);
     }
 
     const tab = row.kind === 'series' ? 'series' : row.kind === 'live' ? 'live' : 'movies';
@@ -2966,8 +3174,7 @@ const multiview = {
       title.textContent = ep.title || `Episode ${ep.episode_num}`;
       card.append(art, title);
       card.addEventListener('click', () => {
-        this.closePicker();
-        this.start(this.picking, item, {
+        this.take(item, {
           kind: 'series',
           id: ep.id,
           ext: ep.container_extension || 'mp4',
@@ -3473,6 +3680,12 @@ const multiview = {
 $('#mvClose').addEventListener('click', () => multiview.close());
 $('#mvStopAll').addEventListener('click', () => multiview.stopAll());
 $('#mvSuggestBtn').addEventListener('click', () => multiview.toggleSuggest());
+$('#mvBuildBtn').addEventListener('click', () => multiview.buildSet());
+$('#mvBasketWatch').addEventListener('click', () => multiview.basketWatch());
+$('#mvBasketClear').addEventListener('click', () => {
+  multiview.basket = [];
+  multiview.paintBasket();
+});
 $('#mvSuggestClose').addEventListener('click', () => multiview.hideSuggest());
 $('#mvPickerBack').addEventListener('click', () => multiview.pickerBack());
 for (const button of document.querySelectorAll('#mvSourceSeg button')) {

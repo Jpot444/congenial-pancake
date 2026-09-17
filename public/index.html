@@ -551,6 +551,13 @@
     <!-- The other games. Opening multi-view off a game is almost always
          "what else is on right now", so the answer is a press away rather
          than a walk through the channel picker. -->
+    <!-- Assemble the whole set, then watch it.
+         Filling cells one at a time is still here — every empty cell has its
+         own +, and that is the right thing for swapping ONE picture while the
+         others keep playing. But starting a multiview that way is four trips
+         through the same picker, and the thing being copied does it the other
+         way round: build the list, then press play once. -->
+    <button class="btn btn-ghost btn-sm" id="mvBuildBtn">Build a multiview</button>
     <button class="btn btn-ghost btn-sm" id="mvSuggestBtn">Other games</button>
     <button class="btn btn-ghost btn-sm" id="mvStopAll">Stop all</button>
   </div>
@@ -608,7 +615,22 @@
     </div>
     <input type="search" id="mvSearch" placeholder="Search channels…" autocomplete="off" />
   </div>
+  <!-- What is going into the multiview, while it is being assembled. Hidden
+       when a cell is being filled one at a time, because then there is no set
+       to show — there is one cell and the next tap fills it. -->
+  <div class="mv-basket" id="mvBasket" hidden>
+    <div class="mv-basket-head">
+      <h3 id="mvBasketCount">Nothing picked yet</h3>
+      <button class="btn btn-ghost btn-sm" id="mvBasketClear">Clear</button>
+    </div>
+    <div class="mv-basket-rows" id="mvBasketRows"></div>
+  </div>
   <div class="grid is-cats mv-results" id="mvResults"></div>
+  <!-- Pinned, so the way out is in the same place however far the list has
+       been scrolled — the one control that is always reachable. -->
+  <div class="mv-basket-go" id="mvBasketGo" hidden>
+    <button class="btn btn-primary" id="mvBasketWatch">Start watching</button>
+  </div>
 </div>
 
 <!-- ─────────────────────────────────────────────────── walkthrough ─── -->
