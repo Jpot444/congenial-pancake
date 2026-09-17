@@ -3529,6 +3529,63 @@ and the roll-off case is kept as a check.
 A renumbered window resets the measurement rather than reading the jump as an
 hour of work in a second.
 
+## The multiview builder, second pass
+
+Four things, from watching it in use.
+
+**All the streams at once.** *"it loads the streams in one at a time after i
+press start watching, one press start watching I want all streams already
+going."* They were awaited one after another, and the reasoning at the time —
+four starts at once is how you get four failures instead of the two an account
+can carry — was misplaced. Nothing about awaiting them in turn makes the
+provider more willing: the same connections are asked for either way, a second
+apart instead of together, while the cost is watching the grid fill in one
+picture at a time. `Promise.allSettled`, so one channel the provider refuses
+does not stop the other three; and cells are claimed **before** anything is
+awaited, because two starts racing for "the first free cell" would both find
+the same one.
+
+**"Other games" stops opening itself.** Carrying a channel in from the player
+used to open the suggestions panel with it, on the reasoning that arriving from
+inside a game is usually the question "what else is on". A panel that opens
+itself over the grid you just asked for is answering a question that had not
+been put. The button stays.
+
+**Live TV opens on what is on.** The picker's default view is now three stacked
+sections, and the order is the substance — each is likelier than the one below
+it to hold the thing being looked for:
+
+```
+LIVE NOW              ← the scoreboard band, borrowed from the home page
+Your channels   4 favorites
+  [ big logo ] [ big logo ] [ big logo ] [ big logo ]
+All channels
+  [ Sports ] [ Entertainment ] …
+```
+
+Categories used to be the only thing here — ninety-odd folders, when the answer
+is nearly always a game on now or a channel already marked as a favourite. They
+are still there, last.
+
+The band is **borrowed, not copied**. There is one in the whole app — one poll,
+one slate — and `desktop.js` hands it to whoever asks; the car layer already
+does this. It moves into the sheet while that is open and `closePicker` puts it
+back, because left borrowed the page behind would have a hole across its head
+until something happened to redraw it. Guarded, because that layer only exists
+in desktop layout: a phone gets the two sections below it and no band, which is
+honester than an empty frame.
+
+The favourites section uses the picker's **own** tile, not the home page's
+channel card — the home card plays a channel, and in here a tap has to add to
+the set. Bigger than the categories below it, and the size is *for* the logo: a
+broadcaster is recognised by its mark long before anybody reads a name off it.
+
+One assumption worth flagging: "the listings for my favorite shows" was built
+as **favourite live channels**, since that is the only favourites display the
+home page has and "logos for the broadcasts" points at broadcasters. If what
+was meant is favourited *series* with their upcoming episodes, that is a
+different section and a small change.
+
 ## Build a multiview
 
 From a screen recording of another app, with an exact ask: *"I want my player

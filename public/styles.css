@@ -4205,6 +4205,48 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 }
 .mv-picker .show-note { padding: 8px 4px; color: var(--muted-dim); }
 
+/* ---- what Live TV opens on in the picker ----
+ *
+ * Three stacked sections in order of how likely each is to hold the thing
+ * being looked for: what is on now, then the channels already marked as
+ * favourites, then — last — the ninety-odd category folders that used to be
+ * the only thing here.
+ */
+.mv-results.mv-landing {
+  display: block;
+  padding: 0 18px 18px;
+}
+/* Inside the sheet's own gutter. Pulled OUT of it first, which put the band's
+   heading hard against the left edge of the screen — it carries no padding of
+   its own, because where it normally lives the page head provides it. */
+.mv-land-scores { display: block; margin: 0 0 4px; }
+.mv-land-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 18px 0 10px;
+}
+.mv-land-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: .01em;
+}
+.mv-land-head .shelf-count { color: var(--muted-dim); font-size: .8rem; }
+
+/* Bigger than the category tiles below it, and the size is FOR the logo: a
+   broadcaster is recognised by its mark long before anybody reads a name. */
+.mv-land-grid {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 14px;
+}
+.mv-land-grid .card-art { border-radius: 12px; }
+.mv-land-grid .card-art img { object-fit: contain; padding: 10px; }
+.mv-land-grid .card-title { font-size: .95rem; }
+
+@media (max-width: 700px) {
+  .mv-land-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}
+
 /* ---- the set being assembled ----
  *
  * Above the catalogue and below the sources, because it is the thing being

@@ -53,10 +53,12 @@ const CATEGORIES = [{ id: 'c1', name: 'Sports' }];
   /* Every cell asks for a stream; none of them has to arrive for this suite,
      which is about which cells were ASKED for and with what. */
   let playCalls = [];
+  let playAt = [];
   await page.route('**/api/play*', (r) => {
     const url = new URL(r.request().url());
     if (url.pathname !== '/api/play') return r.continue();
     playCalls.push(url.searchParams.get('id'));
+    playAt.push(Date.now());
     return r.fulfill({ status: 200, contentType: 'application/json',
       body: '{"url":"/api/nothing","format":"m3u8"}' });
   });
@@ -224,8 +226,11 @@ const CATEGORIES = [{ id: 'c1', name: 'Sports' }];
   /* ---- watching it ----------------------------------------------------- */
   console.log('\n  and then the whole set at once');
   playCalls = [];
+  playAt = [];
   await page.evaluate(() => document.querySelector('#mvBasketWatch').click());
   await wait(1500);
+  const playSpread = playAt.length > 1 ? playAt[playAt.length - 1] - playAt[0] : null;
+  console.log('   asks spread over', playSpread, 'ms');
   const after = await page.evaluate(() => ({
     picker: document.querySelector('#mvPicker').hidden,
     count: multiview.count,
@@ -244,6 +249,19 @@ const CATEGORIES = [{ id: 'c1', name: 'Sports' }];
     JSON.stringify(after));
   check('and each cell really asked for its own stream',
     playCalls.length === 2, JSON.stringify(playCalls));
+  /*
+   * ALL OF THEM AT ONCE, not one after the next.
+   *
+   * "it loads the streams in one at a time after i press start watching, one
+   *  press start watching I want all streams already going."
+   *
+   * They were awaited in turn, which filled the grid one picture at a time.
+   * Nothing about waiting made the provider more willing — the same
+   * connections are asked for either way — so they go together now, and the
+   * gap between the first ask and the last is what says so.
+   */
+  check('and they were asked for together, not one after the other',
+    playSpread !== null && playSpread < 400, `${playSpread}ms between first and last`);
 
   /* ---- editing what is playing ----------------------------------------- */
   /*
@@ -280,6 +298,92 @@ const CATEGORIES = [{ id: 'c1', name: 'Sports' }];
     edited.filled.length === 1, JSON.stringify(edited.filled));
   check('and it was not torn down and started again for nothing',
     playCalls.length === 0, JSON.stringify(playCalls));
+
+  /* ---- what Live TV opens on ------------------------------------------- */
+  /*
+   * "In the 'pick something' area add the live sports display that is on my
+   *  live tv homescreen. Below that, instead of catagories, make it the
+   *  listings for my favorite shows ... only bigger and with the logos for
+   *  the broadcasts. Put the catagories below that."
+   *
+   * The ORDER is the substance: each section is more likely than the one
+   * below it to hold the thing being looked for. Categories were the only
+   * thing here and are the least likely of the three.
+   */
+  console.log('\n  and Live TV opens on what is on, then yours, then the rest');
+  await page.evaluate(() => {
+    /* Two of the channels marked as favourites, so the middle section has
+       something to draw. Idempotent, because toggling twice un-favourites. */
+    for (const item of state.library.live.items.slice(0, 2)) {
+      if (!profiles.hasFav(item)) profiles.toggleFav(item);
+    }
+    multiview.closePicker();
+    multiview.buildSet();
+  });
+  await wait(700);
+  const land = await page.evaluate(() => {
+    const box = document.querySelector('#mvResults');
+    const order = [...box.children].map((n) => n.className);
+    return {
+      landing: box.classList.contains('mv-landing'),
+      order,
+      favs: box.querySelectorAll('.mv-land-favs .card').length,
+      cats: box.querySelectorAll('.mv-land-cats .card').length,
+      heads: [...box.querySelectorAll('.mv-land-head h3')].map((h) => h.textContent),
+    };
+  });
+  console.log('   ', JSON.stringify(land));
+  check('the sections are in that order', 
+    land.order.findIndex((c) => /mv-land-favs/.test(c))
+      < land.order.findIndex((c) => /mv-land-cats/.test(c))
+    && land.order.findIndex((c) => /mv-land-favs/.test(c)) > -1,
+    JSON.stringify(land.order));
+  check('your own channels are there, above the categories',
+    land.favs === 2, String(land.favs));
+  check('and the categories are still reachable, just last',
+    land.cats >= 1, String(land.cats));
+  check('each section says what it is',
+    land.heads.includes('Your channels') && land.heads.includes('All channels'),
+    JSON.stringify(land.heads));
+  /* The band is BORROWED — one band exists in the whole app and desktop.js
+     hands it out. Only present in desktop layout, which is where this runs. */
+  check('and the live band is borrowed rather than a second copy of it',
+    await page.evaluate(() => {
+      const inSheet = document.querySelector('#mvResults #dkScores');
+      return Boolean(inSheet) && document.querySelectorAll('#dkScores').length === 1;
+    }), 'either no band or two of them');
+
+  /* And handed back, or the page behind loses the most visible thing on it. */
+  await page.evaluate(() => multiview.closePicker());
+  await wait(400);
+  check('and handed back when the sheet closes',
+    await page.evaluate(() => {
+      const band = document.querySelector('#dkScores');
+      return Boolean(band) && !band.closest('#mvResults');
+    }), 'the band was left inside the picker');
+
+  /* ---- the panel that opened itself ------------------------------------ */
+  /*
+   * "Get rid of the auto popup of 'other games' but keep the button there."
+   *
+   * Opening multi-view from inside a game used to open the suggestions panel
+   * with it, answering a question that had not been asked. The button stays.
+   */
+  console.log('\n  and other games no longer opens itself');
+  const suggest = await page.evaluate(() => ({
+    panel: document.querySelector('#mvSuggest')?.hidden,
+    button: Boolean(document.querySelector('#mvSuggestBtn')?.getClientRects().length),
+  }));
+  check('the panel is not showing', suggest.panel === true, String(suggest.panel));
+  check('but the button still is', suggest.button === true, String(suggest.button));
+  /* Source-level, because what is being asserted is the ABSENCE of a call
+     that only fires on a path this suite does not take. */
+  const APP = require('fs').readFileSync(
+    require('./paths.js').ROOT + '/public/app.js', 'utf8');
+  const carry = APP.slice(APP.indexOf("$('#cinemaMultiview')"));
+  check('and carrying a channel in no longer opens it either',
+    !/multiview\.suggest\(\);/.test(carry.slice(0, 1200)),
+    'the auto-open is still wired to the player button');
 
   /* ---- cancelling ------------------------------------------------------ */
   console.log('\n  and a set abandoned half-built does not linger');

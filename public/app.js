@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '41.9';
+const VERSION = '42.0';
 
 const PAGE_SIZE = 60;
 
@@ -2585,22 +2585,57 @@ const multiview = {
       if (cell && cell.item) already.set(this.basketKey(cell.item, cell.override), i);
     }
 
+    /*
+     * All of them at once.
+     *
+     * These were awaited one after another, on the reasoning that each start
+     * may take a provider slot and four at once is how you get four failures
+     * instead of the two an account can carry. Asked for directly: "it loads
+     * the streams in one at a time after i press start watching, one press
+     * start watching I want all streams already going."
+     *
+     * And the caution was misplaced anyway. Nothing about awaiting them in
+     * turn makes the provider more willing — the same four connections are
+     * asked for either way, a second or two apart instead of together — while
+     * the cost is watching the grid fill in one picture at a time, which is
+     * the thing being complained about. The slot accounting and the refusals
+     * are the box's business and already work; this is just the order the
+     * asking happens in.
+     *
+     * Cells are claimed BEFORE anything is awaited, because two starts racing
+     * for "the first free cell" would both find the same one.
+     */
+    const claims = [];
     for (const row of set) {
       const key = this.basketKey(row.item, row.override);
       if (already.has(key)) continue;
-      const free = this.cells.findIndex((cell, i) => i < this.count && cell && !cell.item);
+      const free = this.cells.findIndex((cell, i) =>
+        i < this.count && cell && !cell.item && !claims.some((c) => c.index === i));
       if (free < 0) break;
-      /* Awaited one at a time rather than fired together: each start may take
-         a provider slot and may start a conversion, and four at once is how
-         you get four failures instead of the two the account can carry. */
-      // eslint-disable-next-line no-await-in-loop
-      await this.start(free, row.item, row.override || undefined);
+      claims.push({ index: free, row });
     }
     this.basket = [];
+    /* allSettled, not all: one channel the provider refuses must not stop the
+       other three from coming up, and each cell reports its own failure in
+       its own picture. */
+    await Promise.allSettled(claims.map(
+      ({ index, row }) => this.start(index, row.item, row.override || undefined)));
   },
 
   closePicker() {
     $('#mvPicker').hidden = true;
+    /*
+     * Give the scoreboard back.
+     *
+     * There is one band in the app and liveLanding borrows it — see the note
+     * there. Left borrowed, the page behind would have a hole across its head
+     * until something happened to redraw it, which on Live TV is the most
+     * visible thing on the screen.
+     */
+    const desk = window.__ttDesktop;
+    if (desk && typeof desk.scoreboard === 'function' && state.tab === 'live') {
+      try { desk.scoreboard(); } catch { /* the page will redraw it */ }
+    }
     /* Cancelling out of a half-built set throws the set away rather than
        leaving it to reappear behind the next single-cell pick. */
     this.building = false;
@@ -2697,6 +2732,9 @@ const multiview = {
   results(query) {
     const box = $('#mvResults');
     box.innerHTML = '';
+    /* The landing layout is one view among several in this box; cleared here
+       so a search does not inherit its spacing. */
+    box.classList.remove('mv-landing');
     for (const b of document.querySelectorAll('#mvSourceSeg button')) {
       b.classList.toggle('is-on', b.dataset.source === this.source);
     }
@@ -2765,7 +2803,15 @@ const multiview = {
       if (item.logo && !covers.has(id) && !looksAnimated(item.logo)) covers.set(id, item.logo);
     }
 
-    if (!flat) return this.categoryTiles(box, library, counts, covers);
+    if (!flat) {
+      /* Live TV opens on what is on RIGHT NOW, then your channels, then the
+         categories — see liveLanding. Films and shows still open on their
+         categories, because there is no "on now" for a library. */
+      if (this.source === 'live') {
+        return this.liveLanding(box, library, counts, covers);
+      }
+      return this.categoryTiles(box, library, counts, covers);
+    }
 
     const inside = inCategory
       ? all.filter((i) => String(i.categoryId) === String(this.browsing.id))
@@ -2783,6 +2829,79 @@ const multiview = {
       return box.append(note);
     }
     for (const item of hits) box.append(this.titleTile(item));
+  },
+
+  /*
+   * What Live TV opens on inside the picker.
+   *
+   * "In the 'pick something' area add the live sports display that is on my
+   *  live tv homescreen. Below that, instead of catagories, make it the
+   *  listings for my favorite shows, also the same display that is on my
+   *  homescreen, only bigger and with the logos for the broadcasts. Put the
+   *  catagories below that."
+   *
+   * The order is the point, and it is the order of how likely each one is to
+   * hold the thing being looked for. A category list is the least likely and
+   * was the only thing here: ninety-odd folders, when the answer is nearly
+   * always a game that is on now or a channel already marked as a favourite.
+   *
+   * The scoreboard is BORROWED, not copied. There is one band in the whole
+   * app — one poll, one slate — and desktop.js hands it to whoever asks; the
+   * car layer already does this. It moves here while the sheet is open and
+   * goes back when it closes, which is why closePicker puts it back.
+   */
+  liveLanding(box, library, counts, covers) {
+    $('#mvPickerSub').textContent = '';
+    box.classList.remove('is-cats');
+    box.classList.add('mv-landing');
+
+    /* -- what is on now ------------------------------------------------- */
+    const desk = window.__ttDesktop;
+    if (desk && typeof desk.scoreboard === 'function') {
+      const band = el('section', 'mv-land-scores');
+      box.append(band);
+      /* Guarded because this layer only exists in desktop layout. A phone
+         gets the two sections below and no band, which is the honest outcome
+         rather than an empty frame where one would have been. */
+      try {
+        desk.scoreboard(band);
+      } catch {
+        band.remove();
+      }
+    }
+
+    /* -- your channels -------------------------------------------------- */
+    const favourites = profiles.favItems()
+      .filter((i) => i && i.kind === 'live' && i.name)
+      .filter((i) => !profiles.isDeleted(i));
+    if (favourites.length) {
+      const section = el('section', 'mv-land-favs');
+      const head = el('div', 'mv-land-head');
+      head.append(el('h3', null));
+      head.lastChild.textContent = 'Your channels';
+      const count = el('span', 'shelf-count');
+      count.textContent = `${favourites.length} favorite${favourites.length === 1 ? '' : 's'}`;
+      head.append(count);
+      section.append(head);
+      /* Bigger than the tiles below, and the logo is the whole point of the
+         size: a broadcaster is recognised by its mark long before anybody
+         reads a name off it. */
+      const rail = el('div', 'grid is-live mv-land-grid');
+      for (const item of favourites) rail.append(this.titleTile(item));
+      section.append(rail);
+      box.append(section);
+    }
+
+    /* -- and the categories, last --------------------------------------- */
+    const cats = el('section', 'mv-land-cats');
+    const catHead = el('div', 'mv-land-head');
+    catHead.append(el('h3', null));
+    catHead.lastChild.textContent = 'All channels';
+    cats.append(catHead);
+    const catGrid = el('div', 'grid is-cats');
+    cats.append(catGrid);
+    box.append(cats);
+    this.categoryTiles(catGrid, library, counts, covers);
   },
 
   categoryTiles(box, library, counts, covers) {
@@ -15440,11 +15559,14 @@ $('#cinemaMultiview').addEventListener('click', () => {
   multiview.open();          // closes the player, and with it its connection
   const free = multiview.cells.findIndex((c, i) => i < multiview.count && !c.item);
   multiview.start(free >= 0 ? free : 0, item);
-  /* And the other games with it. Pressing this from inside a game is the
-     question "what else is on" far more often than it is "let me go and find
-     three more things", so the answer comes out with the grid rather than
-     waiting behind another press. */
-  multiview.suggest();
+  /* And NOT the other games with it.
+   *
+   * This used to open the suggestions panel too, on the reasoning that coming
+   * here from inside a game is usually the question "what else is on". Asked
+   * for directly: "Get rid of the auto popup of 'other games' but keep the
+   * button there." A panel that opens itself over the grid you just asked for
+   * is answering a question that had not been put, and the button is one press
+   * away for when it has been. */
 });
 
 for (const evt of ['mousemove', 'touchstart', 'click']) {

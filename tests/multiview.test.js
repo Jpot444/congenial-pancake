@@ -201,8 +201,13 @@ const EPISODES = {
     subs: [...document.querySelectorAll('#mvResults .cat-card .card-sub')]
       .map((c) => c.textContent),
     withArt: document.querySelectorAll('#mvResults .cat-card .card-art img').length,
-    // The library grid's own classes, so the tiles size themselves the same.
-    gridClass: document.querySelector('#mvResults').className,
+    /* The library grid's own classes, so the tiles size themselves the same.
+       Read off the element the CATEGORIES are on rather than off #mvResults:
+       Live TV opens on three stacked sections now — what is on, your own
+       channels, then these — so #mvResults is the landing wrapper and the
+       grid is one level in. The claim is unchanged; where it is true moved. */
+    gridClass: (document.querySelector('#mvResults .mv-land-cats .grid')
+      || document.querySelector('#mvResults')).className,
     // No bin: hiding a category from inside here would re-render the page
     // underneath the sheet, which is not what pressing it there means.
     bins: document.querySelectorAll('#mvResults .card-bin').length,
@@ -215,6 +220,16 @@ const EPISODES = {
     cats.withArt === 2, `${cats.withArt} with art`);
   check('laid out on the library grid itself',
     /\bis-cats\b/.test(cats.gridClass), cats.gridClass);
+  /* And they are the LAST of the three sections, not the only one — see
+     mvbuild.test.js, which owns the order. */
+  check('below what is on now and below your own channels',
+    await page.evaluate(() => {
+      const box = document.querySelector('#mvResults');
+      if (!box.classList.contains('mv-landing')) return true;
+      const kids = [...box.children].map((n) => n.className).join('|');
+      return /mv-land-cats/.test(kids)
+        && kids.indexOf('mv-land-cats') === kids.lastIndexOf('mv-land-cats');
+    }), 'the categories are not where the landing puts them');
   check('each saying how many are in it', /4 channels/.test(cats.subs[0]), cats.subs[0]);
   check('with no bin to re-render the page behind the sheet', cats.bins === 0,
     `${cats.bins} bins`);
