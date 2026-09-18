@@ -3992,6 +3992,85 @@ account: one channel takes the connection, the second is refused by name, and �
 the check that matters as much — a feed that fails with nothing holding
 anything still gets the direct proxy exactly as before.
 
+## How many connections this house actually has
+
+> "im getting Refused: No connection free for this channel. ACC NETWORK HD is
+> open. Close one and try again. i should be able to run multiple streams no
+> problem."
+
+They could. **The box was wrong about its own capacity**, and being wrong about
+it turned every other fault into a lie about connections.
+
+`providers.slotsFor()` answers with the provider's own `max_connections` when
+it knows it, and a conservative guess of **one** when it does not. The only
+thing that ever filled that in was `GET /api/providers` — which is the
+manage-providers panel in Settings and nothing else. So a box that had rebooted
+believed every login was a single-connection account, indefinitely, until
+somebody happened to open Settings. The Pi reboots; nobody opens Settings
+afterwards.
+
+With two logins that makes the house two streams wide however many the account
+allows. And the guess does not merely refuse — it **misattributes**. `crowded`
+is the flag deciding whether a failed ingest is reported as a connection
+problem, and it is `!providers.pick(cfg)`. Believe the house is full and a slow
+feed, a dead channel, anything at all going wrong on the second window comes
+back as a sentence about the pool naming the one channel that is open.
+
+Three changes:
+
+- **`refreshAccounts()`** — the probe, lifted out of the settings endpoint it
+  was trapped in. Called at boot, by that endpoint as before, and once more
+  before the box is willing to claim the house is full: `if (!providers.pick(cfg)
+  && providers.anyGuessed(cfg)) await refreshAccounts(cfg)`. One cached call per
+  login, and only where the answer changes the decision.
+- **A failed probe does not shrink the house.** `note(id, null, msg)` is the
+  right record for "the provider answered and rejected this login"; it is the
+  wrong one for "the box could not get a reply", where clearing
+  `maxConnections` drops the account back to the guess. `noteError()` keeps the
+  numbers and moves only the error — otherwise the original bug comes back
+  wearing a dropped packet.
+- **Unreachable still means one.** The fallback stays conservative. A box that
+  assumed plenty on a panel it could not reach would open four connections on a
+  single-connection account, which is the failure the pool exists to prevent.
+
+### `take()` was cancelling other people's reservations
+
+Found on the way. A reservation covers the gap between choosing a login and
+opening the pipe, and `take()` gave one up with `held.reserved.shift()` — the
+oldest on that login, whoever called. So a download, or an ingest that found
+the pool full and went ahead anyway, cancelled a reservation a *different*
+start was relying on, at exactly the moment it was needed. Four multiview cells
+starting together could each knock another off the login it had been promised.
+
+Split in two, because they are two different acts:
+
+| call | means |
+| --- | --- |
+| `take(id)` | take a slot, touch no reservation — downloads, recordings, a crowded ingest that reserved nothing |
+| `claim(id, ticket)` | take a slot **and** give up the reservation held for it |
+
+`pick(cfg, {reserve:true})` hands the ticket back on the account object, so a
+caller that chooses and takes in one breath consumes exactly its own. The
+stream proxy cannot: `/api/play` reserves a login and builds a URL, and the
+pipe opens in a *later* request that knows the account only from the
+credentials in that URL. There is no object to carry, so `claim(id)` with no
+ticket takes the oldest — which is what the code always did, and what it has to
+keep doing there.
+
+Getting that wrong is not theoretical: the first cut made every claim
+ticket-exact, the proxy had no ticket to give, and its reservation outlived the
+stream it was made for. A standing reservation reads as a full pool, a full
+pool stamps `lastSlotsFullAt`, and the download queue then waits out the grace
+window after a film that had already stopped. `twoup.test.js` caught it.
+
+`tests/connections.test.js` reproduces the report on the shipped code before
+the fix, in the reported words — one channel open on a four-connection account,
+a second channel failing for reasons of its own, and
+`No connection free for this channel. ACC NETWORK HD is open.` It then holds
+the four things that must all stay true: the box learns the number without
+being asked, runs that many streams, still refuses the fifth by name, and still
+sends a dead feed with room to spare down the direct path.
+
 ## The DVR keeps trying
 
 > "We need to fix the DVR because it just does not work... if something is

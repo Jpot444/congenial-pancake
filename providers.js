@@ -61,7 +61,7 @@ function slot(id) {
   // Each reservation dies on its own schedule.
   if (held.reserved.length) {
     const now = Date.now();
-    held.reserved = held.reserved.filter((until) => until > now);
+    held.reserved = held.reserved.filter((t) => t.until > now);
   }
   return held;
 }
@@ -98,6 +98,32 @@ function slotsFor(id) {
   if (!Number.isFinite(said) || said < 1) return DEFAULT_SLOTS;
   return Math.min(MAX_SLOTS, Math.floor(said));
 }
+
+/**
+ * Whether that number is a GUESS rather than something the provider said.
+ *
+ * This matters because the guess is one, and one is the number that makes
+ * everything else in the box behave as though the house is full. A login
+ * nobody has asked about reads as a single-connection account, so the second
+ * stream is "crowded" and any failure on it — a slow feed, a dead channel,
+ * anything at all — gets reported as "no connection free", which is a
+ * sentence about the pool rather than about what actually went wrong.
+ *
+ * Nothing used to correct it except opening the manage-providers panel by
+ * hand: `note()` is called from that endpoint and nowhere else, so a box that
+ * had rebooted believed every account allowed one connection until somebody
+ * happened to visit Settings. A reboot is exactly when nobody does.
+ *
+ * So callers about to make a decision that hinges on capacity can ask whether
+ * the figure is worth deciding on, and go and find out when it is not.
+ */
+function guessing(id) {
+  const known = facts.get(id);
+  return !(known && Number(known.maxConnections) >= 1);
+}
+
+/** True when any login's slot count is still the conservative guess. */
+const anyGuessed = (cfg) => accounts(cfg).some((a) => guessing(a.id));
 
 /** Free slots across every login. */
 function free(cfg) {
@@ -139,7 +165,15 @@ function pick(cfg, { reserve = false } = {}) {
     }
   }
   if (!best) return null;
-  if (reserve) slot(best.id).reserved.push(Date.now() + RESERVE_MS);
+  /* The reservation is handed back on the account object so the caller can
+     give up THAT one later. Without a ticket, take() could only drop the
+     oldest reservation on the login, which is somebody else's whenever two
+     things start at once — see take(). */
+  if (reserve) {
+    const ticket = { until: Date.now() + RESERVE_MS };
+    slot(best.id).reserved.push(ticket);
+    return { ...best, ticket };
+  }
   return best;
 }
 
@@ -178,7 +212,6 @@ function forUrl(cfg, url) {
 function take(id) {
   const held = slot(id);
   held.streams += 1;
-  held.reserved.shift();        // this is what the reservation was for
   let done = false;
   return () => {
     if (done) return;
@@ -187,9 +220,42 @@ function take(id) {
   };
 }
 
+/**
+ * Take a slot AND give up the reservation that was held for it.
+ *
+ * The distinction take() no longer makes on its own, because it used to make
+ * it wrongly: it shifted the oldest reservation on the login whoever called
+ * it, so a download — or an ingest that found the pool full and went ahead
+ * anyway — cancelled a reservation a different start was relying on, at
+ * exactly the moment it was needed. Four multiview cells starting together
+ * could each cancel another's.
+ *
+ * Two kinds of caller claim a reservation, and they can say so differently:
+ *
+ * - With a `ticket`, from pick({reserve:true}) in the same breath. Exact, and
+ *   the right thing wherever the choosing and the taking are in one function.
+ * - Without one, from the stream proxy: /api/play reserves a login and builds
+ *   a URL, and the pipe opens in a LATER request that can only know the
+ *   account from the credentials in that URL. There is no object to carry, so
+ *   the oldest reservation on that login is the one being claimed — which is
+ *   what take() always did, and what it has to keep doing HERE.
+ *
+ * A caller that never reserved calls take() and touches nothing.
+ */
+function claim(id, ticket = null) {
+  const held = slot(id);
+  const at = ticket ? held.reserved.indexOf(ticket) : 0;
+  if (at >= 0 && held.reserved.length) held.reserved.splice(at, 1);
+  return take(id);
+}
+
 /** Give up a reservation nobody is going to claim. */
-function unreserve(id) {
-  slot(id).reserved.shift();
+function unreserve(id, ticket = null) {
+  const held = slot(id);
+  if (!ticket) return held.reserved.shift();
+  const at = held.reserved.indexOf(ticket);
+  if (at >= 0) held.reserved.splice(at, 1);
+  return undefined;
 }
 
 /* ------------------------------------------------------------ what they are ── */
@@ -212,6 +278,23 @@ function note(id, userInfo, error = '') {
     created: Number(info.created_at) ? Number(info.created_at) * 1000 : null,
     error: error || '',
   });
+}
+
+/**
+ * A login that could not be reached, without forgetting what it last said.
+ *
+ * note(id, null, message) is the right record for "the provider answered and
+ * rejected this login" — the account really is unusable and its numbers mean
+ * nothing. It is the wrong record for "the box could not get a reply", which
+ * is a network hiccup: clearing maxConnections there drops the account back
+ * to the one-connection guess, and the guess is what makes the box refuse
+ * streams the account allows. So the numbers stand and only the error moves.
+ */
+function noteError(id, message) {
+  const known = facts.get(id);
+  if (!known) return note(id, null, message);
+  facts.set(id, { ...known, error: message || '', at: Date.now() });
+  return undefined;
 }
 
 const stale = (id) => {
@@ -262,13 +345,17 @@ module.exports = {
   forMeta,
   forUrl,
   take,
+  claim,
   unreserve,
   free,
   busy,
   capacity,
   inUse,
   slotsFor,
+  guessing,
+  anyGuessed,
   note,
+  noteError,
   stale,
   report,
   forget,

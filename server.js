@@ -946,6 +946,57 @@ function xtreamApiUrl(cfg, params) {
   return u.toString();
 }
 
+/**
+ * Ask the provider what each login actually allows, and remember it.
+ *
+ * "i should be able to run multiple streams no problem"
+ *
+ * The box's slot count per login used to come from one of two places: the
+ * provider's own `max_connections`, or — if nobody had ever asked — a
+ * conservative guess of ONE. The only thing that ever asked was GET
+ * /api/providers, which is the manage-providers panel in Settings and nothing
+ * else. So a box that had rebooted believed every account was a
+ * single-connection account, indefinitely, until somebody happened to open
+ * Settings; and the Pi reboots.
+ *
+ * With two logins that makes the house two streams wide. The third window is
+ * then "crowded", and `crowded` is what decides whether a failed ingest is
+ * reported as a connection problem — so a slow feed, a dead channel, anything
+ * at all going wrong on that third window came back as
+ *
+ *   "No connection free for this channel. ACC NETWORK HD is open."
+ *
+ * which names one channel, blames the pool, and is not true. Being wrong
+ * about capacity turned every other fault into a lie about connections.
+ *
+ * Asking is cheap — one call per login, cached for REFRESH_MS by
+ * providers.stale — so it happens at boot, and again before the box is
+ * willing to tell anybody the house is full.
+ */
+async function refreshAccounts(cfg, { force = false } = {}) {
+  for (const account of providers.accounts(cfg)) {
+    if (!providers.stale(account.id) && !force) continue;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const probe = await request(xtreamApiUrl(account, {}), { timeout: 15000 });
+      // eslint-disable-next-line no-await-in-loop
+      const body = JSON.parse((await readBody(probe)).toString('utf8'));
+      if (body && body.user_info && body.user_info.auth !== 0) {
+        providers.note(account.id, body.user_info);
+      } else {
+        providers.note(account.id, null, 'The provider rejected this login.');
+      }
+    } catch (err) {
+      /* A login that cannot be reached keeps whatever was last known about
+         it, and the error is recorded for the panel. What it must NOT do is
+         leave the pool asserting a full house on the strength of a guess —
+         see the crowded check, which treats a still-guessed count as a
+         reason not to blame connections. */
+      providers.noteError(account.id, err.message);
+    }
+  }
+}
+
 function buildStreamUrl(cfg, kind, streamId, ext) {
   const base = normalizeHost(cfg.host);
   const u = encodeURIComponent(cfg.username);
@@ -3524,7 +3575,12 @@ async function startRemux(input, opts) {
      already counted, which is what makes it "did this take the LAST one"
      rather than "is anything playing". */
   const account = fromProvider ? providers.forUrl(readConfig(), input) : null;
-  const releaseSlot = account ? providers.take(account.id) : null;
+  /* claim(), because /api/remux reserved this login a few lines up and reads
+     the choice back out of the URL — so the reservation it made is the one
+     this conversion is here to consume. Left unconsumed it stands for its
+     full twenty seconds on top of a slot already counted, and the pool reads
+     one short for no reason. */
+  const releaseSlot = account ? providers.claim(account.id) : null;
   if (fromProvider) autoPauseActiveDownload();
 
   const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -4577,6 +4633,18 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
   // still start — multiview and a recording already in progress are the
   // cases that need a second window — but take() the first login anyway so
   // the pool is not left reading idle while ffmpeg is pulling.
+  /*
+   * Before deciding the house is full, find out how big it is.
+   *
+   * A login nobody has asked about counts as one connection, and that guess is
+   * what `crowded` is read against. Two logins then make the house two streams
+   * wide however many the account really allows, so the third window is
+   * "crowded" and every failure on it is reported as a connection problem.
+   * Asking costs one cached call per login, and only when the answer would
+   * change the decision. */
+  if (!providers.pick(cfg) && providers.anyGuessed(cfg)) {
+    await refreshAccounts(cfg);
+  }
   const spare = providers.pick(cfg, { reserve: true });
   const account = spare || providers.accounts(cfg)[0] || null;
   if (!account) throw new Error('No free provider connection for live ingest');
@@ -4616,7 +4684,16 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
      it — they all read the Pi's window rather than the provider. take()
      consumes the reservation from pick() above. */
   session.account = account.id;
-  session.releaseSlot = providers.take(account.id);
+  /* The ticket from pick() above, so this consumes ITS OWN reservation. A
+     crowded start has none — it found nothing free and went ahead anyway —
+     and must not cancel the reservation another start is relying on. */
+  /* claim() when this start reserved a login, take() when it did not.
+     A crowded start found nothing free and went ahead anyway — it holds no
+     reservation, and cancelling somebody else's is how four cells starting
+     together used to knock each other off the login they had been promised. */
+  session.releaseSlot = account.ticket
+    ? providers.claim(account.id, account.ticket)
+    : providers.take(account.id);
   remuxSessions.set(id, session);
   lastProviderActiveAt = Date.now();
   autoPauseActiveDownload();
@@ -5124,7 +5201,13 @@ async function handleStream(req, res, query) {
      was built because here is where the pipe actually opens — and released
      whichever way the response ends. */
   const account = providers.forUrl(readConfig(), target);
-  const giveBack = account ? providers.take(account.id) : null;
+  /* claim(), not take(): /api/play reserved a login for this pipe one request
+     ago and there is no ticket that can travel through a URL, so the oldest
+     reservation on the login is the one being claimed. Left as a plain take()
+     the reservation outlived the stream it was made for — which reads as a
+     full pool, which stamps lastSlotsFullAt, which holds the download queue
+     back for the grace window after that. */
+  const giveBack = account ? providers.claim(account.id) : null;
   providerStreams += 1;
   lastProviderActiveAt = Date.now();
   autoPauseActiveDownload();
@@ -8159,26 +8242,15 @@ async function handleApi(req, res, pathname, query) {
 
   if (pathname === '/api/providers') {
     if (req.method === 'GET') {
-      const list = providers.accounts(cfg);
       /* Asked of the provider rather than remembered, but not on every open:
          an expiry date does not move, and a panel asked once a minute by a
-         page somebody left open is a panel that starts refusing. */
-      for (const account of list) {
-        if (!providers.stale(account.id) && !query.get('refresh')) continue;
-        try {
-          // eslint-disable-next-line no-await-in-loop
-          const probe = await request(xtreamApiUrl(account, {}), { timeout: 15000 });
-          // eslint-disable-next-line no-await-in-loop
-          const body = JSON.parse((await readBody(probe)).toString('utf8'));
-          if (body && body.user_info && body.user_info.auth !== 0) {
-            providers.note(account.id, body.user_info);
-          } else {
-            providers.note(account.id, null, 'The provider rejected this login.');
-          }
-        } catch (err) {
-          providers.note(account.id, null, err.message);
-        }
-      }
+         page somebody left open is a panel that starts refusing.
+
+         The same call the box makes at boot and before it will claim the
+         house is full. It used to live only here, which is how a rebooted box
+         came to believe every login allowed one connection until somebody
+         opened this panel by hand. */
+      await refreshAccounts(cfg, { force: Boolean(query.get('refresh')) });
       return json(res, 200, {
         accounts: providers.report(cfg),
         free: providers.free(cfg),
@@ -11099,6 +11171,22 @@ setTimeout(() => {
 }, 5000).unref?.();
 
 server.listen(PORT, HOST, () => {
+  /* How many connections this house actually has, asked once at boot.
+   *
+   * Until this existed the answer came only from opening Settings, so every
+   * restart left the box assuming one connection per login — and a box that
+   * thinks it is full reports every stream failure as a connection problem.
+   * Fire and forget: nothing waits on it, and a provider that cannot be
+   * reached leaves the conservative guess in place, which is what it was
+   * always for. */
+  const startCfg = readConfig();
+  if (startCfg) {
+    refreshAccounts(startCfg).then(() => {
+      const count = providers.capacity(startCfg);
+      if (count) console.log(`  Provider: ${count} connection(s) across ${providers.accounts(startCfg).length} login(s)`);
+    }).catch(() => { /* the guess stands */ });
+  }
+
   const configured = readConfig() ? 'configured' : 'awaiting setup';
   const paused = [...downloads.values()].filter((j) => j.status === 'paused').length;
   console.log(`\n  IPTV Portal  →  http://${HOST}:${PORT}   (${configured})`);

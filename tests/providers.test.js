@@ -124,14 +124,24 @@ const LOGINS = {
     held.id !== alsoHeld.id, `${held.id} / ${alsoHeld.id}`);
   check('a reservation counts against the pool while it stands',
     providers.free(TWO) === 0, String(providers.free(TWO)));
-  const releaseHeld = providers.take(held.id);
+  /* Claimed with the TICKET pick() handed back, which is what makes it this
+     caller's own reservation rather than whichever was made first on that
+     login. take() without one still takes a slot — a download, or an ingest
+     that found the pool full and went ahead anyway — but it no longer
+     cancels a reservation somebody else is relying on. */
+  const releaseHeld = providers.claim(held.id, held.ticket);
   check('and claiming it does not then count twice',
     providers.inUse(TWO) === 1 && providers.free(TWO) === 0,
     `${providers.inUse(TWO)}/${providers.free(TWO)}`);
   releaseHeld();
-  providers.unreserve(alsoHeld.id);
+  providers.unreserve(alsoHeld.id, alsoHeld.ticket);
   check('a reservation nobody claims is given up',
     providers.free(TWO) === 2, String(providers.free(TWO)));
+
+  /* That a take() without a ticket no longer cancels somebody else's
+     reservation is checked in connections.test.js, on a four-slot account —
+     these logins carry one slot each, and free() floors at zero, so the
+     difference is invisible here whichever way it behaves. */
 
   /* Each reservation has to die on its own schedule — and the case that
      proves it is TWO reservations on the SAME login, which is what a panel
