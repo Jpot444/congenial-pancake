@@ -65,6 +65,37 @@ const CATEGORIES = [{ id: 'c1', name: 'Sports' }];
   await page.route('**/progress*', (r) =>
     r.fulfill({ status: 200, contentType: 'application/json', body: '{"found":false}' }));
 
+  /*
+   * The listings. Stubbed because the real endpoint asks the provider — and
+   * because a guide is only worth asserting against known programmes at
+   * known times.
+   *
+   * One two-hour programme running NOW on every channel asked about, plus the
+   * one after it, so both `is-now` and a plain future slab are on the grid.
+   * `known: true` matters: it is the box saying it asked and answered, as
+   * against not having reached that channel yet, and a row left "waiting"
+   * never gets its slabs.
+   */
+  const epgAsks = [];
+  await page.route('**/api/epg/now*', (r) => {
+    const ids = new URL(r.request().url()).searchParams.get('ids') || '';
+    epgAsks.push(ids);
+    /* Anchored on now rather than on a whole hour, so the suite does not
+       depend on the box's clock agreeing with the grid's about where an hour
+       begins. The grid clamps anything that starts before its window. */
+    const now = Math.floor(Date.now() / 1000);
+    const channels = ids.split(',').filter(Boolean).map((id) => ({
+      id: Number(id),
+      known: true,
+      listings: [
+        { start: now - 600, stop: now + 3000, title: `Game ${id} — first half` },
+        { start: now + 3000, stop: now + 6600, title: `Game ${id} — after` },
+      ],
+    }));
+    return r.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ channels }) });
+  });
+
   await page.goto(BASE, { waitUntil: 'networkidle' });
   if (await page.locator('#profileGate').isVisible()) {
     await page.locator('.profile-tile').first().click();
@@ -306,11 +337,22 @@ const CATEGORIES = [{ id: 'c1', name: 'Sports' }];
    *  listings for my favorite shows ... only bigger and with the logos for
    *  the broadcasts. Put the catagories below that."
    *
-   * The ORDER is the substance: each section is more likely than the one
-   * below it to hold the thing being looked for. Categories were the only
-   * thing here and are the least likely of the three.
+   * and then, about what that first went out as:
+   *
+   * "I dont want just my favorite channels. I want the actual listings like
+   *  it have on my homescreen that has what is airing at what time."
+   *
+   * Which is a different section entirely: not a rail of channel cards but
+   * the guide — the grid on a clock, the red line at now, a slab per
+   * programme as wide as the programme is long. So the assertions below are
+   * about TIMES on screen, not about how many cards are.
+   *
+   * The ORDER is the rest of the substance: each section is more likely than
+   * the one below it to hold the thing being looked for. Categories were the
+   * only thing here and are the least likely of the three.
    */
-  console.log('\n  and Live TV opens on what is on, then yours, then the rest');
+  console.log('\n  and Live TV opens on what is on, then your listings, then the rest');
+  epgAsks.length = 0;
   await page.evaluate(() => {
     /* Two of the channels marked as favourites, so the middle section has
        something to draw. Idempotent, because toggling twice un-favourites. */
@@ -320,31 +362,101 @@ const CATEGORIES = [{ id: 'c1', name: 'Sports' }];
     multiview.closePicker();
     multiview.buildSet();
   });
-  await wait(700);
+  /* Longer than the other waits here: the guide appears at once with the
+     channel names and fills in over passes, which is the whole point of its
+     shape — nothing on this sheet waits on the provider. */
+  await wait(1600);
   const land = await page.evaluate(() => {
     const box = document.querySelector('#mvResults');
     const order = [...box.children].map((n) => n.className);
+    const guide = box.querySelector('.mv-land-guide');
+    const slabs = [...box.querySelectorAll('.mv-land-guide .guide-prog')]
+      .filter((s) => !s.classList.contains('is-blank'));
     return {
       landing: box.classList.contains('mv-landing'),
       order,
-      favs: box.querySelectorAll('.mv-land-favs .card').length,
+      rows: box.querySelectorAll('.mv-land-guide .guide-row').length,
+      logos: box.querySelectorAll('.mv-land-guide .guide-chan-logo').length,
+      slabs: slabs.length,
+      titles: slabs.map((s) => s.querySelector('.guide-prog-title')?.textContent),
+      times: slabs.map((s) => s.querySelector('.guide-prog-time')?.textContent),
+      onNow: box.querySelectorAll('.mv-land-guide .guide-prog.is-now').length,
+      nowLine: Boolean(box.querySelector('.mv-land-guide .guide-now-line')),
+      hours: [...box.querySelectorAll('.mv-land-guide .guide-hour')].map((h) => h.textContent),
+      guideHead: guide?.querySelector('.shelf-title')?.textContent || '',
       cats: box.querySelectorAll('.mv-land-cats .card').length,
       heads: [...box.querySelectorAll('.mv-land-head h3')].map((h) => h.textContent),
     };
   });
   console.log('   ', JSON.stringify(land));
-  check('the sections are in that order', 
-    land.order.findIndex((c) => /mv-land-favs/.test(c))
+  check('the sections are in that order',
+    land.order.findIndex((c) => /mv-land-guide/.test(c))
       < land.order.findIndex((c) => /mv-land-cats/.test(c))
-    && land.order.findIndex((c) => /mv-land-favs/.test(c)) > -1,
+    && land.order.findIndex((c) => /mv-land-guide/.test(c)) > -1,
     JSON.stringify(land.order));
-  check('your own channels are there, above the categories',
-    land.favs === 2, String(land.favs));
+  check('there is a row per favourite channel', land.rows === 2, String(land.rows));
+  /* The correction, in one assertion: not "your channels" but what is ON
+     them. A rail of cards would pass every other check on this screen. */
+  check('and each row carries the programmes that are airing',
+    land.slabs === 4 && land.titles.every((t) => /first half|after/.test(t || '')),
+    JSON.stringify({ slabs: land.slabs, titles: land.titles }));
+  check('at what time, said on the slab',
+    land.times.every((t) => /\d{1,2}:\d\d.+\d{1,2}:\d\d/.test(t || '')),
+    JSON.stringify(land.times));
+  check('with a clock across the top', land.hours.length === 4
+    && land.hours.every((h) => /\d{1,2}:\d\d/.test(h)), JSON.stringify(land.hours));
+  /* The one thing that makes it a guide rather than a schedule: which of
+     these is happening, not merely which are listed. */
+  check('and now marked on it', land.onNow === 2 && land.nowLine,
+    JSON.stringify({ onNow: land.onNow, line: land.nowLine }));
+  /* "with the logos for the broadscasts" — the channel column carries the
+     broadcaster's mark here, which it does not on the home page. */
+  check('the broadcasters are shown by their marks', land.logos === 2, String(land.logos));
+  /* One request for both channels, not one per row. The provider has a
+     single connection and this grid is drawn while something is playing. */
+  check('and the listings were asked for in one go, not one call per channel',
+    epgAsks.length >= 1 && epgAsks[0].split(',').length === 2,
+    JSON.stringify(epgAsks));
   check('and the categories are still reachable, just last',
     land.cats >= 1, String(land.cats));
   check('each section says what it is',
-    land.heads.includes('Your channels') && land.heads.includes('All channels'),
-    JSON.stringify(land.heads));
+    /what's on your channels/i.test(land.guideHead) && land.heads.includes('All channels'),
+    JSON.stringify({ guide: land.guideHead, heads: land.heads }));
+
+  /* ---- and a programme is a way into the set --------------------------- */
+  /*
+   * A press on a slab has to mean "put that channel in the multiview". On
+   * the page behind it means "record this" — programmePanel — and on the
+   * home page it means "watch it now". Getting either of those while a set
+   * is half assembled is the sheet doing something nobody asked for.
+   *
+   * The programme is how the channel is FOUND. Nobody knows the channel
+   * number of the game they want; they know there is a game on.
+   */
+  console.log('\n  and pressing what is on puts that channel in the set');
+  /* Channel 2's programme, not channel 1's: the set was seeded from what is
+     playing and channel 1 is already in it, so pressing that one would be
+     testing the duplicate refusal a second time. */
+  const before = await page.evaluate(() => multiview.basket.length);
+  const pressed = await page.evaluate(() => {
+    const slab = [...document.querySelectorAll('.mv-land-guide .guide-prog')]
+      .find((s) => /Game 2 — first half/.test(s.textContent));
+    if (!slab) return null;
+    slab.click();
+    return slab.textContent;
+  });
+  await wait(400);
+  const picked = await page.evaluate(() => ({
+    basket: multiview.basket.map((r) => r.item.name),
+    modal: document.querySelector('#progModal')?.hidden ?? true,
+  }));
+  console.log('   ', JSON.stringify({ pressed, ...picked }));
+  check('the channel it is on joins the set',
+    picked.basket.length === before + 1
+    && picked.basket.some((n) => /NBC East/.test(n)),
+    JSON.stringify(picked.basket));
+  check('and nothing offers to record it instead',
+    picked.modal === true, String(picked.modal));
   /* The band is BORROWED — one band exists in the whole app and desktop.js
      hands it out. Only present in desktop layout, which is where this runs. */
   check('and the live band is borrowed rather than a second copy of it',
@@ -405,6 +517,33 @@ const CATEGORIES = [{ id: 'c1', name: 'Sports' }];
     gone.basket === 0 && gone.building === false, JSON.stringify(gone));
   check('and cannot reappear behind the next single-cell pick',
     gone.shown === false, String(gone.shown));
+
+  /* ---- and the box is handed back the way it was found ------------------ */
+  /*
+   * This suite marks two channels as favourites, and a favourite is not a
+   * page's opinion — it is written to the box's profiles.json, which every
+   * other suite in the sweep shares.
+   *
+   * That was harmless while the only thing favourites did here was draw a
+   * rail of cards. It stopped being harmless the moment the picker started
+   * drawing a LIVE GUIDE from them: two suites run after this one — guide and
+   * multiview — then found a guide they had not asked for, firing /api/epg/now
+   * at a box with no provider behind it, and failed. Alphabetically this one
+   * runs last of the three, so a full sweep never saw it; a sweep of a
+   * hand-picked list did.
+   *
+   * Nothing clever, and best-effort on purpose: a suite that has already
+   * failed has more interesting things to say than this.
+   */
+  await page.evaluate(() => {
+    for (const item of profiles.favItems().filter((i) => i.kind === 'live')) {
+      if (profiles.hasFav(item)) profiles.toggleFav(item);
+    }
+  });
+  await wait(400);
+  check('and this suite leaves the shared box as it found it',
+    await page.evaluate(() => profiles.favItems().length === 0),
+    await page.evaluate(() => JSON.stringify(profiles.favItems().map((i) => i.name))));
 
   await browser.close();
   console.log(`\n  ${fails.length ? `FAILED: ${fails.join(', ')}` : 'all passed'}`);

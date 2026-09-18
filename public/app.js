@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '42.1';
+const VERSION = '42.2';
 
 const PAGE_SIZE = 60;
 
@@ -1140,6 +1140,13 @@ $('#multiviewBtn').addEventListener('click', () => multiview.open());
 const MV_MAX = 4;
 const MV_SKIP = 10;          // seconds a skip button moves
 const MV_IDLE = 3000;        // how long the chrome stays up with nothing moving
+/* How many favourite channels the picker's guide asks about.
+ *
+ * Twice the home page's six, because "only bigger" was the ask and a sheet
+ * has the height for it — and not the listings view's forty, because every
+ * row is one metadata call to a provider with a single connection and this
+ * grid is drawn while something is already playing. */
+const MV_GUIDE_CHANNELS = 12;
 
 /**
  * What the picker can offer. The first three are the provider's libraries and
@@ -2870,26 +2877,61 @@ const multiview = {
       }
     }
 
-    /* -- your channels -------------------------------------------------- */
+    /* -- what is on, on your channels ----------------------------------- */
+    /*
+     * "I dont want just my favorite channels. I want the actual listings
+     *  like it have on my homescreen that has what is airing at what time."
+     *
+     * The same guide the landing page carries — paintGuide, the grid on a
+     * clock with the red line at now — and not a second implementation of
+     * it. What it is given here is different in three ways, all of them
+     * asked for:
+     *
+     *   logos      the broadcaster's mark in the channel column, which is
+     *              what "with the logos for the broadscasts" was about;
+     *   bigger     twice as many channels as the home page shows, a wider
+     *              channel column, and the Earlier/Later nav, because a sheet
+     *              has the room the landing page does not;
+     *   onPick     a press adds the channel to the set being built instead of
+     *              opening the player or the record-it panel. The programme
+     *              is how a game is FOUND — nobody knows the channel number
+     *              of the thing they want to watch — and the channel is what
+     *              goes in the cell.
+     *
+     * The offset is local to this sheet rather than the module-level
+     * guideOffset the Live TV listings view keeps: moving the picker forward
+     * two hours should not move where the page underneath is looking.
+     */
     const favourites = profiles.favItems()
       .filter((i) => i && i.kind === 'live' && i.name)
       .filter((i) => !profiles.isDeleted(i));
     if (favourites.length) {
-      const section = el('section', 'mv-land-favs');
-      const head = el('div', 'mv-land-head');
-      head.append(el('h3', null));
-      head.lastChild.textContent = 'Your channels';
-      const count = el('span', 'shelf-count');
-      count.textContent = `${favourites.length} favorite${favourites.length === 1 ? '' : 's'}`;
-      head.append(count);
-      section.append(head);
-      /* Bigger than the tiles below, and the logo is the whole point of the
-         size: a broadcaster is recognised by its mark long before anybody
-         reads a name off it. */
-      const rail = el('div', 'grid is-live mv-land-grid');
-      for (const item of favourites) rail.append(this.titleTile(item));
-      section.append(rail);
-      box.append(section);
+      const shown = favourites.slice(0, MV_GUIDE_CHANNELS);
+      /* Each window is a fresh section, which is what stops the outgoing
+         one's passes — they run over a second or so — from filling rows in
+         the incoming one. Same reason renderListings does it this way. */
+      let current = null;
+      let offset = 0;
+      const draw = (next) => {
+        offset = Math.max(0, Math.min(GUIDE_MAX_AHEAD, next));
+        const section = el('section', 'home-guide mv-land-guide');
+        if (current) current.replaceWith(section);
+        else box.append(section);
+        current = section;
+        paintGuide(section, shown, {
+          title: "What's on your channels",
+          count: shown.length < favourites.length
+            ? `first ${shown.length} of ${favourites.length}`
+            : `${shown.length} favorite${shown.length === 1 ? '' : 's'}`,
+          offsetHours: offset,
+          onOffset: draw,
+          logos: true,
+          onPick: (channel) => this.take(channel),
+        });
+      };
+      draw(0);
+      // What is already being kept, so the slabs can say so as they are drawn.
+      loadRecordings();
     }
 
     /* -- and the categories, last --------------------------------------- */
@@ -8119,6 +8161,22 @@ async function paintGuide(section, channels, opts = {}) {
     const row = el('div', 'guide-row');
 
     const who = el('div', 'guide-chan');
+    /* The broadcaster's mark, where there is room for it.
+     *
+     * Off by default because the home page's guide gives the channel 168px
+     * of column and a mark would take the half of it the name uses. The
+     * multiview picker asked for it and pays for it with a wider column:
+     * a set is assembled by recognising ESPN and FOX at a glance, and the
+     * mark is how anybody does that. Dropped if it will not load, so a
+     * channel with no art is a name rather than a broken image. */
+    if (opts.logos && channel.logo) {
+      const mark = el('img', 'guide-chan-logo');
+      mark.loading = 'lazy';
+      mark.alt = '';
+      mark.src = channel.logo;
+      mark.addEventListener('error', () => mark.remove());
+      who.append(mark);
+    }
     // Favourites keep the name they had when they were starred, tags and
     // all, so a channel starred in July still reads "US: FOX NEWS HD".
     // Trimmed for display only — what is stored stays what was starred.
@@ -8140,7 +8198,13 @@ async function paintGuide(section, channels, opts = {}) {
     waiting.style.left = '0%';
     waiting.style.width = '100%';
     waiting.append(Object.assign(el('span', 'guide-prog-title'), { textContent: '' }));
-    waiting.addEventListener('click', () => openPlayer(channel));
+    /* What pressing a row does. Watching it is the right default and is what
+       every guide on the page means by a press; the multiview picker means
+       "put this one in the set" instead, and nothing else about the grid
+       changes. */
+    waiting.addEventListener('click', () => (opts.onPick
+      ? opts.onPick(channel, null)
+      : openPlayer(channel)));
     track.append(waiting);
 
     row.append(who, track);
@@ -8185,7 +8249,7 @@ async function paintGuide(section, channels, opts = {}) {
   const waiting = new Set(tracks.keys());
   for (let pass = 0; pass < GUIDE_PASSES && waiting.size; pass += 1) {
     // eslint-disable-next-line no-await-in-loop
-    const landed = await fillGuide(tracks, waiting, section);
+    const landed = await fillGuide(tracks, waiting, section, opts);
     if (landed === null) return;                       // asked and refused
     if (!landed) break;                                // nothing new to wait for
     // eslint-disable-next-line no-await-in-loop
@@ -8203,7 +8267,7 @@ async function paintGuide(section, channels, opts = {}) {
  * One pass at the listings. Returns how many rows it filled, or null if the
  * box refused outright.
  */
-async function fillGuide(tracks, waiting, section) {
+async function fillGuide(tracks, waiting, section, opts = {}) {
   if (!section.isConnected) return null;               // the page moved on
   let data;
   try {
@@ -8274,7 +8338,12 @@ async function fillGuide(tracks, waiting, section) {
       slab.dataset.start = String(listing.start * 1000);
       slab.dataset.stop = String(listing.stop * 1000);
       stampRecording(slab);
-      slab.addEventListener('click', () => programmePanel.open(held.channel, listing));
+      /* Same split as the blank row above: watch it or keep it, unless
+         somebody is building a set, in which case the programme is how the
+         channel was found and the channel is what goes in the cell. */
+      slab.addEventListener('click', () => (opts.onPick
+        ? opts.onPick(held.channel, listing)
+        : programmePanel.open(held.channel, listing)));
       held.track.append(slab);
     }
   }

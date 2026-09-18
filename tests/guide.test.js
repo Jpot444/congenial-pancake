@@ -146,15 +146,32 @@ const CHANNELS = [
     rows[0].num === '104', rows[0].num);
 
   console.log('\n  and only the channels, only a few of them');
+  /* Only the asks about the channels THIS suite handed the guide.
+   *
+   * The page draws its home view a couple of times on the way in — the
+   * profile gate, then the hash — before favItems is stubbed, and those
+   * draws ask about the box's real favourites, whatever a suite earlier in
+   * the sweep left behind. Counted in, "one request for the lot" was a claim
+   * about the shared box rather than about the guide, and it read false the
+   * first time anything ran before this suite with a favourite still set.
+   * Filtering by id is the whole fix: what is being measured is that the
+   * guide asks about its channels TOGETHER, and which channels those are is
+   * known. */
+  const asksAbout = (set) => {
+    const ids = new Set(set.map((c) => String(c.id)));
+    return asked.filter((row) => row.some((id) => ids.has(id)));
+  };
   console.log('   ', JSON.stringify(asked));
-  check('one request for the lot, not one per channel', asked.length === 1,
-    JSON.stringify(asked));
+  check('one request for the lot, not one per channel',
+    asksAbout(CHANNELS).length === 1, JSON.stringify(asked));
   const many = Array.from({ length: 20 }, (_, i) => ({
     kind: 'live', id: 600 + i, name: `Channel ${i}`, categoryId: 'c1' }));
   asked = [];
   const capped = await home(many);
+  const forMany = asksAbout(many);
   check('and a wall of favourites is capped rather than asked in full',
-    capped.length === 6 && asked[0].length === 6, `${capped.length} rows`);
+    capped.length === 6 && forMany.length >= 1 && forMany[0].length === 6,
+    `${capped.length} rows, asked ${JSON.stringify(forMany)}`);
 
   console.log('\n  when the provider cannot answer');
   //

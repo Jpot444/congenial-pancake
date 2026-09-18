@@ -3596,8 +3596,15 @@ it to hold the thing being looked for:
 
 ```
 LIVE NOW              ← the scoreboard band, borrowed from the home page
-Your channels   4 favorites
-  [ big logo ] [ big logo ] [ big logo ] [ big logo ]
+What's on your channels        12 favorites     ‹ Earlier | On now | Later ›
+┌──────────────┬────────────────┬────────────────┬──────────────┬──────────┐
+│ CHANNEL      │ 8:00 PM        │ 9:00 PM        │ 10:00 PM     │ 11:00 PM │
+├──────────────┼──────────┊─────┴──────┬─────────┴───┬──────────┴──────────┤
+│ ▣  ESPN HD   │ Inside th┊e NBA       │ College Gameday │ Sunday Night …  │
+│ ▣  FOX SPO…1 │ Postgame ┊Live        │ SportsCenter    │ Inside the NBA  │
+│ ▣  NBC EAST  │ The Late ┊Show        │ Sunday Night …  │ Postgame Live   │
+└──────────────┴──────────┊────────────┴─────────────────┴─────────────────┘
+                     now ─┘
 All channels
   [ Sports ] [ Entertainment ] …
 ```
@@ -3614,16 +3621,52 @@ until something happened to redraw it. Guarded, because that layer only exists
 in desktop layout: a phone gets the two sections below it and no band, which is
 honester than an empty frame.
 
-The favourites section uses the picker's **own** tile, not the home page's
-channel card — the home card plays a channel, and in here a tap has to add to
-the set. Bigger than the categories below it, and the size is *for* the logo: a
-broadcaster is recognised by its mark long before anybody reads a name off it.
+### The middle section, corrected
 
-One assumption worth flagging: "the listings for my favorite shows" was built
-as **favourite live channels**, since that is the only favourites display the
-home page has and "logos for the broadcasts" points at broadcasters. If what
-was meant is favourited *series* with their upcoming episodes, that is a
-different section and a small change.
+It first went out as a rail of favourite *channel cards* — bigger tiles with
+the broadcaster's logo on each. That was wrong, and the correction says why:
+
+> *"when i said i want the listings for my favorites added to the multiview
+> screen I dont want just my favorite channels. I want the actual listings like
+> it have on my homescreen that has what is airing at what time."*
+
+It is the **guide** — `paintGuide`, the same grid on a clock the home page
+carries, with a slab per programme as wide as the programme is long and the red
+line at now. Not a second implementation of it: the picker calls the same
+function, and everything visual below the section heading is the `.home-guide`
+rules untouched. What differs is three options, each of them something that was
+asked for:
+
+| option | what it does |
+| --- | --- |
+| `logos` | the broadcaster's mark in the channel column — *"with the logos for the broadscasts"*. Off by default: the home page gives the channel 168px and a mark would take the half of it the name is using. Here the column is 260px and pays for it. |
+| bigger | twelve channels instead of six, 66px rows, and the Earlier/Later nav, because a sheet has room the landing page does not. |
+| `onPick` | a press adds that channel to the set. |
+
+`onPick` is the one that matters. A slab means "record this" on the Live TV
+page and "watch it now" on the home page, and either of those firing while a
+set is half assembled is the sheet doing something nobody asked for. The
+**programme is how the channel is found** — nobody knows the channel number of
+the game they want, they know there is a game on — so the slab is pressed and
+the channel goes in the cell. It funnels through the same `take()` as every
+other commit point in the picker, so it is one mode decided in one place.
+
+Two smaller decisions:
+
+- **Twelve channels, not forty.** Every row is one metadata call to a provider
+  with a single connection, and this grid is drawn while something is already
+  playing. The Live TV listings page can afford forty; a sheet over a running
+  picture cannot.
+- **Its own offset.** The Earlier/Later position is local to the sheet rather
+  than the module-level `guideOffset` the listings view keeps. Moving the
+  picker forward two hours should not move where the page underneath is
+  looking.
+
+One wrinkle worth recording, because it cost a screenshot to find: the sizes
+had to go in **both** `styles.css` and `desktop.css`. The guide's real
+dimensions live in the desktop layer as `.desk .home-guide`, which is two
+classes; `.mv-land-guide` is one, so the plain layer's version of the override
+loses to the rule it is trying to beat and the column silently stays at 168px.
 
 ## Build a multiview
 

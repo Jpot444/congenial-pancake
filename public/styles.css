@@ -4233,19 +4233,10 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 }
 .mv-land-head .shelf-count { color: var(--muted-dim); font-size: .8rem; }
 
-/* Bigger than the category tiles below it, and the size is FOR the logo: a
-   broadcaster is recognised by its mark long before anybody reads a name. */
-.mv-land-grid {
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 14px;
-}
-.mv-land-grid .card-art { border-radius: 12px; }
-.mv-land-grid .card-art img { object-fit: contain; padding: 10px; }
-.mv-land-grid .card-title { font-size: .95rem; }
-
-@media (max-width: 700px) {
-  .mv-land-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
-}
+/* The guide the picker draws in place of this rail lives with the rest of
+   the guide's rules — see .mv-land-guide, below .home-guide. It has to be
+   there rather than here: the two are the same one-class specificity, so a
+   size set above .home-guide is a size .home-guide overrides. */
 
 /* ---- the set being assembled ----
  *
@@ -6397,6 +6388,63 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .grid.is-listings { display: block; }
 .listings-guide { margin-top: 0; }
 .listings-guide .guide-grid { max-width: none; }
+
+/* ---- the same guide, in the multiview picker --------------------------
+ *
+ * "I want the actual listings like it have on my homescreen that has what is
+ *  airing at what time" — and "only bigger and with the logos for the
+ *  broadscasts".
+ *
+ * So: the same grid, given the room a sheet has. A channel column wide
+ * enough to carry the broadcaster's mark beside the name, rows tall enough
+ * for the mark to be worth putting there, and no width cap, because the
+ * sheet is as wide as the window and two thirds of a grid is worse than a
+ * narrow one. Everything else — the clock, the slabs, the red line at now —
+ * is the .home-guide rules above, untouched. This is a size, not a second
+ * guide.
+ *
+ * Below .home-guide on purpose. The two carry the same one-class
+ * specificity, so a --guide-chan set above it is one .home-guide overrides.
+ * For the same reason these sizes are set AGAIN in desktop.css: the desktop
+ * layer owns the guide's real dimensions as `.desk .home-guide`, which is
+ * two classes, and this block would lose to it. These rules are what the
+ * plain and phone shells get.
+ */
+.mv-land-guide {
+  /* 260 and not 216: the mark takes 44 of it, and at 216 the name had about
+     eleven characters left — enough for "TNT HD" and not for "NFL NETWORK",
+     which is the half of the column that has to stay readable. */
+  --guide-chan: 260px;
+  margin-top: 18px;
+}
+.mv-land-guide .guide-grid { max-width: none; }
+.mv-land-guide .guide-row { min-height: 66px; }
+.mv-land-guide .guide-chan-name { font-size: 13px; }
+.mv-land-guide .guide-prog-title { font-size: 13.5px; }
+/* The section's own heading, at the size the sheet's other headings use —
+   the home page's guide wears a 13px label because it is one of six things
+   on that page, and here it is one of three. */
+.mv-land-guide .shelf-title { font-size: 1.05rem; letter-spacing: .01em; }
+
+/* The mark. Contained rather than cropped — a channel logo is a wordmark as
+   often as it is a roundel, and `cover` would cut the words off — and held
+   to a fixed box so twelve rows of wildly different art still line up. */
+.guide-chan-logo {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 30px;
+  object-fit: contain;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .04);
+}
+
+@media (max-width: 900px) {
+  /* The grid already scrolls sideways here with the channel column pinned,
+     so the column gives back what the logo took rather than letting it eat
+     into the programmes. */
+  .mv-land-guide { --guide-chan: 172px; }
+  .guide-chan-logo { width: 34px; height: 24px; }
+}
 
 
 /* ---- For you: the ask, the reason, and the picker --------------------------

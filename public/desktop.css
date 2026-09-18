@@ -2301,6 +2301,28 @@ body.is-reordering .cht { transition: none; }
 .desk .listings-guide { margin-top: 0; }
 .desk .listings-guide .guide-grid { max-width: none; }
 
+/* The same guide inside the multiview picker, which asked for it bigger and
+   with the broadcasters' marks. The sizes have to be set HERE as well as in
+   the plain layer: `.desk .home-guide` is two classes and `.mv-land-guide`
+   is one, so the plain layer's version of this loses to the rule above it. */
+.desk .mv-land-guide {
+  /* 260 and not 216: the mark takes 44 of it, and at 216 the name had about
+     eleven characters left — enough for "TNT HD" and not for "NFL NETWORK",
+     which is the half of the column that has to stay readable. */
+  --guide-chan: 260px;
+  margin-top: var(--space-7);
+  scroll-margin-top: 0;
+}
+.desk .mv-land-guide .guide-row { min-height: 66px; }
+.desk .mv-land-guide .guide-prog-title { font-size: 13.5px; }
+@media (max-width: 900px) {
+  /* A narrow desk window. The grid already scrolls sideways with the channel
+     column pinned, so at 260px the column would be most of what is visible
+     and the programmes — the thing being read — would all be off the right
+     edge. It gives back what the mark took. */
+  .desk .mv-land-guide { --guide-chan: 172px; }
+}
+
 /* ---- the bin on a channel plate -------------------------------------
    Takes the channel number's place on hover. The number is reference you
    read once; the bin is the thing you reach for, and the corner it would
