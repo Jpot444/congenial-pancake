@@ -3529,6 +3529,45 @@ and the roll-off case is kept as a check.
 A renumbered window resets the measurement rather than reading the jump as an
 hour of work in a second.
 
+## A film or an episode starts itself
+
+> "A lot of times next episode and then when it loads, it says connecting to
+> stream, but it won't play until I press play. I'd like to play
+> automatically."
+
+**The hls.js branch of `attach()` never called `play()`.** Live did — and that
+asymmetry is the whole bug:
+
+| | how it starts |
+| --- | --- |
+| a channel | `waitForCushion` holds the picture back until there is a buffer, then starts it |
+| a film or an episode | nothing. Left to the `autoplay` attribute on the element |
+
+`autoplay` is not reliable for a source hls.js attaches. There is no `src` to
+begin loading — only a MediaSource handed over after the fact — so whether the
+element ever decides to start itself depends on timing nothing here controls.
+
+It now asks, on `MANIFEST_PARSED` rather than immediately, because before that
+there is nothing to play and the call is wasted.
+
+**And the second fault, which is why it read as a loading problem.** When the
+start did not happen the status stayed on *"Connecting to stream…"*, so a
+picture needing one press looked exactly like one still arriving. A genuine
+refusal now says **"Press play to start."** — the sentence the plain-file path
+has always used — and a successful start clears the line.
+
+`tests/autoplaynext.test.js` drives it through a stand-in `Hls` with `play()`
+stubbed and counted, so what is under test is the wiring — does this branch ask
+for playback, and when — rather than whether a headless decoder feels like
+starting. That matters here for a specific reason: **`upnext.test.js` launches
+with `--autoplay-policy=no-user-gesture-required`**, which would have hidden
+this bug completely. A suite that cannot see the fault it is nearest to is
+worth knowing about.
+
+It also checks that live is still left alone. `waitForCushion` holds a channel
+back on purpose; a second `play()` from here would be two things arguing over
+one picture, and the loser would be the buffer.
+
 ## The multiview builder, second pass
 
 Four things, from watching it in use.

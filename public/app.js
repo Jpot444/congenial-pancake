@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '42.0';
+const VERSION = '42.1';
 
 const PAGE_SIZE = 60;
 
@@ -13144,6 +13144,36 @@ function attach(url, format, opts = {}) {
       engine.loadSource(url);
       engine.attachMedia(video);
       if (live) waitForCushion(video);
+      else {
+        /*
+         * Start it.
+         *
+         * "A lot of times next episode and then when it loads, it says
+         *  connecting to stream, but it won't play until I press play. I'd
+         *  like to play automatically."
+         *
+         * This branch never called play(). Live does — waitForCushion holds
+         * the picture back until there is a buffer and then starts it — and a
+         * film or an episode was left to the `autoplay` attribute on the
+         * element, which is not reliable for a source hls.js attaches: there
+         * is no `src` to begin loading, only a MediaSource handed over after
+         * the fact, and whether the element ever decides to start itself
+         * depends on timing nobody here controls. When it did not, the status
+         * stayed on "Connecting to stream…" — which is how a picture that
+         * needs one press looks exactly like one that is still loading.
+         *
+         * MANIFEST_PARSED rather than straight away, because before it there
+         * is nothing to play and the call is wasted.
+         */
+        engine.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.play().then(() => status('')).catch(() => {
+            /* Genuinely refused — no gesture the browser will accept. Said
+               out loud, the way the plain-file path below has always said it,
+               rather than left looking like a slow connection. */
+            status('Press play to start.');
+          });
+        });
+      }
       /* Every playlist the engine is handed, so a window that goes backwards
          is on the record. That is the only place an encoder restart shows —
          see notePlaylist. */
