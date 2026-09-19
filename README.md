@@ -4242,6 +4242,64 @@ for `Date.now()` itself. In the box they are the same clock and it never
 mattered; the moment anything drives the scheduler on its own clock the two
 disagree, and the backoff is measured between them.
 
+### "The feed never started sending"
+
+> "DVR is not working, this was the error
+> NBC KOMU (A) ᴿᴬᵂ · The feed never started sending."
+
+Three faults behind one sentence, and a fourth found while fixing them.
+
+**The sentence explained nothing.** It is the watchdog reporting what it
+measured — ninety seconds, no bytes. ffmpeg is the only thing in the room that
+knows whether that was a 404, a refused connection, a playlist with no segments
+in it or a codec it would not touch, and its words were captured and then
+thrown away unless the process exited by itself. So the failure a person is
+most likely to meet was the one that said least about itself. The last line now
+travels with the reason: *The feed never started sending. Server returned 404
+Not Found.*
+
+**Every attempt asked the same way.** The recorder always built a `.m3u8` URL.
+Playback does not — it follows the configured format and falls back to the
+direct proxy when the box's own ingest cannot get a playlist. So a channel this
+provider serves only as MPEG-TS, which is what the ᴿᴬᵂ on that channel name is
+about, could be **watched perfectly well and never recorded**: ninety seconds
+of nothing, a retry, ninety seconds of nothing, for the length of the booking,
+on a ladder that only ever repeated the same ask. An attempt that wrote
+*nothing* is now followed by one in the other format — `m3u8, ts, m3u8, ts`.
+Nothing written is what makes it safe: there is no footage for the next attempt
+to disagree with, and a channel that works on the first ask never gets here.
+
+**The password was in the error.** `row.error` was set from ffmpeg's raw last
+line, and ffmpeg names the input it failed on:
+`http://host/live/<user>/<password>/4821.m3u8: Server returned 404`. That
+string is written to `recordings.json` and printed on the recordings page. It
+goes through `redactUrl()` now, at both doors — the exit handler and the
+running commentary the watchdog reads.
+
+**And the fallback would not have opened.** Found by running the real binary
+rather than reasoning about the flags. `recordArgs` carries
+`-m3u8_hold_counters` and `-live_start_index`, which are options of the HLS
+*demuxer* — and ffmpeg does not ignore a private option the chosen demuxer
+lacks, it refuses the input outright:
+
+```
+Option m3u8_hold_counters not found.
+Error opening input file http://…/4821.ts
+```
+
+So the TS retry would have died before reading a byte, and the fallback written
+to rescue a TS-only channel would have been the thing that broke it. With those
+two flags: "Option not found", no file. Without them: 1.4 MB in eight seconds.
+They are gated on the format now; the `-user_agent` and `-reconnect` flags
+above them are HTTP *protocol* options and stay for both.
+
+`tests/feedsilent.test.js` drives `recordings.js` on a clock of its own — the
+thing under test is a ninety-second watchdog and a sixty-second ladder, and
+waiting those out would be two and a half minutes of a suite sleeping to
+observe two strings. The last section is the exception and runs the real
+ffmpeg against a real TS feed, lifting `recordArgs` out of `server.js` rather
+than retyping it, because a copy would pass while the shipped one failed.
+
 ## The archive drive
 
 The **Archive** tab plays a 2 TB external drive plugged into the Pi — 5,853

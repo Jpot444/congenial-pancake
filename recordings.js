@@ -539,11 +539,21 @@ function tick(now, hooks) {
         live.lastGrewAt = now;
         row.bytes = bytes;
       } else if (now - live.lastGrewAt > (live.lastBytes ? STALL_MS : FIRST_BYTE_MS)) {
-        stop(row.id, {
-          reason: live.lastBytes
-            ? 'The feed stopped sending.'
-            : 'The feed never started sending.',
-        });
+        /*
+         * And WHAT it said while it was not sending.
+         *
+         * "The feed never started sending" is a symptom. ffmpeg is the only
+         * thing in the room that knows whether that was a 404, a refused
+         * connection, a playlist with no segments in it or a codec it would
+         * not touch — and its words were being thrown away here, kept only
+         * for the case where the process exited by itself. So the one failure
+         * a person is most likely to see was the one that explained least.
+         */
+        const said = lastWords(live);
+        const why = live.lastBytes
+          ? 'The feed stopped sending.'
+          : 'The feed never started sending.';
+        stop(row.id, { reason: said ? `${why} ${said}` : why });
       }
       continue;
     }
@@ -612,18 +622,62 @@ function tick(now, hooks) {
  * Take over a running recording's bookkeeping. Called by the box once it has
  * actually spawned ffmpeg, so this module never has to know how.
  */
-function began(row, { proc, release, source }) {
+function began(row, { proc, release, source, stderr = null, format = '' }) {
   row.status = 'recording';
   row.startedAt = store.clock();
   row.source = source || '';
+  row.format = format || row.format || '';
   row.error = '';
   persist();
   store.running.set(row.id, {
     proc,
     release,
+    /* What ffmpeg has been saying, for the failures where it is the only
+       thing that knows. The box hands this in already redacted — the stream
+       URL carries the provider password and this string is written to
+       recordings.json and printed on screen. */
+    stderr,
     lastBytes: 0,
     lastGrewAt: store.clock(),
   });
+}
+
+/**
+ * Which stream to ask for on this attempt.
+ *
+ * "DVR is not working, this was the error
+ *  NBC KOMU (A) ᴿᴬᵂ · The feed never started sending."
+ *
+ * Every attempt used to ask for `.m3u8`, so a channel the provider serves
+ * only as MPEG-TS could be WATCHED perfectly well — playback follows the
+ * configured format, and falls back to the direct proxy when the box's own
+ * ingest cannot get a playlist — while every recording of it sat there for
+ * ninety seconds receiving nothing and then failed, over and over, on a
+ * ladder that only ever repeated the same ask.
+ *
+ * So an attempt that wrote NOTHING is followed by one in the other format.
+ * Nothing written is what makes it safe: there is no footage for the next
+ * attempt to disagree with, and a channel that works on the first ask never
+ * reaches here at all.
+ *
+ * `tries` counts attempts that came to nothing — it is reset on a byte — so
+ * this alternates m3u8, ts, m3u8, ts rather than wandering off after a
+ * recording that stalled halfway through a game.
+ */
+function formatFor(row) {
+  return (row && (row.tries || 0)) % 2 ? 'ts' : 'm3u8';
+}
+
+/** The last line ffmpeg said, if it said anything worth repeating. */
+function lastWords(live) {
+  let text = '';
+  try {
+    text = live && typeof live.stderr === 'function' ? String(live.stderr() || '') : '';
+  } catch {
+    text = '';
+  }
+  const line = text.split('\n').map((l) => l.trim()).filter(Boolean).pop() || '';
+  return line.slice(0, 200);
 }
 
 /** ffmpeg exited on its own — the feed ended, or it was told to stop. */
@@ -717,6 +771,7 @@ module.exports = {
   stop,
   tick,
   began,
+  formatFor,
   ended,
   noteFailure,
   blocking,

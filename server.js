@@ -4028,7 +4028,31 @@ function liveDvrArgs(input, dir, resumed = false, low = false) {
  */
 
 /** ffmpeg's arguments for keeping a programme, whichever source it came from. */
-function recordArgs(input, out, local) {
+function recordArgs(input, out, local, format = 'm3u8') {
+  /* The HLS demuxer's own options, and ONLY for an HLS input.
+   *
+   * ffmpeg does not ignore a private option the chosen demuxer does not have
+   * — it refuses to open the input at all:
+   *
+   *   Option m3u8_hold_counters not found.
+   *   Error opening input file http://…/4821.ts
+   *
+   * So the moment a retry asked for MPEG-TS instead of a playlist, these two
+   * lines would have failed it before a byte was read, and the fallback that
+   * exists to rescue a TS-only channel would have been the thing that broke
+   * it. Measured against a real ffmpeg and a real TS feed rather than
+   * reasoned about: with them, "Option not found" and no file; without them,
+   * 1.4MB in eight seconds.
+   *
+   * The reconnect and user-agent flags above are HTTP PROTOCOL options, not
+   * demuxer ones, and both inputs are http:// — those stay for both. */
+  const hls = format !== 'ts' ? [
+    '-m3u8_hold_counters', '120',
+    /* From the live edge. A recording that opens a minute before the listing
+       does not want the provider's backlog on top of that — the lead is the
+       padding, not an accident of how deep their playlist is. */
+    '-live_start_index', '-1',
+  ] : [];
   return [
     '-v', 'error', '-nostats', '-hide_banner', '-y',
     ...(local ? [] : [
@@ -4036,11 +4060,7 @@ function recordArgs(input, out, local) {
       '-reconnect', '1', '-reconnect_streamed', '1',
       '-reconnect_at_eof', '1', '-reconnect_on_network_error', '1',
       '-reconnect_delay_max', '5',
-      '-m3u8_hold_counters', '120',
-      /* From the live edge. A recording that opens a minute before the
-         listing does not want the provider's backlog on top of that — the
-         lead is the padding, not an accident of how deep their playlist is. */
-      '-live_start_index', '-1',
+      ...hls,
     ]),
     '-i', input,
     '-map', '0:v:0', '-map', '0:a:0?',
@@ -4343,6 +4363,7 @@ function beginRecording(row) {
   const local = Boolean(existing && !existing.exited);
   let release = null;
   let input;
+  let format = '';
 
   if (local) {
     /* The box's own window, on the loopback. Nothing leaves the machine and
@@ -4374,17 +4395,27 @@ function beginRecording(row) {
       account = providers.pick(cfg);
     }
     const chosen = account || providers.accounts(cfg)[0] || cfg;
-    input = buildStreamUrl(chosen, 'live', row.channelId, 'm3u8');
+    /* Not always m3u8. An attempt that wrote nothing is followed by one in
+       the other format, because a channel this provider serves only as
+       MPEG-TS was watchable and unrecordable — see recordings.formatFor. */
+    format = recordings.formatFor(row);
+    input = buildStreamUrl(chosen, 'live', row.channelId, format);
     if (chosen && chosen.id) release = providers.take(chosen.id);
   }
 
-  const proc = spawn('ffmpeg', recordArgs(input, out, local),
+  const proc = spawn('ffmpeg', recordArgs(input, out, local, format || 'm3u8'),
     { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   onStderr(proc, (d) => { stderr = (stderr + d.toString()).slice(-1000); });
   proc.on('exit', (code) => safely('recording ended', () => {
     const row2 = recordings.get(row.id);
-    if (row2 && code && !row2.error) row2.error = stderr.split('\n').filter(Boolean).pop() || '';
+    /* REDACTED. ffmpeg names the input it failed on, and the input is
+       http://host/live/<user>/<password>/<id>.m3u8 — so the raw last line
+       put the provider password into recordings.json and onto the screen
+       of whoever opened the recordings page. */
+    if (row2 && code && !row2.error) {
+      row2.error = redactUrl(stderr.split('\n').filter(Boolean).pop() || '');
+    }
     recordings.ended(row.id, code);
   }));
   proc.on('error', (err) => safely('recording could not start', () => {
@@ -4392,7 +4423,15 @@ function beginRecording(row) {
     recordings.noteFailure(row, err.message);
   }));
 
-  recordings.began(row, { proc, release, source: local ? 'box window' : 'provider' });
+  recordings.began(row, {
+    proc,
+    release,
+    source: local ? 'box window' : 'provider',
+    format: local ? 'box window' : format,
+    /* Redacted at the door for the same reason, since this one ends up in
+       the failure the watchdog writes. */
+    stderr: () => redactUrl(stderr),
+  });
   console.log(`  recording: ${row.title} on ${row.channelName || row.channelId} `
     + `(${local ? 'sharing the live window' : 'own connection'})`);
 }
