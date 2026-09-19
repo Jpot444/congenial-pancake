@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '42.3';
+const VERSION = '42.4';
 
 const PAGE_SIZE = 60;
 
@@ -1118,6 +1118,42 @@ $('#listingsBtn').addEventListener('click', () => {
   applyListingsButton();
   render();
 });
+
+/**
+ * Opening a live category, and what it opens ON.
+ *
+ * "whenever I click on any live tv catagory now I want it to load as a
+ *  listings of all the channels in that catagory showing what is on now"
+ *
+ * A category is a question about what to watch, and a grid of ninety logos
+ * does not answer it — every tile says the same thing, which is that the
+ * channel exists. The schedule answers it: what is on, on each of them, right
+ * now. So that is what a category opens on, and the button beside it is how
+ * you get the logos back if you want them.
+ *
+ * Every way into a category goes through here — the sidebar row, the folder
+ * tile, and an address typed or reloaded — because a rule that holds for two
+ * of the three is a rule somebody will find the hole in.
+ *
+ * `null` is the folder grid and `__deletedcats__` is the hidden ones, neither
+ * of which has a schedule to show; `__deleted__` is the bin, where the
+ * question is which channels are in it rather than what is on them. Those go
+ * back to the grid, which is also what stops pressing Back out of a category
+ * landing on a schedule of your favourites instead of the folders.
+ */
+function liveCategoryOpensOnListings(id) {
+  return id !== null && id !== DELETED_CATS && id !== DELETED_CATEGORY;
+}
+
+/** Go to a live category, deciding the view it opens on in one place. */
+function openLiveCategory(id) {
+  state.category = id;
+  state.visible = PAGE_SIZE;
+  state.listings = liveCategoryOpensOnListings(id);
+  applyListingsButton();
+  writeView();
+  render();
+}
 
 $('#multiviewBtn').addEventListener('click', () => multiview.open());
 
@@ -7596,9 +7632,10 @@ function renderCategories(categories, items) {
     badge.textContent = count.toLocaleString();
     btn.append(label, badge);
     btn.addEventListener('click', () => {
+      $('#sidebar').classList.remove('is-open');
+      if (state.tab === 'live') return openLiveCategory(id);
       state.category = id;
       state.visible = PAGE_SIZE;
-      $('#sidebar').classList.remove('is-open');
       writeView();
       render();
     });
@@ -8042,6 +8079,11 @@ const GUIDE_CHANNELS = 6;
 const GUIDE_HOURS = 4;
 /** A page of guide. Every row is one call to a one-connection provider. */
 const LISTINGS_MAX = 40;
+/* How many channels the box will answer about in a single request — it caps
+   the list at its end (EPG_MAX_CHANNELS), so asking for more than this is
+   asking for the remainder to be dropped without being told. Matched here so
+   the passes walk a long list a page at a time instead of re-sending one. */
+const EPG_AT_ONCE = 40;
 /** How many times to go back for rows the box had not fetched yet. */
 const GUIDE_PASSES = 8;
 const GUIDE_PASS_MS = 1200;
@@ -8058,6 +8100,8 @@ const GUIDE_MAX_AHEAD = 8;
 
 /** How far into the window the listings view is looking, in hours. */
 let guideOffset = 0;
+/** How many rows of that schedule are on screen. Grows by a page on request. */
+let listingsShown = LISTINGS_MAX;
 /** What that offset belongs to, so a different list starts at now again. */
 let guideScope = '';
 
@@ -8247,19 +8291,39 @@ async function paintGuide(section, channels, opts = {}) {
    * It stops when nothing new arrived, so a category the provider has no
    * listings for costs a couple of requests rather than a poll for ever. */
   const waiting = new Set(tracks.keys());
+  /* What the box said about itself on the way past, so the rows it never got
+     to can say something true rather than something convenient. */
+  const how = { busy: false };
   for (let pass = 0; pass < GUIDE_PASSES && waiting.size; pass += 1) {
     // eslint-disable-next-line no-await-in-loop
-    const landed = await fillGuide(tracks, waiting, section, opts);
+    const landed = await fillGuide(tracks, waiting, section, opts, how);
     if (landed === null) return;                       // asked and refused
     if (!landed) break;                                // nothing new to wait for
     // eslint-disable-next-line no-await-in-loop
     if (waiting.size) await new Promise((r) => setTimeout(r, GUIDE_PASS_MS));
   }
-  // Whatever never arrived says so, rather than sitting blank for ever.
+  /*
+   * Whatever never arrived says so — and says WHICH so.
+   *
+   * A row still waiting when the passes run out is not a channel with nothing
+   * on it. It is a channel nobody asked about: the box fetches six per pass
+   * from a provider with one connection, and it does not ask at all while
+   * something is playing. Writing "No listings" across those rows was the
+   * box reporting its own restraint as a fact about the schedule, which is
+   * the same mistake as blaming a dead feed on a full pool — and a page of
+   * forty rows all claiming no listings reads as a broken guide.
+   *
+   * The distinction between "asked, nothing on" and "not asked" is already
+   * carried per channel by `known`, and fillGuide honours it; this is the
+   * same distinction at the end of the run.
+   */
+  const unasked = how.busy
+    ? 'Guide waits while something is playing'
+    : 'Not checked yet';
   for (const id of waiting) {
     const held = tracks.get(id);
     const blank = held?.track.querySelector('.guide-prog-title');
-    if (blank && !blank.textContent) blank.textContent = 'No listings';
+    if (blank && !blank.textContent) blank.textContent = unasked;
   }
 }
 
@@ -8267,11 +8331,17 @@ async function paintGuide(section, channels, opts = {}) {
  * One pass at the listings. Returns how many rows it filled, or null if the
  * box refused outright.
  */
-async function fillGuide(tracks, waiting, section, opts = {}) {
+async function fillGuide(tracks, waiting, section, opts = {}, how = {}) {
   if (!section.isConnected) return null;               // the page moved on
   let data;
   try {
-    data = await api('/api/epg/now', { ids: [...waiting].join(',') });
+    /* Only as many as the box will answer for in one go. It caps the list
+       itself, so sending four hundred ids was asking it to silently drop
+       three hundred and sixty of them — the rows came back untouched, stayed
+       in `waiting`, and the next pass sent the same over-long list again.
+       Asking a page at a time is what makes the passes walk the list. */
+    data = await api('/api/epg/now', { ids: [...waiting].slice(0, EPG_AT_ONCE).join(',') });
+    how.busy = Boolean(data.busy);
   } catch {
     // A guide that cannot be had is not an error worth a message.
     for (const id of waiting) {
@@ -8939,9 +9009,12 @@ function homeFavColumn({ title, items, hash, empty, shown }) {
  * and All is the first page of everything. It answers a different question
  * from the grid: the grid is "which channel", this is "what is on".
  *
- * Capped, and the cap is not shyness. Every row is one call to a provider
- * with a single connection, so a category of four hundred channels asked
- * about at once is an evening of nothing working. Forty is a page of guide.
+ * Paged, and the page is not shyness. A channel the outside guide covers is
+ * free — the listings are already on disk — but one it does not costs a call
+ * to a provider with a single connection, six per pass. So a category of four
+ * hundred asked about at once is an evening of nothing working, while forty
+ * is a page a box with no guide can actually finish. Press for the next
+ * forty; the category's full size is on screen the whole time.
  */
 function renderListings() {
   const grid = $('#grid');
@@ -8984,24 +9057,40 @@ function renderListings() {
     : 'Live TV';
   $('#contentTitle').textContent = cleanCatName(where);
 
+  /* The way back out to the folders.
+   *
+   * The channel grid has carried one for as long as categories have been
+   * folders, and this view never needed it while it was something you turned
+   * ON inside a category you had already opened — the button you came in by
+   * was the button you left by. Now that a category OPENS here, it is the
+   * only exit, and a page you can enter but not leave is the worst of the
+   * ways this change could have gone wrong. */
+  if (inCategory) {
+    const back = el('button', 'btn btn-ghost folder-back');
+    back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
+    back.append(document.createTextNode(' All categories'));
+    back.addEventListener('click', () => openLiveCategory(null));
+    grid.before(back);
+  }
+
   if (!channels.length) {
     $('#emptyState').hidden = false;
     $('#emptyState').textContent = 'No channels here to build a schedule from.';
     return;
   }
 
-  const shown = channels.slice(0, LISTINGS_MAX);
-
-  /* Where the window was left. Kept across a redraw of the same list — the
-     grid repaints for all sorts of reasons and losing your place every time
-     would make scrolling forward useless — and reset when the list itself
-     changes, because "two hours into the sports category" means nothing once
-     the category is football. */
+  /* Where the window was left, and how far down the list. Both kept across a
+     redraw of the same list — the grid repaints for all sorts of reasons and
+     losing your place every time would make either one useless — and both
+     reset when the list itself changes, because "two hours into the sports
+     category, ninth page" means nothing once the category is football. */
   const key = `${scope}:${state.category ?? ''}`;
   if (guideScope !== key) {
     guideScope = key;
     guideOffset = 0;
+    listingsShown = LISTINGS_MAX;
   }
+  const shown = channels.slice(0, listingsShown);
 
   /* Each window is a new section rather than the same one repainted. The
      fill runs in passes over a second or so, and a pass checks whether its
@@ -9028,6 +9117,10 @@ function renderListings() {
   // What is already being kept, so the slabs can say so as they are drawn.
   loadRecordings();
 
+  /* The rest of the category is one press away rather than unreachable. The
+     same button the channel grid uses, because it is the same idea and a
+     second one in a different place would be a second thing to learn. */
+  $('#loadMore').hidden = shown.length >= channels.length;
   $('#contentMeta').textContent = shown.length < channels.length
     ? `Showing ${shown.length} of ${channels.length.toLocaleString()} channels`
     : '';
@@ -10466,11 +10559,7 @@ function renderLiveCategories() {
     const back = el('button', 'btn btn-ghost folder-back');
     back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
     back.append(document.createTextNode(' All categories'));
-    back.addEventListener('click', () => {
-      state.category = null;
-      writeView();
-      render();
-    });
+    back.addEventListener('click', () => openLiveCategory(null));
     grid.before(back);
   }
 
@@ -10690,12 +10779,7 @@ function liveCategoryCard(cat, count, cover, {
 
   card.append(art, title, sub);
 
-  card.addEventListener('click', onOpen || (() => {
-    state.category = cat.id;
-    state.visible = PAGE_SIZE;
-    writeView();
-    render();
-  }));
+  card.addEventListener('click', onOpen || (() => openLiveCategory(cat.id)));
   return card;
 }
 
@@ -10883,12 +10967,7 @@ function render() {
     const back = el('button', 'btn btn-ghost folder-back');
     back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
     back.append(document.createTextNode(' All categories'));
-    back.addEventListener('click', () => {
-      state.category = null;
-      state.visible = PAGE_SIZE;
-      writeView();
-      render();
-    });
+    back.addEventListener('click', () => openLiveCategory(null));
     grid.before(back);
   }
 
@@ -12847,13 +12926,18 @@ async function goTo(tab, view = null) {
   // schedule you opened twenty minutes ago is not what anyone means by
   // going to Live TV.
   if (tab !== 'live') state.listings = false;
-  applyListingsButton();
   applyWideSearchButton();
   /* Whatever the address says this tab was showing — a search, a category, a
      shelf — rather than nothing. `view` is null when there is no such thing to
      restore: a detail page, or a tab arrived at fresh from the nav, which
      should open on its front page the way it always has. */
   state.category = view && view.cat !== null ? view.cat : null;
+  /* An address that names a live category opens on its schedule, exactly as
+     clicking the folder does — a reloaded page and a pressed tile are the
+     same place and must not look different. Set AFTER state.category, since
+     that is what it is deciding about, and before the button is painted. */
+  if (tab === 'live') state.listings = liveCategoryOpensOnListings(state.category);
+  applyListingsButton();
   state.shelf = (view && view.shelf) || null;
   state.query = (view && view.q) || '';
   state.visible = PAGE_SIZE;
@@ -17980,6 +18064,14 @@ document.addEventListener('keydown', (event) => {
 /* --------------------------------------------------------------- chrome */
 
 $('#loadMore').addEventListener('click', () => {
+  /* The schedule counts in guide pages, not grid pages: a row of it is a
+     provider call where a card is not, and the two sizes are different for
+     that reason. Same button either way — it means "more of this". */
+  if (state.tab === 'live' && state.listings) {
+    listingsShown += LISTINGS_MAX;
+    render();
+    return;
+  }
   state.visible += PAGE_SIZE;
   render();
 });

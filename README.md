@@ -2708,6 +2708,59 @@ So Live opens on square tiles, one per category, showing a single station logo
 and the channel count. Tapping one drills into just that category's stations,
 with an **All categories** button back out.
 
+### And what a category opens on is the schedule
+
+> "whenever I click on any live tv catagory now I want it to load as a listings
+> of all the channels in that catagory showing what is on now"
+
+A category is a question about what to watch, and a wall of ninety logos does
+not answer it — every tile says the same thing, which is that the channel
+exists. The schedule answers it: a row per channel, a slab per programme as
+wide as the programme is long, and the red line at now. So that is what a
+category opens on; the button beside it (**Channels**) is how you get the
+logos back.
+
+The view already existed and already handled a category — it was something you
+turned *on* after arriving. All that changes is which one a category opens on,
+which sounds like a one-line change and is not, because of three edges:
+
+- **Every door has to agree.** There are five ways into a live category: the
+  sidebar row, the folder tile, the desktop rails' headings, the desktop chip
+  bar, and a typed or reloaded address. Two of those five are in `desktop.js`
+  and set `state.category` directly — they would have gone on opening the old
+  view while every door in `app.js` opened the new one. They all call
+  `openLiveCategory()` now, which is the only place the decision is made.
+- **The way out has to exist.** The schedule never carried a back button: you
+  arrived by pressing Listings and you left by pressing it again. Now it is the
+  only exit from a category, and a page you can enter but not leave is the
+  worst way this could have gone.
+- **Leaving has to land on the categories.** `state.listings` left on at the
+  top level is not the category page — it is a schedule of your *favourites*.
+  So `openLiveCategory(null)` turns it off, and that pairing is the whole
+  reason the decision is one function rather than a line at each call site.
+
+**All the channels, a page at a time.** A row the outside guide covers is free
+— those listings are already on disk — but one it does not cover costs a call
+to a provider with a single connection, six per pass. Forty is a page a box
+with no guide can actually finish; the rest is one press of **Show more** away,
+and the count says how many there are the whole time (`Showing 40 of 412
+channels`).
+
+**And a row nobody asked about no longer claims nothing is on.** Rows still
+unanswered when the passes ran out used to be written over with "No listings",
+which is the box reporting its own restraint as a fact about the schedule —
+and forty rows all claiming nothing is on reads as a broken guide rather than a
+busy one. They say **Not checked yet**, or **Guide waits while something is
+playing** when the box has told us that is why (`/api/epg/now` returns `busy`).
+Same mistake as blaming a dead feed on a full pool, one screen over.
+
+`tests/catlistings.test.js` drives the desktop shell, which is the one that
+draws rails instead of tiles: press a category heading, get forty rows with
+programme titles and times, the now-marking and the now-line; page to all
+fifty-two; switch category from the chip bar; reload the address and land in
+the same place; press back and get the categories, not a schedule of something
+else.
+
 **On a desktop the tiles are gone.** The wall of squares was too close to the
 flat grid it replaced, so that layout leads with the pinned categories as its
 chip bar and your favorited channels as the first row — see *The desktop

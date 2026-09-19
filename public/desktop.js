@@ -1192,10 +1192,15 @@
         catId: c.id,
         count: counts.get(String(c.id)) || 0,
         pinned: profiles.isPinned('live', c.id),
+        /* Through app.js's own door, not around it.
+           A category decides what it opens ON — the schedule, since
+           "whenever I click on any live tv catagory now I want it to load as
+           a listings" — and that decision lives in one function so the two
+           doors on this layer, the two in app.js and a reloaded address
+           cannot drift apart. Setting state.category here by hand is exactly
+           how this layer would have kept opening the old view. */
         onOpen: () => {
-          state.category = String(c.id);
-          writeView();
-          render();
+          openLiveCategory(String(c.id));
           scrollTo({ top: 0, behavior: 'smooth' });
         },
       })),
@@ -2264,9 +2269,8 @@
       });
       section.querySelector('.shelf-head').addEventListener('click', (e) => {
         if (e.target.closest('.dk-hpin')) return;
-        state.category = String(cat.id);
-        writeView();
-        render();
+        // Same door as the bar's chips — see the note on onOpen there.
+        openLiveCategory(String(cat.id));
         scrollTo({ top: 0, behavior: 'smooth' });
       });
     }
