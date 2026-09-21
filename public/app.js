@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '42.5';
+const VERSION = '42.6';
 
 const PAGE_SIZE = 60;
 
@@ -13822,6 +13822,15 @@ const playback = {
    * which is exactly why the report in hand had nothing in it.
    */
   moves: [],
+  /** The playhead's position a moment ago, updated on `timeupdate`. The
+      origin of a seek has to come from here: by the time `seeking` fires the
+      element has already moved to the destination. */
+  lastPos: null,
+  /** That position, captured when `seeking` fired, for `seeked` to measure
+      against — the exact jump, with no sample interval inside it. */
+  seekFrom: null,
+  /** When noteSeek last wrote one down, so the sampler does not repeat it. */
+  seekNotedAt: 0,
   /** The last playlist the engine handed us, to compare the next one against. */
   playlistWas: null,
   playlistResets: [],
@@ -13909,6 +13918,12 @@ const playback = {
   reset() {
     this.samples = [];
     this.events = { waiting: 0, stalled: 0, error: 0, ratechange: 0, seeked: 0 };
+    /* A pending `seeking` belongs to the source that is going away. Measuring
+       the next `seeked` against it would report the difference between two
+       unrelated timelines as a jump. */
+    this.seekFrom = null;
+    this.lastPos = null;
+    this.seekNotedAt = 0;
     this.startedAt = Date.now();
   },
 
@@ -14013,7 +14028,14 @@ const playback = {
     if (prev && !newSource && !prev.paused && !video.paused) {
       const wall = (now - prev.at) / 1000;
       const moved = video.currentTime - prev.t;
-      if (wall > 0.2 && wall < 4) {
+      /* A seek has already been written down exactly, by noteSeek, across the
+         event itself. The sampler's own arithmetic would add a second, vaguer
+         copy of the same jump a moment later — so it stands aside for it, and
+         keeps doing the job only it can do: a timeline that moved with NO
+         seek behind it, which is the other of the two faults here and the one
+         no event fires for. */
+      const justSeeked = performance.now() - (this.seekNotedAt || 0) < 2000;
+      if (wall > 0.2 && wall < 4 && !justSeeked) {
         const seeked = /seek/.test(notes);
         if (moved < -0.5) this.noteMove('back', prev, video, moved, seeked);
         else if (!steppedHole && moved > wall + 1.5) {
@@ -14161,6 +14183,39 @@ const playback = {
    */
   expectMove(why) {
     this.expected = { why, at: performance.now() };
+  },
+
+  /**
+   * The seek that just happened, measured across it.
+   *
+   * `seeking` recorded where the playhead was; this is where it landed. The
+   * distance between them is the jump, exactly, with no sample interval in
+   * the middle of it to lose a small one in.
+   *
+   * Half a second is the floor because the engine nudges the playhead by a
+   * few hundredths routinely — settling onto a fragment boundary, stepping
+   * over a gap of one frame — and writing those down would bury the one that
+   * matters under a hundred that do not.
+   */
+  noteSeek(video) {
+    const from = this.seekFrom;
+    this.seekFrom = null;
+    if (!from || !Number.isFinite(from.t)) return;
+    /* The origin is at most a `timeupdate` old — a couple of hundred
+       milliseconds of real playback — so the measured distance can read very
+       slightly short. Named rather than corrected: guessing at the elapsed
+       time would make the number less true, not more. */
+    const moved = video.currentTime - from.t;
+    if (Math.abs(moved) < 0.5) return;
+    /* The row the jump started from, carrying the real buffer and readyState
+       of that moment but the EXACT pre-seek position — noteMove reads both,
+       and the sampled `t` would be up to a second stale. */
+    const last = this.history[this.history.length - 1];
+    const prev = { ...(last || { buf: 0, rs: 0, nw: 0, backEdge: null }), t: from.t };
+    /* Noted here, so the sampler does not write the same jump down again from
+       its own rows a moment later. */
+    this.seekNotedAt = performance.now();
+    this.noteMove(moved < 0 ? 'back' : 'forward', prev, video, moved, true);
   },
 
   noteMove(kind, prev, video, moved, seeked) {
@@ -14434,6 +14489,11 @@ const playback = {
         const want = lowMode();
         const mine = all.find((s) => Boolean(s.low) === want) || all[0] || null;
         this.livePace = mine ? { pace: mine.pace, encoding: mine.encoding } : null;
+        /* What the box caught the provider doing on a DIRECT stream, where
+           there is no session and every other line here reads healthy. A
+           segment served twice under different numbers is the picture
+           repeating, and it is the only account of it there is. */
+        this.liveDirect = (data.direct || []).flatMap((d) => d.replays || []);
       })
       .catch(() => { /* the report is a bonus, never a requirement */ });
   },
@@ -14695,6 +14755,30 @@ const playback = {
         + `  (${[r.sn ? 'sequence' : '', r.time ? 'timeline' : ''].filter(Boolean).join(' and ')} went backwards)`));
     } else {
       out.push('playlist reset  none — the window only ever moved forwards');
+    }
+
+    /*
+     * And the one the two lines above cannot see.
+     *
+     * A direct stream has no pinned upstream, so two nodes can agree about
+     * the pictures and disagree about the numbers they sit at. Old content
+     * arriving under new numbers passes every check here — the sequence rose,
+     * the media clock advanced, nothing seeked — and the only thing that
+     * happens is that the picture repeats a few seconds. The box sees it
+     * because it rewrites every segment URI; this is where it says so.
+     */
+    const replays = this.liveDirect || [];
+    if (replays.length) {
+      out.push(...replays.slice(-4).map((r, i) =>
+        `${i === 0 ? 'content replay' : ''}`.padEnd(16)
+        + `${Math.round((Date.now() - r.at) / 1000)}s ago  `
+        + `a segment already served as ${r.was} came back as ${r.now} `
+        + `(${r.by} further on) — the provider answered from a node with its own `
+        + 'numbering, so the picture repeats while the clock does not'));
+      out.push('                on a DIRECT stream, which has no pinned upstream. The box\'s'
+        + ' own ingest');
+      out.push('                holds one connection for the life of the channel and cannot'
+        + ' do this.');
     }
     return out;
   },
@@ -15399,9 +15483,55 @@ $('#video').addEventListener('loadstart', () => {
   stallsAt = [];
   playback.reset();
 });
-// Seeking jumps the media clock, so the window either side of it is meaningless.
+/*
+ * A seek is measured AT the seek, not worked out from the rows either side.
+ *
+ * "there was an issue where the playback jumped back a few seconds. I dont
+ *  think it is picked up by the playback issue detection."
+ *
+ * It was not, and the report said why without meaning to: `seeked 1`, and
+ * `playhead moves none` directly underneath it. Those two cannot both be true
+ * about a playhead that moved, and the reason they were is that moves are
+ * INFERRED by differencing samples a second apart while a seek is an
+ * instantaneous event between them. Seek back three seconds and carry on
+ * playing, and the next row is `-3 + elapsed` — so any jump the tick outruns
+ * nets out forward and is never written down. The counter saw it because a
+ * counter cannot miss; the detector missed it because it was looking at the
+ * wrong thing.
+ *
+ * `seeking` fires before the jump and `seeked` after it, so the pair is the
+ * exact distance with no sampling in it at all. Which also makes the old
+ * question — was the tick late, was something paused — moot rather than
+ * answered.
+ */
+/*
+ * Where the playhead was a moment ago, kept continuously.
+ *
+ * `seeking` is too late to read it. Setting currentTime updates the official
+ * playback position FIRST and fires the event afterwards, so a handler that
+ * reads currentTime there gets the destination and measures a jump of zero —
+ * which is what the first version of this did, and the suite caught it.
+ *
+ * `timeupdate` fires several times a second while a picture is running, so
+ * the last position seen outside a seek is at most a couple of hundred
+ * milliseconds stale. That is the origin.
+ */
+$('#video').addEventListener('timeupdate', () => {
+  const video = $('#video');
+  if (video.seeking) return;
+  playback.lastPos = { t: video.currentTime, at: performance.now() };
+});
 $('#video').addEventListener('seeking', () => {
+  /* Taken from the running record rather than from the element, which has
+     already moved. Cleared as it is taken, so one seek cannot be measured
+     twice and a second seek cannot reuse the first one's origin. */
+  playback.seekFrom = playback.lastPos;
+  playback.lastPos = null;
+  // Seeking jumps the media clock, so the rate window either side is meaningless.
   playback.samples = [];
+});
+$('#video').addEventListener('seeked', () => {
+  playback.noteSeek($('#video'));
 });
 setInterval(() => {
   playback.tick();

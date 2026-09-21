@@ -3920,6 +3920,72 @@ Keyed on the channel file rather than the URL, because the pool can hand out
 either login for the same feed and the numbering problem is the provider's
 either way.
 
+### The same pictures under new numbers
+
+> "there was an issue where the playback jumped back a few seconds. I dont
+> think it is picked up by the playback issue detection."
+
+It was not, and the report said so in three lines that were each true and
+together wrong:
+
+```
+playhead moves  none — the media clock only went forwards
+playlist reset  none — the window only ever moved forwards
+remux session   none (playing directly)
+```
+
+The third explains the first two. A **direct** stream has no pinned upstream:
+every refresh is an independent request the provider may answer from a
+different node, and two nodes agree about the content but not about where in
+their own numbering it sits. So node B hands back segments it calls 946-951
+carrying pictures node A already served as 943-948. Every check passes —
+`forwardOnlyPlaylist` compares sequence numbers and they *rose*, the media
+clock only ever advanced so nothing seeked — and the one thing that happens is
+that the picture repeats a few seconds.
+
+The segment URIs are the giveaway, and the box has them because it rewrites
+every one on its way past. A URI already served at a lower sequence arriving
+again at a higher one is old content presented as new. `forwardOnlyPlaylist`
+now keeps `URI → sequence` for the playlist it last served and says so when
+one shifts, in the log and in the report:
+
+```
+content replay  41s ago  a segment already served as 940 came back as 943
+                (3 further on) — the provider answered from a node with its
+                own numbering, so the picture repeats while the clock does not
+```
+
+`/api/live/report` grew a `direct` section for it, because it only ever
+described remux sessions and a direct stream has none — so the one path this
+fault exists on was the one path the report knew nothing about.
+
+**The box's own ingest cannot do this.** It holds one connection for the life
+of the channel, so there is only ever one numbering. That remains the reason
+the ingest is preferred and the direct proxy is the fallback.
+
+### And the seek is measured at the seek
+
+The same report carried `seeked 1` directly above `playhead moves none`, which
+cannot both be true of a playhead that moved. Moves were **inferred** by
+differencing samples a second apart, while a seek is an instantaneous event
+between two of them: jump back three seconds and keep playing, and the next row
+reads `-3 + elapsed`. Any jump the tick outruns nets out forward and is never
+written down. The counter saw it because a counter cannot miss.
+
+So the jump is measured across the event now, and the sampler stands aside for
+two seconds afterwards rather than filing a second, vaguer copy. It still does
+the job only it can do — a timeline that moved with *no* seek behind it, which
+no event fires for.
+
+**The first version of this read the origin in the `seeking` handler and
+measured every jump as zero.** Assigning `currentTime` updates the official
+playback position *first* and fires the event afterwards, so the handler gets
+the destination. The origin has to come from a running record kept on
+`timeupdate`, which is a couple of hundred milliseconds stale at worst —
+named in the code rather than corrected, since guessing at the elapsed time
+would make the number less true, not more. `tests/jumpseen.test.js` caught it
+by comparing the report's figure against the element's own before and after.
+
 ## A live channel has to keep going forwards
 
 > "the red zone screen will just pause and never start playing unless I press

@@ -5128,6 +5128,54 @@ const mediaSequence = (text) => {
   return hit ? Number(hit[1]) : null;
 };
 
+/** The segment lines of a playlist, in order, named by whatever identifies
+    them upstream — the last path component and its query, which is what
+    changes when a different node answers. */
+function segmentUris(text) {
+  return String(text)
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'))
+    .map((l) => {
+      const cut = l.lastIndexOf('/');
+      return cut >= 0 ? l.slice(cut + 1) : l;
+    });
+}
+
+/* What a direct stream has been caught doing, per channel, for the report.
+   A direct stream has no remux session, so this is the only place anything
+   is known about it. */
+const directNotes = new Map();
+const DIRECT_NOTE_MS = 10 * 60 * 1000;
+
+function noteDirectReplay(key, replayed) {
+  const held = directNotes.get(key) || { replays: [] };
+  held.replays.push({ at: Date.now(), was: replayed.was, now: replayed.nowAt, by: replayed.by });
+  if (held.replays.length > 8) held.replays.shift();
+  directNotes.set(key, held);
+  if (directNotes.size > 100) {
+    const cutoff = Date.now() - DIRECT_NOTE_MS;
+    for (const [k, v] of directNotes) {
+      if (!v.replays.length || v.replays[v.replays.length - 1].at < cutoff) directNotes.delete(k);
+    }
+  }
+}
+
+/** What is known about a channel being served directly, if anything. */
+function directReport(channelId) {
+  const want = String(channelId || '');
+  const out = [];
+  const cutoff = Date.now() - DIRECT_NOTE_MS;
+  for (const [key, held] of directNotes) {
+    /* The key is the playlist's last path component — `4821.m3u8` for the
+       channel the player asked for, so a channel id matches its own. */
+    if (want && !new RegExp(`(^|\\D)${want}\\.`).test(key)) continue;
+    const replays = held.replays.filter((r) => r.at >= cutoff);
+    if (replays.length) out.push({ key, replays });
+  }
+  return out;
+}
+
 /**
  * The playlist to serve: this one, or the last one if this one went backwards.
  */
@@ -5159,7 +5207,58 @@ function forwardOnlyPlaylist(url, text) {
       + 'taking it as a genuine restart');
   }
 
-  lastPlaylists.set(key, { seq, text, at: now, held: 0 });
+  /*
+   * And whether the CONTENT went backwards while the numbering went forwards.
+   *
+   * "there was an issue where the playback jumped back a few seconds"
+   *
+   * The check above protects the media sequence, and the report duly said
+   * "the window only ever moved forwards" — which was true and did not mean
+   * what it sounds like. On the direct proxy there is no pinned upstream:
+   * every refresh is an independent request the provider may answer from a
+   * different node, and two nodes agree about the content but not about where
+   * in their numbering it sits. So node B can hand back segments it calls
+   * 946-951 carrying pictures node A already served as 943-948. Sequence
+   * forward, pictures backward, and nothing anywhere noticed:
+   *
+   *   - forwardOnlyPlaylist compares numbers, and the numbers rose
+   *   - the player's media clock only ever advanced, so no seek, no move
+   *   - the picture repeats a few seconds, which is all anybody sees
+   *
+   * The segment URIs are the giveaway, and the box has them in its hands
+   * because it rewrites every one. A URI already served at a LOWER sequence,
+   * arriving again at a higher one, is old content being presented as new.
+   * Recorded per channel so the report can say so — see /api/live/report,
+   * which had nothing to say about a direct stream at all.
+   */
+  const uris = segmentUris(text);
+  if (seen && seen.uris) {
+    let replayed = null;
+    uris.forEach((uri, i) => {
+      const was = seen.uris.get(uri);
+      if (was === undefined) return;
+      const nowAt = seq + i;
+      if (nowAt > was && (replayed === null || nowAt - was > replayed.by)) {
+        replayed = { uri, was, nowAt, by: nowAt - was };
+      }
+    });
+    if (replayed) {
+      noteDirectReplay(key, replayed);
+      console.log(`  live: ${key} served the same segment twice under different `
+        + `numbers (${replayed.was} → ${replayed.nowAt}) — the provider answered from `
+        + 'a node with its own numbering, so the picture repeats');
+    }
+  }
+
+  lastPlaylists.set(key, {
+    seq,
+    text,
+    at: now,
+    held: 0,
+    /* seq of each URI in this playlist, for the comparison above. Bounded by
+       the playlist, which is six segments on this provider. */
+    uris: new Map(uris.map((uri, i) => [uri, seq + i])),
+  });
   /* Nothing here is worth a leak: a box left running for weeks would collect
      an entry per channel ever opened. */
   if (lastPlaylists.size > 200) {
@@ -9528,7 +9627,10 @@ async function handleApi(req, res, pathname, query) {
         encoding: Boolean(s.low),
         notes: (s.notes || []).map((note) => ({ ...note, ago: `${Math.round((Date.now() - note.at) / 1000)}s` })),
       }));
-    return json(res, 200, { sessions, now: Date.now() });
+    /* And what is known about the channel when it is being served DIRECTLY,
+       which is when there is no session at all and so nothing above to report.
+       That is exactly the case the jumping-back report came from. */
+    return json(res, 200, { sessions, direct: directReport(wanted), now: Date.now() });
   }
 
   /* ---- Who is in what ----

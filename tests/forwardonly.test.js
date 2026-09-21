@@ -65,11 +65,20 @@ const box = new Function(`
     const hit = /#EXT-X-MEDIA-SEQUENCE:(\\d+)/.exec(text);
     return hit ? Number(hit[1]) : null;
   };
+  /* Lifted too, because forwardOnlyPlaylist calls them. A harness that lifts
+     one function by name has to lift what that function reaches for — the
+     alternative is a ReferenceError the first time the shipped code grows a
+     helper, which is exactly what happened when it learned to notice the same
+     segment arriving under a new number. */
+  ${lift('segmentUris')}
+  const directNotes = new Map();
+  const DIRECT_NOTE_MS = 600000;
+  ${lift('noteDirectReplay')}
   ${lift('forwardOnlyPlaylist')}
-  return { forwardOnlyPlaylist, lastPlaylists, playlistKey };
+  return { forwardOnlyPlaylist, lastPlaylists, playlistKey, directNotes };
 `)();
 
-const { forwardOnlyPlaylist, lastPlaylists } = box;
+const { forwardOnlyPlaylist, lastPlaylists, directNotes } = box;
 
 const URL_A = 'http://provider.example/live/u/p/902.m3u8';
 /* The same channel on the OTHER login: a different URL for the same feed, and
