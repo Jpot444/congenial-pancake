@@ -127,6 +127,19 @@ const SHAPE = [
   // that came back four times is a different story from one that ran clean,
   // and the difference is worth keeping even when both end as `done`.
   'resumes',
+  // Which stream this was asked for as, m3u8 or ts. Kept because the two are
+  // not interchangeable on every channel — see formatFor — so knowing which
+  // one worked is the answer to "why did this one record and that one not".
+  'format',
+  // Whether the finished file has an index in it.
+  //
+  // This one has to persist or the optimisation becomes a treadmill: the
+  // tick() gate asks for an index when `indexed` is undefined, so a field
+  // dropped on write would mean every restart re-remuxing the entire library
+  // — which is worse than the slow opening it exists to cure. `false` is a
+  // real answer too (ffmpeg missing, or it would not index) and stops a row
+  // being asked about for ever.
+  'indexed',
 ];
 
 /*
@@ -520,7 +533,18 @@ function tick(now, hooks) {
          file the row promises. Both go the same way, and both are idempotent:
          the box sets `parts` to [file] when it is done, so a row is only ever
          picked up here once. */
-      if (parts.length > 1 || (parts.length === 1 && parts[0] !== row.file)) {
+      /* And one that is already under the right name but has never been
+         indexed. A recording is written fragmented so a power cut cannot cost
+         it, which leaves an empty moov — no index, no duration — so opening
+         it means reading the whole file. The box remuxes that away once when
+         the programme ends; `indexed` is how a row says it has had that done,
+         and is what stops this being every tick for ever.
+         `indexed: false` rather than absent on a box where ffmpeg is missing,
+         so a row is not asked about again and again for something that cannot
+         happen here. */
+      if (parts.length > 1
+        || (parts.length === 1 && parts[0] !== row.file)
+        || (parts.length === 1 && row.indexed === undefined)) {
         hooks.join?.(row);
         continue;
       }

@@ -126,12 +126,43 @@ function watch(url) {
 
   /* An ffmpeg that keeps writing to whatever it was told to write to, and
      exits cleanly when interrupted — which is what makes "the half that was
-     written is kept" a real claim rather than a hope. */
+     written is kept" a real claim rather than a hope.
+     
+     AND that answers the other call the box makes of it. A finished recording
+     is remuxed once into an indexed mp4 (`-movflags +faststart`), because the
+     fragmented file it was written as has an empty moov and opening one means
+     reading the whole thing. That call is a read-write-exit, not a recorder,
+     and a stand-in that looped forever on it left the finalise never
+     finishing — the recording stayed under its part name and this suite said
+     so. Told apart by the flag, which is the same thing that tells them apart
+     in the box. */
   fs.writeFileSync(path.join(DIR, 'fakebin', 'ffmpeg'), `#!/bin/bash
 if [ "$1" = "-version" ]; then echo "ffmpeg version fake"; exit 0; fi
 args=("$@")
 out="\${args[-1]}"
 echo "$@" >> "${DIR}/ffmpeg-calls.log"
+case "$*" in
+  *faststart*)
+    # Finishing a recording: copy what the inputs hold and exit, the way a
+    # remux does. Concat lists and plain inputs both arrive here.
+    : > "$out"
+    prev=''
+    for a in "$@"; do
+      if [ "$prev" = "-i" ]; then
+        if [ "\${a##*.}" = "txt" ]; then
+          while IFS= read -r line; do
+            f="\${line#file \'}"; f="\${f%\'}"
+            [ -f "$f" ] && cat "$f" >> "$out"
+          done < "$a"
+        elif [ -f "$a" ]; then
+          cat "$a" >> "$out"
+        fi
+      fi
+      prev="$a"
+    done
+    exit 0
+    ;;
+esac
 trap 'exit 0' INT TERM
 while true; do
   printf 'RECORDED-BYTES-RECORDED-BYTES-RECORDED-BYTES' >> "$out"
@@ -225,14 +256,30 @@ exit 0
       && stopped.data.recording.status === 'partial', JSON.stringify(stopped.data.recording));
     check('and what it got is kept, not thrown away',
       stopped.data.recording.bytes > 0, String(stopped.data.recording.bytes));
-    check('with the file still on disk',
-      fs.existsSync(path.join(DIR, 'rec', stopped.data.recording.file)), '');
     /* Half a programme is watchable — a fragmented mp4 plays as far as it
        was written, which is also what makes watching one still in progress
-       work. */
+       work. Asked FIRST, because it is the claim that matters: what was
+       written is still there and can be played. */
     const playable = await call(`/api/recordings/${id}/file`);
     check('and playable', playable.status === 200 || playable.status === 206,
       String(playable.status));
+
+    /* And then under the name the row promises.
+     *
+     * Not immediately. A finished recording is now remuxed once into an
+     * indexed mp4 — a fragmented one has an empty moov, so opening it means
+     * reading the whole file, which is why a DVR item took so long to start.
+     * That runs through ffmpeg and finishes when it finishes; before this it
+     * was a synchronous rename, which is what this check used to be able to
+     * assume. The part is on disk and playable throughout, which is what the
+     * check above covers. */
+    let named = false;
+    for (let i = 0; i < 30 && !named; i += 1) {
+      named = fs.existsSync(path.join(DIR, 'rec', stopped.data.recording.file));
+      if (!named) await wait(400);
+    }
+    check('and lands under the name the row promises', named,
+      `${stopped.data.recording.file} never appeared`);
 
     await wait(1500);
     const freed = await call('/api/play?kind=live&id=800&ext=ts');

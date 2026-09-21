@@ -4414,6 +4414,66 @@ for `Date.now()` itself. In the box they are the same clock and it never
 mattered; the moment anything drives the scheduler on its own clock the two
 disagree, and the backoff is measured between them.
 
+### A recording opens without being read from end to end
+
+> "im trying to play something from dvr but it just says connecting to stream
+> and wont play" … "it did just start playing but took a long time, i dont
+> think it was optimized"
+
+It was not, and the reason is in the container rather than anywhere near the
+player.
+
+A recording is **written** fragmented on purpose —
+`+frag_keyframe+empty_moov+default_base_moof` — so a power cut two hours into a
+game costs the last few seconds rather than the whole programme. That is right
+for a file that might be cut off, and it stays. The price is an empty moov: no
+index, no duration.
+
+**Measured**, on a clip written exactly as the recorder writes one:
+
+| | moov | duration known after |
+| --- | --- | --- |
+| as written | 1,230 B, empty | reading the **whole file** — 64 KB says 8s, 1 MB says 42s, of 60s |
+| `-c copy -movflags +faststart` | 52,144 B at offset 32 | the **first 64 KB** |
+
+So opening a three-hour recording meant pulling the entire file before the
+browser could settle its timeline and start. From the sofa: a long wait on
+"Connecting to stream…", then eventually a picture.
+
+**One part used to be renamed** — the common case, and the slow one — and
+joined parts were no better, because the concat wrote the fragmented flags
+straight back out. Both go through ffmpeg now and both come out indexed. It is
+`-c copy`: no re-encoding, I/O-bound, once per recording, in the background
+after the programme has ended, instead of on every play.
+
+Four things it is careful about:
+
+- **The recorder is untouched.** Those flags are for a file that might be cut
+  off; this runs when there is nothing left to protect against.
+- **A failed tidy-up never costs the recording.** It remuxes to a scratch name
+  and renames only on success — and a single part that would not index is still
+  put under the name the row promises, slow to open, which is the state
+  everything was in before.
+- **`indexed` persists.** `clean()` writes a whitelist, and the gate asks for
+  an index whenever the field is `undefined` — so a field dropped on write
+  would have meant every restart re-remuxing the whole library, which is worse
+  than the slow opening it cures. Found the same way: `format`, added in v42.5,
+  had never been persisted at all.
+- **One at a time.** `joining` is keyed per recording, which stops one row
+  being finalised twice and does nothing about twenty at once. A box coming up
+  with a library of unindexed recordings would start an ffmpeg for each; they
+  queue, since nobody is waiting on any of them.
+
+`tests/dvropen.test.js` runs the real binary and probes truncated prefixes,
+because the whole finding is about what a demuxer can work out from the start
+of a file and that cannot be established by reading code. Two of its own first
+drafts were wrong in instructive ways: one asserted against a slice of
+`joinRecording` that matched the *comment* explaining the fragmented flags and
+so reported the opposite of the truth, and one mutated a row in memory and read
+the file back, proving nothing. `recordings.test.js` needed its stand-in ffmpeg
+taught to remux — it was a recorder, looping forever, so the finalise never
+finished and the suite correctly said the file never appeared under its name.
+
 ### "The feed never started sending"
 
 > "DVR is not working, this was the error

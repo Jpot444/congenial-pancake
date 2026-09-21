@@ -4095,12 +4095,62 @@ function recordArgs(input, out, local, format = 'm3u8') {
  */
 const joining = new Set();
 
+/* One at a time, across every row.
+ *
+ * `joining` is keyed per recording, which stops one row being finalised
+ * twice and does nothing about twenty rows being finalised at once. A box
+ * coming up with a library of unindexed recordings would start an ffmpeg for
+ * every one of them — on a Pi, with an archive drive and possibly a
+ * recording in progress, that is the tidy-up making the box unusable. They
+ * queue instead; nobody is waiting on any of them. */
+const FINALISE_AT_ONCE = 1;
+
 function joinRecording(row) {
   if (joining.has(row.id)) return;
+  if (joining.size >= FINALISE_AT_ONCE) return;   // next tick will come round again
   const parts = recordings.partsOf(row).filter(
     (f) => recordings.fileSize(path.join(RECORDINGS_DIR, f)) > 0);
-  if (parts.length < 2) {
-    /* One part is the ordinary case: name it what the row says and be done. */
+  if (!parts.length) return;
+
+  /*
+   * ONE PART STILL GETS FINISHED, and that is the whole of this change.
+   *
+   * "im trying to play something from dvr but it just says connecting to
+   *  stream and wont play" … "it did just start playing but took a long time,
+   *  i dont think it was optimized"
+   *
+   * It was not. A recording is WRITTEN fragmented on purpose —
+   * `+frag_keyframe+empty_moov+default_base_moof`, so that a power cut two
+   * hours in costs the last few seconds rather than the whole programme. The
+   * price of that is an empty moov: no index and no duration. Measured on a
+   * sixty-second clip written exactly as the recorder writes one, a demuxer
+   * given the first 64KB believes the file is 8 seconds long, at 1MB it
+   * believes 33, and it only learns the real length by reading to the END.
+   *
+   * So opening a three-hour recording meant pulling the entire file before
+   * the browser could settle its timeline and start. Remuxed `-c copy
+   * -movflags +faststart` the same clip carries a 52KB indexed moov at offset
+   * 32 and the true duration is known from the first 64KB.
+   *
+   * One part used to be RENAMED — the common case, and the slow one. Joined
+   * parts were no better: the concat below wrote the fragmented flags
+   * straight back out. Both go through ffmpeg now and both come out indexed.
+   *
+   * The crash-safety those flags buy is for the file being WRITTEN, where it
+   * is exactly right and stays (see recordArgs). Once the programme is over
+   * there is nothing left to protect against, and the cost is paid on every
+   * play instead of once.
+   *
+   * `+faststart` costs a second pass to move the moov to the front, which on
+   * a multi-gigabyte recording on a Pi is real I/O — once, in the background,
+   * after the programme has ended, rather than every time somebody presses
+   * play.
+   */
+  if (!hasFfmpeg()) {
+    /* No ffmpeg: the old behaviour. A playable file under the name the row
+       promises, slow to open, which is better than no file at all. Recorded
+       as a real answer so the gate in tick() stops asking. */
+    row.indexed = false;
     if (parts.length === 1 && parts[0] !== row.file) {
       try {
         fs.renameSync(path.join(RECORDINGS_DIR, parts[0]), path.join(RECORDINGS_DIR, row.file));
@@ -4111,10 +4161,9 @@ function joinRecording(row) {
     }
     return;
   }
-  if (!hasFfmpeg()) return;
 
   joining.add(row.id);
-  const listFile = path.join(RECORDINGS_DIR, `${row.id}.parts.txt`);
+  const listFile = parts.length > 1 ? path.join(RECORDINGS_DIR, `${row.id}.parts.txt`) : null;
   const final = path.join(RECORDINGS_DIR, row.file);
   /*
    * Joined to one side and moved into place, never written over the parts.
@@ -4127,32 +4176,44 @@ function joinRecording(row) {
    * leaves the parts untouched rather than row.file a stub.
    */
   const out = path.join(RECORDINGS_DIR, `${row.id}.joining.mp4`);
-  try {
-    /* ffmpeg's concat demuxer reads a list of files. The quoting is its own —
-       a single quote inside a name has to be escaped for it, and these names
-       are built by fileName() so they cannot contain one, but a file the box
-       did not name could. */
-    fs.writeFileSync(listFile, parts
-      .map((f) => `file '${path.join(RECORDINGS_DIR, f).replace(/'/g, "'\\''")}'`)
-      .join('\n'));
-  } catch (err) {
-    joining.delete(row.id);
-    console.log(`  recordings: could not write the join list — ${err.message}`);
-    return;
+  if (listFile) {
+    try {
+      /* ffmpeg's concat demuxer reads a list of files. The quoting is its own —
+         a single quote inside a name has to be escaped for it, and these names
+         are built by fileName() so they cannot contain one, but a file the box
+         did not name could. */
+      fs.writeFileSync(listFile, parts
+        .map((f) => `file '${path.join(RECORDINGS_DIR, f).replace(/'/g, "'\\''")}'`)
+        .join('\n'));
+    } catch (err) {
+      joining.delete(row.id);
+      console.log(`  recordings: could not write the join list — ${err.message}`);
+      return;
+    }
   }
+
+  /* Several parts are concatenated; one is copied. Either way the output is
+     the same shape, which is the point — a recording's playability must not
+     depend on how many times the feed dropped while it was being made. */
+  const input = listFile
+    ? ['-f', 'concat', '-safe', '0', '-i', listFile]
+    : ['-i', path.join(RECORDINGS_DIR, parts[0])];
 
   const proc = spawn('ffmpeg', [
     '-v', 'error', '-nostats', '-hide_banner', '-y',
-    '-f', 'concat', '-safe', '0', '-i', listFile,
+    ...input,
     '-c', 'copy',
-    '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
+    /* An indexed moov, at the front. NOT the fragmented flags the recorder
+       writes — see the note above; those are for a file that might be cut
+       off, and this one is finished. */
+    '-movflags', '+faststart',
     '-f', 'mp4', out,
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   onStderr(proc, (d) => { stderr = (stderr + d.toString()).slice(-500); });
   proc.on('exit', (code) => safely('joining a recording', () => {
     joining.delete(row.id);
-    try { fs.unlinkSync(listFile); } catch { /* already gone */ }
+    if (listFile) { try { fs.unlinkSync(listFile); } catch { /* already gone */ } }
     const live = recordings.get(row.id);
     if (!live) return;
     if (code === 0 && recordings.fileSize(out) > 0) {
@@ -4173,14 +4234,39 @@ function joinRecording(row) {
       }
       live.parts = [live.file];
       live.bytes = recordings.fileSize(final);
-      console.log(`  recording: joined ${parts.length} parts of ${live.title}`);
+      /* Marked, so a row can say whether it is the fast kind — and so a box
+         that has been running since before this can tell which of its
+         recordings still need it. */
+      live.indexed = true;
+      console.log(`  recording: ${parts.length > 1 ? `joined ${parts.length} parts of` : 'indexed'} `
+        + `${live.title} — opens without reading the whole file now`);
     } else {
       /* Left in pieces, and left playable. Said out loud in the row so the
          screen can be honest about it rather than showing a size that does
          not match the file it is about to serve. */
       try { fs.unlinkSync(out); } catch { /* never got that far */ }
-      live.error = live.error
-        || `Kept in ${parts.length} pieces — they would not join${stderr ? `: ${stderr.split('\n')[0]}` : ''}.`;
+      /* Left exactly as it was, and left playable — slow to open, which is the
+         state everything was in before this. A failed tidy-up must never cost
+         the recording. */
+      if (parts.length > 1) {
+        live.error = live.error
+          || `Kept in ${parts.length} pieces — they would not join${stderr ? `: ${stderr.split('\n')[0]}` : ''}.`;
+      } else if (parts[0] !== live.file) {
+        /* One part that could not be indexed still has to end up under the
+           name the row promises, or the row points at nothing. */
+        try {
+          fs.renameSync(path.join(RECORDINGS_DIR, parts[0]), final);
+          live.parts = [live.file];
+        } catch (err) {
+          console.log(`  recordings: could not name the file — ${err.message}`);
+        }
+      }
+      /* An answer either way, so tick() does not come back to this row every
+         second for the rest of the box's life. */
+      live.indexed = false;
+      if (parts.length === 1 && stderr) {
+        console.log(`  recordings: could not index ${live.title} — ${stderr.split('\n')[0]}`);
+      }
     }
   }));
   proc.on('error', () => safely('joining a recording', () => {
