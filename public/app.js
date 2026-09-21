@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '42.7';
+const VERSION = '42.8';
 
 const PAGE_SIZE = 60;
 
@@ -4800,8 +4800,19 @@ const health = {
       rows.push(row('Survives a reboot', {
         value: d.boot.ok ? 'Yes' : 'NO — it would stay down',
         sub: d.boot.ok
-          ? `pm2 restores ${(d.boot.saved || []).join(' and ')} at boot`
-          : `${d.boot.missing.join('; ')} — run scripts/ensure-boot.sh on the Pi`,
+          ? `${d.boot.how ? `${d.boot.how} restores ` : 'pm2 restores '}`
+            + `${(d.boot.saved || []).join(' and ')} at boot`
+          /* A remedy that can be pressed, where there is one.
+           *
+           * This row spent weeks saying "run scripts/ensure-boot.sh on the
+           * Pi" — true, and needing an SSH session, about a fault whose whole
+           * nature is that it stays invisible until a reboot nobody watches
+           * for. `pm2 startup` needs root and cannot be done from here; an
+           * @reboot crontab entry needs nothing and can. */
+          : `${d.boot.missing.join('; ')}${d.boot.fixable
+            ? ' — this can be fixed from here'
+            : ' — run scripts/ensure-boot.sh on the Pi'}`,
+        act: d.boot.fixable ? ['boot', 'Fix it now'] : null,
         pill: d.boot.ok ? ['ok', 'Ready'] : ['bad', 'Fix this'],
       }));
     }
@@ -4865,7 +4876,7 @@ const health = {
 
     return rows.join('') + note;
 
-    function row(key, { value, sub = '', pill = null, bar = null }) {
+    function row(key, { value, sub = '', pill = null, bar = null, act = null }) {
       const pillHtml = pill && pill[0] !== 'neutral'
         ? `<span class="health-pill ${pill[0]}">${escapeHtml(pill[1])}</span>`
         : pill ? `<span class="health-pill">${escapeHtml(pill[1])}</span>` : '<span></span>';
@@ -4877,6 +4888,7 @@ const health = {
         <span class="health-val">${escapeHtml(String(value))}${sub ? `<span class="health-sub">${escapeHtml(sub)}</span>` : ''}</span>
         ${pillHtml}
         ${barHtml}
+        ${act ? `<button type="button" class="btn btn-sm health-act" data-act="${escapeHtml(act[0])}">${escapeHtml(act[1])}</button>` : ''}
       </div>`;
     }
 
@@ -5232,6 +5244,37 @@ $('#copyPlayback').addEventListener('click', async () => {
 
 $('#healthModal').addEventListener('click', (e) => {
   if (e.target.id === 'healthModal') health.close();
+});
+
+/*
+ * The one row in the panel that offers to fix itself.
+ *
+ * Delegated, because the panel is rebuilt from an HTML string every poll and
+ * a listener bound to the button would be thrown away with it a second later
+ * — and pressing a button that had just been replaced mid-press is exactly
+ * the kind of nothing-happens this row does not need any more of.
+ */
+$('#healthModal').addEventListener('click', async (e) => {
+  const button = e.target.closest('.health-act[data-act="boot"]');
+  if (!button) return;
+  button.disabled = true;
+  const said = button.textContent;
+  button.textContent = 'Installing…';
+  try {
+    const res = await fetch('/api/boot/install', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    toast(data.already
+      ? 'That was already in place — this box will come back after a reboot.'
+      : 'Done. This box will come back on its own after a reboot.');
+    /* Repainted from the box's own re-reading rather than from optimism: the
+       endpoint checks the crontab back and the panel shows what it found. */
+    await health.refresh();
+  } catch (err) {
+    button.disabled = false;
+    button.textContent = said;
+    toast(`Could not set that up: ${err.message}`);
+  }
 });
 
 /* ----------------------------------------------------------- walkthrough ---

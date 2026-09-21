@@ -85,19 +85,51 @@ else
   say "installing the boot service"
   CMD="$(pm2 startup systemd -u "$(id -un)" --hp "$HOME" 2>/dev/null \
     | grep -E '^\s*sudo ' | tail -1)"
+  # And when it cannot be had, take the route that needs nobody's password.
+  #
+  # This used to exit 1 with advice, which meant the commonest outcome of
+  # running this script — sudo wants a password, because nobody sets up
+  # passwordless sudo on a Pi — left the box exactly as un-survivable as it
+  # was, having printed a paragraph about it. A user crontab needs no
+  # privilege, and `@reboot` running as the user who owns the portal is the
+  # whole of what is being asked for here.
+  install_cron() {
+    local script="$ROOT/scripts/boot-resurrect.sh"
+    if [ ! -f "$script" ]; then
+      say "scripts/boot-resurrect.sh is missing from this checkout"
+      return 1
+    fi
+    chmod +x "$script" 2>/dev/null || true
+    if ! command -v crontab >/dev/null 2>&1; then
+      say "no crontab on this box either — nothing here can make it survive a reboot"
+      return 1
+    fi
+    if crontab -l 2>/dev/null | grep -qE '^[^#]*@reboot.*boot-resurrect\.sh'; then
+      echo "  @reboot entry already installed"
+      return 0
+    fi
+    # Appended, never replaced: `crontab -` overwrites the whole file, so
+    # writing only our line would silently delete every other job on the box.
+    { crontab -l 2>/dev/null
+      echo "# Treasure Theater: bring the portal back after a reboot."
+      echo "@reboot /bin/bash $script >> \$HOME/.iptv-boot.log 2>&1"
+    } | crontab - || { say "crontab would not take the entry"; return 1; }
+    echo "  installed an @reboot entry"
+  }
+
   if [ -z "$CMD" ]; then
-    say "pm2 would not tell us the command. Run this by hand:"
-    echo "      pm2 startup"
-    echo "  then run the sudo line it prints, then: pm2 save"
-    exit 1
+    say "pm2 would not tell us the command — using an @reboot crontab entry instead"
+    install_cron || exit 1
+  else
+    echo "  $CMD"
+    if eval "$CMD"; then
+      pm2 save || true
+    else
+      say "that needed a password, or sudo refused — using an @reboot crontab entry instead"
+      echo "  (to use the systemd unit instead, run the line above by hand, then: pm2 save)"
+      install_cron || exit 1
+    fi
   fi
-  echo "  $CMD"
-  if ! eval "$CMD"; then
-    say "that needed a password, or sudo refused. Run the line above by hand,"
-    echo "  then: pm2 save"
-    exit 1
-  fi
-  pm2 save || true
 fi
 
 # --- 4. say whether it actually holds ------------------------------------
@@ -116,10 +148,15 @@ for app in "$WANT_PORTAL" "$WANT_UPDATER"; do
     FAIL=1
   fi
 done
+# Either mechanism counts, the same way the health panel counts them. Asking
+# for both would fail a box that is genuinely going to come back, and a false
+# FAIL here sends somebody to fix what is not broken.
 if ls /etc/systemd/system/multi-user.target.wants 2>/dev/null | grep -q '^pm2-'; then
-  echo "  ok    pm2 starts at boot"
+  echo "  ok    pm2 starts at boot (systemd unit)"
+elif crontab -l 2>/dev/null | grep -qE '^[^#]*@reboot.*boot-resurrect\.sh'; then
+  echo "  ok    pm2 starts at boot (@reboot crontab entry)"
 else
-  echo "  FAIL  pm2 has no boot service — a reboot comes back empty"
+  echo "  FAIL  nothing starts pm2 at boot — a reboot comes back empty"
   FAIL=1
 fi
 

@@ -9603,6 +9603,95 @@ async function handleApi(req, res, pathname, query) {
    * would react to. `window-restarted` is the one that matters: a media
    * sequence or a first segment going backwards is a player's cue to treat
    * the stream as a new one and join it at the beginning. */
+  /*
+   * Make this box come back after a reboot, from the box.
+   *
+   * "theres a Survives a reboot / NO — it would stay down / pm2 has no boot
+   *  service (`pm2 startup`) — run scripts/ensure-boot.sh on the Pi"
+   *
+   * That row had been telling the truth for weeks and could do nothing about
+   * it. `pm2 startup` needs root — it prints a sudo line rather than
+   * installing anything — so the only remedy the box could name was an SSH
+   * session, for a fault whose whole nature is that it is invisible until the
+   * next reboot, which nobody schedules and nobody watches.
+   *
+   * A user crontab needs no privilege. This writes one `@reboot` line, and
+   * writing it is the entire fix.
+   *
+   * Three things it is careful about, because a crontab is somebody's else's
+   * property as much as ours:
+   *
+   *   - it reads what is there and appends, so nothing already scheduled is
+   *     lost — `crontab -` REPLACES the whole file, so a naive write would
+   *     silently delete every other job on the box;
+   *   - it is idempotent, so pressing twice does not leave two entries;
+   *   - it verifies by reading the crontab back, because the failure being
+   *     fixed is a mechanism that reported success and did nothing.
+   */
+  if (pathname === '/api/boot/install') {
+    if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
+
+    const script = path.join(ROOT, 'scripts', 'boot-resurrect.sh');
+    if (!fs.existsSync(script)) {
+      return json(res, 500, { error: 'scripts/boot-resurrect.sh is missing from this checkout.' });
+    }
+    try {
+      fs.chmodSync(script, 0o755);
+    } catch {
+      /* Already executable, or not ours to change — cron runs it through
+         bash below either way. */
+    }
+
+    /* Through bash explicitly rather than relying on the execute bit, which a
+       git checkout on a filesystem without permissions would not carry. */
+    const line = `@reboot /bin/bash ${script} >> ${path.join(os.homedir(), '.iptv-boot.log')} 2>&1`;
+
+    const listed = spawnSync('crontab', ['-l'], { encoding: 'utf8', timeout: 5000 });
+    if (listed.error) {
+      return json(res, 500, {
+        error: 'There is no crontab command on this box, so this cannot be installed '
+          + 'from here. Run scripts/ensure-boot.sh on the Pi instead.',
+      });
+    }
+    /* Exit 1 with an empty list is "no crontab for this user", which is a
+       perfectly good starting point — not a failure. */
+    const existing = listed.status === 0 ? String(listed.stdout || '') : '';
+    if (/^[^#\n]*@reboot[^\n]*boot-resurrect\.sh/m.test(existing)) {
+      return json(res, 200, { ok: true, already: true, line, boot: bootSurvival() });
+    }
+
+    const next = `${existing.replace(/\n*$/, '')}\n`
+      + '# Treasure Theater: bring the portal back after a reboot. Installed from\n'
+      + '# the health panel; safe to remove if pm2 has a boot service instead.\n'
+      + `${line}\n`;
+    const wrote = spawnSync('crontab', ['-'], { input: next, encoding: 'utf8', timeout: 5000 });
+    if (wrote.status !== 0) {
+      return json(res, 500, {
+        error: `crontab would not take the entry: ${(wrote.stderr || '').trim() || 'no reason given'}`,
+      });
+    }
+
+    /* Read back, because "wrote it" and "it is there" are different claims
+       and this endpoint exists because of the difference. */
+    const boot = bootSurvival();
+    if (!boot.cron) {
+      return json(res, 500, {
+        error: 'The entry was written but reading the crontab back does not show it. '
+          + 'Run scripts/ensure-boot.sh on the Pi.',
+      });
+    }
+    console.log(`  boot: installed an @reboot entry — ${line}`);
+    /* And the list it will resurrect. An entry that comes back to an empty
+       dump is a boot mechanism with nothing to start. */
+    const saved = spawnSync('pm2', ['save'], { encoding: 'utf8', timeout: 20000 });
+    return json(res, 200, {
+      ok: true,
+      line,
+      saved: saved.status === 0,
+      boot: bootSurvival(),
+    });
+  }
+
   if (pathname === '/api/live/report') {
     const wanted = query.get('id') || '';
     const sessions = [...remuxSessions.values()]
@@ -11150,12 +11239,43 @@ function bootSurvival() {
     out.service = false;
   }
 
+  /*
+   * Or the box's own way back, which needs nobody's password.
+   *
+   * `pm2 startup` is the proper answer and it wants root — it does not even
+   * install the unit, it prints a sudo line for a person to run. So this row
+   * could only ever nag, and the sentence it nagged with ("run
+   * scripts/ensure-boot.sh on the Pi") needs an SSH session to act on, about
+   * an event nobody is watching for.
+   *
+   * A user crontab needs no privilege at all, and `@reboot` running as the
+   * user who owns the portal is the whole of what this row is asking for. So
+   * it counts, and the box can install it for itself — see /api/boot/install.
+   */
+  out.cron = false;
+  try {
+    const listed = spawnSync('crontab', ['-l'], { encoding: 'utf8', timeout: 5000 });
+    out.cron = listed.status === 0
+      && /^[^#\n]*@reboot[^\n]*boot-resurrect\.sh/m.test(listed.stdout || '');
+  } catch {
+    out.cron = false;
+  }
+  out.how = out.service ? 'a pm2 boot service' : (out.cron ? 'an @reboot crontab entry' : '');
+
   const want = ['iptv-portal', 'iptv-updater'];
   if (!out.saved) out.missing.push('nothing has been saved with `pm2 save`');
   else for (const name of want) {
     if (!out.saved.includes(name)) out.missing.push(`${name} is not in the saved list`);
   }
-  if (!out.service) out.missing.push('pm2 has no boot service (`pm2 startup`)');
+  /* Either mechanism is enough. Asking for both would fail a box that is
+     genuinely going to come back, which is the one thing this row must never
+     do — a false NO here sends somebody to fix what is not broken. */
+  if (!out.service && !out.cron) {
+    out.missing.push('nothing starts pm2 at boot (no `pm2 startup` service, no @reboot entry)');
+  }
+  /* Whether the box can fix it without being handed a password. The crontab
+     route is ours; the systemd one is not. */
+  out.fixable = !out.service && !out.cron;
   out.ok = out.missing.length === 0;
   return out;
 }

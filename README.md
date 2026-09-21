@@ -3849,6 +3849,58 @@ to replay it (feels fixed, reboots identically), and a list containing the
 portal but not the updater — which comes back up and then silently stops taking
 deploys, which is how a fault hides for a week.
 
+### The row can be pressed now
+
+> "theres a Survives a reboot / NO — it would stay down / pm2 has no boot
+> service (`pm2 startup`) — run scripts/ensure-boot.sh on the Pi"
+
+That row was right, and for weeks it could do nothing about being right.
+`pm2 startup` needs **root** — it does not even install the unit, it prints a
+sudo line for a person to run — so the only remedy the box could name was an
+SSH session, about a fault whose whole nature is that it stays invisible until
+the next reboot, which nobody schedules and nobody watches. And running
+`ensure-boot.sh` without passwordless sudo (which nobody sets up on a Pi) hit
+that same wall, exited 1 with a paragraph, and left the box exactly as
+un-survivable as it found it. A remedy that needs the thing it cannot have is
+not a remedy.
+
+**A user crontab needs no privilege at all.** `@reboot` fires when cron starts,
+running as the user who owns the portal, which is the whole of what this row is
+asking for. So there are two accepted mechanisms now, either being enough:
+
+| mechanism | needs | who can install it |
+| --- | --- | --- |
+| pm2 systemd unit | root | a person, via `sudo` |
+| `@reboot` crontab entry | nothing | **the box itself** |
+
+`POST /api/boot/install` writes the entry, and the health row grew a **Fix it
+now** button that calls it. `scripts/ensure-boot.sh` falls back to the same
+route when sudo refuses rather than exiting with advice.
+
+Three things the endpoint is careful about, because a crontab is as much
+somebody else's property as ours:
+
+- **It reads before it writes.** `crontab -` replaces the *whole file*, so an
+  endpoint that wrote only its own line would silently delete every other job
+  on the box. That is the worst thing this could do.
+- **It is idempotent.** The panel repaints every poll and a button is easy to
+  press twice; two entries would mean two `pm2 resurrect` runs racing at boot.
+- **It reads the crontab back before answering.** A mechanism that reports
+  success and does nothing is the fault being fixed, so it must not be the
+  shape of the fix.
+
+`scripts/boot-resurrect.sh` is what the entry points at, and **cron's
+environment is its whole difficulty**: a threadbare PATH, no profile, no
+`PM2_HOME`. pm2 keyed by the wrong `PM2_HOME` fails in the least obvious way
+available — it reports success and resurrects nothing — so the script
+establishes both rather than inheriting them, waits for the box to finish
+assembling itself, and then *checks* that the portal and the updater are really
+running, because `pm2 resurrect` exits 0 on a dump that does not contain them.
+
+**A boot entry is still only half the answer**, and the row says so: pm2
+resurrects a list only if one was saved, so an `@reboot` line pointing at an
+empty dump starts nothing. Both halves, or the row holds out.
+
 ## A live playlist that only ever goes on
 
 > "There are still so many jumps back to previous spots when I'm watching

@@ -49,13 +49,31 @@ const lift = (name) => {
 /* A pm2 home and a systemd directory under the suite's control. `wants` is
    passed in rather than read from /etc, so this tests the decision without
    needing a machine that actually has pm2 installed at boot. */
-const make = (dir, wants) => new Function('fs', 'path', 'PM2_HOME', 'WANTS', `
+/*
+ * The lift needs spawnSync as well now, because bootSurvival reads the user's
+ * crontab looking for the other boot mechanism.
+ *
+ * Handed in as a stand-in rather than left undefined. Undefined would throw
+ * inside the function's own try/catch and set `cron = false` — the right
+ * ANSWER for the wrong REASON, which would leave this suite passing while
+ * never once exercising the branch, and passing identically if that branch
+ * were deleted. The stand-in answers from `cronText` so the branch is really
+ * taken and both outcomes can be asked for.
+ */
+let cronText = null;   // null = no crontab for this user
+const fakeSpawnSync = (cmd, args) => {
+  if (cmd !== 'crontab' || !args || args[0] !== '-l') return { status: 1, stdout: '' };
+  if (cronText === null) return { status: 1, stdout: '', stderr: 'no crontab' };
+  return { status: 0, stdout: cronText };
+};
+
+const make = (dir, wants) => new Function('fs', 'path', 'PM2_HOME', 'WANTS', 'spawnSync', `
   ${lift('bootSurvival').replace(
     "const wants = '/etc/systemd/system/multi-user.target.wants';",
     'const wants = WANTS;'
   )}
   return bootSurvival;
-`)(fs, path, dir, wants);
+`)(fs, path, dir, wants, fakeSpawnSync);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bootsurvive-'));
 const pm2home = path.join(tmp, 'pm2');
@@ -68,6 +86,8 @@ const saveDump = (names) => fs.writeFileSync(path.join(pm2home, 'dump.pm2'),
 
 (async () => {
   const survival = make(pm2home, wants);
+  /* Declared here so the checks at the end can reach it. */
+  const withCron = (text) => { cronText = text; };
 
   /* ---- the state the Pi was actually found in -------------------------- */
   /*
@@ -82,8 +102,13 @@ const saveDump = (names) => fs.writeFileSync(path.join(pm2home, 'dump.pm2'),
     now.ok === false, JSON.stringify(now.ok));
   check('and names the saving as missing',
     now.missing.some((m) => /pm2 save/.test(m)), JSON.stringify(now.missing));
-  check('and the boot service as missing',
-    now.missing.some((m) => /boot service/.test(m)), JSON.stringify(now.missing));
+  /* Worded for the two mechanisms there are now, not the one there was: a
+     pm2 systemd unit or an @reboot crontab entry, either being enough. What
+     is asserted is that SOMETHING starting pm2 at boot is named as missing,
+     which is the claim — not which of the two is meant. */
+  check('and nothing starting it at boot as missing',
+    now.missing.some((m) => /starts pm2 at boot|boot service/.test(m)),
+    JSON.stringify(now.missing));
 
   /* ---- saved, but with no service to replay it ------------------------- */
   /*
@@ -98,8 +123,8 @@ const saveDump = (names) => fs.writeFileSync(path.join(pm2home, 'dump.pm2'),
   check('still no', now.ok === false, JSON.stringify(now.ok));
   check('with the saving no longer the complaint',
     !now.missing.some((m) => /pm2 save/.test(m)), JSON.stringify(now.missing));
-  check('and the boot service named as the one thing left',
-    now.missing.length === 1 && /boot service/.test(now.missing[0]),
+  check('and starting at boot named as the one thing left',
+    now.missing.length === 1 && /starts pm2 at boot|boot service/.test(now.missing[0]),
     JSON.stringify(now.missing));
 
   /* ---- a service with a list that predates the updater ----------------- */
@@ -155,6 +180,47 @@ const saveDump = (names) => fs.writeFileSync(path.join(pm2home, 'dump.pm2'),
   now = blind();
   check('no dump means no, not yes',
     now.ok === false && now.saved === null, JSON.stringify(now));
+
+  /* ---- the other way a box comes back --------------------------------- */
+  /*
+   * `pm2 startup` needs root — it prints a sudo line rather than installing
+   * anything — so for weeks this row could only nag, and the sentence it
+   * nagged with needed an SSH session. An @reboot crontab entry needs no
+   * privilege, so the box can install one for itself, and it has to COUNT or
+   * a box that had fixed itself would still be told it was going to stay
+   * down.
+   */
+  console.log('\n  and an @reboot entry counts as coming back');
+  saveDump(['iptv-portal', 'iptv-updater']);
+  withCron('# mine\n30 4 * * * /home/hunter/backup.sh\n');
+  now = survival();
+  check('an unrelated crontab is not mistaken for one',
+    now.ok === false && now.cron === false, JSON.stringify(now.missing));
+
+  withCron('@reboot /bin/bash /home/hunter/iptv-portal/scripts/boot-resurrect.sh >> /dev/null 2>&1\n');
+  now = survival();
+  console.log('   ', JSON.stringify({ ok: now.ok, cron: now.cron, how: now.how }));
+  check('ours is', now.cron === true, String(now.cron));
+  check('and with a saved list that is survival, service or no service',
+    now.ok === true, JSON.stringify(now.missing));
+  check('and it says which mechanism, since there are two now',
+    /crontab/.test(now.how || ''), now.how);
+  /* A commented-out line is somebody having turned it off, and reading it as
+     working would be the one wrong answer this row must never give. */
+  withCron('# @reboot /bin/bash /home/hunter/iptv-portal/scripts/boot-resurrect.sh\n');
+  now = survival();
+  check('but a line somebody commented out does not count',
+    now.cron === false && now.ok === false, JSON.stringify(now));
+  /* And the field the panel hangs its button off: only the route the box can
+     take by itself is offered as fixable from here. */
+  withCron(null);
+  now = survival();
+  check('with neither route, the box offers to fix it', now.fixable === true,
+    String(now.fixable));
+  fs.writeFileSync(path.join(wants, 'pm2-hunter.service'), '');
+  now = survival();
+  check('but with a systemd unit there is nothing to offer',
+    now.fixable === false && now.ok === true, JSON.stringify(now));
 
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(`\n  ${fails.length ? `FAILED: ${fails.join(', ')}` : 'all passed'}`);
