@@ -3963,6 +3963,60 @@ fault exists on was the one path the report knew nothing about.
 of the channel, so there is only ever one numbering. That remains the reason
 the ingest is preferred and the direct proxy is the fallback.
 
+### A pause is not the network being slow
+
+> "It is running at 1.00× now, but fell to 0.02× with 7 stalls — the stream is
+> not arriving fast enough."
+
+It was arriving fine, and the report's own timeline said so in the plainest
+terms: eighty-eight consecutive rows reading `paused`, the buffer **growing**
+through them from 309s to 340s, a `pause` event at the top and a `play` at the
+bottom.
+
+```
+  + 31s    244.9  paused  rs4/2 buf  309 + 64s bhd  68s  pause
+  …
+  +119s    245.7       -  rs4/2 buf  340 + 95s bhd 154s  play
+```
+
+`sample()` declined to take a sample while paused and **left the window
+alone**, so the first sample after the resume was measured against the last
+one from before it — eighty-eight seconds of standing still divided into a
+second and a half of media. `1.4 / 88 = 0.016`, which is the figure that was
+reported. `worstRate` then kept it for the whole viewing and the banner turned
+it into a sentence about the link. The window is dropped across a pause now,
+exactly as it always was across a seek and for the same reason: the two ends
+no longer describe one stretch of playback.
+
+**And the pause caused everything else in that report.** A live window is
+sixty seconds wide. Pausing for longer does not pause the broadcast — the edge
+keeps moving, the segments under the playhead expire, and on resume the
+engine's only move is a long way forward. That report carried a forced
+139-second jump, seven waitings and five fragment failures, described every one
+of them, and never mentioned the pause. So pauses over twenty seconds are kept
+for the whole viewing beside the moves they explain, printed as their own line
+and offered as the cause of a forced jump that follows one:
+
+```
+stood still     45s ago  paused 88s — the window holds 60s, so anything longer
+                expires the content under the playhead
+
+playhead moves  930s ago  forward 139.4s  350.2 → 489.6  — the playhead had
+                fallen 100s behind the oldest segment the provider still lists,
+                so the engine jumped forward onto one that exists — it had been
+                paused for 88s, and the window only holds 60s
+```
+
+This is the third report in a row whose headline named the wrong culprit, and
+the shape is always the same: a mechanism reports what it measured as though it
+were a fact about something else. "No connection free" for a dead feed, "the
+feed never started sending" for a format nobody asked the right way for, and
+now a pause read as a slow link.
+
+`tests/stoodstill.test.js` pauses a real element for four seconds — the
+arithmetic that produced 0.016x is the same at any length — and fails on the
+shipped build with `0.41x` retained as the worst moment of the viewing.
+
 ### And the seek is measured at the seek
 
 The same report carried `seeked 1` directly above `playhead moves none`, which

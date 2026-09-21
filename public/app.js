@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '42.6';
+const VERSION = '42.7';
 
 const PAGE_SIZE = 60;
 
@@ -13822,6 +13822,21 @@ const playback = {
    * which is exactly why the report in hand had nothing in it.
    */
   moves: [],
+  /* -- how long it was standing still ----------------------------------- *
+   *
+   * A live window is sixty seconds wide on this provider. Pausing for longer
+   * than that does not pause the broadcast — the edge keeps moving, the old
+   * segments expire, and on resume the playhead is standing on content that
+   * no longer exists. The engine's only move is forward, a long way, and
+   * everything downstream of that looks like the stream falling over: a
+   * forced jump, stalls, fragments that 404 because they are gone.
+   *
+   * The report described every one of those consequences and never once
+   * mentioned the pause that caused them. So pauses are kept, for the whole
+   * viewing, beside the moves they explain. */
+  pauses: [],
+  /** When the current pause began, if there is one. */
+  pausedAt: null,
   /** The playhead's position a moment ago, updated on `timeupdate`. The
       origin of a seek has to come from here: by the time `seeking` fires the
       element has already moved to the destination. */
@@ -13907,6 +13922,8 @@ const playback = {
     this.gaps = [];
     this.engineErrors = [];
     this.moves = [];
+    this.pauses = [];
+    this.pausedAt = null;
     this.playlistWas = null;
     this.playlistResets = [];
     this.expected = null;
@@ -14122,6 +14139,20 @@ const playback = {
     }
   },
 
+  /**
+   * The most recent pause worth blaming something on, within `seconds`.
+   *
+   * Only the long ones: a live window is a minute, and a pause shorter than
+   * that costs nothing but latency. What is looked for is the one that
+   * outlasted the window, because that is the one whose consequences read as
+   * a broken stream.
+   */
+  lastLongPause(seconds) {
+    const cutoff = Date.now() - seconds * 1000;
+    const recent = this.pauses.filter((p) => p.at >= cutoff && p.seconds >= 20);
+    return recent.length ? recent[recent.length - 1] : null;
+  },
+
   /* -- the playhead moving on its own ----------------------------------- */
 
   /**
@@ -14252,10 +14283,23 @@ const playback = {
     /* The answers this can give, in the order they are worth having. The last
        two are the two faults that look identical from the sofa, and the
        difference between them is whether a seek happened at all. */
+    /* And WHY it had fallen out, where the answer is in our own hands.
+     *
+     * A live window is a minute wide; a pause longer than that expires the
+     * content under the playhead while it stands there. Naming it turns the
+     * report from a description of the consequence into an account of the
+     * cause — the difference between "the stream fell over" and "it was
+     * paused for longer than the window holds". */
+    const stood = this.lastLongPause(180);
+    const because = stood
+      ? ` — it had been paused for ${stood.seconds.toFixed(0)}s${
+        standing.windowEnds ? `, and the window only holds ${standing.windowEnds.toFixed(0)}s` : ''}`
+      : '';
     const why = asked
       || (fellOut
         ? `the playhead had fallen ${(prev.backEdge - prev.t).toFixed(0)}s behind the oldest `
           + 'segment the provider still lists, so the engine jumped forward onto one that exists'
+          + because
         : resetAgo !== null && resetAgo < 8
           ? `the playlist was replaced ${resetAgo.toFixed(0)}s earlier`
           : seeked
@@ -14441,7 +14485,35 @@ const playback = {
 
   sample() {
     const video = $('#video');
-    if (video.paused || video.seeking) return;
+    /*
+     * A PAUSE IS NOT SLOW DELIVERY.
+     *
+     * "It is running at 1.00× now, but fell to 0.02× with 7 stalls — the
+     *  stream is not arriving fast enough."
+     *
+     * It was arriving fine. The report's own timeline said so: eighty-eight
+     * consecutive rows reading `paused`, with the buffer GROWING through them
+     * from 309s to 340s, bracketed by a `pause` event and a `play` event.
+     * Nothing was slow; somebody had pressed pause.
+     *
+     * The rate read 0.02x because this function declined to SAMPLE while
+     * paused but left the window alone — so the first sample after the resume
+     * was measured against the last one from before the pause, and eighty-
+     * eight seconds of standing still were divided into a second and a half
+     * of media. 1.4 / 88 = 0.016, which is the figure that was reported. Then
+     * `worstRate` kept it for the whole viewing and the banner turned it into
+     * a sentence about the network.
+     *
+     * Dropping the window is what the seek handler has always done, and for
+     * the same reason: the two ends no longer describe one stretch of
+     * playback. `span() > 6` then holds the verdict back until a real window
+     * has been rebuilt, which is exactly the guard that was already there for
+     * start-up.
+     */
+    if (video.paused || video.seeking) {
+      this.samples = [];
+      return;
+    }
     const q = this.quality();
     // performance.now() rather than Date.now(): immune to the clock being set.
     this.samples.push({ at: performance.now(), t: video.currentTime, f: q ? q.total : 0 });
@@ -14767,6 +14839,26 @@ const playback = {
      * happens is that the picture repeats a few seconds. The box sees it
      * because it rewrites every segment URI; this is where it says so.
      */
+    /*
+     * And whether it was standing still, which is not the stream's fault.
+     *
+     * Printed near the jumps because it is usually their cause: the window is
+     * a minute wide, the edge keeps moving while the picture is paused, and a
+     * pause that outlasts the window leaves the playhead on content that has
+     * expired. Everything after that — the forced jump forward, the stalls,
+     * the fragments that 404 because they are gone — is a consequence, and
+     * the report used to describe all of them and none of this.
+     */
+    const stood = this.pauses.filter((p) => p.seconds >= 20);
+    if (stood.length) {
+      const held = this.liveStanding();
+      out.push(...stood.slice(-3).map((p, i) =>
+        `${i === 0 ? 'stood still' : ''}`.padEnd(16)
+        + `${Math.round((Date.now() - p.at) / 1000)}s ago  paused ${p.seconds.toFixed(0)}s`
+        + `${held.windowEnds ? ` — the window holds ${held.windowEnds.toFixed(0)}s, so anything `
+          + 'longer expires the content under the playhead' : ''}`));
+    }
+
     const replays = this.liveDirect || [];
     if (replays.length) {
       out.push(...replays.slice(-4).map((r, i) =>
@@ -15516,6 +15608,20 @@ $('#video').addEventListener('loadstart', () => {
  * the last position seen outside a seek is at most a couple of hundred
  * milliseconds stale. That is the origin.
  */
+$('#video').addEventListener('pause', () => {
+  playback.pausedAt = performance.now();
+});
+$('#video').addEventListener('play', () => {
+  const held = playback.pausedAt;
+  playback.pausedAt = null;
+  if (held === null) return;
+  const seconds = (performance.now() - held) / 1000;
+  /* Two seconds, because a press-pause-press-play is not what this is for and
+     a run of them would bury the eighty-eight-second one. */
+  if (seconds < 2) return;
+  playback.pauses.push({ at: Date.now(), seconds });
+  if (playback.pauses.length > 8) playback.pauses.shift();
+});
 $('#video').addEventListener('timeupdate', () => {
   const video = $('#video');
   if (video.seeking) return;
