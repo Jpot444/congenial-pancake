@@ -3721,6 +3721,86 @@ dimensions live in the desktop layer as `.desk .home-guide`, which is two
 classes; `.mv-land-guide` is one, so the plain layer's version of the override
 loses to the rule it is trying to beat and the column silently stays at 168px.
 
+## Next episode in a cell, and multi-view from the drive
+
+> "i want a play next episode and resume playing from inside of multiplayer.
+> Also add the multipleyer button when i am watching something from the
+> archive"
+
+Three things, and **one of them was already built** — worth saying plainly
+rather than quietly shipping a second copy of it.
+
+### Next episode
+
+The episode *list* was already one press away: a cell's name is a button that
+opens it. But finding the next one in that list is a hunt through a sheet laid
+over a picture while three other cells carry on without you. The player has
+offered the next episode by name for months; a cell is the same question and
+had no answer.
+
+So the bar carries a `⏭` that names what it will play — `Next: S2E1 — Three` —
+and is **hidden unless there is something for it to do**. Three of the four
+cells are usually channels, and a dead control on each of them is worse than
+no control at all.
+
+Two things it gets right that a naive version would not:
+
+- **It crosses the season boundary.** The last episode of season one is
+  followed by the first of season two, not by nothing.
+- **It sorts seasons numerically.** A show with ten of them orders `1, 10, 2`
+  as strings, and the button would confidently offer the wrong episode.
+
+And it **finds out for itself**, fetching the episode list when it is not
+already cached, because a control that only appears once you have opened the
+sheet is a control for somebody who no longer needs it.
+
+### Resuming was already there
+
+Both halves, and they are worth naming because the second one is the half that
+is usually missing:
+
+- A cell **reads** the saved position before asking for a conversion — a
+  provider title is converted *from* a point, so starting at the top and
+  seeking afterwards would spend a whole restart of ffmpeg arriving where it
+  could have begun.
+- A cell **writes** history on a fifteen-second timer while it plays
+  (`beginCellHistory`), so watching in a cell leaves something to come back
+  to. A cell that read a position it never wrote would be resume that only
+  worked in one direction.
+
+The keys match the player's — `series:<id>:s<season>e<episode>` — so a thing
+started in the player can be finished in a cell and the other way round.
+`tests/mvnext.test.js` checks that rather than taking it on trust, and the
+evidence is the conversion request itself: `{id: "902", start: "620"}`.
+
+### The archive button
+
+It was missing **twice**, and that is the interesting part: the control was
+hidden for anything that was not a channel, *and* its handler read
+`currentLiveItem`, which is `null` for a recording off the drive. Fixing only
+the first would have produced a button that did nothing — measured on both
+builds:
+
+```
+old:  {buttonShown: false, currentLive: null}
+new:  {buttonShown: true,  currentLive: null}
+```
+
+`currentLiveItem` is null either way, so the player now records what it is
+showing (`cinemaItem`) and the button reads that.
+
+The original reasoning — "multi-view is four channels and a film has nothing
+to put beside it" — was already out of date: the picker has had an Archive
+source for as long as it has had Live TV, so a cell can hold a recording off
+the drive and the grid can mix one with three channels. A game on the drive
+beside three that are on now is the obvious thing to want.
+
+**Still not offered for a provider film or a download**, and that is
+deliberate: only one conversion runs at a time — `start()` says so out loud and
+stops the other — so a button that can only ever replace what is already
+playing is a button that does nothing twice. The archive is the exception
+because a direct-playing file on the drive is not a conversion.
+
 ## Build a multiview
 
 From a screen recording of another app, with an exact ask: *"I want my player

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '42.9';
+const VERSION = '43.0';
 
 const PAGE_SIZE = 60;
 
@@ -1091,6 +1091,9 @@ $('#layoutSeg').addEventListener('click', (event) => {
  * The button is Live TV's, because that is the only page where putting four
  * things side by side means anything.
  */
+/** What the full-screen player is showing, for the controls that act on it. */
+let cinemaItem = null;
+
 function applyMultiviewButton() {
   $('#multiviewBtn').hidden = state.tab !== 'live';
 }
@@ -1495,6 +1498,13 @@ const multiview = {
     const play = button('mv-btn mv-play', '❚❚', 'Pause', () => this.toggle(this.at(rec)));
     const fwd = button('mv-btn', '+10', `Forward ${MV_SKIP} seconds`,
       () => this.skip(this.at(rec), MV_SKIP));
+    /* The next episode, by name, without opening anything.
+       Hidden until there is one — see paintNext — because a dead control on a
+       channel is worse than no control, and three of the four cells are
+       usually channels. */
+    const nextBtn = button('mv-btn mv-next', '⏭', 'Next episode',
+      () => this.playNext(this.at(rec)));
+    nextBtn.hidden = true;
     const again = button('mv-btn mv-again', '↻', 'Refresh this stream',
       () => this.refresh(this.at(rec)));
     const sound = button('mv-btn mv-sound', '🔇', 'Listen to this one',
@@ -1544,7 +1554,7 @@ const multiview = {
     });
     track.append(elapsed, rail, total);
 
-    bar.append(name, tag, grip, back, play, fwd, again, sound, grow, drop);
+    bar.append(name, tag, grip, back, play, fwd, nextBtn, again, sound, grow, drop);
     bar.append(track);
 
     const note = el('p', 'mv-status');
@@ -1593,6 +1603,7 @@ const multiview = {
 
     Object.assign(rec, {
       box, video, empty, bar, name, tag, play, sound, note,
+      nextBtn,
       sheet, sheetTitle, sheetBody,
       track, rail, ready, played, knob, elapsed, total,
     });
@@ -1687,6 +1698,112 @@ const multiview = {
         body.append(row);
       }
     }
+  },
+
+  /**
+   * The episode after the one this cell is playing, across season boundaries.
+   *
+   * "i want a play next episode and resume playing from inside of multiplayer"
+   *
+   * The episode LIST was already one press away — the cell's name is a button
+   * that opens it — but finding the next one in it is a hunt through a sheet
+   * over a picture, while three other cells carry on without you. The player
+   * has offered the next episode by name for months; a cell is the same
+   * question and had no answer.
+   *
+   * Reads the cache the sheet fills, so it only knows the answer once that
+   * has been fetched — see `armNext`, which fetches it rather than waiting to
+   * be asked. Seasons are walked in numeric order, because a show with ten of
+   * them sorts 1, 10, 2 as strings and the button would offer the wrong one.
+   */
+  episodeAfter(show, season, episode) {
+    const all = state.seriesCache[show?.id]?.episodes || {};
+    const seasons = Object.keys(all).sort((a, b) => Number(a) - Number(b));
+    const flat = [];
+    for (const s of seasons) {
+      for (const ep of (all[s] || []).slice()
+        .sort((a, b) => Number(a.episode_num) - Number(b.episode_num))) {
+        flat.push({ season: s, ep });
+      }
+    }
+    const at = flat.findIndex((row) => String(row.season) === String(season)
+      && String(row.ep.episode_num) === String(episode));
+    if (at < 0 || at + 1 >= flat.length) return null;
+    return flat[at + 1];
+  },
+
+  /** What a cell would play next, as the override `start` takes. */
+  nextOverride(show, next) {
+    return {
+      kind: 'series',
+      id: next.ep.id,
+      ext: next.ep.container_extension || 'mp4',
+      vcodec: next.ep.info?.video?.codec_name || '',
+      label: `${show.name} — S${next.season}E${next.ep.episode_num}`,
+      season: next.season,
+      episode: next.ep.episode_num,
+    };
+  },
+
+  /**
+   * Work out whether this cell has a next episode, and show the button if so.
+   *
+   * Fetches the show's episodes when they are not already cached, because the
+   * button has to be right BEFORE anybody goes looking for it — a control that
+   * appears only after you have opened the episode sheet is a control for
+   * somebody who no longer needs it.
+   *
+   * Quiet about failure. A cell that cannot find out what comes next simply
+   * has no button, which is the state every cell was in until now.
+   */
+  async armNext(index) {
+    const cell = this.cells[index];
+    if (!cell) return;
+    const show = cell.item;
+    const over = cell.override;
+    const isEpisode = Boolean(show && show.kind === 'series' && over
+      && over.season && over.episode);
+    if (!isEpisode) {
+      cell.next = null;
+      return this.paintNext(index);
+    }
+    if (!state.seriesCache[show.id]) {
+      const mine = cell.token;
+      try {
+        state.seriesCache[show.id] =
+          await api('/api/xtream', { action: 'get_series_info', series_id: show.id });
+      } catch {
+        cell.next = null;
+        return this.paintNext(index);
+      }
+      /* Repointed or stopped while that was in flight, so the answer is about
+         something that is no longer in this cell. */
+      if (cell.token !== mine || cell.item !== show) return undefined;
+    }
+    cell.next = this.episodeAfter(show, over.season, over.episode);
+    return this.paintNext(index);
+  },
+
+  /** The button, shown only where there is something for it to do. */
+  paintNext(index) {
+    const cell = this.cells[index];
+    if (!cell || !cell.nextBtn) return;
+    const next = cell.next;
+    cell.nextBtn.hidden = !next;
+    if (!next) return;
+    const label = `Next: S${next.season}E${next.ep.episode_num}`;
+    cell.nextBtn.title = next.ep.title ? `${label} — ${next.ep.title}` : label;
+    cell.nextBtn.setAttribute('aria-label', cell.nextBtn.title);
+  },
+
+  /** Play it. */
+  playNext(index) {
+    const cell = this.cells[index];
+    if (!cell || !cell.next || !cell.item) return undefined;
+    const show = cell.item;
+    const next = cell.next;
+    this.closeEpisodes(index);
+    return this.start(index, show, this.nextOverride(show, next));
   },
 
   closeEpisodes(index) {
@@ -3421,6 +3538,11 @@ const multiview = {
     cell.offset = 0;
     cell.duration = 0;
     cell.resumeKey = vod ? mvResumeKey(item, override) : '';
+    /* Cleared before the new thing is worked out, so a cell that held episode
+       three does not offer episode four over a channel for the second it takes
+       to find out. */
+    cell.next = null;
+    this.paintNext(index);
     cell.note.hidden = false;
     cell.note.textContent = vod ? 'Converting…' : 'Asking for the stream…';
     this.paint();
@@ -3708,6 +3830,9 @@ const multiview = {
       cell.note.hidden = true;
       cell.ok = true;
       this.paint();
+      /* Once it is really running, and not before: a next-episode button over
+         a cell that never started is an offer to move on from nothing. */
+      this.armNext(this.at(cell));
     }, { once: true });
     // So the play/pause button follows the element rather than only the
     // button that was pressed — a stall or an ended stream moves it too.
@@ -15975,9 +16100,34 @@ function enterCinema(item) {
         : item.kind === 'live' ? '#/live' : `#/movies/${item.id}`;
 
   $('#cinemaTop').hidden = false;
-  // Live only: multi-view is four live channels, and there is nothing to put
-  // in a second cell when the thing on screen is a film.
-  $('#cinemaMultiview').hidden = item.kind !== 'live';
+  /*
+   * Which thing the player is showing, for the controls that act on it.
+   *
+   * The multi-view button reached for `currentLiveItem`, which is null for
+   * anything that is not a channel — so the button could only ever have
+   * worked on live, whatever it was shown for.
+   */
+  cinemaItem = item;
+  /*
+   * Multi-view, from live and from the archive.
+   *
+   * "Also add the multipleyer button when i am watching something from the
+   *  archive"
+   *
+   * It was live-only on the reasoning that multi-view is four channels and a
+   * film has nothing to put beside it. That reasoning was already out of date:
+   * the picker has had an Archive source for as long as it has had Live TV,
+   * so a cell can hold a recording off the drive and the grid can mix one with
+   * three channels. A game on the drive beside three that are on now is the
+   * obvious thing to want and the button was the only thing missing.
+   *
+   * Still not offered for a provider film or a download. Only one conversion
+   * runs at a time — start() says so out loud and stops the other — so a
+   * button that can only ever replace what is already playing is a button that
+   * does nothing twice. The archive is the exception because a direct-playing
+   * file on the drive is not a conversion.
+   */
+  $('#cinemaMultiview').hidden = !(item.kind === 'live' || fromArchive);
   // A film has its own fullscreen button in the film bar; this is live's.
   $('#liveFull').hidden = item.kind !== 'live';
   // The bottom strip — play/pause and captions — exists exactly where the
@@ -16016,7 +16166,10 @@ $('#cinemaBack').addEventListener('click', leaveCinema);
  * if they are all busy, since the one you just asked for is the one you want.
  */
 $('#cinemaMultiview').addEventListener('click', () => {
-  const item = currentLiveItem;
+  /* Whatever the player is showing, not only a channel. `currentLiveItem` is
+     null for a recording off the drive, so reading it here was the other half
+     of why this button was live-only. */
+  const item = currentLiveItem || cinemaItem;
   if (!item) return;
   multiview.open();          // closes the player, and with it its connection
   const free = multiview.cells.findIndex((c, i) => i < multiview.count && !c.item);
