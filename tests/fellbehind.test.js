@@ -262,8 +262,29 @@ const block = (report, label) => {
   check('the slide is on the report', now > 55, `${now}`);
   check('and named as a slide rather than a number', /slipped/.test(behind), behind);
   check('with how much of it was lost', /slipped 2[0-9]\.\ds/.test(behind), behind);
-  check('and said to be time the stalls cost',
-    /never made back/.test(behind), behind);
+  /*
+   * And ATTRIBUTED to one end or the other rather than blamed on stalls by
+   * default.
+   *
+   * That line used to read "time lost to stalls that was never made back" for
+   * every slide whatever caused it, and a report arrived carrying exactly
+   * that sentence with `stalled 0`, `waiting 0`, no dropped frames and a
+   * clean 1.00x — where the far end had run ahead at 1.44x and the player had
+   * done nothing wrong at all.
+   *
+   * WHICH end it names is not pinned here, and deliberately. This harness
+   * compresses time: it advances the simulated latency a whole second per
+   * tick while the ticks themselves are milliseconds of real clock, so the
+   * media clock and the wall clock do not agree inside it and any ratio
+   * between them is an artefact of the fixture rather than a finding. The
+   * attribution itself is checked in edgepace.test.js, which drives both
+   * clocks from the same place for that reason.
+   */
+  check('and attributed to an end rather than blamed on stalls by default',
+    !/time lost to stalls/.test(behind)
+    && /(far end ran ahead|playhead falling behind|far end stalled)/.test(behind),
+    behind);
+  check('with a figure behind the claim', /\d\.\d\dx/.test(behind), behind);
 
   /* ---- 3. the cliff, called before it is reached ----------------------- */
   /*

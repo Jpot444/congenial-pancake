@@ -4095,6 +4095,66 @@ fault exists on was the one path the report knew nothing about.
 of the channel, so there is only ever one numbering. That remains the reason
 the ingest is preferred and the direct proxy is the fallback.
 
+### Which end of the gap slipped
+
+> "the jumping issue happened again"
+
+The report that came with it was clean on every line that exists — `1.000x`,
+`waiting 0, stalled 0`, `0 dropped of 741`, `playhead moves none`, `skipped
+nothing`, `holes now none`, `playlist reset none` — and one number growing:
+
+```
+behind live     48.2s now, 37.3s when it started
+                slipped 10.9s since it started — time lost to stalls that
+                was never made back
+```
+
+With `stalled 0` four lines above it. That sentence was printed
+**unconditionally** whenever the gap had grown, and had never once been
+checked against whether anything had stalled.
+
+**A gap has two ends, and the report only ever watched one of them.**
+Everything in it describes the playhead: whether it keeps up, what it is
+buffered against, whether it moved when it should not have. Reading that
+report's own timeline:
+
+| | at +10s | at +36s | over 26s |
+| --- | --- | --- | --- |
+| playhead | 28.2 | 52.6 | +24.4s — **1.00×**, exactly right |
+| live edge | 63.2 | 100.6 | +37.4s — **1.44×** |
+
+A live edge cannot outrun the clock. A provider doing it is publishing faster
+than it is producing — catching up after a stumble, splicing, or advertising
+segment durations longer than the media behind them — and every one of those
+is felt as the picture skipping.
+
+The edge is `currentTime + behind`, which is **stable across a seek** because
+both terms move together; that is what makes it worth measuring separately
+from the playhead. Its pace is on the report now, whether or not a gap has
+opened, and the slip line names which end moved:
+
+```
+slipped 10.9s since it started — the far end ran ahead, not the player: the
+edge moved at 1.44x over 25s while the picture played at 1.00x
+the edge moved at 1.44x real time over 25s — FASTER than the clock, which a
+broadcast cannot do
+```
+
+It stays quiet under eight seconds of window, because a ratio taken over two
+seconds of a stream that has just started is noise with a decimal point on it,
+and this line is read by somebody deciding whether their provider is at fault.
+
+**`fellbehind.test.js` cannot pin which end**, and the reason is worth
+recording: that harness compresses time, advancing the simulated latency a
+whole second per tick while the ticks themselves are milliseconds of real
+clock. The two clocks do not agree inside it, so any ratio between them is an
+artefact of the fixture. It checks that an end is named and a figure given;
+`edgepace.test.js` drives both clocks from one place and checks which.
+
+This is the **fourth** report in a row whose headline named the wrong culprit,
+and the shape has not changed once: a mechanism reports what it measured as
+though it were a fact about something else.
+
 ### A pause is not the network being slow
 
 > "It is running at 1.00× now, but fell to 0.02× with 7 stalls — the stream is

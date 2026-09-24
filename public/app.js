@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '43.0';
+const VERSION = '43.1';
 
 const PAGE_SIZE = 60;
 
@@ -14005,6 +14005,32 @@ const playback = {
   pauses: [],
   /** When the current pause began, if there is one. */
   pausedAt: null,
+  /* -- how fast the far end is moving ----------------------------------- *
+   *
+   * "the jumping issue happened again"
+   *
+   * The report that came with it was clean on every line — 1.00x, no stalls,
+   * no dropped frames, no seek, no hole, the playlist only ever forwards —
+   * and one number growing: `behind live` went 37.3s to 48.2s in half a
+   * minute. The report called that "time lost to stalls", with `stalled 0`
+   * four lines above it.
+   *
+   * It was not the playhead. Reading the timeline: the playhead advanced
+   * 24.4s in 26s of wall clock, which is 1.00x and exactly right. The EDGE
+   * advanced 37.4s in the same 26s, which is 1.44x and is not possible for a
+   * broadcast — a live edge cannot outrun the clock unless the provider is
+   * publishing faster than it is producing, or the durations it advertises
+   * are longer than the media behind them.
+   *
+   * Either of those is felt as the picture skipping, and NOTHING here
+   * measured it. Everything in this report describes the playhead: whether it
+   * keeps up, what it is buffered against, whether it moved when it should
+   * not have. The other end of the gap was never watched at all.
+   *
+   * So it is watched now. The edge is `currentTime + behind`, which is stable
+   * across a seek — both terms move together — and its pace over the whole
+   * viewing is the number that says whether the far end is behaving. */
+  edges: [],
   /** The playhead's position a moment ago, updated on `timeupdate`. The
       origin of a seek has to come from here: by the time `seeking` fires the
       element has already moved to the destination. */
@@ -14090,6 +14116,7 @@ const playback = {
     this.gaps = [];
     this.engineErrors = [];
     this.moves = [];
+    this.edges = [];
     this.pauses = [];
     this.pausedAt = null;
     this.playlistWas = null;
@@ -14173,6 +14200,12 @@ const playback = {
         this.behindWorst = standing.behind;
         this.behindAt = Date.now();
       }
+      /* Where the far end is, on the same clock. currentTime + behind is the
+         edge's own position in the timeline, and it is stable across a seek
+         because both terms move together — which is what makes it worth
+         measuring separately from the playhead. */
+      this.edges.push({ at: now, edge: video.currentTime + standing.behind });
+      if (this.edges.length > 180) this.edges.shift();
     }
 
     /*
@@ -14319,6 +14352,29 @@ const playback = {
     const cutoff = Date.now() - seconds * 1000;
     const recent = this.pauses.filter((p) => p.at >= cutoff && p.seconds >= 20);
     return recent.length ? recent[recent.length - 1] : null;
+  },
+
+  /**
+   * How fast the live edge is moving, in media seconds per wall second.
+   *
+   * 1.00 is a broadcast behaving. Above it the provider is publishing faster
+   * than it is producing — catching up after a stumble, splicing, or
+   * advertising segment durations longer than the media behind them — and all
+   * of those are felt as the picture skipping. Below it the far end has
+   * stalled while the clock carried on.
+   *
+   * Null until there is enough of a window to divide by, because a figure
+   * taken over two seconds of a stream that has just started is noise with a
+   * decimal point on it.
+   */
+  edgePace() {
+    const rows = this.edges;
+    if (rows.length < 2) return null;
+    const first = rows[0];
+    const last = rows[rows.length - 1];
+    const wall = (last.at - first.at) / 1000;
+    if (wall < 8) return null;
+    return { rate: (last.edge - first.edge) / wall, over: wall };
   },
 
   /* -- the playhead moving on its own ----------------------------------- */
@@ -15081,13 +15137,51 @@ const playback = {
     if (this.behindFirst !== null) {
       const slid = standing.behind - this.behindFirst;
       if (slid > 3) {
-        out.push(`                slipped ${slid.toFixed(1)}s since it started — `
-          + 'time lost to stalls that was never made back');
+        /*
+         * WHICH END SLIPPED.
+         *
+         * This used to say "time lost to stalls that was never made back",
+         * always, whatever had happened — and a report arrived carrying that
+         * sentence with `stalled 0` and `waiting 0` four lines above it, a
+         * clean 1.00x throughout and not one dropped frame. The gap had grown
+         * by eleven seconds and nothing in the player had gone wrong.
+         *
+         * A gap has two ends. If the playhead kept up, the far end ran away:
+         * the edge advanced 1.44x while the clock advanced 1.00x, which a
+         * broadcast cannot do unless the provider is publishing faster than
+         * it produces or advertising durations longer than the media behind
+         * them. Either is felt as the picture skipping, and the report was
+         * pointing at the one end that was behaving.
+         */
+        const pace = this.edgePace();
+        const why = pace === null
+          ? ''
+          : pace.rate > 1.08
+            ? ` — the far end ran ahead, not the player: the edge moved at `
+              + `${pace.rate.toFixed(2)}x over ${pace.over.toFixed(0)}s while the picture `
+              + 'played at 1.00x'
+            : pace.rate < 0.92
+              ? ` — the far end stalled: the edge moved at ${pace.rate.toFixed(2)}x `
+                + `over ${pace.over.toFixed(0)}s`
+              : ` — the edge kept proper time (${pace.rate.toFixed(2)}x), so this is `
+                + 'the playhead falling behind it';
+        out.push(`                slipped ${slid.toFixed(1)}s since it started${why}`);
       } else if (slid < -3) {
         out.push(`                pulled ${Math.abs(slid).toFixed(1)}s closer to the edge since it started`);
       } else {
         out.push('                holding steady — whatever it is behind by, it is not sliding');
       }
+    }
+    /* Printed whether or not anything has slipped, because "the far end is
+       behaving" is an answer worth having before a gap opens rather than only
+       as an explanation after one. */
+    const pace = this.edgePace();
+    if (pace !== null) {
+      out.push(`                the edge moved at ${pace.rate.toFixed(2)}x real time `
+        + `over ${pace.over.toFixed(0)}s`
+        + `${Math.abs(pace.rate - 1) <= 0.08 ? ' — proper time'
+          : pace.rate > 1 ? ' — FASTER than the clock, which a broadcast cannot do'
+            : ' — slower than the clock'}`);
     }
     out.push(`                asked to sit ${asked.toFixed(1)}s back`
       + `${standing.seat !== null ? `; the seat is at ${standing.seat.toFixed(1)}s` : ''}`);
