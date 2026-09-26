@@ -1950,8 +1950,18 @@ body.is-reordering .cht { transition: none; }
 }
 
 /* The first lane overlaps the billboard, so the page starts before the
-   picture has finished. */
-.desk #dkLane { position: relative; z-index: 5; margin-top: -96px; }
+   picture has finished.
+ *
+   Keyed on WHICHEVER section leads rather than on the one that used to. This
+   was `#dkLane`, the rail of channel cards, and when that rail was replaced by
+   the listings grid the rule went on pointing at an element the page no longer
+   builds — so the overlap silently stopped happening and the page began with a
+   band of empty backdrop. buildHome marks its first section. */
+/* Written with the id so it beats whatever the leading section's own rules
+   say about its top margin — `.desk .home-guide` sets one, and two class
+   selectors of equal weight are settled by which comes later in the file,
+   which is not a thing this should depend on. */
+.desk #homeView > .dk-lead { position: relative; z-index: 5; margin-top: -96px; }
 .desk .home-resume .card-art { aspect-ratio: 16/10; }
 
 /* Home artwork is never cropped, for the reason styles.css gives where it
@@ -3445,7 +3455,7 @@ body.is-reordering .cht { transition: none; }
  * 474px one the copy fills the lower half, so the same 96px landed on the
  * buttons: measured at 393pt, the lane began at 429 and the Watch live row
  * ran 449 to 499 — the whole of it underneath. */
-.desk body.has-tabbar #dkLane { margin-top: 0; }
+.desk body.has-tabbar #homeView > .dk-lead { margin-top: 0; }
 
 /* The stage keeps its height and the copy keeps its `position: absolute`: the
    billboard holds up to three features and crossfades between them by stacking

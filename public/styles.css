@@ -5311,6 +5311,54 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .health-pill.warn { color: #E9A13B; border-color: rgba(233, 161, 59, .35); }
 .health-pill.bad  { color: var(--live); border-color: rgba(255, 107, 94, .4); }
 
+/*
+   The remedy on a row that has one.
+
+   "still getting this error … nothing starts pm2 at boot … this can be fixed
+   from here"
+
+   It could be, and the button that does it had no rules of its own. `.btn`
+   sets a shape and no colour and no font, so the browser's own button
+   defaults showed through: a blank white pill, 84 pixels wide, with the words
+   "Fix it now" invisible inside it — dumped into the grid's next implicit
+   cell below the row, where it read as a rendering fault rather than as a
+   control. The fix had been one press away for a fortnight and looked like a
+   smudge.
+
+   So: placed on purpose, under the sentence it answers, in the column the
+   sentence is in; and coloured like the row it belongs to, which is a row
+   saying something is wrong. */
+.health-act {
+  grid-column: 2;
+  justify-self: start;
+  margin-top: 9px;
+  height: 32px;
+  padding: 0 15px;
+  border: 1px solid rgba(255, 107, 94, .45);
+  border-radius: 999px;
+  background: rgba(255, 107, 94, .1);
+  color: var(--live);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .18s var(--ease), border-color .18s var(--ease);
+}
+.health-act:hover:not(:disabled) {
+  background: rgba(255, 107, 94, .2);
+  border-color: var(--live);
+}
+/* Disabled is what it looks like for the second or two the box is writing the
+   crontab, so it has to read as busy rather than as refused. */
+.health-act:disabled { opacity: .6; cursor: progress; }
+/* Bigger on a touch screen, and bigger on a narrow one whether or not the
+   browser admits to having a finger — `.touch` is set from pointer events, and
+   a phone-width window that has not fired one yet would otherwise be offered a
+   32px target. The size is the same question either way: how wide is this. */
+.touch .health-act { height: 42px; padding: 0 20px; font-size: 14px; }
+
 /* Storage bar — the one that has to move when downloads come and go. */
 .health-bar {
   grid-column: 2 / -1;
@@ -5719,6 +5767,7 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 @media (max-width: 560px) {
   .health-row { grid-template-columns: 84px 1fr; }
   .health-row .health-pill { grid-column: 2; justify-self: start; margin-top: 4px; }
+  .health-act { height: 42px; padding: 0 20px; font-size: 14px; }
 }
 
 /* ------------------------------------------------------------------ archive

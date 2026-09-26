@@ -4034,6 +4034,103 @@ running, because `pm2 resurrect` exits 0 on a dump that does not contain them.
 resurrects a list only if one was saved, so an `@reboot` line pointing at an
 empty dump starts nothing. Both halves, or the row holds out.
 
+### And then nobody could press it
+
+> "still getting this error … nothing starts pm2 at boot (no `pm2 startup`
+> service, no @reboot entry) — this can be fixed from here"
+
+Everything above was true and tested — the endpoint, the crontab write, the
+read-back, the idempotence — and the box went on reporting the fault for a
+fortnight, because **the button had no CSS**.
+
+`.health-act` was a class invented in the markup and never given a rule.
+`.btn` beside it sets a shape and nothing else: no background, no colour, no
+font. So the browser's own button defaults came through underneath and it
+rendered as a **blank white lozenge with the words "Fix it now" invisible
+inside it** — and, being the fourth child of a three-column grid, it fell into
+the next implicit cell *under the key column*, 84 pixels wide and detached
+from the sentence it answers. Measured on the shipped build at 1400px and at
+390px; it looked like a rendering smudge on both.
+
+```
+SURVIVES A     NO — it would stay down
+REBOOT         nothing starts pm2 at boot … this can be fixed from here
+               ▁▁▁▁▁▁▁▁▁▁                      ← the remedy
+```
+
+It is now placed on purpose — in the value column, directly under the sentence
+— and coloured like the row it belongs to, which is a row saying something is
+wrong. 42px tall on a phone and on any narrow window, not only where `.touch`
+has been set, because that class comes from a pointer event that may not have
+fired yet and the question "how wide is this screen" is the same question
+either way.
+
+`tests/healthact.test.js` measures the three things the eye measures: the
+label's **contrast against the button** — composited through every translucent
+layer, because this panel is built out of them and comparing the declared
+`rgba(…, .1)` against itself reports 1:1 on a button that is perfectly
+readable — whether the label **fits** inside the button, and whether the
+button **sits with the row** it is offering to fix. `bootfix.test.js` still
+owns the endpoint; this one owns whether anybody can reach it.
+
+## What is on, in place of which channels you like
+
+> "replace the on now in the homepage with the listings view"
+
+The desktop home page led with a rail called **ON NOW**: five big tiles, each
+with a channel's name on it. It said which channels are favourites — a fact
+the page already carried, and one the viewer supplied themselves — and nothing
+whatever about what was on them. The thing that answered that question was the
+listings grid, and it was the **last** block on the page, below four rails of
+library.
+
+So they swap. The grid leads, the rail is gone:
+
+```
+┌ billboard ─────────────────────────────────────────────────────┐
+└────────────────────────────────────────────────────────────────┘
+TONIGHT'S GUIDE   12 of 15 favorite channels          See all ›
+┌──────────────┬──────────┊──────────┬─────────────┬─────────────┐
+│ ESPN HD      │ Inside th┊e NBA     │ Gameday     │ Sunday Night│
+│ FOX SPORTS 1 │ Postgame ┊Live      │ SportsCenter│ Inside the …│
+│ …            │          ┊          │             │             │
+└──────────────┴──────────┊──────────┴─────────────┴─────────────┘
+                     now ─┘
+CONTINUE WATCHING …
+```
+
+Nothing is lost by the swap itself: the channel column is the same list in the
+same order, each row still a press away from tuning in — the blank slab covers
+the whole track until listings land, so a row works whether or not the
+provider has answered yet.
+
+**One thing is, and it had to be paid for.** A rail scrolls, so it showed all
+fifteen favourites; a grid does not, and every row of it is a metadata call to
+a provider with one connection. `GUIDE_CHANNELS` went from 6 to **12** —
+twelve was already what the multiview sheet draws, at the same cost — and the
+heading does the rest: it says `12 of 15 favorite channels` when it is a
+slice, and it is a door to `#/favlive`, built as the same `.shelf-head` +
+`.shelf-more` every other rail on the page uses rather than a second idiom for
+the same thing. A grid that quietly stops at twelve is one somebody counts
+their channels against and concludes the box has lost three.
+
+Two small things fell out of it, both of the same kind — **a rule pointed at
+the element that used to be first**:
+
+- `.desk #dkLane { margin-top: -96px }` is what makes the page overlap the
+  foot of the billboard. Keyed on the rail, it would have silently stopped
+  applying and left a band of empty backdrop. `buildHome` now marks whatever
+  ended up first with `.dk-lead`, and the rule is written `#homeView >
+  .dk-lead` so it beats the leading section's own top margin without depending
+  on which rule the stylesheet happens to declare later.
+- The same for the cleanup that empties `#homeView` on the way to another
+  page: it asked whether `#dkLane` was there, and would have stopped clearing
+  anything at all.
+
+And the empty-page test counts the guide as content now. It did not have to
+before, because the channels that produce it also produced a shelf; a page
+with a full evening's listings on it is not an empty page.
+
 ## A live playlist that only ever goes on
 
 > "There are still so many jumps back to previous spots when I'm watching

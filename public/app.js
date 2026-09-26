@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '43.2';
+const VERSION = '43.3';
 
 const PAGE_SIZE = 60;
 
@@ -8247,8 +8247,18 @@ async function playFromHistory(row) {
  */
 /* trimTag lives in title-match.js — see the note beside findTitle. */
 
-/** How many channels the guide shows. The box caps it too; this is the row. */
-const GUIDE_CHANNELS = 6;
+/**
+ * How many channels the guide shows. The box caps it too; this is the row.
+ *
+ * Six while the guide was the last thing on the landing page, under a rail
+ * that listed every favourite channel by name — the grid was a glance and the
+ * rail was the list. The rail is gone ("replace the on now in the homepage
+ * with the listings view"), so the grid IS the list now, and six of somebody's
+ * fifteen channels is not one. Twelve is what the multiview sheet already
+ * draws and it costs the same kind of call; the heading says when it is still
+ * a slice, and goes through to the whole set.
+ */
+const GUIDE_CHANNELS = 12;
 /** Hours across the grid. More and the columns cannot hold a title. */
 const GUIDE_HOURS = 4;
 /** A page of guide. Every row is one call to a one-connection provider. */
@@ -8324,6 +8334,28 @@ async function paintGuide(section, channels, opts = {}) {
   count.textContent = opts.count
     || `${channels.length} favorite channel${channels.length === 1 ? '' : 's'}`;
   head.append(label, count);
+
+  /* A way through to the whole list, for the same reason every rail on the
+     desktop page has one.
+   *
+   * This grid is capped — every row is a metadata call to a provider with one
+   * connection — so somebody with twenty favourites sees twelve of them and
+   * the other eight are nowhere. That was fine while the page also carried a
+   * rail of every channel above it; the rail is gone, so the way to the rest
+   * has to be here. Built as `.shelf-head` + `.shelf-more` exactly as
+   * shelfOf builds one, so it inherits the "See all" the rest of the page
+   * uses rather than inventing a second idiom for the same door. */
+  if (opts.onOpen) {
+    head.setAttribute('role', 'button');
+    head.tabIndex = 0;
+    const more = el('span', 'shelf-more');
+    more.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>';
+    head.append(more);
+    head.addEventListener('click', opts.onOpen);
+    head.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); opts.onOpen(); }
+    });
+  }
 
   /* Later, and back. Only where the page can redraw itself — the landing
      page's guide is a glance at what is on now and has nowhere to put a
@@ -9383,7 +9415,16 @@ function renderHome() {
   if (channels.length) {
     const guide = el('section', 'home-guide');
     view.append(guide);
-    paintGuide(guide, channels.slice(0, GUIDE_CHANNELS));
+    const shown = Math.min(channels.length, GUIDE_CHANNELS);
+    paintGuide(guide, channels.slice(0, GUIDE_CHANNELS), {
+      /* Says when it is a slice rather than the lot, because a grid that
+         quietly stops at twelve is a grid somebody counts their channels
+         against and concludes the box has lost three. */
+      count: channels.length > shown
+        ? `${shown} of ${channels.length} favorite channels`
+        : `${shown} favorite channel${shown === 1 ? '' : 's'}`,
+      onOpen: () => { location.hash = '#/favlive'; },
+    });
   }
 
   if (!recent.length && !favs.length) {

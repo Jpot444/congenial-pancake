@@ -2761,14 +2761,24 @@
     const guide = view.querySelector('.home-guide');
     view.innerHTML = '';
 
+    /*
+     * What is on, where the rail of channel cards used to be.
+     *
+     * "replace the on now in the homepage with the listings view"
+     *
+     * ON NOW was five big tiles with a channel's name on each and nothing
+     * else — it said which channels are favourites, which is a fact the page
+     * already carried twice, and answered none of "is anything worth watching
+     * on". The guide underneath it answered exactly that and was the last
+     * thing on the page, below four rails of library.
+     *
+     * So the rail goes and the guide takes its place. Nothing is lost: the
+     * channel column of the grid is the same list of channels in the same
+     * order, each one still a press away, with what is actually on it beside
+     * the name.
+     */
     const channels = profiles.favItems().filter((i) => i.kind === 'live');
-    if (channels.length) {
-      const lane = shelfOf('On now', `${channels.length} channels`, [], () => { location.hash = '#/favlive'; });
-      lane.id = 'dkLane';
-      const track = lane.querySelector('.rail-track');
-      for (const channel of channels) track.append(channelCard(channel));
-      view.append(lane);
-    }
+    if (guide) view.append(guide);
 
     /* One card per TITLE. Rows written before series ids were recorded carry
        only the episode's id, so grouping by that gives the same show four
@@ -2827,9 +2837,16 @@
 
     /* Worked out before the stamp goes back, or the version in the corner
        counts as content and a profile with nothing watched and nothing
-       starred gets a blank page instead of a sentence telling it why. */
-    const bare = !features.length && !view.querySelector('.shelf');
-    if (guide) view.append(guide);
+       starred gets a blank page instead of a sentence telling it why.
+       The guide counts as content too — it did not have to before, because
+       the channels that produce it also produced an ON NOW shelf, and now
+       they produce only the guide. A page with a full week's listings on it
+       is not an empty page. */
+    const bare = !features.length && !view.querySelector('.shelf') && !channels.length;
+    /* Whatever ended up first carries the overlap onto the billboard — see
+       .dk-lead. Set here rather than at each append because which section
+       leads depends on what this profile has. */
+    view.firstElementChild?.classList.add('dk-lead');
     if (stamp) view.append(stamp);
     $('#appView').append(buildFooter());
     $('#emptyState').hidden = !bare;
@@ -2930,11 +2947,14 @@
 
     if (tab === 'home') { hideCatbar(); buildHome(); return; }
 
-    /* app.js hides the home view rather than emptying it, so the lane of
-       channel cards would sit there off-screen holding its listeners until
-       somebody came back. Nothing on this page is going to look at it. */
+    /* app.js hides the home view rather than emptying it, so the page this
+       layer built would sit there off-screen holding its listeners until
+       somebody came back. Nothing on this page is going to look at it.
+       Keyed on the marker buildHome sets rather than on one section it
+       happens to make — this asked for `#dkLane` and would have stopped
+       clearing anything the moment that rail was replaced. */
     const home = $('#homeView');
-    if (home && home.querySelector('#dkLane')) home.innerHTML = '';
+    if (home && home.querySelector('.dk-lead')) home.innerHTML = '';
 
     /* A film's own page is not a browse page, and the bar is browse chrome.
        The way off it is the back pill on the backdrop, which names the

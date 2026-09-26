@@ -171,8 +171,15 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
       slides: document.querySelectorAll('#dkHero .slide').length,
       picks: document.querySelectorAll('#dkHero .picker button').length,
       billed: [...document.querySelectorAll('#dkHero h1.big')].map((h) => h.textContent),
-      lane: head('#dkLane'),
-      laneChannels: document.querySelectorAll('#dkLane .cht').length,
+      /* The listings grid, where the rail of channel cards used to be.
+         "replace the on now in the homepage with the listings view" — the
+         rail said which channels were favourites, a fact the page carried
+         twice already, and nothing about what was on them. */
+      guide: head('.home-guide'),
+      guideCount: text('.home-guide .shelf-count'),
+      guideRows: document.querySelectorAll('.home-guide .guide-row').length,
+      leads: document.querySelector('#homeView').firstElementChild?.className || '',
+      lane: document.querySelector('#dkLane') ? 'still there' : null,
       resumeRow: head('.home-recent'),
       resuming: document.querySelectorAll('.home-recent .card').length,
       favRow: head('.home-favs'),
@@ -190,10 +197,23 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
   check('the billboard has something on it', shape.slides >= 1, String(shape.slides));
   check('and offers each of them to be picked', shape.picks === shape.slides,
     `${shape.picks} pickers for ${shape.slides} slides`);
-  check('your channels lead the page', shape.lane === 'On now', String(shape.lane));
-  // All of them, not a capped six with a link to the rest: a rail scrolls,
-  // so there is nothing to cap and nowhere the remainder has to go.
-  check('with every one of them in it', shape.laneChannels === 15, String(shape.laneChannels));
+  check('what is on your channels leads the page',
+    shape.guide === "Tonight's guide", String(shape.guide));
+  check('and the rail of channel names it replaced is gone',
+    shape.lane === null, String(shape.lane));
+  check('it is the first thing under the billboard, so it overlaps it',
+    /home-guide/.test(shape.leads) && /dk-lead/.test(shape.leads), shape.leads);
+  /* CAPPED, unlike the rail, and this is the one thing the swap costs: every
+     row of the grid is a metadata call to a provider with one connection, so
+     twelve is the ceiling and fifteen favourites do not all fit. The rail
+     scrolled and had nothing to cap. */
+  check('twelve rows of it, which is what the provider can be asked for',
+    shape.guideRows === 12, String(shape.guideRows));
+  /* So it has to SAY it is a slice — a grid that quietly stops at twelve is
+     one somebody counts their channels against and concludes the box has
+     lost three — and the heading is the way to the rest. */
+  check('and it says so rather than quietly stopping',
+    shape.guideCount === '12 of 15 favorite channels', String(shape.guideCount));
   check('continue watching is a row of its own', shape.resumeRow === 'Continue watching',
     String(shape.resumeRow));
   check('carrying what was actually watched', shape.resuming === 5, String(shape.resuming));
@@ -234,7 +254,7 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
     innerW: window.innerWidth,
     heroBottom: Math.round(document.querySelector('#dkHero').getBoundingClientRect().bottom),
     innerH: window.innerHeight,
-    laneTop: Math.round(document.querySelector('#dkLane').getBoundingClientRect().top),
+    laneTop: Math.round(document.querySelector('.home-guide').getBoundingClientRect().top),
   }));
   console.log('  ', JSON.stringify(fit));
   check('no sideways scrolling', fit.scrollW <= fit.innerW, `${fit.scrollW} vs ${fit.innerW}`);
@@ -289,25 +309,28 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
 
   // --- the artwork ---------------------------------------------------------
   console.log('\n  the artwork');
+  /* The channel plates are gone with the rail that held them — a guide row is
+     a name and a timeline, not artwork — so what is left to claim here is
+     about the posters. */
   const art = await page.evaluate(() => {
     const rect = (n) => n.getBoundingClientRect();
-    const chans = [...document.querySelectorAll('#dkLane .cht .card-art')].map(rect);
     const films = [...document.querySelectorAll('.home-favs .card-art')].map(rect);
+    const rows = [...document.querySelectorAll('.home-guide .guide-row')].map(rect);
     const same = (list) => new Set(list.map((b) => Math.round(b.width))).size === 1;
     return {
       filmRatio: films[0].width / films[0].height,
-      chanRatio: chans[0].width / chans[0].height,
       filmsUniform: same(films),
-      chansUniform: same(chans),
+      rowsUniform: same(rows),
+      rowHeight: rows.length ? Math.round(rows[0].height) : 0,
     };
   });
   console.log('  ', JSON.stringify(art));
   check('favorite films keep a 2:3 poster',
     Math.abs(art.filmRatio - 2 / 3) < 0.02, String(art.filmRatio));
-  check('a channel ident gets a wide plate instead, so its name survives',
-    art.chanRatio > 1.2, String(art.chanRatio));
   check('films are all one size', art.filmsUniform, JSON.stringify(art));
-  check('and so are the channels', art.chansUniform, JSON.stringify(art));
+  /* A guide whose rows are different widths is a guide whose clock does not
+     line up down the page, which is the whole of what a timeline is for. */
+  check('and the guide rows line up with each other', art.rowsUniform, JSON.stringify(art));
 
   // --- a favorite poster opens the thing, not a list -----------------------
   console.log('\n  pressing a favorite');
@@ -321,8 +344,11 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
   check('a film opens its own page rather than the favorites list',
     film.hash === '#/movies/200', film.hash);
 
+  /* A row of the guide, which is how a channel is reached now. The slab is
+     the control — it covers the whole track until listings arrive, so a row
+     is pressable whether or not the provider has said what is on it. */
   await home();
-  await page.evaluate(() => document.querySelector('#dkLane .cht').click());
+  await page.evaluate(() => document.querySelector('.home-guide .guide-row .guide-prog').click());
   await wait(2500);
   const chan = await page.evaluate(() => ({
     playerUp: !document.querySelector('#playerOverlay').hidden,
@@ -336,11 +362,13 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
   await page.evaluate(() => closePlayer());
   await wait(400);
 
-  // The row heading is the way through to the full list.
+  /* The heading is the way through to the full list, and now it has to be:
+     the grid shows twelve of fifteen, so three of this profile's channels
+     are not on the page at all and this is the only door to them. */
   await home();
-  await page.evaluate(() => document.querySelector('#dkLane .shelf-head').click());
+  await page.evaluate(() => document.querySelector('.home-guide .shelf-head').click());
   await wait(700);
-  check('the channel row reaches the list it is a slice of',
+  check('the guide reaches the list it is a slice of',
     (await page.evaluate(() => location.hash)) === '#/favlive',
     await page.evaluate(() => location.hash));
 
@@ -456,7 +484,7 @@ const TITLES = Array.from({ length: 6 }, (_, i) => ({
   await wait(600);
   const fresh = await page.evaluate(() => ({
     hero: document.querySelectorAll('#dkHero .slide').length,
-    personal: document.querySelectorAll('#dkLane, .home-recent, .home-favs').length,
+    personal: document.querySelectorAll('.home-guide, .home-recent, .home-favs').length,
     rails: document.querySelectorAll('#homeView .shelf').length,
     empty: document.querySelector('#emptyState').hidden
       ? '' : document.querySelector('#emptyState').textContent,

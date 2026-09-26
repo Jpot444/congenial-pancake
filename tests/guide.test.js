@@ -169,8 +169,13 @@ const CHANNELS = [
   asked = [];
   const capped = await home(many);
   const forMany = asksAbout(many);
+  /* Twelve, not twenty. The number moved up from six when the grid replaced
+     the home page's rail of channel names and became the list rather than a
+     glance at it — but it is still a cap, and that is the claim: a profile
+     with twenty favourites does not turn the landing page into twenty
+     metadata calls against a provider with one connection. */
   check('and a wall of favourites is capped rather than asked in full',
-    capped.length === 6 && forMany.length >= 1 && forMany[0].length === 6,
+    capped.length === 12 && forMany.length >= 1 && forMany[0].length === 12,
     `${capped.length} rows, asked ${JSON.stringify(forMany)}`);
 
   console.log('\n  when the provider cannot answer');
