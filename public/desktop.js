@@ -2476,6 +2476,15 @@
         /* `item` for a channel so the mark is drawn and the card opens; `art`
            for a title, which is looked up for its artwork only. */
         item: live ? (shelf || null) : null,
+        /* Which channel this is billing, whether or not the library happens
+           to be in hand.
+         *
+         * `item` is a LOOKUP — shelfItemFor goes to state.library.live — and
+         * on a page opened straight onto home that library has not been
+         * fetched yet, so it is null and the billboard has neither a mark nor
+         * anything to identify itself by. The history row it came from knows
+         * the id perfectly well, and the id is all the stream needs. */
+        liveId: live ? String(last.id || '') : '',
         art: shelf,
         eyebrow: live
           ? `<span class="plive"><span class="d"></span>LIVE</span>`
@@ -2505,6 +2514,7 @@
       out.push({
         kind: 'live',
         item: channel,
+        liveId: String(channel.id || ''),
         eyebrow: `<span class="plive"><span class="d"></span>LIVE</span>`
           + `<span class="caps">${esc(channel.name)}</span>`,
         tags: [channel.uhd ? '4K' : 'HD', 'Direct play'].filter(Boolean),
@@ -2658,20 +2668,243 @@
     return hero;
   }
 
-  /* --------------------------------------------- the billboard, and why
-   * it is a picture rather than the stream
+  /* ------------------------------------------- the billboard, playing again
    *
-   * This used to play the channel in the slide, muted, behind the words. It
-   * looked wonderful and it cost a provider connection for as long as the
-   * home page was open — the ingest it started is kept alive by its own
-   * fetching, so it never went idle and never gave the slot back. On a
-   * one-account box that is the whole subscription spent on a page nobody is
-   * watching yet; on a two-account box it quietly ate the second login, which
-   * is the opposite of what the second login was bought for.
+   * "the live channels dont have any background, make it play the live channel
+   *  again, only for the desktop display not the tesla phone or tv"
    *
-   * The billboard is a still now. Watch live opens the channel properly, with
-   * sound, and that is the only thing on this page that touches the provider.
+   * A live channel has no backdrop to show. Its artwork is a station mark, and
+   * a mark laid out at its own size over a tinted field leaves most of a
+   * 770-pixel billboard as empty ground — which is what the screenshot shows.
+   * The thing that fills it is the channel.
+   *
+   * THIS WAS REMOVED ONCE, FOR A REAL REASON, and the reason has not gone
+   * away: a stream in the billboard costs a provider connection for as long as
+   * it runs, and the ingest is kept alive by its own fetching, so it never
+   * goes idle and never gives the slot back on its own. On a one-account box
+   * that is the whole subscription spent on a page nobody is watching yet.
+   *
+   * So it comes back with the four things that were missing the first time,
+   * each aimed at one way it used to spend a login on nobody:
+   *
+   *   BIG SCREENS ONLY, which is what was asked for — not the car, not the
+   *   television, not a phone borrowing this layout. Those are the three
+   *   places a home page is most likely to be left sitting.
+   *
+   *   IT SETTLES FIRST. Arrow-keying along three features would have opened
+   *   three streams; nothing is asked for until a slide has been still for a
+   *   moment.
+   *
+   *   IT STOPS BEING WATCHED WHEN NOBODY IS. Hidden tab, another page, a
+   *   window left open past the idle timer — all of them tear it down and
+   *   hand the slot back. The old version had none of these and that is
+   *   precisely how it ate a subscription.
+   *
+   *   AND IT GIVES UP QUIETLY. A box that refuses — no connection free, which
+   *   is the exact failure this risks — leaves the still exactly as it was,
+   *   with nothing said. The billboard is decoration; it does not get to
+   *   report an error over the top of the page.
+   *
+   * Watch live still opens the channel properly, with sound, at whatever the
+   * player does. This is muted wallpaper and nothing else.
    */
+
+  /** A slide has to be still this long before it is worth a connection. */
+  const HERO_SETTLE_MS = 1400;
+  /** And a page nobody has touched for this long is not being watched. */
+  const HERO_IDLE_MS = 5 * 60 * 1000;
+  /** How long the address the box gave for a channel is worth re-using. */
+  const HERO_ADDRESS_MS = 60 * 1000;
+
+  /*
+   * Where this is allowed to run at all.
+   *
+   * The car dash, the television and a phone on the tab bar all load this same
+   * layer, so "desktop" is not the same question as "is this module on". Each
+   * of the three is somewhere a page gets left up for hours, which is the
+   * whole thing being guarded against.
+   */
+  const heroBigScreen = () => on
+    && !document.documentElement.classList.contains('car')
+    && !document.documentElement.classList.contains('tv')
+    && !document.body.classList.contains('has-tabbar')
+    /* Somebody who has asked their machine for less motion has not asked for
+       a moving picture behind the words. Checked HERE and not only in the
+       stylesheet: hiding it in CSS would still open the connection and still
+       hold it, which is the cost without any of the benefit. */
+    && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const heroLive = {
+    hls: null,
+    video: null,
+    settle: null,
+    idle: null,
+    /** { id, play, at } — the last address the box gave. See start(). */
+    held: null,
+    /** The channel currently asked for, so a repeat paint does not restart it. */
+    key: '',
+
+    /* Why it is not playing, in the words of whichever rule said no.
+     *
+     * Kept because "it did not ask" and "it asked and the box refused" look
+     * identical from outside and are completely different faults — the first
+     * is this layer deciding, the second is the provider being out of
+     * connections. Read by the suite and by anyone wondering from a console
+     * why the billboard is a still. */
+    why: '',
+
+    /** Put the channel behind the words, if this is a place that may. */
+    arm(hero, feature) {
+      this.stop();
+      if (!heroBigScreen()) return this.no('not a desktop, or reduced motion');
+      if (!hero) return this.no('no billboard');
+      if (!feature || feature.kind !== 'live') return this.no('the feature is not a channel');
+      if (state.tab !== 'home') return this.no('not on home');
+      if (document.hidden) return this.no('the tab is hidden');
+
+      /* `liveId` rather than `item.id`: the item is a library lookup and the
+         library is often not loaded yet on a page opened straight onto home,
+         which would leave the billboard a blank field for the one feature
+         this exists to fill. */
+      const id = String(feature.liveId || feature.item?.id || '');
+      if (!id) return this.no('the channel has no id');
+      this.why = 'settling';
+      this.key = id;
+      this.settle = setTimeout(() => {
+        this.settle = null;
+        this.start(hero, feature, id);
+      }, HERO_SETTLE_MS);
+    },
+
+    async start(hero, feature, id) {
+      /* Everything that was true when this was queued has to still be true —
+         a settle delay is a window in which somebody navigates away. */
+      if (this.key !== id || state.tab !== 'home' || document.hidden) {
+        return this.no('the page moved on while it was settling');
+      }
+      if (!document.body.contains(hero)) return this.no('the billboard was rebuilt');
+
+      /*
+       * The address this channel was last given, if it is still fresh.
+       *
+       * Home rebuilds its billboard on every render — a library landing, a
+       * profile poll, the guide finishing — and each rebuild tears the stream
+       * down and asks again. Asking again is the expensive half: `/api/play`
+       * is what reserves the slot. Within a minute the answer has not changed,
+       * so the same address is re-attached and the box is not troubled.
+       *
+       * Deliberately NOT cleared by stop(), which is the whole point: it has
+       * to outlive the teardown it exists to make cheap.
+       */
+      let play = this.held && this.held.id === id
+        && Date.now() - this.held.at < HERO_ADDRESS_MS
+        ? this.held.play : null;
+      if (play) this.why = 'reusing the address it was given a moment ago';
+      if (!play) {
+        try {
+          const res = await fetch(`/api/play?kind=live&id=${encodeURIComponent(id)}`,
+            { headers: { accept: 'application/json' } });
+          /* Refused — almost always no connection free. The still stands and
+             nothing is said: a billboard does not get to put an error over
+             the page it is decorating. */
+          if (!res.ok) return this.no(`the box answered ${res.status}`);
+          play = await res.json();
+        } catch (err) {
+          return this.no(`the box could not be reached: ${err.message}`);
+        }
+        if (play && play.url) this.held = { id, play, at: Date.now() };
+      }
+      if (!play || !play.url) return this.no('the box gave no address');
+      if (this.key !== id || state.tab !== 'home' || document.hidden) {
+        return this.no('the page moved on while the box was answering');
+      }
+      if (!document.body.contains(hero)) return this.no('the billboard was rebuilt');
+
+      const slide = hero.querySelector('.slide.on .art');
+      if (!slide) return this.no('the slide went away');
+      this.why = '';
+
+      const video = document.createElement('video');
+      video.className = 'hero-live';
+      video.muted = true;
+      video.defaultMuted = true;
+      video.playsInline = true;
+      video.autoplay = true;
+      video.preload = 'auto';
+      /* No controls, no focus, nothing for a keyboard to land on: this is a
+         background, and a billboard that can be tabbed into is a trap. */
+      video.tabIndex = -1;
+      video.setAttribute('aria-hidden', 'true');
+      slide.append(video);
+      this.video = video;
+
+      /* Only once there are actual pictures. Fading in on `canplay` and then
+         stalling shows a black rectangle where the mark used to be, which is
+         worse than the mark. */
+      video.addEventListener('playing', () => {
+        if (this.video !== video) return;
+        video.classList.add('is-on');
+        video.closest('.slide')?.classList.add('has-live');
+      }, { once: true });
+
+      if (play.format === 'm3u8' && window.Hls?.isSupported()) {
+        /* Its own instance. The portal's player keeps `engine` for the thing
+           somebody actually chose to watch, and a billboard that reached into
+           that would take the picture out from under them. */
+        const hls = new window.Hls({ lowLatencyMode: false, liveSyncDuration: 32 });
+        this.hls = hls;
+        hls.on(window.Hls.Events.ERROR, (_e, data) => {
+          if (data?.fatal) this.stop();
+        });
+        hls.loadSource(play.url);
+        hls.attachMedia(video);
+      } else {
+        video.src = play.url;
+      }
+      video.play().catch(() => { /* a browser that will not autoplay muted */ });
+
+      /* The timer that ends it. A billboard left up over lunch is the case
+         this whole feature was taken out for the first time. */
+      this.idle = setTimeout(() => this.stop(), HERO_IDLE_MS);
+    },
+
+    /** Record why nothing is playing, and say so to the caller as `undefined`. */
+    no(reason) {
+      this.why = reason;
+      return undefined;
+    },
+
+    /** Hand the connection back. Safe to call at any point, including twice. */
+    stop() {
+      clearTimeout(this.settle);
+      clearTimeout(this.idle);
+      this.settle = null;
+      this.idle = null;
+      this.key = '';
+      if (this.hls) {
+        try { this.hls.destroy(); } catch { /* already gone */ }
+        this.hls = null;
+      }
+      const video = this.video;
+      this.video = null;
+      if (!video) return;
+      video.closest('.slide')?.classList.remove('has-live');
+      try {
+        video.pause();
+        /* Emptied as well as removed. A detached element with a src is still
+           a fetch in flight, and a fetch in flight is still a connection. */
+        video.removeAttribute('src');
+        video.load();
+      } catch { /* the element is going away regardless */ }
+      video.remove();
+    },
+  };
+
+  /* Nobody is looking at a hidden tab. Both ways round: it stops on the way
+     out and the next paint puts it back. */
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) heroLive.stop();
+  });
 
   /* The billboard never rotates on its own. Three features are offered and
      the choice is the viewer's — a page that changes under you while you are
@@ -2681,6 +2914,11 @@
     for (const el of hero.querySelectorAll('.slide, .copy, .picker button')) {
       el.classList.toggle('on', Number(el.dataset.i) === heroAt);
     }
+    /* Whatever was playing belonged to the slide that is no longer showing,
+       and the new one gets its own go — see heroLive. Switching features is
+       also the fastest way to open three streams, which is what the settle
+       delay in there is for. */
+    heroLive.arm(hero, heroShowing[heroAt]);
   }
 
   /* What the billboard is currently offering, so showFeature can ask the
@@ -2933,6 +3171,11 @@
 
   /* =========================================================== dispatch */
   function buildBrowseChrome() {
+    /* Before the billboard is taken out from under it. Removing a video
+       element does not stop what it is fetching, and what it is fetching is a
+       provider connection — so every navigation away from home would have
+       leaked one. */
+    heroLive.stop();
     for (const node of $$('#dkLive, #dkHero, #dkFoot, #dkScores')) node.remove();
 
     /* The page title, back. Live TV puts the scores where it stands and takes
@@ -2983,6 +3226,11 @@
      whole of the tooling. Nothing in the portal reads this. */
   window.__ttDesktop = { ICON, esc, num, guard, $$, catId, ensureCatbar, ensureSheet,
     closeSheet, fillSheet, syncArrows, decorateCards,
+    /* The billboard's muted stream. Published so a suite can ask what it
+       decided rather than inferring it from whether a request happened —
+       "it did not ask" and "it asked and the box refused" look identical
+       from outside and are completely different faults. */
+    heroLive, heroBigScreen,
     /* The car layer draws the same scoreboard somewhere else, and asks for it
        here rather than carrying a second copy of the band, the poll and the
        slate. See scoreboard() for what the argument does. */

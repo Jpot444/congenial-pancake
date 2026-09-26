@@ -1731,6 +1731,51 @@ body.is-reordering .cht { transition: none; }
     rgba(255, 255, 255, .22), rgba(255, 255, 255, .08) 52%, transparent 74%);
 }
 
+/* ---- the billboard, playing ----
+ *
+ * "the live channels dont have any background, make it play the live channel
+ *  again, only for the desktop display not the tesla phone or tv"
+ *
+ * A live feature has no backdrop, only a station mark — so most of a 770px
+ * billboard is the tinted field, which is what "no background" describes. The
+ * channel itself fills it. Only ever reached on a big screen and only after a
+ * slide has settled; see heroLive in desktop.js for the whole of why.
+ *
+ * Faded in on `playing` rather than on arrival, because the alternative is a
+ * black rectangle where the mark used to be while the stream makes up its
+ * mind — which is worse than the mark. Until then nothing about the slide
+ * changes, and if the box refuses the connection nothing ever does. */
+.desk #dkHero .hero-live {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  opacity: 0;
+  transition: opacity .9s var(--ease);
+  pointer-events: none;
+  z-index: 1;
+}
+.desk #dkHero .hero-live.is-on { opacity: .92; }
+
+/* The mark steps aside for the thing it was standing in for — along with the
+   light behind it, which exists to lift a logo off a flat plate and has
+   nothing to do once there is a picture there. */
+.desk #dkHero .slide.has-live .art img,
+.desk #dkHero .slide.has-live .art::before { opacity: 0; }
+.desk #dkHero .slide.has-live .art img {
+  transition: opacity .9s var(--ease);
+}
+/* The drift is for a still. Moving a video that is already moving is a
+   second motion nobody asked for. */
+.desk #dkHero .slide.has-live.on .art { animation: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* A moving picture behind text is exactly what this asks not to have. */
+  .desk #dkHero .hero-live { display: none; }
+}
+
 /*
  * A POSTER is not a backdrop either.
  *
@@ -2295,12 +2340,50 @@ body.is-reordering .cht { transition: none; }
   margin-top: var(--space-12);
   scroll-margin-top: 118px;
 }
+/*
+ * "visually the tonights guide is clashing with the red hue in the page"
+ *
+ * Two things were doing it, and neither was the guide being wrong on its own.
+ *
+ * THE PANEL WAS A WINDOW, not a surface. At 2.2% white over black it is very
+ * nearly transparent, which is fine on a plain background and wrong on this
+ * one: the billboard's red glow runs the height of the page and came straight
+ * through the grid, so every row sat on a different shade of red. An opaque
+ * dark panel gives the listings their own ground to stand on — and it is the
+ * only block on the landing page that is a dense grid of small type, which is
+ * exactly the thing that needs one.
+ */
 .desk .guide-grid {
-  background: rgba(255, 255, 255, .022);
+  background: rgba(14, 11, 11, .82);
   border-color: var(--line);
   border-radius: 12px;
 }
 .desk .guide-row { min-height: 56px; }
+
+/*
+ * AND "ON NOW" WAS A COLUMN, not a highlight.
+ *
+ * The plain layer fills the current programme with red and outlines it in red,
+ * on the reasoning that it is "the only coloured thing on the grid, so it is
+ * the first thing the eye lands on". That holds for one slab. But every row
+ * has something on now, so what is actually drawn is a red stripe down the
+ * left of the grid — twelve of them — against a page that is already red. A
+ * highlight that is on every row highlights nothing, and it fights the page
+ * while doing it.
+ *
+ * So on this layout the current programme reads by WEIGHT: a lighter panel
+ * and a brighter title, which is what "this one" looks like when the accent
+ * colour is already spoken for. Red is left to the one thing that is genuinely
+ * a single mark — the now line — and it reads far better for having the field
+ * to itself.
+ */
+.desk .guide-prog.is-now {
+  background: rgba(255, 255, 255, .085);
+  border-color: rgba(255, 255, 255, .17);
+}
+.desk .guide-prog.is-now:hover { background: rgba(255, 255, 255, .12); }
+.desk .guide-prog.is-now .guide-prog-title { color: #fff; }
+.desk .guide-prog.is-now .guide-prog-time { color: rgba(255, 255, 255, .55); }
 .desk .guide-chan-name {
   font-family: var(--font-display, inherit);
   font-size: 13.5px;

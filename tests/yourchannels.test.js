@@ -121,29 +121,54 @@ async function open(browser, { dvr = true } = {}) {
 
   const hero = await page.evaluate(() => ({
     video: document.querySelectorAll('#dkHero video').length,
-    engine: window.__hls.url,
+    /* The BILLBOARD's own instance — the stand-in records whichever was built
+       last, and on home that is the one behind the words. */
+    heroSource: window.__hls.url,
+    /* The portal's player, which must not have been touched. `engine` is a
+       top-level binding in app.js, reachable bare. */
+    engine: typeof engine === 'undefined' ? null : engine,
+    engineKind: typeof engineKind === 'undefined' ? '' : engineKind,
+    playerUp: !document.querySelector('#playerOverlay')?.hidden,
     slide: Boolean(document.querySelector('#dkHero .slide')),
     cta: document.querySelector('#dkHero .copy.on .dk-btn-p')?.textContent?.trim(),
   }));
   console.log('   hero:', JSON.stringify(hero));
-  check('the channel is a mark on the billboard, as it always was',
-    hero.slide, JSON.stringify(hero));
-  check('nothing is playing in it', hero.video === 0, String(hero.video));
-  check('and no player engine was started for it', !hero.engine, hero.engine);
+  check('there is a billboard, on a channel', hero.slide, JSON.stringify(hero));
   check('the button offers the real thing', hero.cta === 'Watch live', hero.cta);
+  /* The billboard has its OWN engine. The portal keeps `engine` for the thing
+     somebody actually chose to watch, and a billboard that reached into it
+     would take the picture out from under them — so what is checked is not
+     "nothing is playing" but "the player was not the thing that did it". */
+  check('the billboard is playing something', hero.video >= 1, String(hero.video));
+  check('through an engine of its own, not the portal\u2019s',
+    hero.engine === null && !hero.engineKind,
+    JSON.stringify({ engine: Boolean(hero.engine), kind: hero.engineKind }));
+  check('and without opening the player over the page',
+    hero.playerUp === false, String(hero.playerUp));
 
-  /* The claim this suite exists for now.
+  /* What opening home costs, which is the claim this suite exists for — now
+     the other way round.
    *
-   * The billboard used to play the channel, muted, through the box's own DVR
-   * window — which reads as free and is not: the ingest is kept alive by its
-   * own fetching, so it never goes idle and never gives the slot back. Home
-   * sat open and a provider connection sat spoken for, which on a two-account
-   * box quietly ate the login the second subscription was bought for. Opening
-   * home must not touch the provider at all. */
+   * ONE connection, and the ceiling is the thing worth stating rather than the
+   * floor: the old fault was not that the billboard cost something, it was
+   * that it cost something unboundedly and never gave it back. Three features
+   * on the page must still be one stream, and a repaint must not be a second.
+   */
   const asked = page.__plays.length;
   console.log('   /api/play calls from home:', asked, page.__plays);
-  check('opening home asks the box to open nothing, so no login is spent on it',
-    asked === 0, JSON.stringify(page.__plays));
+  check('opening home spends one connection on the billboard, not several',
+    asked <= 1, JSON.stringify(page.__plays));
+
+  /* And gives it back on the way out. Removing a video element does not stop
+     what it is fetching, and what it is fetching is the connection — so this
+     is the half that makes the bargain survivable. */
+  await page.evaluate(() => { location.hash = '#/movies'; render(); });
+  await page.waitForTimeout(900);
+  const left = await page.evaluate(() => document.querySelectorAll('.hero-live').length);
+  console.log('   streams left behind:', left);
+  check('and hands it back the moment you leave home', left === 0, String(left));
+  await page.evaluate(() => { location.hash = '#/home'; render(); });
+  await page.waitForTimeout(900);
 
   console.log('\n  and Watch live still opens the channel properly');
   await page.evaluate(() => {

@@ -4112,6 +4112,95 @@ And the empty-page test counts the guide as content now. It did not have to
 before, because the channels that produce it also produced a shelf; a page
 with a full evening's listings on it is not an empty page.
 
+### The guide stops fighting the page
+
+> *"visually the tonights guide is clashing with the red hue in the page"*
+
+Two things were doing it, and neither was the guide being wrong on its own.
+
+**The panel was a window, not a surface.** At 2.2% white over black it is very
+nearly transparent — fine against a plain background, wrong against this one.
+The billboard's red glow runs the height of the page and came straight through
+the listings, so every row sat on a different shade of red. It is an opaque
+dark panel on this layout now. It is the only block on the landing page that
+is a dense grid of small type, which is exactly the thing that needs ground of
+its own to stand on.
+
+**And "on now" was a column, not a highlight.** The plain layer fills the
+current programme with red and outlines it in red, on the reasoning that it is
+*"the only coloured thing on the grid, so it is the first thing the eye lands
+on"*. That holds for one slab. But **every row has something on now**, so what
+is actually drawn is a red stripe down the left of the grid — twelve of them —
+against a page that is already red. A highlight that is on every row
+highlights nothing, and it fights the page while doing it.
+
+So on the desktop the current programme reads by **weight**: a lighter panel
+and a brighter title, which is what "this one" looks like when the accent
+colour is already spoken for. Red is left to the one mark that genuinely is
+single — the now line — and it reads far better for having the field to
+itself.
+
+### And the billboard plays the channel again
+
+> *"the live channels dont have any background, make it play the live channel
+> again, only for the desktop display not the tesla phone or tv"*
+
+A live feature has no backdrop to show. Its artwork is a station mark laid out
+at its own size, so most of a 770-pixel billboard is tinted field — which is
+what "no background" describes. The thing that fills it is the channel.
+
+**This was removed once, for a real reason, and the reason has not gone away.**
+A stream in the billboard holds a provider connection for as long as it runs,
+and the ingest is kept alive by its own fetching, so it never goes idle and
+never hands the slot back on its own. Home sitting open meant a login sitting
+spoken for. On this box that is not hypothetical — *"Refused: No connection
+free for this channel"* is a sentence it has already said out loud.
+
+So it comes back with the four things that were missing the first time, each
+aimed at one way it used to spend a login on nobody:
+
+| rule | the case it answers |
+| --- | --- |
+| **big screens only** | not the car, not the television, not a phone borrowing this layout — the three places a page gets left up for hours. This is the half that was asked for by name. Also off under `prefers-reduced-motion`, checked in JS and not only in CSS: hiding it in the stylesheet would still open the connection and still hold it. |
+| **it settles first** | arrow-keying along three features would have opened three streams. Nothing is asked for until a slide has been still for 1.4s. |
+| **it stops when nobody is looking** | another page, a hidden tab, or five minutes idle. The old version had none of these, and that is precisely how it ate a subscription. |
+| **it gives up in silence** | a box with no connection free leaves the still exactly as it was, with nothing said. A decoration does not get to put an error over the page it is decorating. |
+
+And a fifth that only showed up once it was running: **a repaint is not a
+second connection.** Home rebuilds its billboard on every render — a library
+landing, a profile poll, the guide finishing its passes — and each rebuild
+tears the stream down. Asking again is the expensive half, because `/api/play`
+is what reserves the slot, so a page that repainted six times while somebody
+read it would have asked six times. The address the box gave is held for a
+minute and re-attached, and it deliberately survives the teardown it exists to
+make cheap.
+
+Its own hls.js instance, never the portal's `engine` — a billboard that reached
+into that would take the picture out from under whatever somebody had chosen to
+watch. Muted, `tabIndex = -1`, `aria-hidden`: wallpaper you can tab into is a
+trap. And it fades in on `playing` rather than on arrival, because the
+alternative is a black rectangle where the mark used to be while the stream
+makes up its mind, which is worse than the mark.
+
+**One thing found while building it**, and it explains the screenshot that
+prompted the request: the feature's `item` is a *lookup* — `shelfItemFor` goes
+to `state.library.live` — and on a page opened straight onto home that library
+has not been fetched yet. So the billboard had neither a mark nor anything to
+identify itself by, for the one feature this exists to fill. The history row it
+came from knows the channel id perfectly well, so the feature carries `liveId`
+now and the stream no longer depends on the library having arrived.
+
+`heroLive.why` records which rule said no, in its own words. *"It did not ask"*
+and *"it asked and the box refused"* look identical from outside and are
+completely different faults — the first is this layer deciding, the second is
+the provider being out of connections — and the suite asserts the reason, not
+just the absence.
+
+**`yourchannels.test.js` turns over with it.** That suite was written to hold
+the negative claim — *opening home asks the box for nothing at all* — and what
+it tests now is the shape of the bargain rather than its absence: one
+connection, after a settle, handed back the moment you leave the page.
+
 ## A live playlist that only ever goes on
 
 > "There are still so many jumps back to previous spots when I'm watching
