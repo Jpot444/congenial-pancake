@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '43.4';
+const VERSION = '43.5';
 
 const PAGE_SIZE = 60;
 
@@ -5141,6 +5141,11 @@ const notice = {
       await profiles.save();
     }
     this.key = null;
+    /* Whatever was queued behind this. A profile can be owed both the notice
+       and the starter picks — Dad, signing in for the first time on a box that
+       has been running a while — and two overlays on top of each other means
+       the one underneath gets dismissed by a press aimed at the other. */
+    starter.maybeStart();
   },
 
   /** Nothing to say to a profile that has not finished the tour — it is next. */
@@ -5547,7 +5552,13 @@ const tour = {
 
   start(list = TOUR, doneKey = 'tourDone') {
     this.steps = this.visible(list);
-    if (!this.steps.length) return;
+    if (!this.steps.length) {
+      /* Nothing to point at — a layout with none of the targets on it. The
+         tour is over before it began, and what comes after it still has to
+         happen, or a profile on that layout never gets asked. */
+      if (doneKey === 'tourDone') starter.maybeStart();
+      return;
+    }
     this.doneKey = doneKey;
     this.at = 0;
     $('#tour').hidden = false;
@@ -5559,10 +5570,20 @@ const tour = {
   async finish() {
     $('#tour').hidden = true;
     window.removeEventListener('resize', this.reposition);
+    const opening = this.doneKey === 'tourDone';
     if (profiles.current && !profiles.data[this.doneKey]) {
       profiles.data[this.doneKey] = true;
       await profiles.save();
     }
+    /* "when new profiles are created, after the walkthrough tour, I want it to
+       ask a few channels, movies, shows, so that there homepage wont be blank
+       when they first join."
+     *
+     * AFTER, and only after the opening one — the Live TV note runs its own
+     * little tour later and is not the end of anything. Skipping the tour
+     * comes through here too, which is right: somebody who does not want to be
+     * shown around still wants a page with something on it. */
+    if (opening) starter.maybeStart();
   },
 
   next() {
@@ -5671,6 +5692,287 @@ function tourReportCopy() {
 
 $('#tourNext').addEventListener('click', () => tour.next());
 $('#tourSkip').addEventListener('click', () => tour.finish());
+
+/* ------------------------------------------------------- a page to come back to
+ *
+ * "when new profiles are created, after the walkthrough tour, I want it to ask
+ *  a few channels, movies, shows, so that there homepage wont be blank when
+ *  they first join"
+ *
+ * The walkthrough ended by describing a home page built out of favourites and
+ * half-watched things, to somebody who had neither — so it pointed at a rail
+ * of nothing and said "your favourite channels live here". The page was a
+ * correct rendering of an empty profile, which is the least useful thing a
+ * first screen can be.
+ *
+ * Three passes, in the order somebody would answer them: channels, films,
+ * shows. A tap is a favourite, which is exactly what the home page reads, so
+ * this is not a separate kind of state to be kept in step with anything — it
+ * is the ordinary star, pressed eighteen at a time.
+ *
+ * SKIPPABLE AT EVERY STEP, and skipping still counts as having been asked.
+ * Somebody who wants to go and find their own things should not be handed this
+ * sheet again tomorrow.
+ */
+
+/** How many to offer per pass. Enough to recognise something, few enough to read. */
+const STARTER_SHOWN = 18;
+
+const STARTER_STEPS = [
+  { tab: 'live',
+    title: 'Pick a few channels',
+    sub: 'What is on them shows up on your home page. You can change these any '
+      + 'time with the heart.' },
+  { tab: 'movies',
+    title: 'And a few films',
+    sub: 'Anything you star here is waiting on the home page when you get back.' },
+  { tab: 'series',
+    title: 'And a few shows',
+    sub: 'Last one. Star what you might watch — nothing here downloads anything.' },
+];
+
+/*
+ * Channels somebody would recognise, out of a list of twelve thousand.
+ *
+ * A provider's live list is mostly things nobody chooses from a grid — regional
+ * feeds, numbered PPV slots, 24/7 loops — and offering the first eighteen of it
+ * would be offering eighteen strangers. So this asks for named networks and
+ * takes the box's own row for each.
+ *
+ * WHOLE TOKENS, and that is not pedantry: NBC is inside CNBC, ESPN is inside
+ * ESPNU and ESPNEWS, CBS is inside CBSSN. The scoreboard matcher learned this
+ * the hard way — a USC game on NBC matched 'US| CNBC' and the tie-break
+ * preferred it — and the same trap is here.
+ */
+const STARTER_NETWORKS = [
+  'ESPN', 'ESPN 2', 'ESPN2', 'FOX SPORTS 1', 'FS1', 'NFL NETWORK', 'NBA TV',
+  'MLB NETWORK', 'TNT', 'TBS', 'USA', 'AMC', 'FX', 'HBO', 'SHOWTIME',
+  'CNN', 'FOX NEWS', 'MSNBC', 'ABC', 'CBS', 'NBC', 'FOX', 'BRAVO',
+  'DISCOVERY', 'HISTORY', 'NATIONAL GEOGRAPHIC', 'FOOD NETWORK', 'HGTV',
+  'CARTOON NETWORK', 'DISNEY CHANNEL', 'NICKELODEON', 'COMEDY CENTRAL',
+  'SYFY', 'TLC', 'ANIMAL PLANET', 'MTV', 'BET', 'PARAMOUNT NETWORK',
+  'GOLF CHANNEL', 'CBS SPORTS NETWORK', 'TCM', 'FREEFORM', 'HALLMARK CHANNEL',
+];
+
+/** A name as whole upper-case tokens. 'US| FOX SPORTS 1 HD' → US FOX SPORTS 1 HD. */
+const starterWords = (name) =>
+  String(name || '').toUpperCase().split(/[^A-Z0-9&+]+/).filter(Boolean);
+
+/** Whether `want` appears in `hay` as a consecutive run of whole tokens. */
+function starterRun(hay, want) {
+  for (let i = 0; i + want.length <= hay.length; i += 1) {
+    if (want.every((w, j) => hay[i + j] === w)) return true;
+  }
+  return false;
+}
+
+/* Rows that are an event rather than a channel. Starring one is starring a
+   thing that will not exist on Tuesday. */
+const STARTER_NOT_A_CHANNEL = /\b(24\/?7|PPV|VOD|PPV\d+)\b|\d{1,2}[./]\d{1,2}[./]\d{2,4}/i;
+
+function starterChannels() {
+  const lib = state.library.live;
+  if (!lib) return [];
+  const pool = lib.items.filter((i) =>
+    !profiles.isDeleted(i) && !profiles.hasFav(i)
+    && !STARTER_NOT_A_CHANNEL.test(String(i.name || '')));
+
+  const out = [];
+  const taken = new Set();
+  for (const network of STARTER_NETWORKS) {
+    if (out.length >= STARTER_SHOWN) break;
+    const want = starterWords(network);
+    let best = null;
+    for (const channel of pool) {
+      if (taken.has(String(channel.id))) continue;
+      if (!starterRun(starterWords(channel.name), want)) continue;
+      /* The shortest name wins, which on every provider seen so far is the
+         plain network feed rather than a regional or a duplicate of it. */
+      if (!best || String(channel.name).length < String(best.name).length) best = channel;
+    }
+    if (!best) continue;
+    /* One row per network. 'FOX SPORTS 1' and 'FS1' are two spellings of the
+       same question and must not both be offered. */
+    if (out.some((c) => String(c.id) === String(best.id))) continue;
+    taken.add(String(best.id));
+    out.push(best);
+  }
+
+  /* A playlist that names nothing recognisably — somebody else's m3u, a
+     provider with its own scheme. Better eighteen channels than none. */
+  if (out.length < 6) {
+    for (const channel of pool) {
+      if (out.length >= STARTER_SHOWN) break;
+      if (taken.has(String(channel.id))) continue;
+      taken.add(String(channel.id));
+      out.push(channel);
+    }
+  }
+  return out.slice(0, STARTER_SHOWN);
+}
+
+/** The newest things with artwork — the only ranking a profile with no taste has. */
+function starterTitles(tab) {
+  const lib = state.library[tab];
+  if (!lib) return [];
+  const pool = groupVariants(
+    browsable(lib.items.filter((i) => !profiles.isDeleted(i) && !profiles.hasFav(i)), '')
+  );
+  return [...pool]
+    .sort((a, b) => (b.added || 0) - (a.added || 0))
+    /* Artwork, because this is a wall of things to recognise and a wall of
+       fallback text is a list nobody reads. */
+    .filter((i) => i.logo)
+    .slice(0, STARTER_SHOWN);
+}
+
+const starter = {
+  at: 0,
+  offers: [],
+  /** favKey → item, across all three passes. Applied once, at the end. */
+  picked: new Map(),
+  running: false,
+
+  /** Only a profile that has never been here, and only where there is a library. */
+  maybeStart() {
+    if (this.running) return;
+    if (!profiles.current || !profiles.data) return;
+    if (profiles.data.startersDone) return;
+    /* A box with no provider connected has nothing to offer and the sheet
+       would be three empty grids and an apology. The flag is NOT written in
+       that case: connect a provider and the next new profile gets asked. */
+    if (!state.config || !state.config.mode) return;
+    /* One one-time overlay at a time.
+     *
+     * A profile can be owed both the report notice and these picks — Dad,
+     * signing in for the first time on a box that has been running a while —
+     * and this sheet would open on top, leaving the notice underneath to be
+     * dismissed by a press nobody aimed at it. Checked HERE rather than at
+     * the one call site that knows about both, so the rule belongs to the
+     * sheet and holds wherever it is started from. `notice.close` calls this
+     * again on its way out, so waiting costs nothing. */
+    if (!$('#noticeModal').hidden) return;
+    this.at = 0;
+    this.picked = new Map();
+    this.running = true;
+    $('#starter').hidden = false;
+    this.paint();
+  },
+
+  async paint() {
+    const step = STARTER_STEPS[this.at];
+    $('#starterStep').textContent = `Step ${this.at + 1} of ${STARTER_STEPS.length}`;
+    $('#starterTitle').textContent = step.title;
+    $('#starterSub').textContent = step.sub;
+    $('#starterNext').textContent =
+      this.at === STARTER_STEPS.length - 1 ? 'Done' : 'Next';
+
+    const grid = $('#starterGrid');
+    grid.innerHTML = '';
+    const note = $('#starterNote');
+    note.hidden = true;
+    grid.classList.toggle('is-wide', step.tab === 'live');
+
+    /* Quietly, because the full-screen loading panel is this sheet's own
+       backdrop and putting one over the other is two waits stacked up. */
+    const mine = this.at;
+    note.textContent = 'Reading the library…';
+    note.hidden = false;
+    try {
+      await loadTab(step.tab, { quiet: true });
+    } catch {
+      /* Left to the emptiness check below, which already has a sentence for
+         it. A library that will not load and a library with nothing in it are
+         the same fact from this sheet's side. */
+    }
+    if (!this.running || mine !== this.at) return;   // skipped past while waiting
+
+    this.offers = step.tab === 'live' ? starterChannels() : starterTitles(step.tab);
+    if (!this.offers.length) {
+      /* Said rather than shown as an empty frame — and the way on is the
+         button that is already there. */
+      note.textContent = 'Nothing to offer here yet. Press '
+        + `${this.at === STARTER_STEPS.length - 1 ? 'Done' : 'Next'} to carry on.`;
+      this.count();
+      return;
+    }
+    note.hidden = true;
+
+    for (const item of this.offers) {
+      const tile = el('button', 'starter-tile');
+      tile.type = 'button';
+      tile.dataset.key = profiles.favKey(item);
+      if (this.picked.has(profiles.favKey(item))) tile.classList.add('is-on');
+
+      const art = el('div', 'starter-art');
+      if (item.logo) {
+        const image = el('img');
+        image.loading = 'lazy';
+        image.alt = '';
+        image.src = item.logo;
+        /* A broken image leaves the name, which is the whole point of the
+           tile — not a grey hole where a picture was promised. */
+        image.addEventListener('error', () => image.remove());
+        art.append(image);
+      }
+      tile.append(art);
+      tile.append(Object.assign(el('span', 'starter-name'),
+        { textContent: cleanCatName(trimTag(item.name)) }));
+      tile.addEventListener('click', () => this.toggle(item, tile));
+      grid.append(tile);
+    }
+    this.count();
+  },
+
+  toggle(item, tile) {
+    const key = profiles.favKey(item);
+    if (this.picked.has(key)) this.picked.delete(key);
+    else this.picked.set(key, item);
+    tile.classList.toggle('is-on', this.picked.has(key));
+    this.count();
+  },
+
+  count() {
+    const n = this.picked.size;
+    $('#starterCount').textContent = n
+      ? `${n} picked` : 'Pick as many or as few as you like';
+  },
+
+  next() {
+    if (this.at < STARTER_STEPS.length - 1) {
+      this.at += 1;
+      this.paint();
+      return;
+    }
+    this.finish();
+  },
+
+  /**
+   * Put the picks in, and write the flag whether or not there were any.
+   *
+   * ONE SAVE, not one per tile. `profiles.toggleFav` saves on every call, and
+   * eighteen of those is eighteen round trips to the box for a single answer.
+   */
+  async finish() {
+    this.running = false;
+    $('#starter').hidden = true;
+    const list = (profiles.data.favorites ||= []);
+    for (const [key, item] of this.picked) {
+      if (list.some((f) => f.key === key)) continue;
+      list.unshift({ key, item });
+    }
+    profiles.data.favorites = list.slice(0, 500);
+    profiles.data.startersDone = true;
+    this.picked = new Map();
+    await profiles.save();
+    /* So the page behind is the page they just built rather than the empty
+       one they were looking at while they built it. */
+    render();
+  },
+};
+
+$('#starterNext').addEventListener('click', () => starter.next());
+$('#starterSkip').addEventListener('click', () => starter.finish());
 
 /* ---------------------------------------------------------------- loader */
 
@@ -18824,7 +19126,18 @@ async function startApp() {
     tour.start();
   } else {
     // Everyone who was already here. The button changed under them.
+    /* And then the picks, for a profile that finished the tour and never got
+       to them — closed the tab mid-sheet, or was on a device where the tour
+       had nothing to point at. `startersDone` defaults to true for anybody
+       with a favourite or a watch, so this cannot reach somebody who has
+       plainly been here; it only catches the one case where the sheet was
+       owed and not delivered.
+     *
+     * AFTER the notice, which may refuse this one: maybeStart stands down
+     * while another one-time overlay is up and notice.close calls it again on
+     * the way out. The same chain the tour uses. */
     notice.maybeShow();
+    starter.maybeStart();
   }
 
   // Keep the progress bars and the nav badge honest while anything is running.

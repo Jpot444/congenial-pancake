@@ -8654,6 +8654,13 @@ async function handleApi(req, res, pathname, query) {
           // note above so clearing one does not silently re-run the other.
           livePinsSeeded: profile.livePinsSeeded
             ?? (profile.pinnedCategories || []).some((key) => key.startsWith('live:')),
+          /* Whether this profile has been asked to pick a few things to start
+             with. Defaulted the way tourDone is — a profile with a favourite
+             or a watch already has a home page and does not need seeding —
+             and kept as its own field so that clearing favourites does not
+             hand somebody the sheet again a year later. */
+          startersDone: profile.startersDone
+            ?? ((profile.history || []).length > 0 || (profile.favorites || []).length > 0),
           // Whether this profile has been told the corner button changed. A
           // profile that has not finished the tour has not been told anything
           // yet and gets it there instead, pointed at the button itself.
@@ -8721,6 +8728,9 @@ async function handleApi(req, res, pathname, query) {
         if (typeof incoming.liveTourDone === 'boolean') profile.liveTourDone = incoming.liveTourDone;
         if (typeof incoming.livePinsSeeded === 'boolean') {
           profile.livePinsSeeded = incoming.livePinsSeeded;
+        }
+        if (typeof incoming.startersDone === 'boolean') {
+          profile.startersDone = incoming.startersDone;
         }
         if (typeof incoming.reportNoticeSeen === 'boolean') {
           profile.reportNoticeSeen = incoming.reportNoticeSeen;

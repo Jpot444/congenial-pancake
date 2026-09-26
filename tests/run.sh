@@ -129,9 +129,13 @@ fi
 # box while passing on a used one, which is the worst way for a test to be
 # wrong. Set through the API rather than written into profiles.json, because
 # the box normalises unknown fields straight back out of that file.
+#
+# `startersDone` is here for exactly the same reason and was added the day the
+# sheet behind it was: it opens itself for a profile with no favourites and no
+# history, which describes this box before every single suite.
 curl -fs -o /dev/null -X PUT \
   -H 'content-type: application/json' \
-  -d '{"tourDone":true,"liveTourDone":true,"reportNoticeSeen":true,"dlExplainSeen":true}' \
+  -d '{"tourDone":true,"liveTourDone":true,"startersDone":true,"reportNoticeSeen":true,"dlExplainSeen":true}' \
   "http://127.0.0.1:$PORT/api/profiles/own1/prefs" \
   || echo 'note: could not mark the walkthroughs seen; some suites may trip over the tour'
 
@@ -166,7 +170,7 @@ for suite in "${SUITES[@]}"; do
     "http://127.0.0.1:$PORT/api/profiles/current" || true
   curl -fs -o /dev/null -X PUT \
     -H 'content-type: application/json' \
-    -d '{"tourDone":true,"liveTourDone":true,"reportNoticeSeen":true,"dlExplainSeen":true,"scoreSport":"mlb"}' \
+    -d '{"tourDone":true,"liveTourDone":true,"startersDone":true,"reportNoticeSeen":true,"dlExplainSeen":true,"scoreSport":"mlb"}' \
     "http://127.0.0.1:$PORT/api/profiles/own1/prefs" || true
 
   printf '%-24s ' "$suite"

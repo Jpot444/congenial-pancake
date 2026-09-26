@@ -660,6 +660,72 @@ A name that matches nothing is skipped. The seeding is marked done either way:
 a provider that renamed everything will not have renamed it back by the next
 visit, and re-running would fight anyone who unpinned what it left.
 
+### And then a page to come back to
+
+> "when new profiles are created, after the walkthrough tour, I want it to ask
+> a few channels, movies, shows, so that there homepage wont be blank when they
+> first join"
+
+The tour ended by describing a home page built out of favourites and
+half-watched things — to somebody who had neither. It punched a hole over a
+rail of nothing and said "your favourite channels live here". A correct
+rendering of an empty profile is the least useful thing a first screen can be.
+
+So the moment the tour closes — including when it is **skipped**, because
+somebody who does not want the tour still wants a page with something on it —
+three passes come up: channels, films, shows. A tap is an ordinary favourite,
+which is exactly what the home page reads, so this is not a second kind of
+state that has to be kept in step with anything. It is the star, pressed
+eighteen at a time.
+
+**Which channels are offered is the whole difficulty.** A provider's live list
+is twelve thousand rows and most of them are nobody's answer to "pick a few
+channels" — regional feeds, numbered PPV slots, 24/7 loops, dated one-off
+events. Offering the first eighteen would be offering eighteen strangers. So
+the sheet asks for **named networks** from a written list and takes the box's
+own shortest row for each, which on every provider seen so far is the plain
+network feed rather than a regional duplicate of it.
+
+Matched on **whole tokens**, and that is not pedantry — it is the same trap the
+scoreboard matcher fell into and had to be fixed for: NBC is inside CNBC, ESPN
+is inside ESPNU and ESPNEWS, CBS is inside CBSSN. A substring test offers the
+wrong channel and the shortest-name tie-break then *prefers* it. If the list
+matches almost nothing — somebody else's m3u, a provider with its own scheme —
+it falls back to the first eighteen channels, because eighteen strangers still
+beat an empty sheet.
+
+Films and shows are ranked by `added`, newest first, filtered to the ones with
+artwork: a profile with no taste has no better signal, and a wall of fallback
+text is a list nobody reads.
+
+Three smaller decisions:
+
+- **One write, at the end.** `profiles.toggleFav` saves on every call, and
+  eighteen taps would be eighteen round trips to the box for a single answer.
+  The picks are held in a `Map` and applied once.
+- **`startersDone` is its own field**, defaulted the way `tourDone` is — a
+  profile with a favourite or a watch already has a home page — so clearing
+  favourites a year later does not hand somebody the sheet again. It had to be
+  added to the server's profile whitelist in **both** directions; a field the
+  client sends and the box drops looks fine until the next load, and then the
+  sheet is back, which is the most annoying possible way for this to fail.
+- **`tests/run.sh` marks it seen**, for exactly the reason it already marks the
+  tour: the shared test box has no favourites and no history, so the sheet
+  would open itself over every suite in the sweep. `reports.test.js` needed the
+  same for the second profile it creates — Dad has nothing starred, which is
+  precisely the profile this opens for.
+
+And **one one-time overlay at a time**. A profile can be owed both the report
+notice and the picks — Dad again, signing in for the first time on a box that
+has been running a while. The sheet stands down while another is up and
+`notice.close` calls it again on the way out, the same chain the tour uses.
+The check lives in `maybeStart`, not at the call site that knows about both,
+so the rule belongs to the sheet and holds wherever it is started from.
+
+`tests/firstpicks.test.js` drives it through `tour.finish` rather than opening
+the sheet by hand — "after the walkthrough tour" is the requirement, and a
+suite that opened it itself would pass on a build where nothing ever did.
+
 ## Personalization API
 
 The watch history exists to feed recommendations. Every play reports against

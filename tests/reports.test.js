@@ -89,8 +89,16 @@ error: 403 from http://cf.boffworld.com/live/hunter99/s3cr3tP@ss/12.ts`;
     profiles.profiles.push(guest);
     fs.writeFileSync(path.join(LIVE, 'profiles.json'), JSON.stringify(profiles, null, 2));
   }
-  // Both have been here a while: tour done, notice not yet seen.
-  for (const p of profiles.profiles) { p.tourDone = true; p.reportNoticeSeen = false; }
+  /* Both have been here a while: tour done, starter picks done, notice not
+     yet seen. `startersDone` matters as much as `tourDone` here — Dad has no
+     favourites and no history, which is exactly the profile the picks sheet
+     opens itself for, and it would sit on top of the notice this suite is
+     about. */
+  for (const p of profiles.profiles) {
+    p.tourDone = true;
+    p.startersDone = true;
+    p.reportNoticeSeen = false;
+  }
   fs.writeFileSync(path.join(LIVE, 'profiles.json'), JSON.stringify(profiles, null, 2));
 
   fs.rmSync(path.join(LIVE, 'reports.json'), { force: true });
