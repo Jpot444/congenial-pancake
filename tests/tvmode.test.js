@@ -98,7 +98,6 @@ async function boot(browser, width, height) {
   for (const [glob, body] of [
     ['**/api/scores*', '{"games":[],"feeds":[]}'],
     ['**/api/xtream*', '{}'],
-    ['**/api/market/lines*', '{"day":"x","lines":[]}'],
   ]) {
     // eslint-disable-next-line no-await-in-loop
     await page.route(glob, (r) =>

@@ -91,7 +91,7 @@ mkdir -p "$DIR/downloads"
 # their own (grep the tests for 'recommend.js') — a box missing one does not
 # fail loudly, it simply never answers, and the suite reports "did not come up".
 cp -R "$ROOT/public" "$DIR/public"
-cp "$ROOT/server.js" "$ROOT/local-library.js" "$ROOT/epg-guide.js" "$ROOT/people.js" "$ROOT/providers.js" "$ROOT/recordings.js" "$ROOT/recommend.js" "$ROOT/market.js" "$DIR/"
+cp "$ROOT/server.js" "$ROOT/local-library.js" "$ROOT/epg-guide.js" "$ROOT/people.js" "$ROOT/providers.js" "$ROOT/recordings.js" "$ROOT/recommend.js" "$DIR/"
 # Data the box reads at boot, not code — but it is required like code, and a
 # box without it draws college cards with no club marks on them.
 cp "$ROOT/college-teams.json" "$DIR/"

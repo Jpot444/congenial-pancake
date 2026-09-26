@@ -70,7 +70,7 @@ function box() {
   fs.copyFileSync(path.join(ROOT, 'scripts', 'boot-resurrect.sh'),
     path.join(DIR, 'scripts', 'boot-resurrect.sh'));
   for (const f of ['server.js', 'local-library.js', 'epg-guide.js', 'people.js',
-    'providers.js', 'recordings.js', 'recommend.js', 'market.js']) {
+    'providers.js', 'recordings.js', 'recommend.js']) {
     fs.copyFileSync(path.join(ROOT, f), path.join(DIR, f));
   }
   fs.copyFileSync(path.join(ROOT, 'college-teams.json'), path.join(DIR, 'college-teams.json'));

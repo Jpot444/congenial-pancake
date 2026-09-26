@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '43.3';
+const VERSION = '43.4';
 
 const PAGE_SIZE = 60;
 
@@ -234,11 +234,6 @@ const profiles = {
     // Which of the two lives in the corner depends on who is watching, so it
     // is decided here rather than once at startup.
     reporter.applyButtons();
-    /* A different profile is a different deck — the owner's lines name dollar
-       figures and nobody else's do — so the one held from the last profile is
-       thrown away here rather than being allowed to outlive them. */
-    marketLines.text = new Map();
-    marketLines.load({ force: true }).catch(() => {});
     /* And a different Downloads. Both halves matter: the list belongs to
        whoever was signed in a moment ago, and the everyone view is the owner's
        alone — leaving either in place would show one profile another's. */
@@ -4485,98 +4480,6 @@ $('#guideWhy').addEventListener('input', () => {
   whyTimer = setTimeout(() => guideSources.explain($('#guideWhy').value), 350);
 });
 
-/*
- * Where the buffering screens get their lines.
- *
- * Owner only, both here and on the box: the setting behind it is a brokerage
- * credential and the lines it produces name money. The panel says one thing at
- * the top — how many lines there are and whether the book was read today —
- * because that is what somebody opens it to find out; the key and the
- * hand-written lines are folded away behind the summary.
- */
-const marketPanel = {
-  async load() {
-    const panel = $('#marketPanel');
-    panel.hidden = !reporter.isOwner();
-    if (panel.hidden) return;
-    try {
-      this.paint(await api('/api/market', { profileId: profiles.current?.id || '' }));
-    } catch {
-      $('#marketNote').textContent = 'Could not read the buffering-screen settings.';
-    }
-  },
-
-  paint(state) {
-    const note = $('#marketNote');
-    const count = $('#marketCount');
-    const total = (state.jokes || 0) + (state.facts || 0) + (state.typed?.length || 0);
-    count.textContent = total ? `${total} lines` : '';
-    note.classList.remove('is-bad');
-
-    if (state.source !== 'kalshi' || !state.set) {
-      note.textContent = `${state.jokes} jokes and ${state.typed?.length || 0} of your own. `
-        + 'Add a read-only key to put the book’s own numbers in the rotation.';
-    } else if (state.error && !state.facts) {
-      note.classList.add('is-bad');
-      note.textContent = `The book could not be read: ${state.error}`;
-    } else if (state.stale) {
-      note.classList.add('is-bad');
-      note.textContent = `${state.facts} facts, but nothing newer than ${state.day}. `
-        + (state.error ? `Last try said: ${state.error}` : '');
-    } else {
-      note.textContent = `${state.facts} facts from the book, read ${state.day}, `
-        + `beside ${state.jokes} jokes.`;
-    }
-
-    /* Rendered back as lines, which is how they were typed. The ownerOnly flag
-       is worked out from the text — a line with a dollar figure in it is
-       yours — so there is nothing extra to tick. */
-    const box = $('#marketTyped');
-    if (document.activeElement !== box) {
-      box.value = (state.typed || []).map((row) => row.text || '').join('\n');
-    }
-  },
-
-  async put(body, button) {
-    const error = $('#marketError');
-    error.hidden = true;
-    if (button) button.disabled = true;
-    try {
-      const res = await fetch(`/api/market?profileId=${encodeURIComponent(profiles.current?.id || '')}`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `the box answered ${res.status}`);
-      this.paint(data);
-      /* The deck this page is holding was dealt before the change. */
-      marketLines.load({ force: true }).catch(() => {});
-    } catch (err) {
-      error.textContent = err.message;
-      error.hidden = false;
-    } finally {
-      if (button) button.disabled = false;
-    }
-  },
-
-  saveKey() {
-    const keyId = $('#marketKeyId').value.trim();
-    const privateKey = $('#marketKey').value.trim();
-    if (!keyId && !privateKey) return;
-    // Never held in the page longer than the keystroke that pasted it.
-    $('#marketKeyId').value = '';
-    $('#marketKey').value = '';
-    return this.put({ source: 'kalshi', keyId, privateKey }, $('#marketSave'));
-  },
-};
-
-$('#marketSave').addEventListener('click', () => marketPanel.saveKey());
-$('#marketClear').addEventListener('click', () => marketPanel.put({ source: 'none' }, $('#marketClear')));
-$('#marketTypedSave').addEventListener('click', () => marketPanel.put({
-  typed: $('#marketTyped').value.split('\n').map((s) => s.trim()).filter(Boolean),
-}, $('#marketTypedSave')));
-
 /** "four minutes ago", for a timestamp the viewer should not have to subtract. */
 function whenWords(at) {
   const mins = Math.round((Date.now() - at) / 60000);
@@ -4598,7 +4501,6 @@ const health = {
     this.paintPlayback();
     this.loadReports();
     guideSources.load();
-    marketPanel.load();
     await this.refresh();
     clearInterval(this.timer);
     this.timer = setInterval(() => {
@@ -5793,19 +5695,10 @@ $('#tourSkip').addEventListener('click', () => tour.finish());
    over that covers both. */
 const BOOT_MS = 5200;
 
-/* How long a line stays up before the next one, on a wait long enough to get
-   through two. Slower than reading speed on purpose: a line that changes while
-   it is being read is worse than a line that stays. */
-const LINE_MS = 16000;
-
 const loader = {
   booted: false,
-  /** The timer swapping lines on a long wait, and what it is showing. */
-  lineTimer: null,
-  lineShown: '',
 
   show(label, detail = '') {
-    this.stopLine();
     $('#loaderLabel').textContent = label;
     $('#loaderDetail').textContent = detail;
     this.set(0);
@@ -5838,208 +5731,26 @@ const loader = {
   },
 
   /**
-   * A long wait, with something to read on it.
+   * A long wait, which says what it is waiting for.
    *
-   * `why` is the mechanical sentence this screen used to lead with. It is
-   * still shown — small, under the line — because a viewer who wants to know
-   * why the picture is not up yet should be able to find out. What leads is a
-   * line from the market deck, and if there is no deck yet (a first run, a box
-   * that has not answered) `why` leads exactly as it always did. The screen
-   * is never worse than it was.
+   * `why` is the mechanical sentence — "buffering ahead", and what that
+   * means. For a while it was demoted to small print under a rotating deck of
+   * prediction-market jokes and figures; the deck is gone ("get rid of the
+   * factbook and jokes"), so the sentence leads again, which is what it did
+   * before and what a screen holding somebody up should say.
+   *
+   * Still a separate entry point from show() even though the two now do the
+   * same thing: `wait` is the long, explain-yourself kind and `show` is the
+   * quick one, and every caller already says which it means.
    */
   wait(why, detail = '') {
-    const line = marketLines.next();
-    this.show(line || why, detail);
-    const node = $('#loader');
-    const small = $('#loaderWhy');
-    small.textContent = line ? why : '';
-    small.hidden = !line;
-    node.classList.toggle('has-line', Boolean(line));
-    if (!line) return;
-    this.lineShown = line;
-    /* Long waits get a second line, and a third. A prebuffer can run a minute
-       and one sentence does not hold a minute. */
-    this.lineTimer = setInterval(() => {
-      const next = marketLines.next();
-      if (!next || next === this.lineShown) return;
-      node.classList.add('is-turning');
-      setTimeout(() => {
-        $('#loaderLabel').textContent = next;
-        this.lineShown = next;
-        node.classList.remove('is-turning');
-      }, 280);
-    }, LINE_MS);
-  },
-
-  stopLine() {
-    if (this.lineTimer) clearInterval(this.lineTimer);
-    this.lineTimer = null;
-    this.lineShown = '';
-    const node = $('#loader');
-    node.classList.remove('has-line', 'is-turning');
-    $('#loaderWhy').hidden = true;
-    $('#loaderWhy').textContent = '';
+    this.show(why, detail);
   },
 
   hide() {
-    this.stopLine();
     $('#loader').hidden = true;
   },
 };
-
-/*
- * Something to read while the box is buffering.
- *
- * "During the buffering screens where it says 'buffering ahead' I want that
- *  replaced with a prediction market specific joke or a real fact from my
- *  prediction market firm."
- *
- * The box writes the deck — jokes it ships with, plus whatever the firm's book
- * said this morning — and it writes a DIFFERENT deck for a profile that is not
- * the owner's, with the dollar figures expressed as percentages. That choice
- * is made on the box and nothing here can undo it, which is the point: this
- * layer has no idea a redaction happened and cannot be talked out of one.
- *
- * ROTATION. "A decent rotation so I don't see them repeated" is not a random
- * pick — random gives you the same line twice in a row about one time in
- * forty, and people notice that far more than they notice the other
- * thirty-nine. So the deck is SHUFFLED and DEALT: every line comes up once
- * before any line comes up twice, the position in the deck survives a reload,
- * and when the deck runs out it is reshuffled with the last few held back so
- * the seam does not repeat either.
- *
- * The rotation state is ids and nothing else. The text lives in memory for as
- * long as the page does and is asked for again on the next one — so a device
- * that the owner used and a child then picked up cannot have a dollar figure
- * sitting in its local storage waiting to be drawn.
- */
-const DECK_KEY = 'portal.marketDeck';
-/** How many recent lines are kept out of a freshly shuffled deck. */
-const DECK_HOLDBACK = 8;
-
-const marketLines = {
-  /** id → text, for the profile that is signed in right now. */
-  text: new Map(),
-  order: [],
-  at: 0,
-  recent: [],
-  who: '',
-  day: '',
-  loading: null,
-
-  /**
-   * Ask the box for this profile's deck.
-   *
-   * Keyed by profile: the answer is different for the owner and the same
-   * request made as somebody else must not be served from what the owner got.
-   */
-  async load({ force = false } = {}) {
-    const who = profiles.current?.id || '';
-    if (!force && this.who === who && this.text.size) return;
-    if (this.loading) return this.loading;
-    this.loading = (async () => {
-      try {
-        const data = await api('/api/market/lines', who ? { profileId: who } : {});
-        const lines = Array.isArray(data.lines) ? data.lines : [];
-        this.text = new Map(lines.map((l) => [String(l.id), String(l.text || '')]));
-        this.who = who;
-        this.day = String(data.day || '');
-        this.restore();
-      } catch {
-        /* A deck that did not arrive is a buffering screen that says what it
-           always said. Never worth a word to anybody. */
-      } finally {
-        this.loading = null;
-      }
-    })();
-    return this.loading;
-  },
-
-  /** The rotation as this device left it, reconciled with today's deck. */
-  restore() {
-    let held = null;
-    try {
-      held = JSON.parse(localStorage.getItem(DECK_KEY) || 'null');
-    } catch {
-      held = null;
-    }
-    const ids = [...this.text.keys()];
-    const known = new Set(ids);
-    if (held && held.who === this.who && Array.isArray(held.order)) {
-      /* Lines that have gone — yesterday's facts — drop out of the deck where
-         they stood rather than resetting it; new ones are dealt in at the end
-         of what is left, so a fact that arrived this morning is not held back
-         until the whole deck has turned over. */
-      this.order = held.order.map(String).filter((id) => known.has(id));
-      this.at = Math.max(0, Math.min(Number(held.at) || 0, this.order.length));
-      this.recent = (Array.isArray(held.recent) ? held.recent : []).map(String);
-      const seen = new Set(this.order);
-      const fresh = shuffle(ids.filter((id) => !seen.has(id)));
-      if (fresh.length) this.order = [...this.order.slice(0, this.at), ...fresh,
-        ...this.order.slice(this.at)];
-    } else {
-      this.order = shuffle(ids);
-      this.at = 0;
-      this.recent = [];
-    }
-    if (!this.order.length) this.order = shuffle(ids);
-    this.save();
-  },
-
-  save() {
-    try {
-      localStorage.setItem(DECK_KEY, JSON.stringify({
-        who: this.who, at: this.at, order: this.order,
-        recent: this.recent.slice(-DECK_HOLDBACK),
-      }));
-    } catch {
-      /* A device that will not remember rotates within the session instead. */
-    }
-  },
-
-  /** The next line, or '' when there is no deck to deal from. */
-  next() {
-    /* A screen left open for days is the normal case on a television, and the
-       facts change overnight. Asked for in the background, so this wait uses
-       yesterday's deck and the next one uses today's. */
-    const now = new Date().toISOString().slice(0, 10);
-    if (this.day && this.day !== now) this.load({ force: true }).catch(() => {});
-    if (!this.text.size) return '';
-    if (this.at >= this.order.length) this.reshuffle();
-    const id = this.order[this.at];
-    this.at += 1;
-    this.recent = [...this.recent, id].slice(-DECK_HOLDBACK);
-    this.save();
-    return this.text.get(id) || '';
-  },
-
-  /**
-   * Deal again, without repeating across the seam.
-   *
-   * The last few shown are put back at the bottom rather than reshuffled with
-   * everything else, so finishing a deck on one line and starting the next
-   * with it — the one repeat somebody would actually notice — cannot happen.
-   */
-  reshuffle() {
-    const ids = [...this.text.keys()];
-    const held = new Set(this.recent);
-    const fresh = shuffle(ids.filter((id) => !held.has(id)));
-    const tail = shuffle(ids.filter((id) => held.has(id)));
-    this.order = fresh.length ? [...fresh, ...tail] : tail;
-    this.at = 0;
-    this.save();
-  },
-};
-
-/** Fisher–Yates, on a copy. */
-function shuffle(list) {
-  const out = list.slice();
-  for (let i = out.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
 
 const mb = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`;
 
@@ -19098,12 +18809,6 @@ async function startApp() {
   $('#lowMode').checked = prefs.data.lowBandwidth === true;
   await refreshDownloads();
   await applyRoute();
-
-  /* Something to read on the next buffering screen. Fetched now rather than
-     then: the moment it is wanted is by definition a moment when the box is
-     already busy, and this is one small answer that can be had while nothing
-     is happening. Never awaited — a deck that does not arrive costs nothing. */
-  marketLines.load().catch(() => {});
 
   // After the first page has drawn, or the tour would be pointing at things
   // that are not there yet.

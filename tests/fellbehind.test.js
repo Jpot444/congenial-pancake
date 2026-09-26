@@ -81,7 +81,6 @@ const block = (report, label) => {
     ['**/api/scores*', '{"games":[],"feeds":[]}'],
     ['**/api/profiles/*/taste', '{}'],
     ['**/api/xtream*', '{}'],
-    ['**/api/market/lines*', '{"day":"2026-09-11","lines":[]}'],
   ]) {
     // eslint-disable-next-line no-await-in-loop
     await page.route(glob, (r) =>

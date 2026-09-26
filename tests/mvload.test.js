@@ -210,6 +210,39 @@ const LIB = {
   check('and it says so rather than sitting silent',
     /couldn't load/i.test(broken.sub), broken.sub);
 
+  /* --- and a long wait says what it is waiting for ---------------------- */
+  /*
+   * "get rid of the factbook and jokes"
+   *
+   * `loader.wait` is the long kind — a prebuffer, fifteen to sixty seconds of
+   * bar. For a while it led with a line from a deck of prediction-market
+   * jokes and figures and demoted its own sentence to small print underneath.
+   * The deck is gone, so the sentence leads again, and this is the one thing
+   * about that removal that could break quietly: a `wait` that showed nothing
+   * would be a blank screen holding somebody up for a minute.
+   */
+  console.log('\n  a long wait');
+  const waited = await page.evaluate(() => {
+    loader.wait('Buffering ahead', '45 second prebuffer');
+    return {
+      label: document.querySelector('#loaderLabel').textContent,
+      detail: document.querySelector('#loaderDetail').textContent,
+      /* The small print the deck pushed it into, and the classes that faded
+         one line out and the next one in. All of it went with the deck. */
+      why: Boolean(document.querySelector('#loaderWhy')),
+      classes: document.querySelector('#loader').className,
+    };
+  });
+  console.log('   ', JSON.stringify(waited));
+  check('the reason is the headline, not the small print',
+    waited.label === 'Buffering ahead', waited.label);
+  check('and the mechanical detail is still under it',
+    waited.detail === '45 second prebuffer', waited.detail);
+  check('with nothing left of the deck it used to sit beneath',
+    waited.why === false && !/has-line|is-turning/.test(waited.classes),
+    JSON.stringify(waited));
+  await page.evaluate(() => loader.hide());
+
   await browser.close();
   console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(', ')}` : '\nall passed');
   process.exit(fails.length ? 1 : 0);
