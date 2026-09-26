@@ -97,15 +97,41 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // Finishing writes it down.
   await page.locator('#tourNext').click();
-  await wait(600);
+  await wait(1400);
   check('finishing closes it', await page.locator('#tour').isHidden());
   check('and remembers, so it does not come back',
     saved && saved.tourDone === true, JSON.stringify(saved));
 
+  /* And hands over to the picks.
+   *
+   * "when new profiles are created, after the walkthrough tour, I want it to
+   *  ask a few channels, movies, shows."
+   *
+   * The tour ended by describing a home page made of favourites and
+   * half-watched things to somebody who had neither, so what it closes onto
+   * matters as much as what it says. Checked here rather than only in
+   * firstpicks.test.js because this is the suite that owns the end of the
+   * tour, and it is also what made this suite fail when the handover was
+   * added: every click after this point was landing on a sheet that had
+   * opened over the page. */
+  check('and hands over to the picks rather than to an empty page',
+    await page.locator('#starter').isVisible(),
+    'no starter sheet after the last step');
+  await page.locator('#starterSkip').click();
+  await wait(700);
+  check('which can be skipped straight back out of',
+    await page.locator('#starter').isHidden());
+
   // --- the X gets you out at any point ------------------------------------
   console.log('\n  the X');
   saved = null;
-  await page.evaluate(() => { profiles.data.tourDone = false; tour.start(); });
+  await page.evaluate(() => {
+    profiles.data.tourDone = false;
+    /* Already answered a moment ago, and this half of the suite is about the
+       tour's own exit rather than about what follows it. */
+    profiles.data.startersDone = true;
+    tour.start();
+  });
   await wait(300);
   await page.locator('#tourNext').click();
   await wait(200);

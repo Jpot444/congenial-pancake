@@ -45,7 +45,13 @@ const PREFS = {
     ...CHANNELS.slice(2).map((c) => ({ key: `live:${c.id}`, item: c })),
   ],
   pinnedCategories: [], deletedItems: [], deletedCategories: [], owner: true,
-  tourDone: true, liveTourDone: true, reportNoticeSeen: true, dlExplainSeen: true,
+  /* Every one-time overlay marked seen. `startersDone` belongs with them:
+     the picks sheet opens itself over the page for a profile that has not
+     had it, and this whole suite is drags and presses on that page. The
+     real box would default it true off these favourites — it is false here
+     only because this stub replaces the box's answer wholesale. */
+  tourDone: true, liveTourDone: true, startersDone: true,
+  reportNoticeSeen: true, dlExplainSeen: true,
 };
 
 /* A stand-in for hls.js: the CDN is not a dependency of a test about our own
