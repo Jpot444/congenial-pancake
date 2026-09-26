@@ -1353,7 +1353,53 @@
      an ordinary ask never trips it. */
   const SLATE_SLOW_MS = 6000;
 
-  function scoreboard(host) {
+  /*
+   * What pressing a game does, when it is not "watch it".
+   *
+   * "inside of build a multiview the games are not clickable"
+   *
+   * The band is BORROWED — one band in the whole app, moved to whoever asks —
+   * and its cards were wired once, to `openPlayer(channel)`. That is right on
+   * the Live TV page and wrong inside the multi-view builder, where pressing a
+   * game means "put this one in the set I am assembling" and opening the
+   * full-screen player over the sheet is not an answer to it.
+   *
+   * Set by whoever asks for the band and cleared by the next asker, which is
+   * the same rule the band itself follows: closePicker hands it back with a
+   * bare scoreboard() call, and that call clears this. One band, one owner at
+   * a time.
+   */
+  let pickHandler = null;
+
+  function scoreboard(host, opts = {}) {
+    /*
+     * A page redraw must not pull the band out of an open sheet.
+     *
+     * `decorate()` calls this bare on every render, and the multi-view picker
+     * borrows the band while it is open — so a render triggered from anywhere
+     * would move it back to the page head mid-sheet, taking the games out
+     * from under somebody in the middle of choosing.
+     *
+     * BEFORE the handler is touched, and that ordering is the whole of it.
+     * With the clear first, an incidental redraw left the cards on screen
+     * looking exactly as they had — "Add on ESPN" and all — while the thing
+     * that made them add had been wiped, so the next press opened the player
+     * behind the sheet: the original fault, restored by the guard meant to
+     * prevent it. A suite caught it; the eye would not have.
+     *
+     * Safe to key on the picker being open because closePicker hides it
+     * BEFORE it hands the band back, so the one call that is meant to reclaim
+     * it still gets through.
+     */
+    if (!host) {
+      const picker = document.querySelector('#mvPicker');
+      const open = document.querySelector('#dkScores');
+      if (picker && !picker.hidden && open && open.closest('#mvPicker')) return;
+    }
+
+    /* Whoever asked last owns what a card does. A handler left behind would
+       have the Live TV page quietly adding to a multi-view set. */
+    pickHandler = typeof opts.onPick === 'function' ? opts.onPick : null;
     /*
      * `host` is where the band goes, which used to be only one place.
      *
@@ -1696,14 +1742,28 @@
        disagree invisibly once one has won — and "matched on the network ESPN"
        and "the guide says this is what is on it" are two completely different
        faults that used to look identical. */
+    /* And what pressing it would DO, since that is now two different things.
+       A tooltip promising "Watch on ESPN" over a sheet that will instead add
+       it to the set is a small lie told at the exact moment somebody is
+       deciding whether to press. */
     tune.title = channel
-      ? `Watch on ${channel.name}${pass ? `\n\nMatched because ${WHY[pass]}`
-        + `${evidence ? ` — ${evidence}` : ''}.` : ''}`
+      ? `${pickHandler ? 'Add' : 'Watch'} on ${channel.name}`
+        + `${pass ? `\n\nMatched because ${WHY[pass]}`
+          + `${evidence ? ` — ${evidence}` : ''}.` : ''}`
       : 'No channel on this box carries it';
 
     tune.append(scoreLine(game));
     tune.append(game.status === 'upcoming' ? pregameFoot(game) : livingFoot(game, channel));
-    if (channel) tune.addEventListener('click', () => openPlayer(channel));
+    /* Watch it, or take it — see pickHandler. Read at CLICK time rather than
+       captured here, because the band outlives the card: it is moved between
+       hosts with its cards intact, so a handler baked in when the card was
+       drawn would be the one belonging to wherever it was drawn. */
+    if (channel) {
+      tune.addEventListener('click', () => {
+        if (pickHandler) return pickHandler(channel, game);
+        return openPlayer(channel);
+      });
+    }
     card.append(tune);
     return card;
   }

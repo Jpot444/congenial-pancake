@@ -3721,6 +3721,59 @@ dimensions live in the desktop layer as `.desk .home-guide`, which is two
 classes; `.mv-land-guide` is one, so the plain layer's version of the override
 loses to the rule it is trying to beat and the column silently stays at 168px.
 
+### And the same question, asked of the band
+
+> *"inside of build a multiview the games are not clickable"*
+
+They were clickable. What they did was invisible.
+
+The guide slabs got `onPick` and the scoreboard band, sitting directly above
+them in the same sheet, did not. Its cards were wired once, when they were
+drawn, to `openPlayer(channel)` — right on the Live TV page and wrong over a
+sheet you are assembling a set in. So pressing a game inside the builder opened
+the full-screen player *behind* the still-open picker. Nothing went into the
+set, the sheet did not move, and a picture nobody could see started underneath
+it. Reproduced on the shipped build before anything was changed:
+
+```
+{"disabled":false,"basket":[],"playerOpen":true,"pickerOpen":true}
+```
+
+Three things about the fix are worth writing down.
+
+**The handler is read at click time, not captured at draw time.** The band
+*outlives its cards* — it is moved between hosts with them intact, which is the
+whole point of borrowing it — so a handler baked in when a card was drawn would
+be the one belonging to wherever it happened to be drawn. One module-level
+`pickHandler`, set by whoever asks for the band and cleared by the next asker.
+One band, one owner at a time, and `closePicker`'s bare `scoreboard()` is what
+hands both back.
+
+**The tooltip changes with it.** `Watch on US| ESPN HD` becomes `Add on US|
+ESPN HD`. A card promising to watch, over a sheet that will instead add, is a
+small lie told at the exact moment somebody is deciding whether to press — and
+it is the reason "not clickable" was the honest description of a button that
+was firing perfectly well.
+
+**A page redraw must not take the sheet apart.** `decorate()` calls
+`scoreboard()` bare on every render and a render fires from anywhere, so a
+library refresh mid-choice would move the band back to the page head. Guarded
+by "the picker is open and the band is inside it", which is safe only because
+`closePicker` hides the picker *before* reclaiming the band.
+
+That guard is also where this went wrong once, and the ordering is the whole of
+it: the first cut cleared `pickHandler` **before** deciding to return early. The
+band stayed in the sheet, the cards still read `Add on ESPN`, and the next press
+opened the player behind the picker — the original fault restored by the guard
+written to prevent it. A test that checked only "the band did not move" would
+have passed; `mvgames.test.js` presses a game *after* forcing a redraw, which is
+what caught it.
+
+A game no channel on this box carries is still `disabled`, with
+`No channel on this box carries it` as its reason. That is not the bug — it is
+the honest answer, and it is checked here so the fix cannot quietly turn it into
+a button that swallows the press.
+
 ## Next episode in a cell, and multi-view from the drive
 
 > "i want a play next episode and resume playing from inside of multiplayer.

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '43.1';
+const VERSION = '43.2';
 
 const PAGE_SIZE = 60;
 
@@ -3024,7 +3024,13 @@ const multiview = {
          gets the two sections below and no band, which is the honest outcome
          rather than an empty frame where one would have been. */
       try {
-        desk.scoreboard(band);
+        /* Pressing a game here means "put it in the set", not "watch it now".
+           The band is borrowed and its cards were wired once, to openPlayer —
+           right on the Live TV page and wrong over a sheet you are assembling
+           a multiview in, where the full-screen player is not an answer to
+           the question being asked. Handed back by closePicker, which calls
+           scoreboard() bare and so clears this. */
+        desk.scoreboard(band, { onPick: (channel) => this.take(channel) });
       } catch {
         band.remove();
       }
