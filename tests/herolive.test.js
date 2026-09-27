@@ -265,6 +265,58 @@ const LIVE = { categories: [{ id: 'c1', name: 'USA SPORTS' }], items: CHANNELS,
   check('the stream is gone, not merely off screen', away.video === 0,
     JSON.stringify(away));
 
+  /* ---- it is the first thing to give way --------------------------------- */
+  /*
+   * "In build multiview it's asking for the connections at the same time again
+   *  so it's getting refused"
+   *
+   * multiview.open() already closes the main player, on the stated grounds
+   * that "leaving it running would put a fifth claimant in the experiment".
+   * The billboard became a claimant nobody had told it about: it is an overlay
+   * that opens OVER home without changing the tab, so nothing tore the stream
+   * down and it sat there holding a connection while four cells asked for four
+   * more.
+   *
+   * It is wallpaper on a page nobody has pressed play on, so it is the lowest
+   * priority thing on the box and it goes first.
+   */
+  console.log('\n  and anything that actually wants to watch something');
+  await home('desk');
+  check('the billboard is playing to begin with',
+    (await shape()).playing === true, 'nothing was playing to give up');
+
+  await page.evaluate(() => multiview.open());
+  await wait(700);
+  const mv = await shape();
+  console.log('    multi-view open:', JSON.stringify(mv));
+  check('opening multi-view takes the billboard down',
+    mv.video === false, JSON.stringify(mv));
+  /* And it stays down. Home is still underneath and still renders; a repaint
+     that quietly started it up again would put the claimant back mid-build. */
+  await page.evaluate(() => render());
+  await wait(2600);
+  const during = await shape();
+  console.log('    after a repaint underneath:', JSON.stringify(during));
+  check('and a repaint underneath does not bring it back',
+    during.video === false, JSON.stringify(during));
+  check('for the reason it gives', /multi-view is open/.test(during.why), during.why);
+  await page.evaluate(() => multiview.close());
+  await wait(600);
+
+  /* The player is the same question. It opens over home too, and what it is
+     opening is the thing somebody actually chose. */
+  console.log('\n  and the same for the player');
+  await home('desk');
+  check('playing again', (await shape()).playing === true, 'nothing to give up');
+  await page.evaluate(() => { document.querySelector('#playerOverlay').hidden = false; render(); });
+  await wait(2600);
+  const withPlayer = await shape();
+  console.log('   ', JSON.stringify(withPlayer));
+  check('the billboard stands down while the player is up',
+    withPlayer.video === false, JSON.stringify(withPlayer));
+  check('and says so', /the player is open/.test(withPlayer.why), withPlayer.why);
+  await page.evaluate(() => { document.querySelector('#playerOverlay').hidden = true; });
+
   /* ---- and a box that has nothing to spare -------------------------------- */
   /*
    * The failure this feature risks, answered the only way a billboard may

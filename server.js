@@ -11437,20 +11437,53 @@ setTimeout(() => {
 }, 5000).unref?.();
 
 server.listen(PORT, HOST, () => {
-  /* How many connections this house actually has, asked once at boot.
+  /* How many connections this house actually has, asked at boot — and asked
+   * again until it is answered.
    *
    * Until this existed the answer came only from opening Settings, so every
    * restart left the box assuming one connection per login — and a box that
    * thinks it is full reports every stream failure as a connection problem.
-   * Fire and forget: nothing waits on it, and a provider that cannot be
-   * reached leaves the conservative guess in place, which is what it was
-   * always for. */
+   *
+   * ONE SHOT WAS NOT ENOUGH, and a power cut is how that was found out. The
+   * portal comes back from `@reboot` before the network does, so the one probe
+   * fires into a box with no route out, fails, and the guess stands — which
+   * was the documented and accepted outcome. What made it bite is that
+   * DEFAULT_SLOTS is one per login, so the house believes it is two streams
+   * wide when it is eight, and the first multiview built that morning has half
+   * its cells refused.
+   *
+   * So it retries, on a widening delay, and stops the moment every login has
+   * given a real number. Fire and forget still: nothing waits on it.
+   */
   const startCfg = readConfig();
   if (startCfg) {
-    refreshAccounts(startCfg).then(() => {
-      const count = providers.capacity(startCfg);
-      if (count) console.log(`  Provider: ${count} connection(s) across ${providers.accounts(startCfg).length} login(s)`);
-    }).catch(() => { /* the guess stands */ });
+    /* 5s, 20s, a minute, then five — a Pi that came up before its network
+       usually has one within the first minute, and a provider that is simply
+       down is not worth asking more often than this. */
+    const BOOT_PROBES = [0, 5000, 20000, 60000, 300000];
+    let probe = 0;
+    const askOnce = () => {
+      refreshAccounts(startCfg).then(() => {
+        const count = providers.capacity(startCfg);
+        const guessing = providers.anyGuessed(startCfg);
+        if (!guessing) {
+          console.log(`  Provider: ${count} connection(s) across `
+            + `${providers.accounts(startCfg).length} login(s)`);
+          return;
+        }
+        probe += 1;
+        if (probe >= BOOT_PROBES.length) {
+          /* Said out loud rather than left as a silent guess, because every
+             stream refused from here reads as "no connection free" and the
+             real answer is "the box never found out how many there are". */
+          console.log('  Provider: could not be asked how many connections it '
+            + 'allows — running on one per login until it answers');
+          return;
+        }
+        setTimeout(askOnce, BOOT_PROBES[probe]).unref?.();
+      }).catch(() => { /* the guess stands, and the next probe tries again */ });
+    };
+    askOnce();
   }
 
   const configured = readConfig() ? 'configured' : 'awaiting setup';

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '43.6';
+const VERSION = '43.7';
 
 const PAGE_SIZE = 60;
 
@@ -1188,6 +1188,28 @@ const MV_GUIDE_CHANNELS = 12;
  * no fetch, and are the fast way to fill a cell with something you already
  * know you want.
  */
+/**
+ * The billboard on Home plays a channel behind the words, muted, and that
+ * costs a provider connection — see heroLive in desktop.js.
+ *
+ * It is the LOWEST-PRIORITY claimant on this box: wallpaper on a page nobody
+ * has pressed play on. So anything that actually wants to watch something
+ * says so here first, and the billboard gets out of the way.
+ *
+ * "In build multiview it's asking for the connections at the same time again
+ *  so it's getting refused" — multiview.open already closes the main player
+ * for exactly this reason, on the grounds that "leaving it running would put
+ * a fifth claimant in the experiment". The billboard became a claimant
+ * nobody had told it about, and it sat there streaming underneath the sheet
+ * while four cells asked for four more.
+ *
+ * Guarded because this layer only exists on the desktop; everywhere else
+ * there is no billboard and nothing to yield.
+ */
+function yieldBillboard() {
+  try { window.__ttDesktop?.heroLive?.stop(); } catch { /* nothing to stop */ }
+}
+
 const MV_SOURCES = ['live', 'movies', 'series', 'favorites', 'recent', 'archive'];
 
 /**
@@ -1921,6 +1943,7 @@ const multiview = {
     // measurement of what happens when several are asked for at once. Leaving
     // it running would put a fifth claimant in the experiment.
     if (!$('#playerOverlay').hidden) closePlayer();
+    yieldBillboard();
     $('#multiview').hidden = false;
     document.body.style.overflow = 'hidden';
     this.paint();
@@ -18050,6 +18073,9 @@ async function openPlayer(item, { resume = 'ask' } = {}) {
   if (item.kind === 'series') return openSeries(item);
 
   const myToken = preparePlayer(item);
+  /* Whatever this turns out to need, it needs it more than the wallpaper
+     behind the page underneath does. */
+  yieldBillboard();
 
   currentLiveItem = item.kind === 'live' ? item : null;
 

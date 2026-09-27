@@ -2761,6 +2761,17 @@
       if (!feature || feature.kind !== 'live') return this.no('the feature is not a channel');
       if (state.tab !== 'home') return this.no('not on home');
       if (document.hidden) return this.no('the tab is hidden');
+      /* Both of these are overlays — they sit over home without changing the
+         tab — and both want the provider for something somebody actually
+         chose. app.js calls yieldBillboard() when either opens; this is the
+         other half, so that a repaint underneath cannot quietly start it up
+         again while a multiview is being assembled over the top. */
+      if (!document.querySelector('#playerOverlay')?.hidden) {
+        return this.no('the player is open');
+      }
+      if (!document.querySelector('#multiview')?.hidden) {
+        return this.no('multi-view is open');
+      }
 
       /* `liveId` rather than `item.id`: the item is a library lookup and the
          library is often not loaded yet on a page opened straight onto home,

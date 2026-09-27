@@ -303,6 +303,75 @@ const play = (id) => call(`/api/play?kind=live&id=${id}&ext=m3u8`);
   check('and a failed refresh does not shrink the house back to the guess',
     providers.capacity(cfg) === 4, String(providers.capacity(cfg)));
 
+  /* ---- 5b. and a failed ask does not stop the box asking again --------- */
+  /*
+   * "In build multiview it's asking for the connections at the same time
+   *  again so it's getting refused" — the morning after a power cut.
+   *
+   * The check above is about not FORGETTING a number on a hiccup. This is its
+   * sibling and it bit harder, because `facts` lives in memory: a box that has
+   * just booted knows nothing about any login, so there is no number to keep.
+   *
+   * The boot probe fires once, and after a power cut it fires into a network
+   * that is not up yet. That much was expected — the guess stands and the next
+   * thing that wants a stream re-asks, which is what `stale()` is for.
+   *
+   * Except it did not. noteError() wrote `at: Date.now()` and `stale()` read
+   * `at`, so a login nothing was known about was marked freshly checked
+   * BECAUSE the check had failed. Every later asker skipped it for ten
+   * minutes, the house stayed two streams wide when it was eight, and the
+   * first multiview built that morning had half its cells refused.
+   *
+   * Reproduced on the shipped build:
+   *
+   *   before any probe    capacity 2   stale [true,  true ]
+   *   after a failed one  capacity 2   stale [false, false]
+   *
+   * The failure suppressed the retry that would have fixed it.
+   */
+  console.log('\n  and a failed ask does not stop the box asking again');
+  const cold = { mode: 'xtream',
+    accounts: [{ id: 'c1', host: 'http://x', username: 'u', password: '' }] };
+  providers.forget('c1');
+  check('a login nothing is known about is worth asking about',
+    providers.stale('c1') === true, String(providers.stale('c1')));
+
+  providers.noteError('c1', 'connect ETIMEDOUT');
+  /* Still the careful guess, which is right — the box learned nothing. */
+  check('a probe that failed leaves the careful guess',
+    providers.capacity(cold) === 1, String(providers.capacity(cold)));
+  check('and the box still knows it is guessing',
+    providers.anyGuessed(cold) === true, String(providers.anyGuessed(cold)));
+  /* THE FAULT. A brief floor is deliberate — four cells starting together
+     must not become four probes at a provider that is down — but it is
+     seconds, not the ten minutes a real answer is cached for. */
+  const now = Date.now();
+  const at = (ms) => { Date.now = () => now + ms; };
+  const realNow = Date.now;
+  try {
+    at(5000);
+    check('asked again a moment later, it holds off rather than hammering',
+      providers.stale('c1') === false, 'a failed probe is retried per request');
+    at(31000);
+    check('but it does not sit on the guess — it asks again within the minute',
+      providers.stale('c1') === true,
+      'a failed probe suppressed the retry that would have fixed it');
+
+    /* And once it IS answered, the number is housekeeping again: asked every
+       ten minutes, not every thirty seconds. */
+    providers.note('c1', { max_connections: '4', auth: 1 });
+    check('and once answered, the house is the provider\u2019s number',
+      providers.capacity(cold) === 4, String(providers.capacity(cold)));
+    at(31000 + 9 * 60 * 1000);
+    check('which is then asked about as housekeeping, not urgently',
+      providers.stale('c1') === false, 'a known number is being re-asked every 30s');
+    at(31000 + 11 * 60 * 1000);
+    check('and refreshed on the slow clock', providers.stale('c1') === true,
+      String(providers.stale('c1')));
+  } finally {
+    Date.now = realNow;
+  }
+
   /* ---- 6. one start does not cancel another's reservation -------------- */
   /*
    * A reservation covers the gap between choosing a login and opening the

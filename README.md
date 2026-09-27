@@ -4656,6 +4656,66 @@ the four things that must all stay true: the box learns the number without
 being asked, runs that many streams, still refuses the fifth by name, and still
 sends a dead feed with room to spare down the direct path.
 
+### And then the power went out
+
+> *"In build multiview it's asking for the connections at the same time again
+> so it's getting refused"* — the morning after a power cut.
+
+The same symptom, one layer further down, and the reboot is the whole of it.
+`facts` lives in memory, so a box that has just booted knows **nothing** about
+any login — there is no number to keep.
+
+The boot probe fires once. After a power cut it fires into a Pi whose network
+is not up yet, so it fails. That much was expected and documented: *"a provider
+that cannot be reached leaves the conservative guess in place, which is what it
+was always for"*. The next thing that wanted a stream would re-ask, which is
+what `stale()` is for.
+
+**Except it did not**, because `noteError()` wrote `at: Date.now()` and
+`stale()` read `at`. A login nothing was known about was marked *freshly
+checked* — because the check had failed. Every later asker skipped it for ten
+minutes. Reproduced on the shipped build:
+
+```
+before any probe     capacity 2   stale [true,  true ]   ← next asker would retry
+after a failed one   capacity 2   stale [false, false]   ← nothing retries for 10m
+```
+
+So the house stayed two streams wide when it is eight, and the first multiview
+built that morning had half its cells refused. **The failure suppressed the
+retry that would have fixed it** — the same shape this box keeps producing: a
+mechanism recording *"we asked and could not find out"* as *"we know"*.
+
+Three changes:
+
+- **`at` and `triedAt` are different dates.** `at` is when something was
+  *learned*; `triedAt` is when the box last *asked*. A failure moves only the
+  second.
+- **`stale()` asks two different questions.** A login whose count is in hand is
+  re-asked as housekeeping every ten minutes. A login whose count has never
+  been learned is the box running on one connection per login, so it is re-asked
+  within **thirty seconds** — a floor rather than an interval, so that four
+  cells starting together do not become four probes at a provider that is down.
+- **The boot probe retries** — 5s, 20s, a minute, then five — and stops the
+  moment every login has given a real number. A Pi that came up before its
+  network usually has one inside the first minute. If it runs out of attempts
+  it says so in the log, because every stream refused after that reads as *"no
+  connection free"* when the real answer is *"the box never found out how many
+  there are"*.
+
+**And a third claimant had appeared**, which was mine. The billboard added the
+day before plays a channel behind the words, and it is an overlay-free page
+element: multi-view opens *over* home without changing the tab, so nothing tore
+it down. `multiview.open()` has closed the main player for a while now, on the
+stated grounds that *"leaving it running would put a fifth claimant in the
+experiment"* — the billboard became exactly that, streaming underneath the
+sheet while four cells asked for four more.
+
+It is wallpaper on a page nobody has pressed play on, so it is the lowest
+priority thing on the box: `yieldBillboard()` at both doors — multi-view and
+the player — and `heroLive.arm()` refuses to start while either overlay is up,
+so a repaint underneath cannot put the claimant back mid-build.
+
 ## The DVR keeps trying
 
 > "We need to fix the DVR because it just does not work... if something is

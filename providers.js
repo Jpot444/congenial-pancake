@@ -46,8 +46,22 @@ const REFRESH_MS = 10 * 60 * 1000;
     page that asks a few times in a row can leave an account reading as full
     with nothing playing on it. */
 const usage = new Map();
-/** id → { at, expiresAt, status, trial, maxConnections, activeCons, error } */
+/** id → { at, triedAt, expiresAt, status, trial, maxConnections, activeCons, error }
+ *
+ * `at` is when something was LEARNED about this login. `triedAt` is when the
+ * box last asked. They are different dates and conflating them is what put a
+ * rebooted box on the one-connection guess for ten minutes — see stale(). */
 const facts = new Map();
+
+/*
+ * How soon to ask again about a login nothing is known about yet.
+ *
+ * Not REFRESH_MS. That interval is for a number already in hand, where asking
+ * again is housekeeping. A login whose count has never been learned is the box
+ * running on DEFAULT_SLOTS — one connection — and every minute it waits is a
+ * minute of refusing streams the account allows.
+ */
+const RETRY_MS = 30 * 1000;
 
 /* A reservation covers the gap between choosing an account for a stream and
    that stream actually connecting — the URL is built in one request and the
@@ -270,6 +284,7 @@ function note(id, userInfo, error = '') {
   const seconds = Number(info.exp_date);
   facts.set(id, {
     at: Date.now(),
+    triedAt: Date.now(),
     expiresAt: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null,
     status: String(info.status || '').trim(),
     trial: String(info.is_trial ?? '') === '1',
@@ -289,17 +304,55 @@ function note(id, userInfo, error = '') {
  * is a network hiccup: clearing maxConnections there drops the account back
  * to the one-connection guess, and the guess is what makes the box refuse
  * streams the account allows. So the numbers stand and only the error moves.
+ *
+ * AND A FAILURE IS NOT A CHECK.
+ *
+ * "In build multiview it's asking for the connections at the same time again
+ *  so it's getting refused" — the morning after a power cut.
+ *
+ * `facts` lives in memory, so a box that has just booted knows nothing about
+ * any login. The boot probe fires once, and right after a power cut it fires
+ * into a network that is not up yet, so it fails. That much was expected and
+ * harmless: the guess stands, and the next thing that wants a stream re-asks.
+ *
+ * Except it did not, because this wrote `at: Date.now()` — and `stale()` read
+ * `at`. A login nothing was known about was marked freshly checked BECAUSE
+ * the check had failed, and every later asker skipped it for ten minutes. The
+ * box sat on one connection per login for exactly as long as it took somebody
+ * to build a multiview, and refused half of it.
+ *
+ * So the two dates are separate now. `at` is when something was learned;
+ * `triedAt` is when the box last asked. A failure moves only the second.
  */
 function noteError(id, message) {
   const known = facts.get(id);
-  if (!known) return note(id, null, message);
-  facts.set(id, { ...known, error: message || '', at: Date.now() });
+  if (!known) {
+    /* `at: 0` — nothing has been learned, and the panel says so rather than
+       showing a timestamp for a check that told us nothing. */
+    facts.set(id, { at: 0, triedAt: Date.now(), expiresAt: null, status: '',
+      trial: false, maxConnections: null, activeCons: 0, created: null,
+      error: message || '' });
+    return undefined;
+  }
+  facts.set(id, { ...known, error: message || '', triedAt: Date.now() });
   return undefined;
 }
 
+/**
+ * Whether this login is worth asking about again.
+ *
+ * Two different questions wearing one name. A login whose count is IN HAND is
+ * asked again as housekeeping, every REFRESH_MS. A login whose count has never
+ * been learned is the box running on the one-connection guess, and it is asked
+ * again in seconds — with a floor only so that a provider which is genuinely
+ * down is not hammered once per request.
+ */
 const stale = (id) => {
   const known = facts.get(id);
-  return !known || Date.now() - known.at > REFRESH_MS;
+  if (!known) return true;
+  const learned = Number(known.maxConnections) >= 1;
+  if (!learned) return Date.now() - (known.triedAt || 0) > RETRY_MS;
+  return Date.now() - known.at > REFRESH_MS;
 };
 
 /** Everything the manage-providers panel shows, with no password in it. */
