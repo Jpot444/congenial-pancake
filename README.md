@@ -4375,6 +4375,69 @@ This is the **fourth** report in a row whose headline named the wrong culprit,
 and the shape has not changed once: a mechanism reports what it measured as
 though it were a fact about something else.
 
+### And the end the report never asked about
+
+> *"I'm convinced that the jumping back issue has something to do with the way
+> it builds in time to avoid buffering"*
+
+Worth taking seriously, because every line of the report so far describes the
+**player** — the media clock, the buffer, the readyState, whether a seek
+happened, whether the playlist it was handed went backwards — and three reports
+running have come back clean on all of them while the picture still jumped.
+
+The mechanism that builds time is on the other side. The box's ingest reads the
+provider **ten segments back from their live edge** on a cold start, so the
+window opens deep enough for the player to take its 45-second seat immediately
+rather than riding the frontier and stalling every few seconds. And when the
+feed drops it respawns with `append_list` and `discont_start` — continuing the
+same playlist with a **new timeline laid under somebody who is already
+watching**. That respawn is the one event on this box that can do it, and the
+box has recorded every one of them all along. Nothing ever asked.
+
+So the report asks now. On a backward jump nobody requested, it fetches
+`/api/live/report` for that channel and prints what the ingest had been doing
+in the ingest's own words:
+
+```
+playhead moves  4s ago  BACK 1.2s  84.3 → 83.1  (32.0s behind live)
+                — the seconds around the last one —
+                >>> the jump <<<
+                — and what the box was doing —
+                ingest running, restarted 2 times this session, keeping up at 1.00x
+                    6s ago  ingest-exited (exit 0)
+                    4s ago  ingest-resumed — from the provider live edge
+```
+
+And with it, **the two ends of the same number**. `edgePace()` already measures
+how fast the live edge moved as seen from the sofa — the thing that settled the
+last report at 1.44x — and `box.pace` is how fast the box's own ingest is
+publishing. A live edge cannot outrun the clock, so when one does, the only
+question worth asking is which end produced the extra, and until now there was
+no way to ask it:
+
+```
+the edge ran at 1.44x here while the box published at 1.00x —
+the box kept proper time, so the extra came from the provider
+```
+
+If both run fast, the box is putting out more than it took in — republishing
+content it has already served, which is exactly what a viewer describes as the
+picture going back.
+
+Three things about how it is done. It is fetched **after** the move is
+recorded and filled in late, because this runs off a `timeupdate` and a fetch
+in that path is the last thing a stuttering stream needs. It is **bounded to
+thirty seconds** either side, because a session's notes run back to the start
+of it and a list of everything is a list nobody reads. And it is said **either
+way round**: a channel served straight through the proxy has no ingest of ours
+at all, and a jump with no restart behind it rules the mechanism out — which is
+worth exactly as much as confirming it.
+
+This does not fix anything yet, and is not dressed up as doing so. It is the
+same method that settled the previous three: measure the end nobody was
+looking at, then let the next report name the culprit instead of us guessing at
+it.
+
 ### A pause is not the network being slow
 
 > "It is running at 1.00× now, but fell to 0.02× with 7 stalls — the stream is

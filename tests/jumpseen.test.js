@@ -221,6 +221,118 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   check('and shows the seconds around it, which is what tells a correction '
     + 'from a stream falling over', />>> the jump <<</.test(lines), lines);
 
+  /* ---- and what the box was doing when it happened --------------------- */
+  /*
+   * "I'm convinced that the jumping back issue has something to do with the
+   *  way it builds in time to avoid buffering"
+   *
+   * Everything above this is the player, and three reports in a row have come
+   * back clean on every line of it while the picture still jumped. The
+   * mechanism that builds time is the box's ingest: it reads the provider ten
+   * segments behind their edge on a COLD start so the window opens deep enough
+   * for the player's 45-second seat, and on a feed drop it respawns with
+   * `append_list` and `discont_start` — a new timeline laid under somebody
+   * already watching. The box writes every one of those down and the report
+   * never asked.
+   *
+   * Said either way round, which is the point: a jump with no restart behind
+   * it rules the ingest out, and that is worth as much as confirming it.
+   */
+  console.log('\n  and what the box was doing when it jumped');
+  let asked = null;
+  await page.route('**/api/live/report**', (r) => {
+    asked = new URL(r.request().url()).searchParams.get('id');
+    return r.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        sessions: [{
+          id: 'live-700', alive: true, restarts: 2, pace: { rate: 1.002, windows: 9 },
+          notes: [
+            { at: Date.now() - 6000, event: 'ingest-exited', code: 0, ago: '6s' },
+            { at: Date.now() - 4000, event: 'ingest-resumed',
+              from: 'provider live edge', ago: '4s' },
+            /* Older than the window this looks at — a session's notes run back
+               to the start of it and a list of everything is a list nobody
+               reads. */
+            { at: Date.now() - 400000, event: 'ingest-started', ago: '400s' },
+          ],
+        }],
+        direct: null, now: Date.now(),
+      }) });
+  });
+
+  const withBox = await page.evaluate(async () => {
+    const video = document.querySelector('#video');
+    playback.moves = [];
+    playback.history = [];
+    /* The report is only fetched for a LIVE channel, because a film has no
+       ingest behind it to have restarted.
+     *
+     * Assigned BARE. `currentLiveItem` is a top-level `let` in app.js, which
+     * is a lexical global: reachable by name from here and NOT a property of
+     * `window`, so `window.currentLiveItem = …` quietly makes a second
+     * variable that nothing reads. */
+    currentLiveItem = { kind: 'live', id: 700, name: 'CBS HD' };
+    playback.record();
+    await video.play().catch(() => {});
+    await new Promise((r) => setTimeout(r, 400));
+    video.currentTime = Math.max(0, video.currentTime - 1.2);
+    await new Promise((r) => {
+      video.addEventListener('seeked', r, { once: true });
+      setTimeout(r, 1500);
+    });
+    /* Filled in late on purpose — this runs off a timeupdate and a fetch in
+       that path is the last thing a stuttering stream needs. */
+    await new Promise((r) => setTimeout(r, 900));
+    return { box: playback.moves[0] && playback.moves[0].box,
+      lines: playback.moveLines().join('\n') };
+  });
+  console.log('    asked the box about:', asked);
+  console.log('   ', JSON.stringify(withBox.box));
+  check('the box is asked what its ingest had been doing',
+    asked === '700', String(asked));
+  check('and the answer is kept with the jump', Boolean(withBox.box),
+    JSON.stringify(withBox.box));
+  check('with the restart count, which is the number the hypothesis is about',
+    withBox.box && withBox.box.restarts === 2, JSON.stringify(withBox.box));
+  /* Bounded to the seconds around the jump. */
+  check('and only the notes from around the jump, not the whole session',
+    withBox.box && withBox.box.notes.length === 2,
+    JSON.stringify(withBox.box && withBox.box.notes.map((n) => n.ago)));
+
+  console.log(withBox.lines.split('\n').filter((l) => /box|ingest/.test(l))
+    .map((l) => `    ${l}`).join('\n'));
+  check('the report names the other end of it',
+    /what the box was doing/.test(withBox.lines), withBox.lines.slice(-400));
+  check('and says in the ingest\u2019s own words what it did',
+    /ingest-resumed/.test(withBox.lines) && /provider live edge/.test(withBox.lines),
+    withBox.lines.slice(-400));
+
+  /* And the other answer. A channel served straight through the proxy has no
+     ingest of ours at all, so there is nothing to have restarted — which
+     rules the mechanism out for that jump rather than leaving it open. */
+  console.log('\n  and a channel with no ingest behind it says so');
+  await page.unroute('**/api/live/report**');
+  await page.route('**/api/live/report**', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json',
+      body: '{"sessions":[],"direct":null,"now":0}' }));
+  const direct = await page.evaluate(async () => {
+    const video = document.querySelector('#video');
+    playback.moves = [];
+    playback.history = [];
+    playback.record();
+    await video.play().catch(() => {});
+    await new Promise((r) => setTimeout(r, 400));
+    video.currentTime = Math.max(0, video.currentTime - 1.2);
+    await new Promise((r) => {
+      video.addEventListener('seeked', r, { once: true });
+      setTimeout(r, 1500);
+    });
+    await new Promise((r) => setTimeout(r, 900));
+    return playback.moveLines().join('\n');
+  });
+  check('it says there was no ingest of ours to restart',
+    /no ingest of ours to restart/.test(direct), direct.slice(-300));
+
   await browser.close();
   console.log(`\n  ${fails.length ? `FAILED: ${fails.join(', ')}` : 'all passed'}`);
   process.exit(fails.length ? 1 : 0);

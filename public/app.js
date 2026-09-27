@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '43.7';
+const VERSION = '43.8';
 
 const PAGE_SIZE = 60;
 
@@ -14633,6 +14633,35 @@ const playback = {
     });
     if (this.moves.length > 12) this.moves.shift();
 
+    /*
+     * And what the BOX was doing at that moment, which is the one end of this
+     * nothing here has ever asked about.
+     *
+     * "I'm convinced that the jumping back issue has something to do with the
+     *  way it builds in time to avoid buffering"
+     *
+     * Everything above describes the player: the media clock, the buffer, the
+     * readyState, whether a seek happened, whether the playlist it was handed
+     * went backwards. Three reports in a row have come back clean on every one
+     * of those lines and the picture still jumped — which is what that
+     * hypothesis is really pointing at, because the mechanism that builds time
+     * lives on the other side.
+     *
+     * The ingest is the box's own ffmpeg. It reads the provider ten segments
+     * back from their edge on a COLD start so the window opens deep enough for
+     * the player's 45-second seat; and when the feed drops it respawns with
+     * `append_list` and `discont_start`, continuing the same playlist with a
+     * new timeline. A respawn is therefore the one event on this box that can
+     * put a discontinuity underneath somebody who is already watching, and the
+     * box records every one of them — it just never told this report.
+     *
+     * Asked AFTER the move is recorded and filled in late on purpose: this
+     * runs on a timeupdate, and a fetch in that path is the last thing a
+     * stuttering stream needs. The report is written afterwards, so whatever
+     * lands before then is in it.
+     */
+    if (kind === 'back' && !asked) this.askTheBox(this.moves[this.moves.length - 1]);
+
     /* Said out loud while it is happening. The report is for afterwards;
        somebody watching a game wants to know the picture jumped rather than
        sitting there wondering whether they imagined it.
@@ -14645,6 +14674,43 @@ const playback = {
       this.lastMoveSaidAt = Date.now();
       toast(`The stream jumped back ${Math.abs(moved).toFixed(0)}s on its own.`);
     }
+  },
+
+  /**
+   * What the box's ingest had just done, attached to a move after the fact.
+   *
+   * Never awaited and never allowed to throw: this is a diagnostic hanging off
+   * a stream that is already misbehaving, and a report that fails to be
+   * written because its own footnote could not be fetched would be worse than
+   * no footnote.
+   */
+  askTheBox(move) {
+    if (!move || !currentLiveItem) return;
+    api('/api/live/report', { id: String(currentLiveItem.id || '') })
+      .then((data) => {
+        const session = (data.sessions || [])[0];
+        if (!session) {
+          /* No session at all means the channel is being served straight
+             through the proxy, so there is no ingest to have restarted — and
+             that rules the hypothesis out for this jump, which is worth as
+             much as confirming it. */
+          move.box = { direct: true, restarts: null, notes: [] };
+          return;
+        }
+        const seconds = (note) => Number(String(note.ago || '').replace(/s$/, ''));
+        move.box = {
+          direct: false,
+          restarts: session.restarts || 0,
+          alive: session.alive !== false,
+          pace: session.pace ? session.pace.rate : null,
+          /* Only what happened around the jump. The notes run back through the
+             whole session and a list of everything is a list nobody reads. */
+          notes: (session.notes || [])
+            .filter((note) => Number.isFinite(seconds(note)) && seconds(note) <= 30)
+            .slice(-4),
+        };
+      })
+      .catch(() => { /* the report says nothing rather than failing */ });
   },
 
   /**
@@ -15118,6 +15184,70 @@ const playback = {
       out.push(...m.before.map((r) => line(r, ' ')));
       out.push('                >>> the jump <<<');
       out.push(...m.after.map((r) => line(r, ' ')));
+
+      /*
+       * And the other end of it.
+       *
+       * "I'm convinced that the jumping back issue has something to do with
+       *  the way it builds in time to avoid buffering"
+       *
+       * Everything above this line is the player. The mechanism that builds
+       * time is the box's ingest, and a respawn is the one thing on this box
+       * that can lay a new timeline under somebody already watching. Said
+       * either way round: a jump with no restart behind it rules that out,
+       * which is worth as much as a jump with one.
+       */
+      const box = this.moves.slice().reverse().find((row) => row.box)?.box;
+      if (box) {
+        out.push('                — and what the box was doing —');
+        if (box.direct) {
+          out.push('                served straight through, no ingest of ours to restart');
+        } else {
+          out.push(`                ingest ${box.alive ? 'running' : 'NOT running'}, `
+            + `restarted ${box.restarts} time${box.restarts === 1 ? '' : 's'} this session`
+            + `${box.pace !== null ? `, keeping up at ${box.pace.toFixed(2)}x` : ''}`);
+          /*
+           * The two ends of the same number, which is the comparison this
+           * whole section exists to make possible.
+           *
+           * `edgePace()` is how fast the live edge moved as seen from HERE.
+           * `box.pace` is how fast the box's own ingest is publishing. A live
+           * edge cannot outrun the clock, so when this one does, the question
+           * is which end produced the extra — and until now there was no way
+           * to ask. If the box says 1.00x while the edge here runs at 1.44x,
+           * the extra came from the provider; if both run fast, the box is
+           * republishing content it has already served, which is what a
+           * viewer sees as the picture going back.
+           */
+          const pace = this.edgePace();
+          if (pace && box.pace !== null) {
+            const fast = 0.08;
+            const edgeFast = pace.rate > 1 + fast;
+            const boxFast = box.pace > 1 + fast;
+            out.push(`                the edge ran at ${pace.rate.toFixed(2)}x here `
+              + `while the box published at ${box.pace.toFixed(2)}x — `
+              + (edgeFast && boxFast
+                ? 'BOTH ran fast, so the box is putting out more than it took in'
+                : edgeFast
+                  ? 'the box kept proper time, so the extra came from the provider'
+                  : boxFast
+                    ? 'the box ran fast and this end did not — it caught up while nobody was watching'
+                    : 'both kept proper time, so neither end explains it'));
+          }
+          if (box.notes.length) {
+            /* The ingest's own words, which name the thing the hypothesis is
+               about: a resume takes the provider's live edge, a cold start
+               takes ten segments behind it, and the second of those under a
+               viewer is a minute of already-watched video republished. */
+            out.push(...box.notes.map((note) =>
+              `                  ${String(note.ago).padStart(4)} ago  ${note.event || ''}`
+              + `${note.from ? ` — from the ${note.from}` : ''}`
+              + `${note.code !== undefined ? ` (exit ${note.code})` : ''}`));
+          } else {
+            out.push('                  and it did nothing at all in the 30s around the jump');
+          }
+        }
+      }
     }
 
     /* And whether the ground moved rather than the playhead. A live playlist
