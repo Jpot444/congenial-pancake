@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '43.8';
+const VERSION = '43.9';
 
 const PAGE_SIZE = 60;
 
@@ -14114,6 +14114,9 @@ const playback = {
    * across a seek — both terms move together — and its pace over the whole
    * viewing is the number that says whether the far end is behaving. */
   edges: [],
+  /** Edge readings that moved by much more or much less than the clock did
+      between two samples — see record(). The average cannot show these. */
+  edgeSteps: [],
   /** The playhead's position a moment ago, updated on `timeupdate`. The
       origin of a seek has to come from here: by the time `seeking` fires the
       element has already moved to the destination. */
@@ -14287,7 +14290,43 @@ const playback = {
          edge's own position in the timeline, and it is stable across a seek
          because both terms move together — which is what makes it worth
          measuring separately from the playhead. */
-      this.edges.push({ at: now, edge: video.currentTime + standing.behind });
+      const edge = video.currentTime + standing.behind;
+      /*
+       * A STEP, not just the pace.
+       *
+       * "Just had a jumpback error" — and the report said, of the same
+       * thirty-four seconds:
+       *
+       *   the edge moved at 1.04x real time over 34s — proper time
+       *   holding steady — whatever it is behind by, it is not sliding
+       *
+       * Both true, and both the wrong statistic. Read sample by sample, the
+       * edge advanced at exactly 1.00x for thirty-four of thirty-five seconds
+       * — and in the other two it moved TEN SECONDS FORWARD in one second,
+       * and then FIVE SECONDS BACKWARD. An average over the interval is
+       * precisely the shape that hides an event lasting one sample, and the
+       * two events were the whole content of that report.
+       *
+       * A live edge going backwards is not a slow one: it means the playlist
+       * lost content off its end, a segment that was listed and then was not.
+       * On a six-segment window of twelve-second parts, plus or minus one
+       * segment is plus or minus about ten seconds — which is what these are.
+       */
+      const was = this.edges[this.edges.length - 1];
+      if (was) {
+        const wall = (now - was.at) / 1000;
+        const step = edge - was.edge;
+        /* Against the wall clock it should have moved by, so a sampler that
+           ran late is not read as the edge lurching. A whole second of slack
+           on top, because these rows are a second apart and the readings are
+           an engine's estimate rather than a measurement. */
+        const off = step - wall;
+        if (wall > 0.2 && Math.abs(off) > 2) {
+          this.edgeSteps.push({ at: Date.now(), step, wall, off });
+          if (this.edgeSteps.length > 12) this.edgeSteps.shift();
+        }
+      }
+      this.edges.push({ at: now, edge });
       if (this.edges.length > 180) this.edges.shift();
     }
 
@@ -14457,7 +14496,17 @@ const playback = {
     const last = rows[rows.length - 1];
     const wall = (last.at - first.at) / 1000;
     if (wall < 8) return null;
-    return { rate: (last.edge - first.edge) / wall, over: wall };
+    /* The mean, and the two extremes it averages away. A run that is 1.00x
+       for thirty-four seconds and takes one ten-second lurch reads as 1.04x
+       overall, which is the number that said "proper time" about the report
+       this was written for. */
+    let ahead = null;
+    let back = null;
+    for (const row of this.edgeSteps) {
+      if (row.off > 0 && (!ahead || row.off > ahead.off)) ahead = row;
+      if (row.off < 0 && (!back || row.off < back.off)) back = row;
+    }
+    return { rate: (last.edge - first.edge) / wall, over: wall, ahead, back };
   },
 
   /* -- the playhead moving on its own ----------------------------------- */
@@ -15392,9 +15441,40 @@ const playback = {
     if (pace !== null) {
       out.push(`                the edge moved at ${pace.rate.toFixed(2)}x real time `
         + `over ${pace.over.toFixed(0)}s`
-        + `${Math.abs(pace.rate - 1) <= 0.08 ? ' — proper time'
+        + `${Math.abs(pace.rate - 1) <= 0.08 ? ' — proper time, ON AVERAGE'
           : pace.rate > 1 ? ' — FASTER than the clock, which a broadcast cannot do'
             : ' — slower than the clock'}`);
+      /*
+       * And the steps the average is made of, which is where the fault is.
+       *
+       * The report this was written for read "1.04x — proper time" over
+       * thirty-four seconds in which the edge sat at exactly 1.00x for all but
+       * two samples, moved TEN SECONDS forward in one of them and FIVE SECONDS
+       * BACKWARD in the other. An average is the wrong statistic for an event
+       * that lasts one sample, and the two events were the whole of what
+       * happened.
+       */
+      if (pace.back || pace.ahead) {
+        const when = (row) => `${Math.round((Date.now() - row.at) / 1000)}s ago`;
+        if (pace.ahead) {
+          out.push(`                  but it LURCHED: `
+            + `${pace.ahead.step.toFixed(1)}s of edge in `
+            + `${pace.ahead.wall.toFixed(1)}s of clock, ${when(pace.ahead)}`);
+        }
+        if (pace.back) {
+          /* The impossible one. A live edge is the end of a playlist, and a
+             playlist that gets shorter has lost content it had already
+             published — which is the provider's window wobbling by a whole
+             segment, not our player and not our box. */
+          out.push(`                  and it WENT BACKWARDS `
+            + `${Math.abs(pace.back.off).toFixed(1)}s, ${when(pace.back)} — `
+            + 'the playlist lost content off its own end, which a broadcast '
+            + 'cannot do and only the far end can cause');
+        }
+      } else if (this.edges.length > 10) {
+        out.push('                  and it took no lurches — every reading was '
+          + 'within a second of the clock');
+      }
     }
     out.push(`                asked to sit ${asked.toFixed(1)}s back`
       + `${standing.seat !== null ? `; the seat is at ${standing.seat.toFixed(1)}s` : ''}`);

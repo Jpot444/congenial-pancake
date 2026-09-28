@@ -224,6 +224,82 @@ const check = (name, ok, detail) => {
   check('and the report carries no pace line yet',
     !/the edge moved at/.test(earlyLines), earlyLines);
 
+  /* ---- and the lurch an average hides ----------------------------------- */
+  /*
+   * "Just had a jumpback error", and the report of it said, about the same
+   * thirty-four seconds:
+   *
+   *   the edge moved at 1.04x real time over 34s — proper time
+   *   holding steady — whatever it is behind by, it is not sliding
+   *
+   * Both true. Both the wrong statistic. Read sample by sample — edge is
+   * playhead plus behind, and the report prints both every second — the edge
+   * advanced at exactly 1.00x for thirty-four of thirty-five seconds, and in
+   * the other two it moved TEN SECONDS FORWARD in one second and then FIVE
+   * SECONDS BACKWARD. An average over an interval is precisely the shape that
+   * hides an event lasting one sample of it, and those two samples were the
+   * entire content of the report.
+   *
+   * Driven with the numbers off that report rather than invented ones.
+   */
+  console.log('\n  an edge that is perfect on average and lurches twice');
+  await reset();
+  await page.evaluate(() => { playback.edgeSteps = []; });
+  await run(20, 1.0, 1.0);          // a long quiet stretch, as the report had
+  /* The lurch: ten seconds of edge inside one second of clock. */
+  await page.evaluate(() => {
+    window.__fake.at += 1;
+    window.__fake.t += 1;
+    window.__fake.latency += 9;     // edge +10 while the playhead did +1
+    playback.record();
+  });
+  await run(15, 1.0, 1.0);
+  /* And the impossible one: the playlist gets shorter. */
+  await page.evaluate(() => {
+    window.__fake.at += 1;
+    window.__fake.t += 1;
+    window.__fake.latency -= 6;     // edge -5 while the playhead did +1
+    playback.record();
+  });
+  await run(10, 1.0, 1.0);
+
+  const lurch = await page.evaluate(() => playback.edgePace());
+  console.log('   ', JSON.stringify({ rate: lurch && Number(lurch.rate.toFixed(3)),
+    ahead: lurch && lurch.ahead && Number(lurch.ahead.off.toFixed(1)),
+    back: lurch && lurch.back && Number(lurch.back.off.toFixed(1)) }));
+  /* THE WHOLE POINT: the average is innocent. If this stops being true the
+     test below has stopped testing anything. */
+  check('the average still reads as proper time, which is what hid this',
+    lurch && Math.abs(lurch.rate - 1) <= 0.08, lurch && String(lurch.rate));
+  check('but the forward lurch is kept', lurch && lurch.ahead
+    && Math.abs(lurch.ahead.off - 9) < 1.5, JSON.stringify(lurch && lurch.ahead));
+  check('and so is the step backwards', lurch && lurch.back
+    && Math.abs(lurch.back.off + 6) < 1.5, JSON.stringify(lurch && lurch.back));
+
+  lines = await readBehind();
+  console.log(lines.split('\n').map((l) => `    ${l}`).join('\n'));
+  check('the report says the average is an average',
+    /proper time, ON AVERAGE/.test(lines), lines);
+  check('and names the lurch rather than smoothing it away',
+    /LURCHED/.test(lines), lines);
+  /* The impossible one, said as impossible. A playlist that gets shorter has
+     lost content it had already published, which is neither our player nor
+     our box. */
+  check('and says the edge went backwards, which a broadcast cannot do',
+    /WENT BACKWARDS/.test(lines) && /lost content off its own end/.test(lines), lines);
+
+  /* And the other way round, so a clean stream is not accused of lurching. */
+  console.log('\n  and a steady one is said to be steady');
+  await reset();
+  await page.evaluate(() => { playback.edgeSteps = []; });
+  await run(20, 1.0, 1.0);
+  lines = await readBehind();
+  console.log(lines.split('\n').filter((l) => /edge/.test(l))
+    .map((l) => `    ${l}`).join('\n'));
+  check('no lurch is claimed', !/LURCHED|WENT BACKWARDS/.test(lines), lines);
+  check('and it says so out loud rather than staying quiet',
+    /took no lurches/.test(lines), lines);
+
   await page.evaluate(() => { performance.now = window.__realNow; });
   await browser.close();
   console.log(`\n  ${fails.length ? `FAILED: ${fails.join(', ')}` : 'all passed'}`);

@@ -4438,6 +4438,68 @@ same method that settled the previous three: measure the end nobody was
 looking at, then let the next report name the culprit instead of us guessing at
 it.
 
+### The average was hiding it
+
+The next report arrived, and it did name the culprit — not in a line the report
+printed, but in the timeline underneath. This is the **fifth** instance of the
+same shape, and this time the mechanism doing it was the summary line itself.
+
+What the report said about thirty-four seconds:
+
+```
+playhead moves  none — the media clock only went forwards
+behind live     36.2s now, 34.6s when it started
+                holding steady — whatever it is behind by, it is not sliding
+                the edge moved at 1.04x real time over 34s — proper time
+remux session   none (playing directly)
+```
+
+Every line true. Now the edge, worked out from the timeline as `playhead +
+behind`, which the report prints on every row:
+
+```
++ 17s   edge 71.4   +1.0
++ 18s   edge 81.4  +10.0   ← ten seconds of edge in one second of clock
++ 33s   edge 95.5   +1.0
++ 34s   edge 90.5   -5.0   ← and then the edge went BACKWARDS
+```
+
+Thirty-four of thirty-five samples at exactly 1.00x, and two that were not. An
+average over an interval is precisely the shape that hides an event lasting one
+sample of it — and those two samples were the entire content of the report.
+`1.04x — proper time` and `holding steady` are both arithmetically correct
+descriptions of a stream that lurched ten seconds forward and five seconds
+back while somebody was watching it.
+
+**A live edge going backwards is not a slow one.** The edge is the end of the
+playlist; a playlist that gets shorter has lost content it had already
+published. On a six-segment window of twelve-second parts — which is what this
+channel serves — plus or minus one segment is plus or minus about ten seconds,
+and that is the size of both of these.
+
+So `edgePace()` keeps the steps as well as the mean. Any reading that differs
+from the clock by more than two seconds between one sample and the next is
+written down, and the report prints the largest in each direction beside the
+average it would otherwise have been buried in:
+
+```
+the edge moved at 1.07x real time over 46s — proper time, ON AVERAGE
+  but it LURCHED: 10.0s of edge in 1.0s of clock, 12s ago
+  and it WENT BACKWARDS 6.0s, 3s ago — the playlist lost content off its
+  own end, which a broadcast cannot do and only the far end can cause
+```
+
+And says so the other way round too — *"it took no lurches, every reading was
+within a second of the clock"* — because a clean edge is an answer, and a
+silence is not.
+
+**And it answers the hypothesis for this instance.** `remux session none
+(playing directly)` — there was no ingest of ours behind that channel at all,
+so the box's build-in-time machinery was not involved. The wobble is upstream,
+in the provider's own window. Which does not make the hypothesis wrong in
+general; it makes it ruled out for this one, which is what a measurement is
+for.
+
 ### A pause is not the network being slow
 
 > "It is running at 1.00× now, but fell to 0.02× with 7 stalls — the stream is
