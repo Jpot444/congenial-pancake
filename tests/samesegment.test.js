@@ -59,7 +59,19 @@ const YEAR = 365 * 86400000;
 let node = 'a';
 const playlistFor = (which) => {
   /* Node A calls the same six files 940-945; node B calls them 943-948.
-     Same names — the same pictures — different media sequence. */
+     Same names — the same pictures — different media sequence.
+   *
+   * `short` is the third shape, off the fifth report: the window carries on
+   * forwards but comes back with one fewer segment on the END of it, so the
+   * live edge retreats by a segment. Nothing about the sequence or the URIs
+   * says anything is wrong, and hls.js seats the viewer against that edge. */
+  if (which === 'short') {
+    const files = ['s101.ts', 's102.ts', 's103.ts', 's104.ts'];
+    return ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-TARGETDURATION:11',
+      '#EXT-X-MEDIA-SEQUENCE:941',
+      ...files.flatMap((f) => ['#EXTINF:11.0,', f]),
+    ].join('\n') + '\n';
+  }
   const start = which === 'a' ? 940 : 943;
   const files = ['s100.ts', 's101.ts', 's102.ts', 's103.ts', 's104.ts', 's105.ts'];
   return ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-TARGETDURATION:11',
@@ -177,8 +189,27 @@ const call = (p) => new Promise((resolve, reject) => {
     console.log('\n  and then a node with its own numbering, three segments on');
     node = 'b';
     const second = await fetchPlaylist();
-    check('the sequence went forwards, so the old guard stays quiet',
-      /EXT-X-MEDIA-SEQUENCE:943/.test(second.text),
+    /*
+     * THE FIX, and it is the whole point of this suite now.
+     *
+     * The provider really did send 943 — the sequence went FORWARDS, which is
+     * why the guard that protects the media sequence has nothing to say about
+     * it. For five versions this branch detected the repeat, wrote it down and
+     * served it anyway, and the picture jumped back every time the refresh
+     * landed on the other node.
+     *
+     * Old content arriving under new numbers is a playlist that has gone
+     * backwards in the only sense a viewer can see, and the answer to a
+     * playlist going backwards was already written twelve lines above: hand
+     * back the one the player already has. From the player's side this refresh
+     * simply had nothing new in it, which every HLS client handles without a
+     * flicker.
+     */
+    check('the box does NOT pass the repeat on',
+      !/EXT-X-MEDIA-SEQUENCE:943/.test(second.text),
+      second.text.split('\n').slice(0, 4).join(' | '));
+    check('it serves the playlist the player already has',
+      /EXT-X-MEDIA-SEQUENCE:940/.test(second.text),
       second.text.split('\n').slice(0, 4).join(' | '));
 
     report = await call('/api/live/report?id=4821');
@@ -229,6 +260,47 @@ const call = (p) => new Promise((resolve, reject) => {
       again.length >= 1, JSON.stringify(again));
     check('and it did not multiply', again.length === replays.length,
       `${replays.length} -> ${again.length}`);
+
+    /* ---- and a window that loses content off its END ------------------ */
+    /*
+     * "the edge went backwards 5.0s"
+     *
+     * The third shape, and nothing above catches it. The sequence still rises,
+     * no URI moves, and the playlist is perfectly well formed — it just comes
+     * back with one fewer segment on the end of it. The live edge is the end
+     * of the playlist, so the edge retreats by a whole segment, and hls.js
+     * seats the viewer against that edge.
+     *
+     * Measured on the report this came from: a six-segment window of
+     * twelve-second parts, the edge ten seconds forward in one second and then
+     * five back. One segment, both times.
+     */
+    console.log('\n  and a window that comes back shorter than it was');
+    node = 'a';
+    await fetchPlaylist();                       // a full six-segment window
+    node = 'short';
+    const shorter = await fetchPlaylist();
+    /* The box rewrites every segment URI on its way past, so the file names
+       are inside the base64 rather than in the text. Decoded, because the
+       claim is about WHICH segments came through. */
+    const served = shorter.text.split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#'))
+      .map((l) => {
+        const hit = /u=([A-Za-z0-9_-]+)/.exec(l);
+        const url = hit ? Buffer.from(hit[1], 'base64url').toString('utf8') : l;
+        return url.slice(url.lastIndexOf('/') + 1);
+      });
+    console.log('   ', served.join(' '));
+    /* The sequence rose — 940 to 941 — so every guard that watches the START
+       of the window is satisfied. */
+    check('the box does not serve the shorter window',
+      served.length === 6, `${served.length} segments served: ${served.join(' ')}`);
+    check('it holds the end where the player last saw it',
+      served[served.length - 1] === 's105.ts', served.join(' '));
+    check('and says so in the log',
+      /came back SHORTER/.test(log),
+      log.split('\n').filter((l) => /live:/.test(l)).slice(-3).join(' | '));
   } catch (err) {
     console.log('  HARNESS ERROR', err.message);
     fails.push('harness');

@@ -5332,6 +5332,58 @@ function forwardOnlyPlaylist(url, text) {
       console.log(`  live: ${key} served the same segment twice under different `
         + `numbers (${replayed.was} → ${replayed.nowAt}) — the provider answered from `
         + 'a node with its own numbering, so the picture repeats');
+      /*
+       * AND DO SOMETHING ABOUT IT.
+       *
+       * This branch has detected the fault since the first jumping-back report
+       * and then returned the playlist unchanged — it wrote the repeat down
+       * and served it. Five reports later the remedy turns out to be the one
+       * already sitting twelve lines above, for the same class of fault: hand
+       * back the playlist the player already has.
+       *
+       * That is all a repeat is. Old content arriving under new numbers is a
+       * playlist that has gone BACKWARDS in the only sense that matters to a
+       * viewer, and the answer to a playlist going backwards is not to pass it
+       * on. From the player's side this refresh simply had nothing new in it,
+       * which every HLS client handles without a flicker — and it has twenty
+       * seconds buffered to do it with.
+       *
+       * Bounded exactly as the renumber case is, and for the same reason:
+       * if the provider has genuinely moved to this numbering and keeps
+       * answering with it, holding for ever would freeze the picture. One
+       * repeat after forty-five seconds beats one every few refreshes.
+       */
+      if (seen.text && now - seen.at < LAST_PLAYLIST_MS) {
+        seen.held = (seen.held || 0) + 1;
+        return seen.text;
+      }
+    }
+
+    /*
+     * And the same rule for the END of the window.
+     *
+     * "the edge went backwards 5.0s"
+     *
+     * A playlist can also lose content off its end — six segments one refresh
+     * and five the next — without re-listing anything. Nothing above catches
+     * that: the media sequence still rose, and no URI moved. But the live edge
+     * is the end of the playlist, so an end that retreats is an edge that
+     * retreats, and hls.js seats the viewer against it.
+     *
+     * Measured on the report this came from: the edge lurched ten seconds
+     * forward and then five back, on a six-segment window of twelve-second
+     * parts — which is one segment, both times.
+     */
+    const endNow = seq + uris.length - 1;
+    if (Number.isFinite(seen.endSeq) && endNow < seen.endSeq
+      && now - seen.at < LAST_PLAYLIST_MS) {
+      seen.held = (seen.held || 0) + 1;
+      if (seen.held === 1 || seen.held % 10 === 0) {
+        console.log(`  live: ${key} came back SHORTER (ends ${seen.endSeq} → ${endNow}) — `
+          + `the window lost content off its own end; serving what the player has `
+          + `(${seen.held})`);
+      }
+      return seen.text;
     }
   }
 
@@ -5340,6 +5392,9 @@ function forwardOnlyPlaylist(url, text) {
     text,
     at: now,
     held: 0,
+    /* The absolute sequence of the last segment, so the next refresh can be
+       asked whether the window's END went backwards as well as its start. */
+    endSeq: seq + uris.length - 1,
     /* seq of each URI in this playlist, for the comparison above. Bounded by
        the playlist, which is six segments on this provider. */
     uris: new Map(uris.map((uri, i) => [uri, seq + i])),

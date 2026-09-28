@@ -4500,6 +4500,57 @@ in the provider's own window. Which does not make the hypothesis wrong in
 general; it makes it ruled out for this one, which is what a measurement is
 for.
 
+### And then: stop serving it
+
+> *"I think this is being overly complicated. Take a fresh look and approach on
+> the issue and see if it can be solved"*
+
+Fair. Five reports had produced five better descriptions and no fix. The fresh
+look is one question: **a viewer sees the picture go back while the playhead
+only goes forward — so what changed is the content at a position, not the
+position.** That is duplicate content arriving in the playlist, and the box
+already had a detector for it:
+
+```js
+if (replayed) {
+  noteDirectReplay(key, replayed);
+  console.log('… so the picture repeats');
+}
+…
+return text;          // ← and served it anyway
+```
+
+Built for the first jumping-back report, five versions ago. It watched the
+fault happen, wrote it down, and passed it to the player every time.
+
+The remedy was already in the same function, **twelve lines above**, for a
+media sequence that goes backwards: *hand back the playlist the player already
+has*. Old content arriving under new numbers is a playlist that has gone
+backwards in the only sense a viewer can see, so it gets the same answer. From
+the player's side that refresh simply had nothing new in it — which every HLS
+client handles without a flicker, and it has twenty seconds buffered to do it
+with.
+
+Bounded exactly as the renumber case is, and for the same reason: if the
+provider has genuinely moved to the new numbering and keeps answering with it,
+holding for ever would freeze the picture. One repeat after forty-five seconds
+beats one every few refreshes.
+
+**And the same rule for the end of the window**, which is the other half of
+what the fifth report measured. A playlist can lose content off its end — six
+segments one refresh and five the next — without re-listing anything. The
+sequence still rises and no URI moves, so nothing above catches it; but the
+live edge *is* the end of the playlist, and hls.js seats the viewer against
+that edge. An end that retreats is now held too:
+
+```
+live: 4821.m3u8 came back SHORTER (ends 945 → 944) — the window lost
+      content off its own end; serving what the player has (1)
+```
+
+Three shapes, one rule: **the window the player is given never goes backwards
+— not its start, not its contents, not its end.**
+
 ### A pause is not the network being slow
 
 > "It is running at 1.00× now, but fell to 0.02× with 7 stalls — the stream is
