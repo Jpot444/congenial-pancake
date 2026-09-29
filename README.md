@@ -4879,6 +4879,53 @@ Three changes:
   connection free"* when the real answer is *"the box never found out how many
   there are"*.
 
+And one more thing the power cut left behind, two days later.
+
+#### "Under-voltage has occurred" is not "your supply is failing"
+
+> *"Power warning: under-voltage has occurred, throttling has occurred. An
+> under-powered supply causes stalls and I/O errors that look exactly like a
+> bad connection."*
+
+That is the panel's own sentence, and the flags in it are the whole story:
+**`has occurred`, twice, and `now` not once.**
+
+A Pi reports throttling as two sets of bits. The low nibble is what is
+happening *at this moment*. The high bits are sticky — "this happened at some
+point since boot" — and they stay set until it reboots, however brief the
+event and however long ago. The panel printed both through one list under one
+heading, so a mark left by something that lasted a millisecond last week read
+exactly like a supply failing while you watch.
+
+**Which is wrong in the direction that costs money.** Restoring power after a
+cut is precisely when a Pi records a brown-out. This box came back from one
+two days before that reading, so it will show `under-voltage has occurred` for
+as long as it stays up with nothing whatever wrong with its supply — and the
+panel was telling its owner to go and buy a new one on the strength of an
+event they had already lived through.
+
+So two readings and two sentences:
+
+```
+Power warning: under-voltage — right now. An under-powered supply causes
+stalls and I/O errors that look exactly like a bad connection.
+
+Power: under-voltage and throttling at some point in the 2d 1h since this
+box booted — but nothing is throttling at this moment. These marks are
+sticky until it reboots, and coming back from a power cut sets them by
+itself. Worth watching, not worth a new supply on its own: if it is the
+plug, it will say right now while something is playing.
+```
+
+The second one is **dated by the uptime**, because "since boot" means nothing
+without knowing when boot was — with it, the reader can match the mark against
+the power cut they remember. And it says what the real fault would look like
+instead, which is the difference between a warning and a diagnosis.
+
+Two sticky bits were not decoded at all before this (`0x20000` frequency cap
+and `0x80000` soft temperature limit), so a Pi sitting at its thermal limit —
+a different fault from a marginal plug — showed up as an unexplained number.
+
 **And a third claimant had appeared**, which was mine. The billboard added the
 day before plays a channel behind the words, and it is an overlay-free page
 element: multi-view opens *over* home without changing the tab, so nothing tore

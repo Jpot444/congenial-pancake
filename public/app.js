@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '44.0';
+const VERSION = '44.1';
 
 const PAGE_SIZE = 60;
 
@@ -4919,11 +4919,47 @@ const health = {
       }
     }
 
-    /* ---- power: reads like a network fault, isn't one ---- */
+    /* ---- power: reads like a network fault, isn't one ----
+     *
+     * Two notes, because the Pi reports two different things and this printed
+     * them as one.
+     *
+     * The low bits are what is happening NOW. The high bits are sticky —
+     * "this happened at some point since boot" — and they stay set until the
+     * box reboots, however brief the event and however long ago. Both came
+     * out under the same "Power warning" with the same sentence about a
+     * marginal supply.
+     *
+     * Which is wrong in the direction that costs money. Restoring power after
+     * a cut is exactly when a Pi records a brown-out, so a box that came back
+     * from one shows `under-voltage has occurred` for as long as it stays up
+     * with nothing whatever wrong with its supply — and the panel was telling
+     * its owner to go and buy a new one on the strength of an event they had
+     * already lived through.
+     */
     let note = '';
-    if (d.power && !d.power.ok) {
-      note = `<p class="health-note"><strong>Power warning:</strong> ${escapeHtml(d.power.flags.join(', '))}. ` +
-        `An under-powered supply causes stalls and I/O errors that look exactly like a bad connection.</p>`;
+    if (d.power && d.power.live) {
+      /* Happening now. This is the one worth acting on, and it keeps every
+         word it had. */
+      note = `<p class="health-note"><strong>Power warning:</strong> `
+        + `${escapeHtml((d.power.now || []).join(', '))} — right now. `
+        + 'An under-powered supply causes stalls and I/O errors that look '
+        + 'exactly like a bad connection.</p>';
+    } else if (d.power && !d.power.ok) {
+      /* Happened, at some unknown moment since the box came up. Dated by the
+         uptime, because "since boot" means nothing without knowing when that
+         was — and if the box booted after a power cut, that is very probably
+         the whole story. */
+      const up = d.uptime && Number.isFinite(d.uptime.host)
+        ? duration(d.uptime.host) : null;
+      note = `<p class="health-note"><strong>Power:</strong> `
+        + `${escapeHtml((d.power.since || []).join(' and '))} `
+        + `at some point in the ${up ? escapeHtml(up) : 'time'} since this box `
+        + 'booted — but nothing is throttling at this moment. These marks are '
+        + 'sticky until it reboots, and coming back from a power cut sets them '
+        + 'by itself. Worth watching, not worth a new supply on its own: if it '
+        + 'is the plug, it will say <em>right now</em> while something is '
+        + 'playing.</p>';
     } else if (d.disk.low) {
       note = `<p class="health-note"><strong>Disk is critically low.</strong> ` +
         `New downloads will be refused until you free space — that guard is what stops a full card ` +

@@ -1449,19 +1449,45 @@ function descriptors() {
 /**
  * Pi throttling flags. Under-voltage is the one that matters — a marginal
  * power supply produces stalls and I/O errors that read like a bad network.
+ *
+ * TWO KINDS OF BIT, and they are not the same news.
+ *
+ * The low nibble is what is happening RIGHT NOW. The high bits are sticky:
+ * they mean "this has happened at some point since the box booted" and they
+ * stay set until it reboots, however brief the event was and however long ago.
+ *
+ * Reported as one list, they read identically — and the panel put the same
+ * "Power warning" over both. That matters here because of when the sticky bits
+ * get set: restoring power after a cut is precisely the moment a Pi records a
+ * brown-out, so a box that came back from one two days ago shows
+ * `under-voltage has occurred` for as long as it stays up, with nothing at all
+ * wrong with the supply. Told to buy a new one on that evidence, somebody
+ * would be buying it for an event they already knew about.
+ *
+ * So the two are separated, and the difference is the whole of what a reader
+ * needs: happening now is a thing to act on, and has-happened-since-boot is a
+ * thing to date.
  */
 function decodeThrottled(text) {
   const m = /throttled=0x([0-9a-f]+)/i.exec(text || '');
   if (!m) return null;
   const bits = parseInt(m[1], 16);
-  const flags = [];
-  if (bits & 0x1) flags.push('under-voltage now');
-  if (bits & 0x2) flags.push('CPU frequency capped');
-  if (bits & 0x4) flags.push('throttled now');
-  if (bits & 0x8) flags.push('at soft temperature limit');
-  if (bits & 0x10000) flags.push('under-voltage has occurred');
-  if (bits & 0x40000) flags.push('throttling has occurred');
-  return { bits, flags, ok: bits === 0 };
+  const now = [];
+  const since = [];
+  if (bits & 0x1) now.push('under-voltage');
+  if (bits & 0x2) now.push('CPU frequency capped');
+  if (bits & 0x4) now.push('throttled');
+  if (bits & 0x8) now.push('at the soft temperature limit');
+  if (bits & 0x10000) since.push('under-voltage');
+  if (bits & 0x20000) since.push('CPU frequency capped');
+  if (bits & 0x40000) since.push('throttling');
+  if (bits & 0x80000) since.push('the soft temperature limit');
+  /* `flags` kept as it was, for anything still reading the old shape. */
+  const flags = [
+    ...now.map((f) => `${f} now`),
+    ...since.map((f) => `${f} has occurred`),
+  ];
+  return { bits, flags, now, since, live: now.length > 0, ok: bits === 0 };
 }
 
 async function readHealth() {
