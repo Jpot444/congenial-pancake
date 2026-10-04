@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '44.1';
+const VERSION = '44.2';
 
 const PAGE_SIZE = 60;
 
@@ -1209,6 +1209,9 @@ const MV_GUIDE_CHANNELS = 12;
 function yieldBillboard() {
   try { window.__ttDesktop?.heroLive?.stop(); } catch { /* nothing to stop */ }
 }
+
+/** How long a cheap re-attach gets before the cell is rebuilt the slow way. */
+const MV_REATTACH_MS = 6000;
 
 const MV_SOURCES = ['live', 'movies', 'series', 'favorites', 'recent', 'archive'];
 
@@ -2554,15 +2557,85 @@ const multiview = {
    * Sound follows the stream: a cell you were listening to is still the one
    * you want to hear afterwards.
    */
+  /**
+   * Put a cell back on its feet.
+   *
+   * "sometimes im pressing refresh and the series isnt playing right after"
+   *
+   * It would not, and the button was doing far more than it was asked to. This
+   * went straight to start(), which begins with stop() — and stop() sends
+   * /api/remux/stop, which KILLS THE CONVERSION ON THE BOX. For a channel that
+   * costs nothing: the segments are already written and a new engine picks
+   * them straight up. For a film or an episode it throws away a minute of
+   * ffmpeg's work and then waits out the whole prebuffer again before a single
+   * frame arrives.
+   *
+   * Which is the wrong trade twice over, because of WHY anybody presses it.
+   * The thing that is stuck is almost always the media element — a buffer that
+   * stopped being appended to, an engine that gave up — and the box's
+   * conversion is perfectly healthy behind it. The cheap repair is to throw
+   * away the browser's state and leave the box alone.
+   *
+   * So that is tried first, and the expensive one is still there behind it: if
+   * the cheap repair has not produced a picture in a few seconds, the
+   * conversion really is gone and the cell is rebuilt exactly as before.
+   */
   refresh(index) {
     const cell = this.cells[index];
     if (!cell?.item) return;
     const listening = !cell.video.muted;
     const item = cell.item;
     const again = cell.override || undefined;
-    this.start(index, item, again).then(() => {
+
+    const whole = () => this.start(index, item, again).then(() => {
       if (listening && this.cells[index]?.item === item) this.listen(index);
     });
+
+    /* Only where there is something to save: a conversion this cell owns, and
+       an address to put it back on. A channel goes the old way, because for a
+       channel the old way is already the cheap one. */
+    if (!cell.vod || !cell.remux || !cell.src) return whole();
+
+    const was = cell.video.currentTime || 0;
+    const mine = (cell.token = (cell.token || 0) + 1);
+    if (cell.engine) {
+      try { cell.engine.destroy(); } catch { /* already gone */ }
+      cell.engine = null;
+    }
+    cell.ok = false;
+    cell.note.hidden = false;
+    this.paint();
+
+    /* Back where it was. The conversion did not move, so neither should the
+       picture — a refresh that silently restarted the episode from the top
+       would be a worse answer than the one being replaced. */
+    const seatBack = () => {
+      if (cell.token !== mine) return;
+      if (was > 1 && Number.isFinite(cell.video.duration)) {
+        try { cell.video.currentTime = was; } catch { /* not seekable yet */ }
+      }
+      if (listening) this.listen(index);
+    };
+    cell.video.addEventListener('loadedmetadata', seatBack, { once: true });
+
+    this.attach(cell, cell.src, cell.format, true, cell.dvr);
+    /* AFTER attach, which sets its own 'Connecting…' on the way in. Said
+       differently on purpose: this cell is going back to a conversion the box
+       still has, and "Reconnecting" is the honest word for it — somebody who
+       pressed ↻ because the picture stopped should be able to tell that from a
+       cell starting from nothing. */
+    cell.note.textContent = 'Reconnecting…';
+
+    /* And the fallback. A re-attach that produces nothing means the thing that
+       was stuck was not the element after all, so the expensive repair happens
+       anyway — a few seconds later than it used to, which is the price of not
+       paying a whole re-conversion every time the cheap one would have done. */
+    setTimeout(() => {
+      if (cell.token !== mine || cell.ok) return;
+      cell.note.textContent = 'Converting…';
+      whole();
+    }, MV_REATTACH_MS);
+    return undefined;
   },
 
   /** Exactly one cell may make a noise. */
@@ -3849,6 +3922,11 @@ const multiview = {
 
   attach(cell, url, format, vod = false, dvr = false) {
     const video = cell.video;
+    /* Kept so the cell can be put back on the SAME stream without the box
+       having to make it again — see refresh(). */
+    cell.src = url;
+    cell.format = format;
+    cell.dvr = dvr;
     cell.note.textContent = 'Connecting…';
     video.addEventListener('playing', () => {
       cell.note.hidden = true;

@@ -5222,6 +5222,26 @@ function pipeLive(upstream, res, capSeconds, holdSeconds = 0) {
  * freeze the picture waiting for numbers that are never coming back.
  */
 const LAST_PLAYLIST_MS = 45_000;
+
+/*
+ * How many refreshes in a row may be answered with the playlist the player
+ * already has.
+ *
+ * The time bound above is the right one for a RENUMBERED playlist, which is
+ * rare and whose alternative is a picture that restarts. It is far too
+ * generous for a repeat, which can land on every other refresh when the
+ * provider is answering from two nodes: holding for forty-five seconds means
+ * forty-five seconds in which the player is handed no new segments at all. It
+ * is seated about thirty seconds back in a sixty-second window, so that
+ * drains the cushion to nothing and stalls it — and a media element recovering
+ * from a starve is exactly how audio and video come back apart.
+ *
+ * Three refreshes is a few seconds, which covers the common case of one
+ * request landing on the other node and the next landing back. Past that the
+ * repeat goes through: a few seconds of picture somebody has already seen is a
+ * far better outcome than a stall and a resync.
+ */
+const MAX_HELD_REFRESHES = 3;
 const lastPlaylists = new Map();
 
 /** Which channel a provider URL is for, whichever login is carrying it. */
@@ -5379,10 +5399,15 @@ function forwardOnlyPlaylist(url, text) {
        * answering with it, holding for ever would freeze the picture. One
        * repeat after forty-five seconds beats one every few refreshes.
        */
-      if (seen.text && now - seen.at < LAST_PLAYLIST_MS) {
+      if (seen.text && now - seen.at < LAST_PLAYLIST_MS
+        && (seen.held || 0) < MAX_HELD_REFRESHES) {
         seen.held = (seen.held || 0) + 1;
         return seen.text;
       }
+      /* Out of holds. The repeat goes through, because the alternative is
+         worse — see MAX_HELD_REFRESHES. */
+      console.log(`  live: ${key} is still repeating after ${seen.held} holds — `
+        + 'letting it through rather than starving the player');
     }
 
     /*
@@ -5402,7 +5427,8 @@ function forwardOnlyPlaylist(url, text) {
      */
     const endNow = seq + uris.length - 1;
     if (Number.isFinite(seen.endSeq) && endNow < seen.endSeq
-      && now - seen.at < LAST_PLAYLIST_MS) {
+      && now - seen.at < LAST_PLAYLIST_MS
+      && (seen.held || 0) < MAX_HELD_REFRESHES) {
       seen.held = (seen.held || 0) + 1;
       if (seen.held === 1 || seen.held % 10 === 0) {
         console.log(`  live: ${key} came back SHORTER (ends ${seen.endSeq} → ${endNow}) — `

@@ -4551,6 +4551,34 @@ live: 4821.m3u8 came back SHORTER (ends 945 → 944) — the window lost
 Three shapes, one rule: **the window the player is given never goes backwards
 — not its start, not its contents, not its end.**
 
+#### And then a bound on it, because a hold is not free
+
+> *"I am also seeing some audio sync issues again, I thought that issue was
+> solved i dont know what changed"*
+
+What changed was the paragraph above. A held playlist means the player is
+handed **no new segments** for that refresh, and the time bound it inherited —
+forty-five seconds — is the right one for a *renumbered* playlist, which is
+rare and whose alternative is a picture that restarts. It is far too generous
+for a repeat, which can land on every other refresh when the provider is
+answering from two nodes.
+
+The viewer sits about thirty seconds back in a sixty-second window. Forty-five
+seconds without a new segment drains that cushion to nothing and stalls — and
+a media element recovering from a starve is exactly how audio and video come
+back apart. The fix for the repeat was quietly buying the stall.
+
+So the repeat and the short-window cases hold for **three refreshes**, not
+forty-five seconds. That covers the common shape — one request lands on the
+other node, the next lands back — and past it the repeat goes through, with a
+line in the log saying so. A few seconds of picture somebody has already seen
+is a far better outcome than a stall and a resync.
+
+The audio *encode* was never the issue here and has not moved since August:
+every ffmpeg path on the box pins AAC-LC, which is the fix for the HE-AAC
+pitch fault, and `audioFilter` with `async=1` holds the alignment in the
+conversion path. A starve is a different mechanism reaching the same symptom.
+
 ### A pause is not the network being slow
 
 > "It is running at 1.00× now, but fell to 0.02× with 7 stalls — the stream is
@@ -5586,6 +5614,39 @@ autoplay with sound in any case.
 
 On a phone the four cells stack rather than tiling; four cells across 390px is
 nothing anybody can watch.
+
+### ↻ repairs the player, not the conversion
+
+> *"sometimes im pressing refresh and the series isnt playing right after"*
+
+It would not, and the button was doing far more than it was asked to.
+
+`refresh` went straight to `start()`, which begins with `stop()` — and `stop()`
+sends `/api/remux/stop`, which **kills the conversion on the box**. For a
+channel that costs nothing: the segments are already written and a new engine
+picks them straight up. For a film or an episode it throws away a minute of
+ffmpeg's work and then waits out the whole prebuffer again before a single
+frame arrives. From the sofa: you press ↻ because the picture is stuck, and
+the picture goes away for the better part of a minute.
+
+The wrong trade twice over, because of **why** anybody presses it. What is
+stuck is almost always the media element — a buffer that stopped being
+appended to, an engine that gave up — while the conversion behind it is
+perfectly healthy. The cheap repair is to throw away the browser's state and
+leave the box alone, so that is what ↻ does now: destroy the engine, re-attach
+to the same playlist, and seat the playhead back where it was.
+
+The expensive repair is still there behind it. If the re-attach has produced
+no picture in six seconds the conversion really is gone, and the cell is
+rebuilt exactly as before — six seconds later than it used to be, which is the
+price of not paying a whole re-conversion every time the cheap one would have
+done.
+
+A channel keeps the old path, because for a channel the old path *is* the
+cheap one, and sending it through the re-attach route would cost it those six
+seconds for nothing. The cell says `Reconnecting…` rather than `Connecting…`
+while it happens — somebody who pressed ↻ because the picture stopped should
+be able to tell that from a cell starting from nothing.
 
 ## Known limits
 
