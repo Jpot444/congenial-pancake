@@ -5686,6 +5686,36 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 .gsrc-status { font-size: 12.5px; color: var(--muted-dim); }
 
+/* --- the front door ---------------------------------------------------- */
+/*
+ * Shares the Listings panel's furniture, and differs in exactly one place:
+ * when the door is open the state line is LOUD. Everything else on this
+ * screen reports; this one line is the only thing in the box that says the
+ * site is reachable by anybody who has the address, and somebody glancing at
+ * it on the way out of a friend's house has to see that without reading.
+ */
+.door .gsrc-note.is-open {
+  border-color: rgba(255, 183, 77, .45);
+  background: rgba(255, 183, 77, .1);
+  color: #ffce80;
+  font-weight: 500;
+}
+
+.door-switch {
+  display: flex;
+  align-items: flex-end;
+  gap: 11px;
+  margin-top: 11px;
+  flex-wrap: wrap;
+}
+
+.door-hours { margin: 0; }
+.door-hours select { font-size: 12.5px; }
+
+/* Hidden until an account has been read, because an empty dropdown asking
+   which application to use is a question with no answers. */
+#doorAppRow[hidden] { display: none; }
+
 /* ---- what each feed gave us ---- */
 .gsrc-runs { margin-top: 9px; display: flex; flex-direction: column; gap: 3px; }
 

@@ -166,6 +166,46 @@ running, rather than dropping a stream mid-scene. It retries on the next tick.
 to try something, but the two do not mix well — see the end of
 [scripts/README.md](scripts/README.md).
 
+## The front door: Cloudflare Access, off for a few hours
+
+The public address sits behind Cloudflare Access, which emails a one-time
+code. On somebody else's television that's a wall. **Front door**, in the
+health panel (owner only), opens it for 1–12 hours, and it shuts itself.
+
+**Opening** adds one policy, `Treasure Theater — open house` (bypass,
+everyone, precedence 1), to the Access application. **Shutting** deletes it.
+Your other policies are never touched. The deadline is written to
+`config.json`, and three things close the door:
+
+- the deadline, checked every minute while the box is up
+- the next boot, if the deadline passed while the box was down (a power cut
+  at a friend's house won't leave it open)
+- the switch itself
+
+If Cloudflare refuses the close, the screen says **still open**, and the box
+keeps retrying every minute until it succeeds.
+
+**Setup, once.** Make a Cloudflare API token with **Account → Access: Apps and
+Policies → Edit** (dash.cloudflare.com → My Profile → API Tokens → Create
+Custom Token). Open the health panel → Front door → Cloudflare setup, then
+paste the token and the account ID (it's in the dashboard URL and on the
+account's overview page). Press **Find the application**, pick this site,
+and save. The token is stored 0600 on the box and never shown again. Don't
+paste it anywhere else.
+
+**From a terminal (Termius):**
+
+```
+cd ~/iptv-portal
+./scripts/openhouse.sh            # is it open?
+./scripts/openhouse.sh on         # open for 4 hours
+./scripts/openhouse.sh on 2       # open for 2 hours
+./scripts/openhouse.sh off        # shut it now
+```
+
+The script talks to the portal, not to Cloudflare, so the same deadline and
+the same auto-close apply.
+
 ## Connecting your provider
 
 **Xtream Codes** (most common — you were given a server URL, username and

@@ -112,6 +112,7 @@ const archive = require('./local-library');
 const guide = require('./epg-guide');
 const people = require('./people');
 const providers = require('./providers');
+const cloudflare = require('./cloudflare');
 const recordings = require('./recordings');
 const recommend = require('./recommend');
 /* When two records are the same title. The page loads the very same file as a
@@ -8251,6 +8252,8 @@ async function handleApi(req, res, pathname, query) {
          quietly dropped — and connecting a provider must not throw away a
          recommendation key somebody pasted a month ago. */
       if (held?.tmdbKey) next.tmdbKey = held.tmdbKey;
+      if (held?.cloudflare) next.cloudflare = held.cloudflare;
+      if (held?.openUntil) next.openUntil = held.openUntil;
 
       if (next.mode === 'xtream') {
         if (!incoming.host || !incoming.username || !incoming.password) {
@@ -8460,6 +8463,141 @@ async function handleApi(req, res, pathname, query) {
    * fetched by anything that can reach this page is a key that has been
    * given away.
    */
+  /*
+   * The open house: the switch, and the credentials behind it.
+   *
+   * Owner only, both here and in the page. The token can add and remove
+   * policies on an Access application, which is to say it can let the whole
+   * internet at this box — it is the most dangerous thing stored here and it
+   * is treated accordingly: written, never read back, and the only thing any
+   * screen is ever told is whether there is one.
+   */
+  if (pathname === '/api/cloudflare') {
+    if (!isOwnerProfile(ownerOf(query.get('profileId')))) {
+      return json(res, 403, { error: 'Only the owner profile can change this.' });
+    }
+    const held = (cfg && cfg.cloudflare) || {};
+    if (req.method === 'GET') {
+      return json(res, 200, {
+        set: Boolean(cloudflareSettings(cfg)),
+        /* Not secrets, and useless without the token — shown so somebody can
+           see which application they pointed it at without reading it back
+           out of a dashboard. */
+        accountId: String(held.accountId || ''),
+        appId: String(held.appId || ''),
+      });
+    }
+    if (req.method === 'PUT') {
+      if (!cfg) return json(res, 400, { error: 'Connect a provider first.' });
+      let incoming;
+      try {
+        incoming = JSON.parse(await collectRequestBody(req));
+      } catch {
+        return json(res, 400, { error: 'Invalid JSON' });
+      }
+      const token = String(incoming.token || '').trim();
+      const accountId = String(incoming.accountId || '').trim();
+      const appId = String(incoming.appId || '').trim();
+      if (token && !/^[A-Za-z0-9._-]{20,200}$/.test(token)) {
+        return json(res, 400, { error: 'That does not look like a Cloudflare API token.' });
+      }
+      /* Blank token means "leave the one you have" rather than "delete it",
+         so somebody correcting an application id does not have to go and make
+         a new token to do it. Clearing is its own button. */
+      const next = {
+        token: token || String(held.token || ''),
+        accountId,
+        appId,
+      };
+      if (incoming.forget === true) {
+        writeConfig({ ...cfg, cloudflare: {}, openUntil: 0 });
+        return json(res, 200, { set: false, accountId: '', appId: '' });
+      }
+      writeConfig({ ...cfg, cloudflare: next });
+      return json(res, 200, {
+        set: Boolean(cloudflare.ready(next)), accountId, appId,
+      });
+    }
+    return json(res, 405, { error: 'Method not allowed' });
+  }
+
+  /* The applications on the account, so the right one can be picked from a
+     list rather than copied out of a dashboard URL. */
+  if (pathname === '/api/cloudflare/apps') {
+    if (!isOwnerProfile(ownerOf(query.get('profileId')))) {
+      return json(res, 403, { error: 'Only the owner profile can change this.' });
+    }
+    const held = (cfg && cfg.cloudflare) || {};
+    if (!held.token || !held.accountId) {
+      return json(res, 400, { error: 'Add the API token and the account id first.' });
+    }
+    try {
+      return json(res, 200, { apps: await cloudflare.apps(held) });
+    } catch (err) {
+      return json(res, 502, { error: err.message });
+    }
+  }
+
+  if (pathname === '/api/openhouse') {
+    if (!isOwnerProfile(ownerOf(query.get('profileId')))) {
+      return json(res, 403, { error: 'Only the owner profile can open the door.' });
+    }
+    const cf = cloudflareSettings(cfg);
+    const until = Number(cfg && cfg.openUntil) || 0;
+
+    if (req.method === 'GET') {
+      if (!cf) return json(res, 200, { configured: false, open: false, until: 0 });
+      /* Asked of CLOUDFLARE, not of our own note. The two disagreeing is
+         exactly the state worth seeing: a policy somebody added by hand, or
+         one this box failed to remove. */
+      try {
+        const open = await cloudflare.isOpen(cf);
+        return json(res, 200, {
+          configured: true,
+          open,
+          until: open ? until : 0,
+          /* Said plainly when the box's note and the door disagree. */
+          stray: open && !until,
+        });
+      } catch (err) {
+        return json(res, 502, { configured: true, error: err.message });
+      }
+    }
+
+    if (req.method === 'POST') {
+      if (!cf) return json(res, 400, { error: 'Add the Cloudflare settings first.' });
+      let incoming = {};
+      try {
+        incoming = JSON.parse(await collectRequestBody(req));
+      } catch {
+        incoming = {};
+      }
+      const hours = Math.min(OPEN_HOUSE_MAX_HOURS,
+        Math.max(0.5, Number(incoming.hours) || 4));
+      try {
+        await cloudflare.open(cf);
+      } catch (err) {
+        return json(res, 502, { error: err.message });
+      }
+      /* Written AFTER the door is open, so a failed open never leaves a
+         deadline for a door that was never unlocked. */
+      const deadline = Date.now() + Math.round(hours * 3600 * 1000);
+      writeConfig({ ...readConfig(), openUntil: deadline });
+      console.log(`  cloudflare: open house ON for ${hours}h`);
+      return json(res, 200, { open: true, until: deadline });
+    }
+
+    if (req.method === 'DELETE') {
+      const out = await closeOpenHouse('asked to');
+      /* A door that would not shut is reported as a door that would not shut.
+         Saying `open: false` here because we asked is how somebody drives
+         home believing the site is behind a login when it is not. */
+      if (!out.closed) return json(res, 502, { open: true, until, error: out.error });
+      return json(res, 200, { open: false, until: 0 });
+    }
+    return json(res, 405, { error: 'Method not allowed' });
+  }
+
   if (pathname === '/api/tmdb') {
     if (req.method === 'GET') {
       return json(res, 200, { set: Boolean(String(cfg?.tmdbKey || '').trim()) });
@@ -11291,6 +11429,129 @@ function serveStatic(req, res, pathname) {
   });
 }
 
+/* ------------------------------------------------------- the open house ---
+ *
+ * "I want to be able to turn off the cloudflair protection if I'm using it at
+ *  a friends, and turn it back on again when I leave."
+ *
+ * The second half of that sentence is the whole design. Anybody can add a
+ * bypass policy in a dashboard; what nobody does reliably is remember to take
+ * it away again from somebody else's sofa. So the door is opened WITH A
+ * DEADLINE, and three separate things close it:
+ *
+ *   the minute tick below, while the box is up;
+ *   the next boot, if the deadline went by while it was down;
+ *   and pressing the switch again.
+ *
+ * The deadline lives in config.json beside the credentials, which is the file
+ * this box already keeps at 0600 — and it is read back on every check rather
+ * than held in memory, so a restart mid-session does not forget that a door is
+ * standing open somewhere.
+ */
+
+/** The longest the door may be left open in one go. */
+const OPEN_HOUSE_MAX_HOURS = 12;
+
+/**
+ * Cloudflare's API, which needs a request body and so cannot go through
+ * `request()` — that helper ends every request without one.
+ *
+ * Fixed host, so none of the SSRF guards the proxy endpoints need apply here:
+ * there is no user-supplied URL to be talked into fetching.
+ */
+function cloudflareFetch(url, { method = 'GET', headers = {}, body, timeout = 15000 } = {}) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try {
+      u = new URL(url);
+    } catch {
+      return reject(new Error('Bad Cloudflare URL'));
+    }
+    if (u.protocol !== 'https:' || u.hostname !== 'api.cloudflare.com') {
+      return reject(new Error('Refusing to send a Cloudflare token anywhere but Cloudflare'));
+    }
+    const req = https.request(u, {
+      method,
+      timeout,
+      headers: { 'user-agent': UA, ...headers,
+        ...(body ? { 'content-length': Buffer.byteLength(body) } : {}) },
+    }, (res) => {
+      readBody(res, 2 * 1024 * 1024).then((buf) => {
+        let parsed = null;
+        try { parsed = JSON.parse(buf.toString('utf8')); } catch { parsed = null; }
+        /* Cloudflare answers errors as JSON with `success: false`, so a body
+           that will not parse is the only thing worth reporting by status. */
+        if (!parsed) return reject(new Error(`Cloudflare answered ${res.statusCode} with no JSON`));
+        return resolve(parsed);
+      }).catch(reject);
+    });
+    req.on('timeout', () => req.destroy(new Error('Cloudflare timed out')));
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+cloudflare.configure({
+  fetchJson: cloudflareFetch,
+  log: (line) => console.log(line),
+});
+
+/** The settings, or null when they have not been filled in. */
+function cloudflareSettings(cfg) {
+  const cf = (cfg && cfg.cloudflare) || null;
+  return cloudflare.ready(cf) ? cf : null;
+}
+
+/**
+ * Shut it, whatever the box currently believes.
+ *
+ * THE ORDER OF THE TWO WRITES IS THE WHOLE THING. Cloudflare first, the
+ * deadline second — because the deadline in the past is what makes the minute
+ * tick try again. Clearing it first and then failing to reach Cloudflare
+ * would leave a door standing open and nothing left on disk to say so, which
+ * is the one outcome this feature exists to prevent.
+ *
+ * So a failure leaves a deadline of 1: the first millisecond of 1970, which
+ * has certainly passed. The sweep sees an expired deadline every minute from
+ * then on and keeps trying, and so does the next boot.
+ */
+async function closeOpenHouse(why) {
+  const cfg = readConfig();
+  const cf = cloudflareSettings(cfg);
+  const note = (openUntil) => {
+    const now = readConfig();
+    if (now && (Number(now.openUntil) || 0) !== openUntil) writeConfig({ ...now, openUntil });
+  };
+  if (!cf) {
+    /* Nothing to close and no way to close it — the credentials were removed
+       while a door was open, and the deadline is now meaningless. */
+    note(0);
+    return { closed: true };
+  }
+  try {
+    const { changed } = await cloudflare.close(cf);
+    note(0);
+    if (changed) console.log(`  cloudflare: open house closed — ${why}`);
+    return { closed: true, changed };
+  } catch (err) {
+    /* Said loudly, because this is the failure that leaves a door open. */
+    console.log(`  cloudflare: COULD NOT CLOSE the open house (${why}): ${err.message}`);
+    note(1);
+    return { closed: false, error: err.message };
+  }
+}
+
+/* Every minute while the box is up. Cheap — it only talks to Cloudflare when
+   a deadline has actually passed, and an expired deadline that is still on
+   disk is precisely a close that has not succeeded yet. */
+setInterval(() => safely('open house sweep', () => {
+  const cfg = readConfig();
+  const until = Number(cfg && cfg.openUntil) || 0;
+  if (!until || Date.now() < until) return;
+  closeOpenHouse('the time was up');
+}), 60_000).unref();
+
 /* ------------------------------------------------------- the black box ---
  *
  * What this process was doing when it died.
@@ -11591,6 +11852,27 @@ server.listen(PORT, HOST, () => {
    * So it retries, on a widening delay, and stops the moment every login has
    * given a real number. Fire and forget still: nothing waits on it.
    */
+  /*
+   * A door left open when the box went down.
+   *
+   * The minute tick can only close it while this process is alive, and the
+   * case that matters most is the one where it is not: a power cut at a
+   * friend's house, and the site sitting open to the internet until somebody
+   * notices. So the deadline is checked on the way up, before anything else,
+   * and a deadline that has passed — or a door open with no deadline at all —
+   * is shut immediately.
+   */
+  const bootCfg = readConfig();
+  if (bootCfg && cloudflareSettings(bootCfg)) {
+    const until = Number(bootCfg.openUntil) || 0;
+    if (!until || Date.now() >= until) {
+      closeOpenHouse(until ? 'the box was down when the time ran out' : 'no deadline was set');
+    } else {
+      const left = Math.round((until - Date.now()) / 60000);
+      console.log(`  cloudflare: open house is ON, ${left} minute(s) left`);
+    }
+  }
+
   const startCfg = readConfig();
   if (startCfg) {
     /* 5s, 20s, a minute, then five — a Pi that came up before its network

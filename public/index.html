@@ -218,6 +218,85 @@
       </details>
     </div>
 
+    <!-- The front door.
+         "sometimes I am at a friends house and want to use it without the
+          hassle of cloudflair login … and turn it back on again when I leave."
+         The second half of that is the design. The state line is first and is
+         a sentence rather than a tick, because the question anybody opens this
+         to ask is "is my site open to the internet right now". -->
+    <div class="gsrc door" id="doorPanel" hidden>
+      <h3>
+        Front door
+        <span class="gsrc-cover" id="doorLeft"></span>
+      </h3>
+      <p class="gsrc-note" id="doorNote">Asking Cloudflare…</p>
+
+      <div class="door-switch" id="doorSwitch" hidden>
+        <label class="field door-hours">
+          <span>For how long</span>
+          <select id="doorHours">
+            <option value="1">1 hour</option>
+            <option value="2">2 hours</option>
+            <option value="4" selected>4 hours</option>
+            <option value="8">8 hours</option>
+            <option value="12">12 hours</option>
+          </select>
+        </label>
+        <button type="button" class="btn btn-ghost btn-sm" id="doorOpen">
+          Open it
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm" id="doorShut" hidden>
+          Shut it now
+        </button>
+      </div>
+
+      <!-- Done once, from a laptop, and then never again — so folded away.
+           No token is ever read back out of here; the box answers whether it
+           has one and nothing else. -->
+      <details class="gsrc-more" id="doorSetup">
+      <summary>Cloudflare setup</summary>
+
+      <p class="gsrc-lead">
+        An API token with <strong>Account → Access: Apps and Policies →
+        Edit</strong>, and the account this site's Access application lives on.
+        The token is written to this box and never shown again.
+      </p>
+
+      <label class="field gsrc-field">
+        <span>API token <small id="doorTokenState"></small></span>
+        <input type="password" id="doorToken" spellcheck="false"
+               autocomplete="off" placeholder="Paste the token" />
+      </label>
+      <label class="field gsrc-field">
+        <span>Account ID</span>
+        <input type="text" id="doorAccount" spellcheck="false"
+               autocomplete="off" placeholder="32 hex characters" />
+      </label>
+
+      <div class="gsrc-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="doorFind">
+          Find the application
+        </button>
+      </div>
+
+      <label class="field gsrc-field" id="doorAppRow">
+        <span>Application</span>
+        <select id="doorApp"></select>
+      </label>
+
+      <div class="gsrc-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="doorSave">
+          Save
+        </button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-ghost btn-sm" id="doorForget">
+          Forget the token
+        </button>
+      </div>
+      <p class="gsrc-note" id="doorSetupNote" hidden></p>
+      </details>
+    </div>
+
     <!-- What everyone else has sent in. Sits outside #healthBody for the same
          reason the connection test does: that block is replaced wholesale by
          the poll every few seconds. -->

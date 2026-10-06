@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '44.3';
+const VERSION = '44.4';
 
 const PAGE_SIZE = 60;
 
@@ -4581,6 +4581,275 @@ $('#guideWhy').addEventListener('input', () => {
   whyTimer = setTimeout(() => guideSources.explain($('#guideWhy').value), 350);
 });
 
+/* ───────────────────────────────────────────────── the front door ─────── *
+ *
+ * "sometimes I am at a friends house and want to use it without the hassle of
+ *  cloudflair login, it always says the email code doesnt work and it isnt
+ *  easy and fast like i want it to be. I want to be able to turn off the
+ *  cloudflair protection if I'm using it at a friends, and turn it back on
+ *  again when I leave."
+ *
+ * The site sits behind Cloudflare Access, which emails a one-time code. On
+ * somebody else's television that is not a nuisance, it is a wall: the code
+ * goes to a phone and the television has no keyboard worth the name.
+ *
+ * Opening it adds one bypass policy to the Access application; shutting it
+ * deletes that policy. The off state is the absence of the thing, which is
+ * the only arrangement where a half-finished write leaves the door SHUT.
+ *
+ * WHAT THIS SCREEN IS FOR, AND WHAT IT IS NOT. It is not the way the door
+ * gets shut — three things do that without anybody here: the deadline, the
+ * minute sweep, and the next boot. This screen exists so that the one
+ * question worth asking has an answer in words: is my site open to the
+ * internet right now. So the state line is a sentence, it is first, and it is
+ * the only loud thing in the health modal when the answer is yes.
+ */
+const frontDoor = {
+  timer: null,
+  apps: [],
+
+  async load() {
+    const panel = $('#doorPanel');
+    /* The token behind this can let the whole internet at the box, so the
+       panel does not exist for anybody else. The server refuses them too —
+       this only saves them the sight of it. */
+    panel.hidden = !reporter.isOwner();
+    if (panel.hidden) return this.stop();
+    try {
+      const data = await api('/api/openhouse', { profileId: profiles.current?.id || '' });
+      this.paint(data);
+    } catch (err) {
+      this.trouble(err.message);
+    }
+    return undefined;
+  },
+
+  /* Followed while it is open, because the only number on this screen that
+     moves is the one counting down, and a deadline that has quietly passed
+     should stop saying OPEN. Stopped when it is shut: this is a settings
+     screen, not a dashboard. */
+  watch() {
+    clearInterval(this.timer);
+    this.timer = setInterval(() => this.load(), 30_000);
+  },
+
+  stop() {
+    clearInterval(this.timer);
+    this.timer = null;
+  },
+
+  trouble(words) {
+    const note = $('#doorNote');
+    note.textContent = words;
+    note.classList.add('is-bad');
+    note.classList.remove('is-open');
+    $('#doorLeft').textContent = '';
+    this.stop();
+  },
+
+  paint(data) {
+    const note = $('#doorNote');
+    const left = $('#doorLeft');
+    const sw = $('#doorSwitch');
+    note.classList.remove('is-bad', 'is-open');
+
+    if (data.configured === false) {
+      note.textContent = 'Not set up yet. Add a Cloudflare API token below and '
+        + 'this box can let the door off the latch for a few hours at a time.';
+      left.textContent = '';
+      sw.hidden = true;
+      $('#doorSetup').open = true;
+      this.stop();
+      this.fillSetup();
+      return;
+    }
+
+    sw.hidden = false;
+    this.fillSetup();
+
+    if (!data.open) {
+      note.textContent = 'Shut. The Cloudflare login is in front of the site, as usual.';
+      left.textContent = '';
+      $('#doorOpen').hidden = false;
+      $('#doorShut').hidden = true;
+      this.stop();
+      return;
+    }
+
+    /* A door open with no deadline is the one state nothing here can have
+       produced, so it is named rather than smoothed over: somebody added a
+       bypass by hand in the dashboard, or a close failed and left it. Either
+       way the honest line is "I do not know when this shuts". */
+    note.classList.add('is-open');
+    note.textContent = data.stray
+      ? 'OPEN — and with no deadline, which this box did not do. '
+        + 'Anybody with the address is in until somebody shuts it.'
+      : 'OPEN — anybody with the address is in, no login asked for.';
+    left.textContent = data.until ? `${untilWords(data.until)} left` : 'no deadline';
+    $('#doorOpen').hidden = true;
+    $('#doorShut').hidden = false;
+    this.watch();
+  },
+
+  /** Whether there is a token, which is the only thing the box will say. */
+  async fillSetup() {
+    try {
+      const cf = await api('/api/cloudflare', { profileId: profiles.current?.id || '' });
+      $('#doorTokenState').textContent = cf.set ? '· saved' : '· none yet';
+      $('#doorToken').placeholder = cf.set
+        ? 'Saved — paste another to replace it'
+        : 'Paste the token';
+      if (!$('#doorAccount').value) $('#doorAccount').value = cf.accountId || '';
+      /* The dropdown is only filled by asking Cloudflare, so until somebody
+         does there is one option: the id already saved. */
+      if (cf.appId && !this.apps.length) {
+        $('#doorAppRow').hidden = false;
+        const sel = $('#doorApp');
+        sel.innerHTML = '';
+        sel.append(Object.assign(el('option'), { value: cf.appId, textContent: cf.appId }));
+      } else if (!cf.appId && !this.apps.length) {
+        $('#doorAppRow').hidden = true;
+      }
+    } catch { /* the state line already says what went wrong */ }
+  },
+
+  say(words, bad) {
+    const note = $('#doorSetupNote');
+    note.textContent = words;
+    note.classList.toggle('is-bad', Boolean(bad));
+    note.hidden = false;
+  },
+
+  /** The applications on the account, so nobody has to read an id out of a URL. */
+  async find() {
+    const button = $('#doorFind');
+    button.disabled = true;
+    this.say('Asking Cloudflare…');
+    try {
+      /* Saved first: the token and the account are what this call needs, and
+         typing them in and then pressing the button next to them is plainly
+         meant to use them. */
+      await this.put({ silent: true });
+      const data = await api('/api/cloudflare/apps', { profileId: profiles.current?.id || '' });
+      this.apps = data.apps || [];
+      const sel = $('#doorApp');
+      sel.innerHTML = '';
+      for (const app of this.apps) {
+        sel.append(Object.assign(el('option'), {
+          value: app.id,
+          textContent: `${app.domain || app.name || app.id}`,
+        }));
+      }
+      $('#doorAppRow').hidden = !this.apps.length;
+      this.say(this.apps.length
+        ? `${this.apps.length} application${this.apps.length === 1 ? '' : 's'}. `
+          + 'Pick the one this site is behind, then Save.'
+        : 'That account has no Access applications on it.', !this.apps.length);
+    } catch (err) {
+      this.say(err.message, true);
+    }
+    button.disabled = false;
+  },
+
+  /** Write the settings. A blank token means "keep the one you have". */
+  async put({ silent } = {}) {
+    const res = await fetch(`/api/cloudflare?profileId=${encodeURIComponent(profiles.current?.id || '')}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: $('#doorToken').value.trim(),
+        accountId: $('#doorAccount').value.trim(),
+        appId: $('#doorApp').value || '',
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `the box answered ${res.status}`);
+    /* Never held in the page a moment longer than the keystroke that typed
+       it. The box will not read it back, so there is nothing to put here. */
+    $('#doorToken').value = '';
+    if (!silent) this.say(data.set ? 'Saved.' : 'Saved, but still missing something.');
+    return data;
+  },
+
+  async save() {
+    try {
+      await this.put();
+      await this.load();
+    } catch (err) {
+      this.say(err.message, true);
+    }
+  },
+
+  async forget() {
+    if (!window.confirm('Forget the Cloudflare token? The door can no longer be '
+      + 'opened from here until a new one is pasted in.')) return;
+    try {
+      const res = await fetch(`/api/cloudflare?profileId=${encodeURIComponent(profiles.current?.id || '')}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ forget: true }),
+      });
+      if (!res.ok) throw new Error(`the box answered ${res.status}`);
+      this.apps = [];
+      $('#doorApp').innerHTML = '';
+      this.say('Forgotten.');
+      await this.load();
+    } catch (err) {
+      this.say(err.message, true);
+    }
+  },
+
+  async open() {
+    const button = $('#doorOpen');
+    button.disabled = true;
+    try {
+      const data = await fetch(`/api/openhouse?profileId=${encodeURIComponent(profiles.current?.id || '')}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hours: Number($('#doorHours').value) || 4 }),
+      });
+      const body = await data.json().catch(() => ({}));
+      if (!data.ok) throw new Error(body.error || `the box answered ${data.status}`);
+      toast(`Open until ${new Date(body.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`);
+      await this.load();
+    } catch (err) {
+      this.trouble(err.message);
+    }
+    button.disabled = false;
+  },
+
+  async shut() {
+    const button = $('#doorShut');
+    button.disabled = true;
+    try {
+      const res = await fetch(`/api/openhouse?profileId=${encodeURIComponent(profiles.current?.id || '')}`, { method: 'DELETE' });
+      const body = await res.json().catch(() => ({}));
+      /* A door that would not shut is reported as a door that would not shut.
+         This is the one message on this screen somebody acts on. */
+      if (!res.ok) throw new Error(`${body.error || `the box answered ${res.status}`} `
+        + '— the door is STILL OPEN. The box will keep trying every minute.');
+      toast('Shut. The login is back in front of it.');
+      await this.load();
+    } catch (err) {
+      this.trouble(err.message);
+    }
+    button.disabled = false;
+  },
+};
+
+/** "1h 58m", for a deadline somebody is deciding whether to extend. */
+function untilWords(until) {
+  const mins = Math.max(0, Math.round((until - Date.now()) / 60000));
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+$('#doorOpen').addEventListener('click', () => frontDoor.open());
+$('#doorShut').addEventListener('click', () => frontDoor.shut());
+$('#doorFind').addEventListener('click', () => frontDoor.find());
+$('#doorSave').addEventListener('click', () => frontDoor.save());
+$('#doorForget').addEventListener('click', () => frontDoor.forget());
+
 /** "four minutes ago", for a timestamp the viewer should not have to subtract. */
 function whenWords(at) {
   const mins = Math.round((Date.now() - at) / 60000);
@@ -4602,6 +4871,7 @@ const health = {
     this.paintPlayback();
     this.loadReports();
     guideSources.load();
+    frontDoor.load();
     await this.refresh();
     clearInterval(this.timer);
     this.timer = setInterval(() => {
@@ -4744,6 +5014,7 @@ const health = {
     clearInterval(this.timer);
     this.timer = null;
     guideSources.stop();
+    frontDoor.stop();
   },
 
   async refresh() {
