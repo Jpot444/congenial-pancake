@@ -8,6 +8,7 @@
  */
 
 import { focus } from './focus.js';
+import { watchGamepad } from './gamepad.js';
 import {
   state, loadProfile, loadTaste, refreshHealth, followBox,
 } from './state.js';
@@ -208,11 +209,28 @@ const NAV_KEYS = new Set([
   'Enter', ' ', 'Escape', 'Backspace', 'BrowserBack', 'GoBack',
 ]);
 
-function onKey(event) {
-  const key = event.key;
+/*
+ * The last key acted on, and when.
+ *
+ * In Edge's d-pad mode the pad ALREADY arrives as arrow keys and Enter, and
+ * the Gamepad API reports the same press at the same moment — so one push of A
+ * would open a channel twice, and one push of a direction would move two
+ * cards. Whichever arrives first wins and the other is dropped.
+ *
+ * Short enough that a deliberate double-tap still reads as two, and the repeat
+ * schedule in gamepad.js is slower than this by a wide margin.
+ */
+let lastKey = '';
+let lastKeyAt = 0;
+const DOUBLE_MS = 60;
+
+function handleKey(key) {
   if (!NAV_KEYS.has(key)) return;
-  event.preventDefault();
   if (rendering) return;
+  const now = performance.now();
+  if (key === lastKey && now - lastKeyAt < DOUBLE_MS) return;
+  lastKey = key;
+  lastKeyAt = now;
 
   const back = key === 'Escape' || key === 'Backspace' || key === 'BrowserBack' || key === 'GoBack';
   const ok = key === 'Enter' || key === ' ';
@@ -251,6 +269,15 @@ function onKey(event) {
   else if (key === 'ArrowDown') focus.move(1, 0);
 }
 
+/* The keyboard door into the same handler. preventDefault stays here, where
+   there is an event to call it on — a controller press has nothing to
+   prevent. */
+function onKey(event) {
+  if (!NAV_KEYS.has(event.key)) return;
+  event.preventDefault();
+  handleKey(event.key);
+}
+
 /* ----------------------------------------------------------------- boot ── */
 
 async function boot() {
@@ -267,6 +294,10 @@ async function boot() {
   fit();
   window.addEventListener('resize', fit);
   window.addEventListener('keydown', onKey);
+  /* And the controller, which is the same six presses by another road — see
+     gamepad.js. Started here rather than at import so nothing polls until the
+     app is actually up. */
+  watchGamepad(handleKey);
   document.addEventListener('click', (event) => {
     const node = event.target.closest && event.target.closest('[data-r]');
     if (!node) return;

@@ -11230,6 +11230,35 @@ function serveStatic(req, res, pathname) {
     // the way a URL typed on a television is actually typed. One level only:
     // the retry lands on a file or on the 404 below.
     if (!statErr && stat.isDirectory()) {
+      /*
+       * And WITH the trailing slash, or the page it serves is broken.
+       *
+       * "add the television build to a new link that is
+       *  https://tv.treasurestatecapital.com/tv"
+       *
+       * `/tv` already answered 200 — and that was the trap, because what came
+       * back was the right HTML at the wrong base. A browser resolves a
+       * relative `css/tokens.css` against the directory of the current URL,
+       * and the directory of `/tv` is `/`. So the markup arrived and every
+       * stylesheet and module it asked for 404'd: an unstyled page with no
+       * script, which looks far more like a broken box than a 404 does.
+       *
+       * Measured before the fix:
+       *
+       *   /tv                 200
+       *   /css/tokens.css     404   <- what /tv then asks for
+       *   /tv/css/tokens.css  200
+       *
+       * One redirect fixes every relative path at once, which is why every
+       * web server has done this since before any of us. The query string is
+       * carried over so a link with one on it survives the bounce.
+       */
+      if (!pathname.endsWith('/')) {
+        const query = req.url.indexOf('?');
+        const target = `${pathname}/${query >= 0 ? req.url.slice(query) : ''}`;
+        res.writeHead(301, { location: target, 'cache-control': 'no-store' });
+        return res.end();
+      }
       return serveStatic(req, res, `${pathname.replace(/\/+$/, '')}/index.html`);
     }
     if (statErr || !stat.isFile()) return send(res, 404, 'Not found');

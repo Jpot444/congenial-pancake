@@ -5648,6 +5648,38 @@ seconds for nothing. The cell says `Reconnecting…` rather than `Connecting…`
 while it happens — somebody who pressed ↻ because the picture stopped should
 be able to tell that from a cell starting from nothing.
 
+## On an Xbox
+
+> "how can i use the player on an xbox" … "add the gamepad support and the
+> television build to a new link that is https://tv.treasurestatecapital.com/tv"
+
+Xbox Series X|S and Xbox One have **Microsoft Edge**, which is Chromium and
+plays everything this box serves. Open:
+
+```
+https://tv.treasurestatecapital.com/tv
+http://<pi-lan-ip>:8420/tv            ← same network, better path
+```
+
+**Tailscale has no Xbox client**, so `100.68.175.115` is not reachable from
+one — it is the LAN address or the cloudflared hostname.
+
+That lands on the television build in `public/tv/`, which is the right target
+for a controller: 1920×1080, remote-first, and it opens straight into whoever
+last used that screen rather than a profile gate you would have to navigate
+with a stick.
+
+Two things had to change for it, and both are written up where they live —
+[`public/tv/README.md`](public/tv/README.md):
+
+- **`/tv` is a 301 to `/tv/`.** It answered 200 before, which is worse than a
+  404: the right HTML at the wrong base, so every relative stylesheet and
+  module 404'd and the television showed an unstyled page with no script.
+- **The pad is read directly**, through the Gamepad API, and turned into the
+  key names the app already handles. Without it the app only works in Edge's
+  d-pad mode, and Edge opens in cursor mode — where the stick drives a pointer
+  and the app hears nothing at all.
+
 ## Known limits
 
 - **MKV and AVI won't play.** No browser decodes them. Movies served as MKV need

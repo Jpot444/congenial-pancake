@@ -9,9 +9,25 @@ portal's existing `/api/*` — **no server changes are needed**.
 ## Where it is
 
 `public/tv/`, served by the portal's own static handler at
-`http://<box>:<port>/tv/`. On the Shield, open that URL — in the browser, or as
-the start URL of whatever WebView wrapper you use. It deploys with everything
-else through `deploy.sh`; there is nothing separate to install.
+`http://<box>:<port>/tv/` — or `/tv`, which now redirects to it. On the Shield,
+open that URL — in the browser, or as the start URL of whatever WebView wrapper
+you use. It deploys with everything else through `deploy.sh`; there is nothing
+separate to install.
+
+**The trailing slash is not optional, which is why `/tv` is a 301.** It used to
+answer 200, and that was worse than a 404: the right HTML served at the wrong
+base. A browser resolves a relative `css/tokens.css` against the directory of
+the current URL, and the directory of `/tv` is `/`. Measured before the fix —
+
+```
+/tv                 200
+/css/tokens.css     404   <- what /tv then asks for
+/tv/css/tokens.css  200
+```
+
+— so the page arrived unstyled with no script at all, which on a television
+reads as a broken box rather than a mistyped address. One redirect fixes every
+relative path at once, and carries the query string over.
 
 No new endpoints, no new dependencies, no build step. The browser portal at `/`
 is untouched.
@@ -33,6 +49,55 @@ local fallback so the folder also works standing alone:
 If the box is ever offline at boot, vendor them next to this README and change
 the two `<script>` tags — the app falls back to the `<video>` element's own
 playback when neither is present.
+
+## A controller, not just a remote
+
+> "how can i use the player on an xbox"
+
+An Xbox has Microsoft Edge, which is Chromium, which plays everything this app
+serves. The obstacle is input. This app was written for a Shield remote, so it
+listens for arrow keys, `Enter` and `Escape` — and on an Xbox that works only
+in Edge's **d-pad mode**. Edge opens in **cursor mode**, where the left stick
+drives a mouse pointer and the app receives nothing whatever. The first thing
+anybody does is push a direction, watch nothing happen, and conclude the box is
+broken.
+
+So `gamepad.js` reads the pad directly. The Gamepad API reports it in either
+mode, and every button maps onto a key the app already handles — no screen has
+to learn what a controller is:
+
+| pad | key | 
+| --- | --- |
+| d-pad, left stick | `ArrowUp` / `Down` / `Left` / `Right` |
+| **A** | `Enter` |
+| **B** | `Escape` (which this app already treats as BACK) |
+
+Nothing else is mapped. A control that exists only on a pad would be one nobody
+holding a remote can reach, and this app is used with both.
+
+Four things it is careful about:
+
+- **It repeats, but not every frame.** A held direction waits 420ms and then
+  walks at 110ms — about six places a second. Unrepeated, a long row is
+  unusable; at 60fps it would cross the screen before you let go.
+- **OK and BACK never repeat.** Holding A through a list of channels, opening
+  each in turn, is nobody's intention.
+- **A resting stick is ignored.** The threshold is 0.6, because a pad at rest
+  reads a little off centre and a drifting one would walk the focus across the
+  screen on its own.
+- **A press that arrives twice counts once.** In Edge's d-pad mode the pad
+  *already* arrives as arrow keys and Enter, and the Gamepad API reports the
+  same press at the same moment — so one push of A would open a channel twice.
+  Whichever arrives first wins and the other is dropped inside 60ms.
+
+Polled only while a pad is connected, so a television with no controller near
+it does no work at all. A pad that was already on when the page loaded raises
+no `gamepadconnected` event — which on an Xbox is the normal case — so the
+first key or pointer press starts the poll as well.
+
+`tests/gamepad.test.js` drives a synthetic pad: there is no controller on a
+test box, and what is under test is the mapping and the repeat behaviour rather
+than whether Chromium can talk to USB.
 
 ## The scores feed — connected
 
