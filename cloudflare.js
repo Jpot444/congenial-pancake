@@ -93,10 +93,15 @@ async function apps(cf) {
   }));
 }
 
+/** Every policy on that application. */
+async function policies(cf) {
+  const list = await call(cf, `/access/apps/${encodeURIComponent(cf.appId)}/policies`);
+  return Array.isArray(list) ? list.filter(Boolean) : [];
+}
+
 /** This module's own policy on that application, or null. */
 async function openPolicy(cf) {
-  const list = await call(cf, `/access/apps/${encodeURIComponent(cf.appId)}/policies`);
-  return (Array.isArray(list) ? list : []).find((p) => p && p.name === POLICY_NAME) || null;
+  return (await policies(cf)).find((p) => p.name === POLICY_NAME) || null;
 }
 
 /** Whether the door is open, asked of Cloudflare rather than of our own notes. */
@@ -109,17 +114,26 @@ async function isOpen(cf) {
  * rather than added a second time.
  */
 async function open(cf) {
-  const already = await openPolicy(cf);
-  if (already) return { changed: false };
+  const list = await policies(cf);
+  if (list.some((p) => p.name === POLICY_NAME)) return { changed: false };
+  /* AT THE END, NOT THE FRONT. Precedences on an application must be unique,
+     and the first try at a real account asked for 1 and was refused —
+     "policy precedences must be unique" — because the owner's own login rule
+     already held it. Taking 1 would mean renumbering somebody else's
+     policies, which this module never does.
+
+     It does not need the front. Cloudflare evaluates every Bypass and Service
+     Auth policy before any Allow or Block, wherever it sits in the list
+     (developers.cloudflare.com → Access policies → order of enforcement), so
+     a bypass at the end still runs first. */
+  const last = list.reduce((max, p) => Math.max(max, Number(p.precedence) || 0), 0);
   await call(cf, `/access/apps/${encodeURIComponent(cf.appId)}/policies`, {
     method: 'POST',
     body: {
       name: POLICY_NAME,
       decision: 'bypass',
       include: [{ everyone: {} }],
-      /* In front of whatever else is there. A bypass evaluated after an allow
-         is a bypass that never runs. */
-      precedence: 1,
+      precedence: last + 1,
     },
   });
   store.log(`  cloudflare: open house ON — ${POLICY_NAME} added to ${cf.appId}`);

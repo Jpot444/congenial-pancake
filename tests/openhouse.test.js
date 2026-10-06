@@ -65,6 +65,13 @@ function cloudflareStandIn() {
         req.on('data', (c) => { raw += c; });
         return req.on('end', () => {
           const body = JSON.parse(raw || '{}');
+          /* What the real one said on the first try at a real account:
+             an app that already has a policy at 1 refuses a second there. */
+          if (body.precedence !== undefined
+            && policies.some((p) => p.precedence === body.precedence)) {
+            return send({ success: false, result: null, errors: [{ code: 12130,
+              message: 'access.api.error.invalid_request: policy precedences must be unique' }] });
+          }
           const made = { id: `pol-${nextId += 1}`, ...body };
           policies.push(made);
           send({ success: true, result: made });
@@ -261,9 +268,12 @@ async function browserPage() {
     check('it is a bypass', policies[0].decision === 'bypass', policies[0].decision);
     check('for everyone', JSON.stringify(policies[0].include) === '[{"everyone":{}}]',
       JSON.stringify(policies[0].include));
-    /* A bypass evaluated after an allow is a bypass that never runs. */
-    check('and in front of whatever else is there',
-      policies[0].precedence === 1, String(policies[0].precedence));
+    /* Cloudflare evaluates every bypass before any allow, wherever it sits
+       in the list, so position is not what makes it work. It just has to be
+       a position nobody else holds. */
+    check('with a precedence of its own',
+      Number.isInteger(policies[0].precedence) && policies[0].precedence >= 1,
+      String(policies[0].precedence));
 
     /* Pressing it twice must not leave two. */
     await call(`/api/openhouse?${ME}`, { method: 'POST', body: { hours: 2 } });
@@ -289,10 +299,17 @@ async function browserPage() {
      * mistyped application id costs an error rather than an access list.
      */
     console.log('\n  and other people’s policies');
-    policies = [{ id: 'theirs', name: 'Allow Hunter', decision: 'allow', include: [] }];
-    await call(`/api/openhouse?${ME}`, { method: 'POST', body: { hours: 1 } });
+    /* At precedence 1, which is where the real account's login rule sat —
+       and is what made the first real open fail with "policy precedences
+       must be unique". */
+    policies = [{ id: 'theirs', name: 'Allow Hunter', decision: 'allow', include: [],
+      precedence: 1 }];
+    const besides = await call(`/api/openhouse?${ME}`, { method: 'POST', body: { hours: 1 } });
+    console.log('   ', besides.status, JSON.stringify(besides.data), JSON.stringify(policies));
+    check('it opens beside a policy already holding position 1',
+      besides.status === 200 && policies.length === 2, `${besides.status} ${besides.text}`);
     check('opening leaves the existing policy alone',
-      policies.some((p) => p.id === 'theirs'), JSON.stringify(policies));
+      policies.some((p) => p.id === 'theirs' && p.precedence === 1), JSON.stringify(policies));
     await call(`/api/openhouse?${ME}`, { method: 'DELETE' });
     check('and shutting removes only its own',
       policies.length === 1 && policies[0].id === 'theirs', JSON.stringify(policies));

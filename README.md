@@ -173,8 +173,10 @@ code. On somebody else's television that's a wall. **Front door**, in the
 health panel (owner only), opens it for 1–12 hours, and it shuts itself.
 
 **Opening** adds one policy, `Treasure Theater — open house` (bypass,
-everyone, precedence 1), to the Access application. **Shutting** deletes it.
-Your other policies are never touched. The deadline is written to
+everyone), to the Access application. **Shutting** deletes it. The policy goes
+at the end of the list, because Cloudflare checks bypass policies before
+allow policies no matter where they sit, and taking slot 1 would mean
+renumbering yours. Your other policies are never touched. The deadline is written to
 `config.json`, and three things close the door:
 
 - the deadline, checked every minute while the box is up
