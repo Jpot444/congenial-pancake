@@ -62,8 +62,8 @@ report() {
       try { d = JSON.parse(raw); } catch { console.log("  the portal said something unreadable"); process.exit(1); }
       if (d.error) { console.log(`  ${d.error}`); process.exit(1); }
       if (d.configured === false) {
-        console.log("  Cloudflare is not set up on this box yet — add the token in");
-        console.log("  Settings on the portal first.");
+        console.log("  Cloudflare is not set up on this box yet. Open the portal →");
+        console.log("  health panel → Front door → Cloudflare setup, and add the token there.");
         process.exit(1);
       }
       if (d.open) {
@@ -82,16 +82,16 @@ case "${1:-status}" in
   on)
     HOURS="${2:-4}"
     say "opening for ${HOURS}h…"
-    curl -fsS -X POST -H 'content-type: application/json' \
+    curl -sS -X POST -H 'content-type: application/json' \
       -d "{\"hours\":$HOURS}" \
       "$BASE/api/openhouse?profileId=$ID" | report
     ;;
   off)
     say "shutting it…"
-    curl -fsS -X DELETE "$BASE/api/openhouse?profileId=$ID" | report
+    curl -sS -X DELETE "$BASE/api/openhouse?profileId=$ID" | report
     ;;
   apps)
-    curl -fsS "$BASE/api/cloudflare/apps?profileId=$ID" \
+    curl -sS "$BASE/api/cloudflare/apps?profileId=$ID" \
       | node -e '
         let raw = "";
         process.stdin.on("data", (c) => (raw += c));
@@ -105,7 +105,7 @@ case "${1:-status}" in
       '
     ;;
   status|"")
-    curl -fsS "$BASE/api/openhouse?profileId=$ID" | report
+    curl -sS "$BASE/api/openhouse?profileId=$ID" | report
     ;;
   *)
     say "usage: openhouse.sh [status|on [hours]|off|apps]"

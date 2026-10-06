@@ -8565,7 +8565,8 @@ async function handleApi(req, res, pathname, query) {
     }
 
     if (req.method === 'POST') {
-      if (!cf) return json(res, 400, { error: 'Add the Cloudflare settings first.' });
+      if (!cf) return json(res, 400, { error: 'Cloudflare is not set up on this box yet. '
+        + 'Open the portal → health panel → Front door → Cloudflare setup, and add the API token there.' });
       let incoming = {};
       try {
         incoming = JSON.parse(await collectRequestBody(req));
