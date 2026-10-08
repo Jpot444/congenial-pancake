@@ -4282,6 +4282,14 @@ login for the 45 seconds the box takes to notice it's unwatched. With a second
 login on the account the billboard just takes the spare one. Covered by
 `billboardyield.test.js`.
 
+**It can be switched off.** *Autoplay on the home screen*, in the health
+panel beside low bandwidth, is box-wide like it, because what it switches off
+is a provider connection. Turning it off drops the billboard's stream on the
+box at once (not at the next 45-second reap), and `/api/play?billboard=1`
+answers 403 `autoplayOff` while it's off. A screen in another room that loaded
+before the switch finds out on its next ask and stops without retrying.
+Stored as `homeAutoplay` in `prefs.json`, on unless set to `false`.
+
 `heroLive.why` records which rule said no, in its own words. *"It did not ask"*
 and *"it asked and the box refused"* look identical from outside and are
 completely different faults — the first is this layer deciding, the second is

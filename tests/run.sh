@@ -200,6 +200,10 @@ run_one() {
     -H 'content-type: application/json' \
     -d '{"tourDone":true,"liveTourDone":true,"startersDone":true,"reportNoticeSeen":true,"dlExplainSeen":true,"scoreSport":"mlb"}' \
     "http://127.0.0.1:$port/api/profiles/own1/prefs" || true
+  # And the box-wide switches a suite can throw, back to how a box ships.
+  curl -fs -o /dev/null -X PUT \
+    -H 'content-type: application/json' -d '{"homeAutoplay":true,"lowBandwidth":false}' \
+    "http://127.0.0.1:$port/api/prefs" || true
 
   started=$SECONDS
   # `timeout` returns 124 when it had to kill the suite — reported as its own

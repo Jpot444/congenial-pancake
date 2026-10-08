@@ -332,6 +332,8 @@ function readPrefsRaw() {
       favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
       captionTrack: typeof parsed.captionTrack === 'string' ? parsed.captionTrack : '',
       lowBandwidth: parsed.lowBandwidth === true,
+      // On unless somebody turned it off — see /api/play's billboard check.
+      homeAutoplay: parsed.homeAutoplay !== false,
       prebufferSeconds: Number(parsed.prebufferSeconds) || DEFAULT_PREBUFFER,
       filtersEnabled: parsed.filtersEnabled !== false,
       filters: { ...DEFAULT_FILTERS, ...(parsed.filters || {}) },
@@ -356,6 +358,7 @@ function readPrefs() {
     favorites: [],
     captionTrack: '',
     lowBandwidth: false,
+    homeAutoplay: true,
     prebufferSeconds: DEFAULT_PREBUFFER,
     filtersEnabled: true,
     filters: { ...DEFAULT_FILTERS },
@@ -9528,6 +9531,18 @@ async function handleApi(req, res, pathname, query) {
       if (typeof incoming.lowBandwidth === 'boolean') {
         prefs.lowBandwidth = incoming.lowBandwidth;
       }
+      /* The home page's muted channel, for the whole house. Turned off, the
+         connection it is holding goes back at once rather than at the next
+         45-second reap, on every screen and not only the one that pressed. */
+      if (typeof incoming.homeAutoplay === 'boolean') {
+        const was = prefs.homeAutoplay !== false;
+        prefs.homeAutoplay = incoming.homeAutoplay;
+        if (was && !incoming.homeAutoplay) {
+          for (const [sid, sess] of [...remuxSessions]) {
+            if (sess.live && sess.billboard) killSession(sid);
+          }
+        }
+      }
       if (incoming.filters && typeof incoming.filters === 'object') {
         for (const tab of ['live', 'movies', 'series']) {
           if (typeof incoming.filters[tab] === 'string') {
@@ -11269,6 +11284,12 @@ async function handleApi(req, res, pathname, query) {
     let id = query.get('id');
     const ext = query.get('ext') || '';
     if (!kind || !id) return json(res, 400, { error: 'kind and id are required' });
+    /* Asked for by the billboard while autoplay is switched off: said
+       plainly, so the page stops rather than retrying. Another screen that
+       loaded before the switch was thrown finds out here. */
+    if (query.get('billboard') === '1' && readPrefs().homeAutoplay === false) {
+      return json(res, 403, { error: 'Autoplay on the home screen is turned off.', autoplayOff: true });
+    }
     if (!cfg || cfg.mode !== 'xtream') return json(res, 400, { error: 'Not in Xtream mode' });
     try {
       // A live HLS channel goes through the Pi's own DVR window when it can:

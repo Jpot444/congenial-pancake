@@ -147,6 +147,23 @@
       <p class="health-note" id="lowModeNote" hidden></p>
     </div>
 
+    <!-- The home page's muted channel. For the whole house, like the switch
+         above: it is the thing holding a provider connection. A cell of its
+         own rather than a second row under low bandwidth, so the grid can sit
+         it in the space beside Listings instead of making the card taller. -->
+    <div class="low-mode">
+      <label class="low-mode-row">
+        <input type="checkbox" id="autoplayMode" checked />
+        <span class="low-mode-words">
+          <strong>Autoplay on the home screen</strong>
+          <small>
+            Plays the last channel you watched, muted, behind the home page
+            on a desktop. Uses a provider connection while it runs.
+          </small>
+        </span>
+      </label>
+    </div>
+
     <!-- Where the listings come from. The provider has none for most of what
          it sells, so this is the screen that fixes a blank guide — and the
          coverage line is the first thing on it, because "did it work" is the

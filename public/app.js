@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '45.0';
+const VERSION = '45.1';
 
 const PAGE_SIZE = 60;
 
@@ -112,6 +112,8 @@ const prefs = {
     // Remembered rather than asked, because the corner of the house with bad
     // signal is still bad tomorrow.
     lowBandwidth: false,
+    // The home page's muted channel. On unless turned off, box-wide.
+    homeAutoplay: true,
   },
 
   async load() {
@@ -4654,8 +4656,7 @@ const frontDoor = {
     note.classList.remove('is-bad', 'is-open');
 
     if (data.configured === false) {
-      note.textContent = 'Not set up yet. Open Cloudflare setup below and add an '
-        + 'API token, and this box can let the door off the latch for a few hours.';
+      note.textContent = 'Not set up yet — add an API token under Cloudflare setup.';
       left.textContent = '';
       sw.hidden = true;
       /* Left folded, like Listings. Opened by itself it was a column of form
@@ -19310,6 +19311,27 @@ $('#lowMode').addEventListener('change', async (event) => {
     : 'Low bandwidth mode off.');
 });
 
+/*
+ * Autoplay on the home screen. Box-wide, like low bandwidth: the box drops
+ * any channel it was playing for a billboard the moment this goes off, and
+ * refuses billboard requests while it is off — so a screen in another room
+ * that loaded before the switch stops too, rather than this one only.
+ */
+$('#autoplayMode').addEventListener('change', async (event) => {
+  prefs.data.homeAutoplay = event.target.checked;
+  await prefs.save();
+  if (!event.target.checked) {
+    yieldBillboard();
+    const hero = window.__ttDesktop?.heroLive;
+    if (hero) hero.why = 'autoplay is turned off';
+  } else if (state.tab === 'home' && $('#homeView') && !$('#homeView').hidden) {
+    render();   // put it back on the page that is already showing
+  }
+  toast(event.target.checked
+    ? 'Autoplay on the home screen is on.'
+    : 'Autoplay on the home screen is off.');
+});
+
 $('#filterToggle').addEventListener('change', async (event) => {
   prefs.data.filtersEnabled = event.target.checked;
   await prefs.save();
@@ -19759,6 +19781,7 @@ async function startApp() {
   $('#profileGate').hidden = true;
   $('#filterToggle').checked = prefs.data.filtersEnabled !== false;
   $('#lowMode').checked = prefs.data.lowBandwidth === true;
+  $('#autoplayMode').checked = prefs.data.homeAutoplay !== false;
   await refreshDownloads();
   await applyRoute();
 

@@ -2778,6 +2778,11 @@
     arm(hero, feature) {
       this.stop();
       if (!heroBigScreen()) return this.no('not a desktop, or reduced motion');
+      /* The switch in the health panel. Read from the box's own setting, so
+         turning it off in one room turns it off in all of them. */
+      if (typeof prefs !== 'undefined' && prefs.data?.homeAutoplay === false) {
+        return this.no('autoplay is turned off');
+      }
       if (!hero) return this.no('no billboard');
       if (!feature || feature.kind !== 'live') return this.no('the feature is not a channel');
       if (state.tab !== 'home') return this.no('not on home');
@@ -2846,6 +2851,14 @@
              a moment: the channel somebody just closed is still letting go
              of it. The still stands and nothing is said, and it is asked
              again shortly. */
+          if (res.status === 403) {
+            /* Switched off since this page loaded — in another room, maybe.
+               Not a refusal worth retrying: the answer will not change. */
+            /* `prefs` is a top-level const in app.js: reachable by bare name
+               from this script, never as window.prefs. */
+            if (typeof prefs !== 'undefined' && prefs.data) prefs.data.homeAutoplay = false;
+            return this.no('autoplay is turned off');
+          }
           if (!res.ok) return this.again(hero, feature, id, `the box answered ${res.status}`);
           play = await res.json();
         } catch (err) {

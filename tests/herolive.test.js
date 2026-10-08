@@ -135,9 +135,16 @@ const LIVE = { categories: [{ id: 'c1', name: 'USA SPORTS' }], items: CHANNELS,
   await page.route('**/hero-clip.webm', (r) =>
     r.fulfill({ status: 200, contentType: 'video/webm', body: CLIP }));
 
+  /* Mirrors the box's answer when autoplay has been switched off there —
+     see the autoplay section. */
+  let offAtBox = false;
   await page.route('**/api/play**', (r) => {
     const url = new URL(r.request().url());
     asks.push(url.searchParams.get('id'));
+    if (offAtBox && url.searchParams.get('billboard') === '1') {
+      return r.fulfill({ status: 403, contentType: 'application/json',
+        body: '{"error":"Autoplay on the home screen is turned off.","autoplayOff":true}' });
+    }
     if (refuse) {
       return r.fulfill({ status: 409, contentType: 'application/json',
         body: '{"error":"No connection free for this channel."}' });
@@ -423,6 +430,74 @@ const LIVE = { categories: [{ id: 'c1', name: 'USA SPORTS' }], items: CHANNELS,
   check('a dead address is dropped and a fresh one asked for',
     asks.length >= 1, JSON.stringify(asks));
   check('and the billboard plays', stale.playing === true, JSON.stringify(stale));
+
+  /* ---- and a switch to turn it off ---------------------------------------- */
+  /*
+   * "Add a auto play feature toggle in the control panel I can turn it off with"
+   *
+   * In the health panel, beside low bandwidth, and box-wide like it: the
+   * thing being switched off is a provider connection, which belongs to the
+   * house rather than to one screen.
+   */
+  console.log('\n  the autoplay switch');
+  await page.evaluate(() => { window.__ttDesktop.heroLive.held = null; });
+  await home('desk');
+  check('playing to begin with', (await shape()).playing === true, JSON.stringify(await shape()));
+  await page.evaluate(() => health.open());
+  await page.waitForSelector('#autoplayMode', { state: 'visible', timeout: 10000 });
+  const was = await page.isChecked('#autoplayMode');
+  check('the switch is in the health panel, on by default', was === true, String(was));
+  await page.click('#autoplayMode');
+  await wait(800);
+  const off = await shape();
+  console.log('    switched off:', JSON.stringify(off));
+  check('switching it off takes the picture down at once', off.video === false, JSON.stringify(off));
+  check('and says why', /autoplay is turned off/.test(off.why), off.why);
+  await page.evaluate(() => health.close());
+  const stored = await (await page.request.get(`${BASE}/api/prefs`)).json();
+  check('the box remembers it, for every screen', stored.homeAutoplay === false,
+    JSON.stringify(stored.homeAutoplay));
+
+  await home('desk');
+  const after = await shape();
+  check('home drawn again asks for nothing', asks.length === 0 && after.video === false,
+    `${JSON.stringify(asks)} ${JSON.stringify(after)}`);
+
+  /* The box's own answer, asked directly rather than through the stub. */
+  const refused403 = await page.request.get(`${BASE}/api/play?kind=live&id=701&billboard=1`);
+  check('and the box itself refuses a billboard while it is off',
+    refused403.status() === 403 && (await refused403.json()).autoplayOff === true,
+    String(refused403.status()));
+  const realPlay = await page.request.get(`${BASE}/api/play?kind=live&id=701`);
+  check('but not somebody actually pressing a channel', realPlay.status() !== 403,
+    String(realPlay.status()));
+
+  /* A screen in another room that loaded before the switch was thrown still
+     believes it is on. It asks once, is told, and stops — no retry loop. */
+  console.log('\n  a screen that loaded before it was switched off');
+  offAtBox = true;
+  await page.evaluate(() => { prefs.data.homeAutoplay = true; window.__ttDesktop.heroLive.held = null; });
+  await home('desk');
+  await wait(3000);
+  const early = await shape();
+  console.log('   ', JSON.stringify(early), 'asked:', JSON.stringify(asks));
+  check('it asks once and is told', asks.length === 1, JSON.stringify(asks));
+  check('and stops, without retrying', /autoplay is turned off/.test(early.why) && early.video === false,
+    JSON.stringify(early));
+  offAtBox = false;
+
+  console.log('\n  and on again');
+  await page.evaluate(() => health.open());
+  await page.waitForSelector('#autoplayMode', { state: 'visible', timeout: 10000 });
+  if (!(await page.isChecked('#autoplayMode'))) await page.click('#autoplayMode');
+  await page.evaluate(() => health.close());
+  await home('desk');
+  let back = await shape();
+  const backAt = Date.now();
+  while (!back.playing && Date.now() - backAt < 8000) { await wait(250); back = await shape(); }
+  check('switching it back on brings the picture back', back.playing === true, JSON.stringify(back));
+  check('and the box agrees',
+    (await (await page.request.get(`${BASE}/api/prefs`)).json()).homeAutoplay === true);
 
   /* ---- the guide it sits above ------------------------------------------- */
   /*
