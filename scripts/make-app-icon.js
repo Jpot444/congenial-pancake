@@ -206,12 +206,19 @@ for (const name of ['app-icon.png', 'apple-touch-icon.png', 'apple-touch-icon-pr
  * both point at app-icon.png. Whichever iOS settles on, it is the finished
  * square. appicon.test.js checks the links.
  */
+/* With a fingerprint of the picture on the end. iOS caches a home-screen
+   icon by its ADDRESS, and can keep the old one even after the shortcut is
+   deleted; a new picture at a new address is one it has never seen. The
+   Access rule for the icon matches the path, so the query does not affect it. */
+const version = require('crypto').createHash('sha256')
+  .update(fs.readFileSync(path.join(ROOT, 'public', 'app-icon.png'))).digest('hex').slice(0, 10);
+const href = `/app-icon.png?v=${version}`;
 for (const page of ['public/index.html', 'public/tv/index.html']) {
   const file = path.join(ROOT, page);
   const html = fs.readFileSync(file, 'utf8');
   const next = html
-    .replace(/(<link rel="apple-touch-icon" sizes="180x180" href=")[^"]*(" \/>)/, '$1/app-icon.png$2')
-    .replace(/(<link rel="icon" type="image\/png" )href="[^"]*"( \/>)/, '$1sizes="180x180" href="/app-icon.png"$2')
-    .replace(/(<link rel="icon" type="image\/png" sizes="180x180" )href="[^"]*"( \/>)/, '$1href="/app-icon.png"$2');
+    .replace(/(<link rel="apple-touch-icon" sizes="180x180" href=")[^"]*(" \/>)/, `$1${href}$2`)
+    .replace(/(<link rel="icon" type="image\/png" )href="[^"]*"( \/>)/, `$1sizes="180x180" href="${href}"$2`)
+    .replace(/(<link rel="icon" type="image\/png" sizes="180x180" )href="[^"]*"( \/>)/, `$1href="${href}"$2`);
   if (next !== html) fs.writeFileSync(file, next);
 }

@@ -61,7 +61,13 @@ const readPng = decoder(fs, zlib);
   /* A plain link. iOS does not take a data: URI here — inlining it made no
      difference on a real phone. */
   check('pointing at the manufactured icon, not the raw logo',
-    href === '/app-icon.png', href);
+    /^\/app-icon\.png\?v=[0-9a-f]{10}$/.test(href), href);
+  /* The fingerprint is of the picture itself, so a new icon is a new address
+     — iOS keeps an old one by address, even past deleting the shortcut. */
+  const want = require('crypto').createHash('sha256')
+    .update(fs.readFileSync(path.join(ROOT, 'public/app-icon.png'))).digest('hex').slice(0, 10);
+  check('carrying a fingerprint of the current picture, so iOS cannot reuse an old one',
+    href.endsWith(`?v=${want}`), `${href} vs ${want}`);
   check('with its size declared', /sizes="180x180"/.test(link), link);
 
   const name = /<meta[^>]+name="apple-mobile-web-app-title"[^>]+content="([^"]+)"/.exec(head)?.[1];
@@ -72,7 +78,7 @@ const readPng = decoder(fs, zlib);
      logo it came out filled to the square, cropped and backed with white:
      "the bull is cut off … the background should be black". */
   check('and the favicon is the same square icon, so the fallback is too',
-    /<link rel="icon"[^>]+href="\/app-icon\.png"/.test(head),
+    /<link rel="icon"[^>]+href="\/app-icon\.png\?v=/.test(head),
     (/<link rel="icon"[^>]*>/.exec(head) || [''])[0]);
   check('while the raw bison is still the profile gate\u2019s picture',
     /src="\/bison\.png"/.test(html));
