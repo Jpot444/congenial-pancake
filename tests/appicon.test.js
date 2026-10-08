@@ -99,6 +99,12 @@ const readPng = decoder(fs, zlib);
   // --- the two facts the iPad taught --------------------------------------
   console.log('\n  what the iPad demanded');
   check('square', img.width === img.height, `${img.width}x${img.height}`);
+  /* The third thing, and the one a real phone taught: opaque PIXELS are not
+     enough. iOS fetched this file, was answered 200, and still drew it small
+     on white, because the file was RGBA — a format that can be transparent.
+     Colour type 2 is RGB: no alpha channel to have. */
+  check('saved with no alpha channel at all — RGB, not RGBA',
+    bytes[25] === 2, `PNG colour type ${bytes[25]}`);
   check('180x180 — the size iOS scales everything else from', img.width === 180,
     String(img.width));
 

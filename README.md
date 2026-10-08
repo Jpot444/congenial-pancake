@@ -89,6 +89,18 @@ name and only reads the site's own application, to learn its hostname. A
 failure is shown in Front door → Cloudflare setup. Covered in
 `openhouse.test.js`.
 
+**What it actually was: the file format.** The box records every touch-icon
+request (Front door → Cloudflare setup). An Add to Home Screen showed iOS's
+own downloader (CFNetwork, which says neither iPhone nor iPad) fetching
+`/app-icon.png` and `/apple-touch-icon.png` and being answered 200. So nothing
+stood in front of the box, and the Access pass-through above wasn't the fix.
+iOS had the icon and still drew it small on white, because the file was
+**RGBA**. Every pixel was opaque, but iOS goes by the format: an icon that
+*can* be transparent is treated as one, inset and backed with white. The
+icon is now written as **RGB (PNG colour type 2)** with no alpha channel, and
+`appicon.test.js` checks the colour type. The link carries a fingerprint of
+the picture (`?v=…`), so a changed icon is an address iOS hasn't cached.
+
 iOS caches home-screen icons hard: an existing shortcut keeps the old tile
 until it is removed and added again.
 

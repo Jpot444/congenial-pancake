@@ -12085,8 +12085,11 @@ const bootedAt = Date.now();
 
 function noteIconRequest(req, res, pathname) {
   const ua = String(req.headers['user-agent'] || '');
-  const device = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad'
-    : /Macintosh/.test(ua) ? 'Mac' : /Android/.test(ua) ? 'Android' : 'something else';
+  /* iOS's own downloader — what actually fetches a home-screen icon — says
+     neither iPhone nor iPad: it is CFNetwork on Darwin. */
+  const device = /CFNetwork|Darwin/.test(ua) ? 'iOS (its icon downloader)'
+    : /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad'
+      : /Macintosh/.test(ua) ? 'Mac' : /Android/.test(ua) ? 'Android' : 'something else';
   const row = {
     at: Date.now(),
     path: pathname,

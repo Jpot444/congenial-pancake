@@ -53,6 +53,7 @@ function readPng(file) {
   let pos = 8;
   let width = 0;
   let height = 0;
+  let channels = 4;
   const idat = [];
   while (pos < data.length) {
     const length = data.readUInt32BE(pos);
@@ -61,16 +62,18 @@ function readPng(file) {
     if (type === 'IHDR') {
       width = chunk.readUInt32BE(0);
       height = chunk.readUInt32BE(4);
-      if (chunk[8] !== 8 || chunk[9] !== 6) {
-        throw new Error('expected 8-bit RGBA — re-export the logo that way');
+      if (chunk[8] !== 8 || (chunk[9] !== 6 && chunk[9] !== 2)) {
+        throw new Error('expected 8-bit RGBA or RGB — re-export the logo that way');
       }
+      channels = chunk[9] === 2 ? 3 : 4;
     } else if (type === 'IDAT') {
       idat.push(chunk);
     }
     pos += 12 + length;
   }
   const raw = zlib.inflateSync(Buffer.concat(idat));
-  const stride = width * 4;
+  const bpp = channels;
+  const stride = width * bpp;
   const px = Buffer.alloc(width * height * 4);
   let prev = Buffer.alloc(stride);
   let p = 0;
@@ -80,9 +83,9 @@ function readPng(file) {
     const line = Buffer.from(raw.subarray(p, p + stride));
     p += stride;
     for (let i = 0; i < stride; i += 1) {
-      const a = i >= 4 ? line[i - 4] : 0;
+      const a = i >= bpp ? line[i - bpp] : 0;
       const b = prev[i];
-      const c = i >= 4 ? prev[i - 4] : 0;
+      const c = i >= bpp ? prev[i - bpp] : 0;
       if (filter === 1) line[i] = (line[i] + a) & 255;
       else if (filter === 2) line[i] = (line[i] + b) & 255;
       else if (filter === 3) line[i] = (line[i] + ((a + b) >> 1)) & 255;
@@ -93,15 +96,22 @@ function readPng(file) {
         line[i] = (line[i] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 255;
       }
     }
-    line.copy(px, y * stride);
+    // Always handed back as RGBA, an RGB file reading as fully opaque.
+    for (let x = 0; x < width; x += 1) {
+      const o = (y * width + x) * 4;
+      px[o] = line[x * bpp];
+      px[o + 1] = line[x * bpp + 1];
+      px[o + 2] = line[x * bpp + 2];
+      px[o + 3] = bpp === 4 ? line[x * bpp + 3] : 255;
+    }
     prev = line;
   }
-  return { width, height, px };
+  return { width, height, px, channels };
 }
 
 /* ---- PNG out ---- */
 
-function writePng(file, size, rgba, height = size) {
+function writePng(file, size, rgba, height = size, { rgb = false } = {}) {
   const chunk = (type, payload) => {
     const body = Buffer.concat([Buffer.from(type, 'ascii'), payload]);
     const head = Buffer.alloc(4);
@@ -110,16 +120,21 @@ function writePng(file, size, rgba, height = size) {
     crc.writeUInt32BE(zlib.crc32(body) >>> 0);
     return Buffer.concat([head, body, crc]);
   };
-  const stride = size * 4;
+  const bpp = rgb ? 3 : 4;
+  const stride = size * bpp;
   const raw = Buffer.alloc((stride + 1) * height);
   for (let y = 0; y < height; y += 1) {
-    rgba.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
+    for (let x = 0; x < size; x += 1) {
+      const from = (y * size + x) * 4;
+      const to = y * (stride + 1) + 1 + x * bpp;
+      for (let c = 0; c < bpp; c += 1) raw[to + c] = rgba[from + c];
+    }
   }
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(size, 0);
   ihdr.writeUInt32BE(height, 4);
   ihdr[8] = 8;  // bit depth
-  ihdr[9] = 6;  // RGBA
+  ihdr[9] = rgb ? 2 : 6;  // RGB : RGBA
   fs.writeFileSync(file, Buffer.concat([
     Buffer.from('89504e470d0a1a0a', 'hex'),
     chunk('IHDR', ihdr),
@@ -186,8 +201,18 @@ for (let y = 0; y < SIZE; y += 1) {
   }
 }
 
+/*
+ * RGB, with NO alpha channel at all.
+ *
+ * "Now it's a small black square with the bull in it surrounded by white" —
+ * and the box's own record showed iOS fetching this file and being answered
+ * 200. Every pixel was opaque, but the FILE was RGBA, and iOS goes by the
+ * format: an icon that can be transparent is treated as one, inset and backed
+ * with white. A PNG with no alpha channel cannot be, so it is drawn edge to
+ * edge.
+ */
 for (const name of ['app-icon.png', 'apple-touch-icon.png', 'apple-touch-icon-precomposed.png']) {
-  writePng(path.join(ROOT, 'public', name), SIZE, icon);
+  writePng(path.join(ROOT, 'public', name), SIZE, icon, SIZE, { rgb: true });
 }
 
 /*
