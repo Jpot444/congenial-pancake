@@ -36,7 +36,13 @@ const API = 'https://api.cloudflare.com/client/v4';
    remembered: an id written to disk would go stale the moment somebody
    removed the policy by hand in the dashboard, and then the box would think
    the door was open when it was shut, or worse, the other way round. */
-const POLICY_NAME = 'Treasure Theater — open house';
+const POLICY_NAME = 'Treasureflix — open house';
+
+/* What the policy was called before the rename. Still recognised, so a door
+   opened under the old name the evening of the rename is still a door this
+   box can see and shut. Never created under it. */
+const OLD_NAMES = ['Treasure Theater — open house'];
+const ours = (p) => p && (p.name === POLICY_NAME || OLD_NAMES.includes(p.name));
 
 /** Nothing here is worth a long wait; a door that will not open says so. */
 const TIMEOUT_MS = 15000;
@@ -101,7 +107,7 @@ async function policies(cf) {
 
 /** This module's own policy on that application, or null. */
 async function openPolicy(cf) {
-  return (await policies(cf)).find((p) => p.name === POLICY_NAME) || null;
+  return (await policies(cf)).find(ours) || null;
 }
 
 /** Whether the door is open, asked of Cloudflare rather than of our own notes. */
@@ -115,7 +121,7 @@ async function isOpen(cf) {
  */
 async function open(cf) {
   const list = await policies(cf);
-  if (list.some((p) => p.name === POLICY_NAME)) return { changed: false };
+  if (list.some(ours)) return { changed: false };
   /* AT THE END, NOT THE FRONT. Precedences on an application must be unique,
      and the first try at a real account asked for 1 and was refused —
      "policy precedences must be unique" — because the owner's own login rule

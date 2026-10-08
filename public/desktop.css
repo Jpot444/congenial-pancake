@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Treasure Theater — the desktop portal.
+   Treasureflix — the desktop portal.
 
    Everything in this file hangs off `html.desk`, which app.js sets only when
    the device is in desktop layout AND the window is wide enough for it. The

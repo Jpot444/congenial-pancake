@@ -88,7 +88,7 @@ const REFRESH_MS = 6 * 60 * 60 * 1000;
 /** A slow feed should not hold the refresh open forever. */
 const FETCH_TIMEOUT_MS = 120000;
 
-const UA = 'Mozilla/5.0 (compatible; TreasureTheater/1.0)';
+const UA = 'Mozilla/5.0 (compatible; Treasureflix/1.0)';
 
 /* ------------------------------------------------------------------- state */
 

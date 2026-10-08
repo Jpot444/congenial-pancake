@@ -1,5 +1,5 @@
 /*
- * Treasure Theater, on a dashboard.
+ * Treasureflix, on a dashboard.
  *
  * The look is car.css. This is the one thing the car needs that no amount of
  * styling could produce: a home screen arranged for a glance rather than for a

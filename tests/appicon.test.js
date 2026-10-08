@@ -64,7 +64,7 @@ const readPng = decoder(fs, zlib);
 
   const name = /<meta[^>]+name="apple-mobile-web-app-title"[^>]+content="([^"]+)"/.exec(head)?.[1];
   check('the icon is named, so it is not labelled from the document title',
-    name === 'Treasure Theater', String(name));
+    name === 'Treasureflix', String(name));
   check('while the raw bison is still the favicon and the profile gate',
     /rel="icon"[^>]+href="\/bison\.png"/.test(head) && /src="\/bison\.png"/.test(html));
 

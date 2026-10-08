@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Treasure Theater — the desktop portal's own behaviour.
+   Treasureflix — the desktop portal's own behaviour.
 
    Loaded after app.js and layered on top of it. Nothing in here replaces a
    render function: app.js still owns what is on the page and where the data

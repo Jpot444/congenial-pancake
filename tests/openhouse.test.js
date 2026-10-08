@@ -54,7 +54,7 @@ function cloudflareStandIn() {
 
     if (/\/access\/apps$/.test(url.pathname)) {
       return send({ success: true, result: [
-        { id: 'app-1', name: 'Treasure Theater', domain: 'tv.example.com' },
+        { id: 'app-1', name: 'Treasureflix', domain: 'tv.example.com' },
         { id: 'app-2', name: 'Something else', domain: 'other.example.com' },
       ] });
     }
@@ -439,7 +439,7 @@ async function browserPage() {
 
       /* A bypass added by hand in the dashboard — a state nothing here can
          have produced, so it is named rather than smoothed over. */
-      policies = [{ id: 'byhand', name: 'Treasure Theater — open house',
+      policies = [{ id: 'byhand', name: 'Treasureflix — open house',
         decision: 'bypass', include: [{ everyone: {} }] }];
       await page.evaluate(() => frontDoor.load());
       await wait(900);
@@ -474,6 +474,8 @@ async function browserPage() {
     console.log('\n  and a door left open when the box went down');
     stop();
     await wait(400);
+    /* Under the name it had before the rename, which is what a door opened
+       the day of the rename and left across a power cut would carry. */
     policies = [{ id: 'stale', name: 'Treasure Theater — open house',
       decision: 'bypass', include: [{ everyone: {} }] }];
     log = '';
@@ -493,7 +495,7 @@ async function browserPage() {
     console.log('\n  but one that is still within its time is left alone');
     stop();
     await wait(400);
-    policies = [{ id: 'live', name: 'Treasure Theater — open house',
+    policies = [{ id: 'live', name: 'Treasureflix — open house',
       decision: 'bypass', include: [{ everyone: {} }] }];
     log = '';
     start(Date.now() + 3600 * 1000);

@@ -111,7 +111,7 @@ else
     # Appended, never replaced: `crontab -` overwrites the whole file, so
     # writing only our line would silently delete every other job on the box.
     { crontab -l 2>/dev/null
-      echo "# Treasure Theater: bring the portal back after a reboot."
+      echo "# Treasureflix: bring the portal back after a reboot."
       echo "@reboot /bin/bash $script >> \$HOME/.iptv-boot.log 2>&1"
     } | crontab - || { say "crontab would not take the entry"; return 1; }
     echo "  installed an @reboot entry"

@@ -1,5 +1,5 @@
 /**
- * Treasure Theater on a dashboard.
+ * Treasureflix on a dashboard.
  *
  * "I want to have a new 'this device' for my tesla screen for when I am at
  *  charging stops or parked. The desktop screen is close to what I want, but

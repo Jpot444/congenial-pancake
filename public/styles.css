@@ -48,7 +48,7 @@
   --ease: cubic-bezier(.22, .61, .36, 1);
 
   /* ---------------------------------------------------------------------
-     The rest of the design system, lifted from the Treasure Theater kit.
+     The rest of the design system, lifted from the Treasureflix kit.
      Everything above this line predates it and is left exactly as it was;
      everything below is additive, so a rule that has never asked for one of
      these names cannot change behaviour by their being here. The desktop

@@ -1,4 +1,4 @@
-# Treasure Theater
+# Treasureflix
 
 Private media server for Treasure State — trading-desk operations and the
 principal's personal film and television collection. Point it at your IPTV
@@ -46,7 +46,7 @@ in step again; the test suite checks the committed icon is byte-for-byte what
 the script produces, so they cannot drift silently. The same bytes also sit
 at `/apple-touch-icon.png` and `/apple-touch-icon-precomposed.png`, the bare
 paths iPadOS requests on its own when it ignores the link tags.
-`apple-mobile-web-app-title` names it *Treasure Theater*, which is what the
+`apple-mobile-web-app-title` names it *Treasureflix*, which is what the
 app is called everywhere except its `<title>`.
 
 iOS caches home-screen icons hard: an existing shortcut keeps the old tile
@@ -172,7 +172,7 @@ The public address sits behind Cloudflare Access, which emails a one-time
 code. On somebody else's television that's a wall. **Front door**, in the
 health panel (owner only), opens it for 1–12 hours, and it shuts itself.
 
-**Opening** adds one policy, `Treasure Theater — open house` (bypass,
+**Opening** adds one policy, `Treasureflix — open house` (bypass,
 everyone), to the Access application. **Shutting** deletes it. The policy goes
 at the end of the list, because Cloudflare checks bypass policies before
 allow policies no matter where they sit, and taking slot 1 would mean

@@ -190,7 +190,7 @@ function paintHealth() {
   /* Which build this is. The box is the only thing that knows — this app is
      served by it and updated with it — and a report that starts "it is on
      30.1" is worth a great deal more than one that does not. */
-  if (health.version) dom.version.textContent = `treasure theater · shield · v${health.version}`;
+  if (health.version) dom.version.textContent = `treasureflix · shield · v${health.version}`;
 }
 
 /** 1920×1080, scaled to the panel. */
@@ -289,7 +289,7 @@ async function boot() {
 
   const bison = document.getElementById('brandBison');
   if (bison) bison.onerror = () => { bison.src = 'assets/bison.png'; bison.onerror = null; };
-  dom.version.textContent = 'treasure theater · shield';
+  dom.version.textContent = 'treasureflix · shield';
 
   fit();
   window.addEventListener('resize', fit);

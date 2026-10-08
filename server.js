@@ -9921,7 +9921,7 @@ async function handleApi(req, res, pathname, query) {
     }
 
     const next = `${existing.replace(/\n*$/, '')}\n`
-      + '# Treasure Theater: bring the portal back after a reboot. Installed from\n'
+      + '# Treasureflix: bring the portal back after a reboot. Installed from\n'
       + '# the health panel; safe to remove if pm2 has a boot service instead.\n'
       + `${line}\n`;
     const wrote = spawnSync('crontab', ['-'], { input: next, encoding: 'utf8', timeout: 5000 });
