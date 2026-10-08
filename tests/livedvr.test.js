@@ -132,7 +132,9 @@ const get = (p) => new Promise((resolve, reject) => {
      of checks on the fallback below, and crowded.test.js for the behaviour. */
   check('and a new ingest still starts when the pool is full, but it is counted',
     /const spare = providers\.pick\(cfg, \{ reserve: true \}\);/.test(SERVER)
-    && /const account = spare \|\| providers\.accounts\(cfg\)\[0\]/.test(SERVER));
+    /* …falling back to the first login still alive (deadlogin.test.js), not
+       simply the first in the list, which may be the expired one. */
+    && /const account = spare \|\| providers\.fallback\(cfg\)/.test(SERVER));
   check('and whether it started into a full pool is carried to the failure',
     /const crowded = !spare;/.test(SERVER)
     && /\{ crowded \}\)/.test(SERVER));

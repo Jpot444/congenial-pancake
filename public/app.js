@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '44.9';
+const VERSION = '45.0';
 
 const PAGE_SIZE = 60;
 

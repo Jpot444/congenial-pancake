@@ -105,6 +105,40 @@ function accounts(cfg) {
     }));
 }
 
+/**
+ * Whether the provider has said this login is finished — past its expiry
+ * date, or a status of expired, banned or disabled.
+ *
+ * "I am getting a second provider to replace the expired one"
+ *
+ * Nothing here used to ask. An expired login with no streams on it read as
+ * the emptiest account in the house, so pick() handed it out first: the
+ * billboard, a channel, a download, all opened on a login that would refuse
+ * them, and the dead one was still counted in capacity. A login nobody has
+ * asked about yet is NOT dead — that is the conservative guess, the same one
+ * DEFAULT_SLOTS makes — so this only ever acts on what the provider said.
+ */
+function dead(id) {
+  const known = facts.get(id);
+  if (!known) return false;
+  if (known.expiresAt && known.expiresAt < Date.now()) return true;
+  return /expired|banned|disabled/i.test(known.status || '');
+}
+
+/** The logins worth opening anything on, in the order they were added. */
+function usable(cfg) {
+  return accounts(cfg).filter((a) => !dead(a.id));
+}
+
+/**
+ * The login to fall back to when the pool says none is free: the first one
+ * still alive, and only if every one is dead, the first one at all — so the
+ * provider gets to say no in its own words rather than the box going quiet.
+ */
+function fallback(cfg) {
+  return usable(cfg)[0] || accounts(cfg)[0] || null;
+}
+
 /** How many slots this login is believed to have. */
 function slotsFor(id) {
   const known = facts.get(id);
@@ -139,9 +173,9 @@ function guessing(id) {
 /** True when any login's slot count is still the conservative guess. */
 const anyGuessed = (cfg) => accounts(cfg).some((a) => guessing(a.id));
 
-/** Free slots across every login. */
+/** Free slots across every login still alive — see dead(). */
 function free(cfg) {
-  return accounts(cfg).reduce((sum, account) => {
+  return usable(cfg).reduce((sum, account) => {
     const held = slot(account.id);
     return sum + Math.max(0, slotsFor(account.id) - held.streams - held.reserved.length);
   }, 0);
@@ -152,7 +186,7 @@ const busy = (cfg) => free(cfg) === 0;
 
 /** Every slot, in use or not — what the house could run at once. */
 function capacity(cfg) {
-  return accounts(cfg).reduce((sum, a) => sum + slotsFor(a.id), 0);
+  return usable(cfg).reduce((sum, a) => sum + slotsFor(a.id), 0);
 }
 
 function inUse(cfg) {
@@ -170,7 +204,7 @@ function inUse(cfg) {
 function pick(cfg, { reserve = false } = {}) {
   let best = null;
   let bestRoom = 0;
-  for (const account of accounts(cfg)) {
+  for (const account of usable(cfg)) {
     const held = slot(account.id);
     const room = slotsFor(account.id) - held.streams - held.reserved.length;
     if (room > bestRoom) {
@@ -201,7 +235,7 @@ function pick(cfg, { reserve = false } = {}) {
  * stream is running comes back empty.
  */
 function forMeta(cfg) {
-  return pick(cfg) || accounts(cfg)[0] || null;
+  return pick(cfg) || fallback(cfg);
 }
 
 /** Which login this URL belongs to, by the credentials written into it. */
@@ -394,6 +428,9 @@ function forget(id) {
 
 module.exports = {
   accounts,
+  usable,
+  fallback,
+  dead,
   pick,
   forMeta,
   forUrl,

@@ -1822,7 +1822,7 @@ function jobSourceUrl(job) {
      touches the provider — it yields to anybody pressing play — so it takes
      the account nobody else is on, and only starts at all when the queue
      below has found a free slot for it. */
-  const account = providers.pick(cfg) || cfg;
+  const account = providers.pick(cfg) || providers.fallback(cfg) || cfg;
   return buildStreamUrl(account, job.kind === 'series' ? 'series' : 'movie', job.streamId, job.ext);
 }
 
@@ -4613,7 +4613,7 @@ function beginRecording(row) {
       makeRoomForRecording(row);
       account = providers.pick(cfg);
     }
-    const chosen = account || providers.accounts(cfg)[0] || cfg;
+    const chosen = account || providers.fallback(cfg) || cfg;
     /* Not always m3u8. An attempt that wrote nothing is followed by one in
        the other format, because a channel this provider serves only as
        MPEG-TS was watchable and unrecordable — see recordings.formatFor. */
@@ -4935,7 +4935,7 @@ async function ensureLiveDvr(cfg, channelId, low = false, { billboard = false } 
     await refreshAccounts(cfg);
   }
   const spare = providers.pick(cfg, { reserve: true });
-  const account = spare || providers.accounts(cfg)[0] || null;
+  const account = spare || providers.fallback(cfg);
   if (!account) throw new Error('No free provider connection for live ingest');
   /*
    * Whether this ingest is starting into a full pool, which is the difference
@@ -11426,7 +11426,7 @@ async function handleApi(req, res, pathname, query) {
           });
         }
       }
-      const direct = buildStreamUrl(chosen || cfg, kind, id, ext);
+      const direct = buildStreamUrl(chosen || providers.fallback(cfg) || cfg, kind, id, ext);
       let url = proxyPath(direct);
 
       // How an MPEG-TS channel is opened. One setting, not a choice.
