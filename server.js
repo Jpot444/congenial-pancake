@@ -8741,6 +8741,8 @@ async function handleApi(req, res, pathname, query) {
         accountId: String(held.accountId || ''),
         appId: String(held.appId || ''),
         icon: iconThrough,
+        iconSeen,
+        since: bootedAt,
       });
     }
     if (req.method === 'PUT') {
@@ -12062,6 +12064,53 @@ function recentCrashes(limit = 3) {
 
 /* -------------------------------------------------------------------- main */
 
+/*
+ * Who asks for the home-screen icon, and what they are told.
+ *
+ * "Cloudflare isn't blocking it, you've been updating it and I've seen your
+ *  updates"
+ *
+ * Three tries at the icon on a guess about what stood between the phone and
+ * the file. This writes it down instead: every request for a touch icon, from
+ * what, through Cloudflare or not, with a login or without, and what the box
+ * answered. One "Add to Home Screen" then says which of the explanations is
+ * true. Shown in Front door → Cloudflare setup, and in the log.
+ *
+ * A request that never arrives is an answer too — it means something in
+ * front of the box turned it away, and the list stays empty.
+ */
+const ICON_REQUEST = /^\/(app-icon|apple-touch-icon(-precomposed)?)(-\d+x\d+)?(-precomposed)?\.png$/;
+const iconSeen = [];
+const bootedAt = Date.now();
+
+function noteIconRequest(req, res, pathname) {
+  const ua = String(req.headers['user-agent'] || '');
+  const device = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad'
+    : /Macintosh/.test(ua) ? 'Mac' : /Android/.test(ua) ? 'Android' : 'something else';
+  const row = {
+    at: Date.now(),
+    path: pathname,
+    method: req.method,
+    device,
+    /* What iOS's own fetch looks like: not a browser page load. */
+    agent: ua.slice(0, 160),
+    viaCloudflare: Boolean(req.headers['cf-ray'] || req.headers['cf-connecting-ip']),
+    /* Access adds this to a request it let through on a login; a bypass or a
+       request that never met Access carries none. */
+    login: Boolean(req.headers['cf-access-jwt-assertion']
+      || /(^|;\s*)CF_Authorization=/.test(String(req.headers.cookie || ''))),
+    status: 0,
+  };
+  res.on('finish', () => {
+    row.status = res.statusCode;
+    console.log(`  icon: ${row.method} ${row.path} from ${row.device}`
+      + `${row.viaCloudflare ? ' via Cloudflare' : ' direct'}`
+      + `${row.login ? ' with a login' : ' without a login'} → ${row.status}`);
+  });
+  iconSeen.unshift(row);
+  iconSeen.length = Math.min(iconSeen.length, 12);
+}
+
 const server = http.createServer(async (req, res) => {
   const parsed = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const { pathname, searchParams } = parsed;
@@ -12095,6 +12144,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/stream') return await handleStream(req, res, searchParams);
     if (pathname === '/img') return await handleImage(req, res, searchParams);
+    if (ICON_REQUEST.test(pathname)) noteIconRequest(req, res, pathname);
     return serveStatic(req, res, pathname);
   } catch (err) {
     if (!res.headersSent) json(res, 500, { error: err.message });

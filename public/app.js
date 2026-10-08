@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '45.7';
+const VERSION = '45.8';
 
 const PAGE_SIZE = 60;
 
@@ -4705,6 +4705,7 @@ const frontDoor = {
       if (cf.set && cf.icon && cf.icon.at && !cf.icon.ok) {
         this.say(`The home-screen icon could not be let through: ${cf.icon.error}`, true);
       }
+      this.paintIconSeen(cf);
       $('#doorToken').placeholder = cf.set
         ? 'Saved — paste another to replace it'
         : 'Paste the token';
@@ -4720,6 +4721,26 @@ const frontDoor = {
         $('#doorAppRow').hidden = true;
       }
     } catch { /* the state line already says what went wrong */ }
+  },
+
+  /**
+   * Who has asked for the home-screen icon since the box started, and what
+   * they were told. An empty list after an "Add to Home Screen" is itself the
+   * answer: the request never reached the box.
+   */
+  paintIconSeen(cf) {
+    const node = $('#doorIconSeen');
+    const rows = Array.isArray(cf.iconSeen) ? cf.iconSeen : [];
+    const since = cf.since ? new Date(cf.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+    node.hidden = false;
+    if (!rows.length) {
+      node.textContent = `Home-screen icon: nothing has asked for it since the box started${since ? ` at ${since}` : ''}. `
+        + 'If you have just tried Add to Home Screen, the request never reached the box.';
+      return;
+    }
+    node.textContent = 'Home-screen icon, last asked for: ' + rows.slice(0, 3).map((r) =>
+      `${whenWords(r.at)} — ${r.device}, ${r.path}, ${r.viaCloudflare ? 'through Cloudflare' : 'direct'}, `
+      + `${r.login ? 'with a login' : 'without a login'}, answered ${r.status || '…'}`).join(' · ');
   },
 
   say(words, bad) {

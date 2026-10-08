@@ -188,6 +188,24 @@ const readPng = decoder(fs, zlib);
       `${alt.status}, ${altBytes.length} vs ${bytes.length} bytes`);
   }
 
+  // --- who asked for it ----------------------------------------------------
+  //
+  // "Cloudflare isn't blocking it" — so the box writes down every request for
+  // the icon, and an Add to Home Screen says what really happened.
+  console.log('\n  the box remembers who asked for the icon');
+  await fetch(`${BASE}/app-icon.png?v=test`, { headers: {
+    'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+    'cf-ray': '8abc-DFW',
+  } });
+  await new Promise((r) => setTimeout(r, 200));
+  const cfSaid = await (await fetch(`${BASE}/api/cloudflare?profileId=own1`)).json();
+  const last = (cfSaid.iconSeen || [])[0] || {};
+  console.log('   ', JSON.stringify(last).slice(0, 200));
+  check('an iPhone asking through Cloudflare is recorded as exactly that',
+    last.device === 'iPhone' && last.viaCloudflare === true && last.login === false
+      && last.path === '/app-icon.png', JSON.stringify(last));
+  check('with what the box answered', last.status === 200, String(last.status));
+
   // --- regenerating is one command -----------------------------------------
   //
   // The icon is a build product of the logo. Running the script again must
