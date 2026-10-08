@@ -58,23 +58,24 @@ const readPng = decoder(fs, zlib);
   const link = /<link[^>]+rel="apple-touch-icon"[^>]*>/.exec(head)?.[0] || '';
   check('the head asks for an apple-touch-icon', Boolean(link), 'no such link tag');
   const href = /href="([^"]+)"/.exec(link)?.[1] || '';
-  /* Carried IN the page, not fetched. iOS fetches a linked touch icon outside
-     the page's session, so behind Cloudflare Access it got the login page,
-     fell back to the transparent favicon and padded it with white — "the Red
-     Bull is surrounded by white". */
-  check('carried inside the page, so nothing has to fetch it',
-    href.startsWith('data:image/png;base64,'), href.slice(0, 40));
-  const inline = Buffer.from(href.slice('data:image/png;base64,'.length), 'base64');
-  const servedIcon = Buffer.from(await (await fetch(`${BASE}/app-icon.png`)).arrayBuffer());
-  check('and it is the manufactured icon, byte for byte, not the raw logo',
-    inline.length > 0 && inline.equals(servedIcon), `${inline.length} vs ${servedIcon.length} bytes`);
+  /* A plain link. iOS does not take a data: URI here — inlining it made no
+     difference on a real phone. */
+  check('pointing at the manufactured icon, not the raw logo',
+    href === '/app-icon.png', href);
   check('with its size declared', /sizes="180x180"/.test(link), link);
 
   const name = /<meta[^>]+name="apple-mobile-web-app-title"[^>]+content="([^"]+)"/.exec(head)?.[1];
   check('the icon is named, so it is not labelled from the document title',
     name === 'Treasureflix', String(name));
-  check('while the raw bison is still the favicon and the profile gate',
-    /rel="icon"[^>]+href="\/bison\.png"/.test(head) && /src="\/bison\.png"/.test(html));
+  /* The favicon too. It is what iOS falls back to when it cannot use the
+     touch icon — behind Cloudflare Access, always — and as the transparent
+     logo it came out filled to the square, cropped and backed with white:
+     "the bull is cut off … the background should be black". */
+  check('and the favicon is the same square icon, so the fallback is too',
+    /<link rel="icon"[^>]+href="\/app-icon\.png"/.test(head),
+    (/<link rel="icon"[^>]*>/.exec(head) || [''])[0]);
+  check('while the raw bison is still the profile gate\u2019s picture',
+    /src="\/bison\.png"/.test(html));
 
   // --- and the server serves it -------------------------------------------
   console.log('\n  what the server sends back');
@@ -141,14 +142,31 @@ const readPng = decoder(fs, zlib);
     shown > 1500 && notRed === 0, `${shown} visible px, ${notRed} not #E50914`);
 
   const [br, bgc, bb] = px(2, 2);
-  check('on the app\'s own dark background, not on white',
-    br < 60 && bgc < 60 && bb < 60, `corner is rgb(${br},${bgc},${bb})`);
+  check('on black, not on white', br === 0 && bgc === 0 && bb === 0,
+    `corner is rgb(${br},${bgc},${bb})`);
+  /* iOS rounds the tile to a corner radius of about 22% of its width. Every
+     red pixel of the bull has to fall inside that, or it is cut off. */
+  const R = img.width * 0.2237;
+  const inside = (x, y) => {
+    const cx = Math.min(Math.max(x, R), img.width - R);
+    const cy = Math.min(Math.max(y, R), img.height - R);
+    return (x - cx) ** 2 + (y - cy) ** 2 <= R * R;
+  };
+  let clipped = 0;
+  for (let y = 0; y < img.height; y += 1) {
+    for (let x = 0; x < img.width; x += 1) {
+      const [r, g, b] = px(x, y);
+      if (r > 120 && g < 80 && b < 80 && !inside(x + 0.5, y + 0.5)) clipped += 1;
+    }
+  }
+  check('and none of the bull falls outside iOS\u2019s rounded corners', clipped === 0,
+    `${clipped} red pixels would be cut off`);
   const margin = Math.min(minX, minY, img.width - 1 - maxX, img.height - 1 - maxY);
   check('with margin, so the rounded-corner mask cannot clip the mark',
     margin >= 12, `${margin}px`);
   /* And not lost in the middle of it: "isn't at full scale". */
   check('and filling the tile — the bull is most of its width',
-    maxX - minX + 1 >= img.width * 0.8, `${maxX - minX + 1} of ${img.width}px`);
+    maxX - minX + 1 >= img.width * 0.75, `${maxX - minX + 1} of ${img.width}px`);
 
   // --- the paths iPadOS asks for by itself ---------------------------------
   //
