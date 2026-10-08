@@ -195,6 +195,14 @@ const LIVE = { categories: [{ id: 'c1', name: 'USA SPORTS' }], items: CHANNELS,
 
   /* ---- on a desktop ------------------------------------------------------ */
   console.log('\n  on a desktop');
+  /* From a clean start. With taste served above, the billboard is already
+     playing from the page load itself — which is the point of the change —
+     so the count of asks has to begin from nothing remembered. */
+  await page.evaluate(() => {
+    const h = window.__ttDesktop.heroLive;
+    h.stop();
+    h.held = null;
+  });
   await home('desk');
   const desk = await shape();
   console.log('   ', JSON.stringify(desk), 'asked:', JSON.stringify(asks));
