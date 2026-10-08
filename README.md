@@ -101,6 +101,15 @@ icon is now written as **RGB (PNG colour type 2)** with no alpha channel, and
 `appicon.test.js` checks the colour type. The link carries a fingerprint of
 the picture (`?v=…`), so a changed icon is an address iOS hasn't cached.
 
+**And it's 1024×1024.** RGB alone didn't change the phone either. *"Just make
+it bigger and the background black"*. That was literally it: iOS now shows a
+home-screen icon larger than 180 pixels, and it won't stretch a smaller file.
+It puts it at its own size in the middle of a white tile, which was the small
+black square on white. The icon is now Apple's master size, **1024×1024**, on
+pure black, with the bull at 0.06 padding (about 88% of the width). It's drawn
+from the 219px logo by re-sharpening the silhouette's edge rather than
+smearing it, so it stays crisp at that size.
+
 iOS caches home-screen icons hard: an existing shortcut keeps the old tile
 until it is removed and added again.
 

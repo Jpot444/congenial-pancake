@@ -7,7 +7,7 @@
  * which an iPhone quietly pads and fills but iPadOS renders as a blank white
  * tile. What iOS actually wants is boring, and boring is what is checked:
  *
- *   * square, 180x180, opaque in every pixel;
+ *   * square, 1024x1024, opaque in every pixel;
  *   * the bison on the app's own dark background, not on white;
  *   * margin around the mark, so the rounded-corner mask cannot clip it;
  *   * manufactured FROM the logo by scripts/make-app-icon.js — the logo stays
@@ -68,7 +68,7 @@ const readPng = decoder(fs, zlib);
     .update(fs.readFileSync(path.join(ROOT, 'public/app-icon.png'))).digest('hex').slice(0, 10);
   check('carrying a fingerprint of the current picture, so iOS cannot reuse an old one',
     href.endsWith(`?v=${want}`), `${href} vs ${want}`);
-  check('with its size declared', /sizes="180x180"/.test(link), link);
+  check('with its size declared', /sizes="1024x1024"/.test(link), link);
 
   const name = /<meta[^>]+name="apple-mobile-web-app-title"[^>]+content="([^"]+)"/.exec(head)?.[1];
   check('the icon is named, so it is not labelled from the document title',
@@ -105,8 +105,11 @@ const readPng = decoder(fs, zlib);
      Colour type 2 is RGB: no alpha channel to have. */
   check('saved with no alpha channel at all — RGB, not RGBA',
     bytes[25] === 2, `PNG colour type ${bytes[25]}`);
-  check('180x180 — the size iOS scales everything else from', img.width === 180,
-    String(img.width));
+  /* "Just make it bigger". At 180 iOS put it at its own size in the middle
+     of a white tile; it does not stretch a small icon up, but it does scale a
+     big one down. 1024 is Apple's own master size. */
+  check('1024x1024 — big enough that iOS scales it down, never pads it out',
+    img.width === 1024, String(img.width));
 
   const px = (x, y) => {
     const o = (y * img.width + x) * 4;

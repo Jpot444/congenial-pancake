@@ -30,7 +30,11 @@ const path = require('path');
 const zlib = require('zlib');
 
 const ROOT = path.join(__dirname, '..');
-const SIZE = 180;
+// 1024, not 180. "Just make it bigger": iOS now shows a home-screen icon
+// larger than 180 pixels, and a smaller file is not stretched — it is put at
+// its own size in the middle of a white tile. 1024 is Apple's own master size
+// for an icon; iOS scales it DOWN, which it does cleanly.
+const SIZE = 1024;
 // --bg from styles.css: the room the app itself sits in.
 // Black — "the background should be black". The Netflix tile is black too.
 const BG = [0x00, 0x00, 0x00];
@@ -41,7 +45,7 @@ const BULL = [0xe5, 0x09, 0x14];
 // 0.09: big — it was 0.16, two thirds of the width, "isn't at full scale" —
 // but with the tail and the grass well clear of the corner curve, which on a
 // wide mark like this is where a tighter crop starts to lose them.
-const PAD = 0.09;
+const PAD = 0.06;
 
 /* ---- PNG in ---- */
 
@@ -188,11 +192,16 @@ for (let y = 0; y < SIZE; y += 1) {
     const i = (y * SIZE + x) * 4;
     let [r, g, b] = BG;
     if (x >= ox && x < ox + dw && y >= oy && y < oy + dh) {
-      const [sr, sg, sb, sa] = sample((x - ox) / scale, (y - oy) / scale);
-      const a = sa / 255;
-      r = Math.round(sr * a + BG[0] * (1 - a));
-      g = Math.round(sg * a + BG[1] * (1 - a));
-      b = Math.round(sb * a + BG[2] * (1 - a));
+      /* The logo is 219 pixels wide and this draws it at about 960, so its
+         edge is re-sharpened rather than smeared: the silhouette's coverage,
+         interpolated, then pulled to a narrow anti-aliased band. A flat-colour
+         mark scales like a shape that way instead of like a photograph. */
+      const [, , , sa] = sample((x - ox) / scale, (y - oy) / scale);
+      const t = Math.min(1, Math.max(0, (sa / 255 - 0.35) / 0.3));
+      const a = t * t * (3 - 2 * t);
+      r = Math.round(BULL[0] * a + BG[0] * (1 - a));
+      g = Math.round(BULL[1] * a + BG[1] * (1 - a));
+      b = Math.round(BULL[2] * a + BG[2] * (1 - a));
     }
     icon[i] = r;
     icon[i + 1] = g;
@@ -242,8 +251,7 @@ for (const page of ['public/index.html', 'public/tv/index.html']) {
   const file = path.join(ROOT, page);
   const html = fs.readFileSync(file, 'utf8');
   const next = html
-    .replace(/(<link rel="apple-touch-icon" sizes="180x180" href=")[^"]*(" \/>)/, `$1${href}$2`)
-    .replace(/(<link rel="icon" type="image\/png" )href="[^"]*"( \/>)/, `$1sizes="180x180" href="${href}"$2`)
-    .replace(/(<link rel="icon" type="image\/png" sizes="180x180" )href="[^"]*"( \/>)/, `$1href="${href}"$2`);
+    .replace(/<link rel="apple-touch-icon"[^>]*\/>/, `<link rel="apple-touch-icon" sizes="${SIZE}x${SIZE}" href="${href}" />`)
+    .replace(/<link rel="icon" type="image\/png"[^>]*\/>/, `<link rel="icon" type="image/png" sizes="${SIZE}x${SIZE}" href="${href}" />`);
   if (next !== html) fs.writeFileSync(file, next);
 }
