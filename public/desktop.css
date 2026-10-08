@@ -64,10 +64,10 @@
  * desktop.js sets it once now. */
 .desk .site-header.lifted {
   height: 58px;
-  background: rgba(17, 11, 10, .74);
+  background: rgba(17, 17, 17, .74);
   backdrop-filter: blur(22px) saturate(150%);
   box-shadow:
-    0 1px 0 rgba(162, 31, 36, .6),
+    0 1px 0 rgba(229, 9, 20, .6),
     0 16px 44px rgba(0, 0, 0, .55);
 }
 
@@ -95,8 +95,8 @@
 
 .desk .site-header.lifted .brand-title {
   font-size: 22px;
-  color: #E4262E;
-  text-shadow: 0 0 22px rgba(226, 38, 46, .5);
+  color: #E50914;
+  text-shadow: 0 0 22px rgba(229, 9, 20, .5);
 }
 
 .desk .brand-sub {
@@ -193,7 +193,7 @@
   height: var(--space-3);
   border-radius: 50%;
   background: var(--ok);
-  box-shadow: 0 0 0 2px rgba(17, 11, 10, .9);
+  box-shadow: 0 0 0 2px rgba(17, 17, 17, .9);
   animation: pulse 2.6s infinite;
 }
 
@@ -328,7 +328,7 @@
 }
 .desk .sc-card:hover { border-color: var(--line-hover); }
 .desk .sc-card.is-final { opacity: .74; }
-.desk .sc-card.is-pinned { border-color: rgba(224, 49, 50, .5); }
+.desk .sc-card.is-pinned { border-color: rgba(229, 9, 20, .5); }
 
 /* The whole card is the way into the broadcast; the star sits on top of it. */
 .desk .sc-tune {
@@ -441,7 +441,7 @@
 
 .desk .sc-at { font-size: 15px; color: var(--muted-dim); line-height: 1; }
 .desk .sc-time { margin-top: 4px; font-size: 19px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
-.desk .sc-warmup { margin-top: 2px; font-size: 13px; font-weight: 600; color: #ff6b62; }
+.desk .sc-warmup { margin-top: 2px; font-size: 13px; font-weight: 600; color: #F5333F; }
 .desk .sc-state { margin-top: 2px; font-size: 11.5px; color: var(--muted-dim); }
 
 /* ---- the diamond and the count ---- */
@@ -487,7 +487,7 @@
 .desk .sc-countrow:first-child i.on { background: #6fd08c; }
 /* Strikes and outs: the ones that end things. */
 .desk .sc-countrow:nth-child(2) i.on { background: #f0b64a; }
-.desk .sc-countrow:nth-child(3) i.on { background: #ff6b62; }
+.desk .sc-countrow:nth-child(3) i.on { background: #F5333F; }
 
 /* ---- the field ----
  * A hundred yards, the away side's end zone at the left and the home side's
@@ -503,7 +503,7 @@
   background: rgba(110, 190, 130, .1);
   overflow: hidden;
 }
-.desk .sc-field.is-redzone { background: rgba(224, 49, 50, .16); border-color: rgba(224, 49, 50, .45); }
+.desk .sc-field.is-redzone { background: rgba(229, 9, 20, .16); border-color: rgba(229, 9, 20, .45); }
 
 .desk .sc-field .ez {
   position: absolute;
@@ -646,8 +646,8 @@
 
 .desk .rail:hover .rail-nav { opacity: 1; }
 .desk .rail-nav.is-off { opacity: 0 !important; pointer-events: none; }
-.desk .rail-nav.prev { left: -10px; background: linear-gradient(90deg, var(--bg) 26%, rgba(21, 16, 15, 0)); }
-.desk .rail-nav.next { right: -10px; background: linear-gradient(270deg, var(--bg) 26%, rgba(21, 16, 15, 0)); }
+.desk .rail-nav.prev { left: -10px; background: linear-gradient(90deg, var(--bg) 26%, rgba(20, 20, 20, 0)); }
+.desk .rail-nav.next { right: -10px; background: linear-gradient(270deg, var(--bg) 26%, rgba(20, 20, 20, 0)); }
 .desk .rail-nav svg { width: var(--space-9); height: var(--space-9); stroke-width: 2; }
 
 
@@ -763,7 +763,7 @@
   font-size: 19px;
   letter-spacing: .03em;
   line-height: 1.12;
-  color: rgba(246, 241, 238, .74);
+  color: rgba(255, 255, 255, .74);
   background: var(--field, var(--fallback-tile));
 }
 
@@ -776,9 +776,9 @@
     radial-gradient(80% 60% at 50% 108%, rgba(0, 0, 0, .45), transparent);
 }
 
-.desk .card:nth-child(6n + 1) { --field: radial-gradient(120% 110% at 22% 18%, #3c2a24, #1a1210 62%, #100b0a); }
+.desk .card:nth-child(6n + 1) { --field: radial-gradient(120% 110% at 22% 18%, #333333, #1A1A1A 62%, #0F0F0F); }
 .desk .card:nth-child(6n + 2) { --field: radial-gradient(120% 110% at 74% 26%, #243440, #141b20 60%, #0d1115); }
-.desk .card:nth-child(6n + 3) { --field: radial-gradient(120% 110% at 34% 22%, #4a2a22, #20120f 62%, #120a09); }
+.desk .card:nth-child(6n + 3) { --field: radial-gradient(120% 110% at 34% 22%, #3A3A3A, #1C1C1C 62%, #121212); }
 .desk .card:nth-child(6n + 4) { --field: radial-gradient(120% 110% at 60% 30%, #2c3a2c, #161e17 60%, #0d120e); }
 .desk .card:nth-child(6n + 5) { --field: radial-gradient(120% 110% at 40% 20%, #3a2c40, #1a151f 60%, #100d13); }
 .desk .card:nth-child(6n + 6) { --field: radial-gradient(120% 110% at 66% 24%, #40382a, #1e1a13 60%, #12100b); }
@@ -826,7 +826,7 @@
   border: 0;
   border-radius: 50%;
   background: rgba(255, 255, 255, .94);
-  color: #100b0a;
+  color: #0F0F0F;
   cursor: pointer;
 }
 
@@ -1032,7 +1032,7 @@
   position: sticky;
   top: var(--header-h);
   z-index: 50;
-  background: rgba(17, 11, 10, .86);
+  background: rgba(17, 17, 17, .86);
   backdrop-filter: blur(20px) saturate(140%);
   border-bottom: 1px solid var(--line-soft);
   transition: top .3s var(--ease);
@@ -1076,7 +1076,7 @@
   right: -1px;
   width: 44px;
   pointer-events: none;
-  background: linear-gradient(270deg, rgba(17, 11, 10, .95), transparent);
+  background: linear-gradient(270deg, rgba(17, 17, 17, .95), transparent);
 }
 
 .desk .catchip {
@@ -1222,8 +1222,8 @@
 
 .desk .dk-ctrl.on {
   color: var(--text);
-  border-color: rgba(224, 49, 50, .55);
-  background: rgba(224, 49, 50, .16);
+  border-color: rgba(229, 9, 20, .55);
+  background: rgba(229, 9, 20, .16);
 }
 
 /* The originals stay in the markup — they are what these press — but two of
@@ -1400,7 +1400,7 @@
 
 .desk .dk-btn:active { transform: var(--press-scale); }
 /* A primary action is bone-white. Red is chrome here, not a call to action. */
-.desk .dk-btn-p { background: #fff; color: #100b0a; }
+.desk .dk-btn-p { background: #fff; color: #0F0F0F; }
 .desk .dk-btn-p:hover { background: var(--text); }
 .desk .dk-btn-g {
   border-color: rgba(255, 255, 255, .32);
@@ -1468,7 +1468,7 @@ body.is-reordering .cht { transition: none; }
 
 .desk .dk-hpin svg { width: var(--text-md); height: var(--text-md); }
 .desk .dk-hpin:hover { color: var(--text); border-color: var(--line-hover); }
-.desk .dk-hpin.on { opacity: 1; color: var(--brand-red); border-color: rgba(162, 31, 36, .4); }
+.desk .dk-hpin.on { opacity: 1; color: var(--brand-red); border-color: rgba(229, 9, 20, .4); }
 .desk .shelf-head:hover .dk-hpin { opacity: 1; }
 
 /* ---- the channel card ---- */
@@ -1531,7 +1531,7 @@ body.is-reordering .cht { transition: none; }
   line-height: 1.02;
   letter-spacing: .03em;
   text-align: center;
-  color: rgba(246, 241, 238, .9);
+  color: rgba(255, 255, 255, .9);
   text-shadow: 0 2px 16px rgba(0, 0, 0, .5);
 }
 
@@ -1590,7 +1590,7 @@ body.is-reordering .cht { transition: none; }
   z-index: 2;
   display: grid;
   place-items: center;
-  background: rgba(8, 6, 6, .44);
+  background: rgba(8, 8, 8, .44);
   backdrop-filter: blur(2px);
   opacity: 0;
   transition: opacity var(--dur-base) var(--ease);
@@ -1604,7 +1604,7 @@ body.is-reordering .cht { transition: none; }
   height: 46px;
   border-radius: 50%;
   background: rgba(255, 255, 255, .94);
-  color: #100b0a;
+  color: #0F0F0F;
   box-shadow: 0 8px 22px rgba(0, 0, 0, .45);
 }
 .desk .cht .go svg { width: 20px; height: 20px; fill: currentColor; stroke: none; margin-left: 2px; }
@@ -1621,7 +1621,7 @@ body.is-reordering .cht { transition: none; }
   width: 30px;
   height: 30px;
   border-radius: var(--radius-pill);
-  background: rgba(8, 6, 6, .6);
+  background: rgba(8, 8, 8, .6);
   backdrop-filter: blur(6px);
   border: 1px solid rgba(255, 255, 255, .14);
   color: rgba(255, 255, 255, .72);
@@ -1636,7 +1636,7 @@ body.is-reordering .cht { transition: none; }
 .desk .cht .fav svg { width: 15px; height: 15px; }
 .desk .cht:hover .fav { opacity: 1; }
 .desk .cht .fav:hover { color: #fff; border-color: rgba(255, 255, 255, .5); }
-.desk .cht .fav.on { opacity: 1; color: var(--live); border-color: rgba(255, 107, 94, .45); }
+.desk .cht .fav.on { opacity: 1; color: var(--live); border-color: rgba(245, 51, 63, .45); }
 
 .desk #dkLive .shelf:first-child { margin-top: var(--space-8); }
 
@@ -1821,9 +1821,9 @@ body.is-reordering .cht { transition: none; }
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(90deg, rgba(11, 7, 7, .96) 0%, rgba(11, 7, 7, .84) 34%,
-      rgba(11, 7, 7, .2) 64%, rgba(11, 7, 7, .04) 100%),
-    linear-gradient(0deg, var(--bg) 0%, rgba(21, 16, 15, .74) 17%, rgba(21, 16, 15, 0) 48%),
+    linear-gradient(90deg, rgba(11, 11, 11, .96) 0%, rgba(11, 11, 11, .84) 34%,
+      rgba(11, 11, 11, .2) 64%, rgba(11, 11, 11, .04) 100%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(20, 20, 20, .74) 17%, rgba(20, 20, 20, 0) 48%),
     linear-gradient(180deg, rgba(0, 0, 0, .62) 0%, rgba(0, 0, 0, 0) 24%);
 }
 
@@ -1834,7 +1834,7 @@ body.is-reordering .cht { transition: none; }
   width: 72%;
   height: 92%;
   pointer-events: none;
-  background: radial-gradient(closest-side, rgba(162, 31, 36, .44), rgba(162, 31, 36, 0) 70%);
+  background: radial-gradient(closest-side, rgba(229, 9, 20, .44), rgba(229, 9, 20, 0) 70%);
   filter: blur(28px);
   animation: dkBreathe 12s ease-in-out infinite alternate;
 }
@@ -1928,7 +1928,7 @@ body.is-reordering .cht { transition: none; }
   max-width: 50ch;
   font-size: 15.5px;
   line-height: 1.62;
-  color: rgba(246, 241, 238, .76);
+  color: rgba(255, 255, 255, .76);
   text-wrap: pretty;
 }
 
@@ -2130,7 +2130,7 @@ body.is-reordering .cht { transition: none; }
   padding: 9px;
   font-size: 13px;
   line-height: 1.1;
-  color: rgba(246, 241, 238, .6);
+  color: rgba(255, 255, 255, .6);
 }
 
 .desk .show-slab .card-art img { width: 100%; height: 100%; object-fit: cover; }
@@ -2144,7 +2144,7 @@ body.is-reordering .cht { transition: none; }
   display: grid;
   place-items: center;
   padding: 0;
-  background: rgba(8, 6, 6, .5);
+  background: rgba(8, 8, 8, .5);
 }
 
 .desk .show-slab .card-over [role="button"] { width: 38px; height: 38px; }
@@ -2181,7 +2181,7 @@ body.is-reordering .cht { transition: none; }
   transition: background var(--dur-base) var(--ease);
 }
 .desk .slab-pips i.seen { background: var(--muted-dim); }
-.desk .slab-pips i.here { background: var(--brand-red); box-shadow: 0 0 8px rgba(162, 31, 36, .7); }
+.desk .slab-pips i.here { background: var(--brand-red); box-shadow: 0 0 8px rgba(229, 9, 20, .7); }
 
 .desk .slab-up {
   display: flex;
@@ -2197,7 +2197,7 @@ body.is-reordering .cht { transition: none; }
   flex-shrink: 0;
   padding: 2px 7px;
   border-radius: var(--radius-pill);
-  background: rgba(162, 31, 36, .22);
+  background: rgba(229, 9, 20, .22);
   color: var(--live-soft);
   font-size: 10px;
   font-weight: 700;
@@ -2311,7 +2311,7 @@ body.is-reordering .cht { transition: none; }
   height: 50px;
   border-radius: 50%;
   background: rgba(255, 255, 255, .94);
-  color: #100b0a;
+  color: #0F0F0F;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
 }
 .desk .dk-ep .go svg { width: 21px; height: 21px; fill: currentColor; stroke: none; margin-left: 2px; }
@@ -2354,7 +2354,7 @@ body.is-reordering .cht { transition: none; }
  * exactly the thing that needs one.
  */
 .desk .guide-grid {
-  background: rgba(14, 11, 11, .82);
+  background: rgba(14, 14, 14, .82);
   border-color: var(--line);
   border-radius: 12px;
 }
@@ -2439,7 +2439,7 @@ body.is-reordering .cht { transition: none; }
 .desk .cht .dk-bin svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .desk .cht:hover .dk-bin { opacity: 1; }
 .desk .cht:hover .no { opacity: 0; }
-.desk .cht .dk-bin:hover { color: #FF6B5E; border-color: #FF6B5E; }
+.desk .cht .dk-bin:hover { color: #F5333F; border-color: #F5333F; }
 .desk .cht .no { transition: opacity .16s ease; }
 
 /* ---- pin on a category chip ----------------------------------------- */
@@ -2526,10 +2526,10 @@ body.is-reordering .cht { transition: none; }
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(90deg, rgba(21, 16, 15, .9) 0%, rgba(21, 16, 15, .7) 38%,
-      rgba(21, 16, 15, .3) 72%, rgba(21, 16, 15, .5) 100%),
-    linear-gradient(0deg, var(--bg) 0%, rgba(21, 16, 15, .72) 26%, rgba(21, 16, 15, 0) 62%),
-    linear-gradient(180deg, rgba(58, 10, 13, .34), rgba(21, 16, 15, 0) 34%);
+    linear-gradient(90deg, rgba(20, 20, 20, .9) 0%, rgba(20, 20, 20, .7) 38%,
+      rgba(20, 20, 20, .3) 72%, rgba(20, 20, 20, .5) 100%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(20, 20, 20, .72) 26%, rgba(20, 20, 20, 0) 62%),
+    linear-gradient(180deg, rgba(64, 7, 9, .34), rgba(20, 20, 20, 0) 34%);
 }
 
 .desk .film-scrims::after {
@@ -2540,8 +2540,8 @@ body.is-reordering .cht { transition: none; }
   width: 62%;
   height: 100%;
   opacity: .5;
-  background: radial-gradient(120% 90% at 100% 20%, rgba(162, 31, 36, .34),
-    rgba(21, 16, 15, 0) 62%);
+  background: radial-gradient(120% 90% at 100% 20%, rgba(229, 9, 20, .34),
+    rgba(20, 20, 20, 0) 62%);
 }
 
 .desk .film-hero-inner {
@@ -2616,7 +2616,7 @@ body.is-reordering .cht { transition: none; }
   font-size: 26px;
   line-height: 1.12;
   letter-spacing: .03em;
-  color: rgba(246, 241, 238, .7);
+  color: rgba(255, 255, 255, .7);
 }
 
 /* What this copy IS, as against what it is doing — which is the pill up in the
@@ -2752,7 +2752,7 @@ body.is-reordering .cht { transition: none; }
   max-width: 760px;
   font-size: var(--text-xl);
   line-height: 1.45;
-  color: rgba(246, 241, 238, .92);
+  color: rgba(255, 255, 255, .92);
 }
 
 .desk .film-plot {
@@ -2775,7 +2775,7 @@ body.is-reordering .cht { transition: none; }
 }
 
 .desk .film-variants .variant-chip {
-  background: rgba(12, 10, 12, .55);
+  background: rgba(12, 12, 12, .55);
   backdrop-filter: blur(6px);
 }
 
@@ -2819,10 +2819,10 @@ body.is-reordering .cht { transition: none; }
 .desk .film-icon-btn svg { width: 20px; height: 20px; }
 
 /* Filled only for the heart and the pin, and only to mean "on". */
-.desk .film-icon-btn.show-fav.is-on { color: var(--live); border-color: rgba(255, 107, 94, .45); }
+.desk .film-icon-btn.show-fav.is-on { color: var(--live); border-color: rgba(245, 51, 63, .45); }
 .desk .film-icon-btn.show-fav.is-on svg { fill: currentColor; }
 .desk .film-icon-btn.show-dl.is-saved { color: var(--ok-soft); border-color: rgba(87, 200, 139, .45); }
-.desk .film-hide:hover { color: var(--live); border-color: rgba(255, 107, 94, .45); }
+.desk .film-hide:hover { color: var(--live); border-color: rgba(245, 51, 63, .45); }
 
 /* How much is left, which is the number that decides whether tonight is the
    night. Tabular so it does not shuffle as the seconds change. */
@@ -2985,7 +2985,7 @@ body.is-reordering .cht { transition: none; }
   font-family: var(--display);
   font-size: 38px;
   letter-spacing: .04em;
-  color: rgba(246, 241, 238, .34);
+  color: rgba(255, 255, 255, .34);
   position: relative;
   transition: transform .16s var(--ease), border-color .16s var(--ease);
 }
@@ -3185,8 +3185,8 @@ body.is-reordering .cht { transition: none; }
 
 .desk .film-thumb.is-down.on {
   color: var(--live-soft);
-  background: rgba(255, 107, 94, .12);
-  border-color: rgba(255, 107, 94, .45);
+  background: rgba(245, 51, 63, .12);
+  border-color: rgba(245, 51, 63, .45);
 }
 
 /* Rows rather than a list of links: the whole row is the target, which is what
@@ -3349,7 +3349,7 @@ body.is-reordering .cht { transition: none; }
  * two different products depending on which screen it was opened on.
  *
  * A flat colour rather than the desktop's translucency, for the reason above:
- * `rgba(17, 11, 10, .74)` over nothing is just a lighter grey. This is what
+ * `rgba(17, 17, 17, .74)` over nothing is just a lighter grey. This is what
  * that glass settles to over the page, so the two read as the same bar.
  *
  * The hairline underneath is the desktop's, and it is doing real work here —
@@ -3357,10 +3357,10 @@ body.is-reordering .cht { transition: none; }
 .desk body.has-tabbar .site-header,
 .desk body.has-tabbar .site-header.lifted {
   height: auto;
-  background: #100B0A;
+  background: #0F0F0F;
   backdrop-filter: none;
   box-shadow:
-    0 1px 0 rgba(162, 31, 36, .6),
+    0 1px 0 rgba(229, 9, 20, .6),
     0 10px 30px rgba(0, 0, 0, .45);
 }
 
@@ -3402,8 +3402,8 @@ body.is-reordering .cht { transition: none; }
 .desk body.has-tabbar .brand-title,
 .desk body.has-tabbar .site-header.lifted .brand-title {
   font-size: 17px;
-  color: #E4262E;
-  text-shadow: 0 0 18px rgba(226, 38, 46, .45);
+  color: #E50914;
+  text-shadow: 0 0 18px rgba(229, 9, 20, .45);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

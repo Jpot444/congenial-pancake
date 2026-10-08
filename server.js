@@ -603,6 +603,113 @@ function writeProfiles(data) {
   }
 }
 
+/* ----------------------------------------------------------- the guest ---
+ *
+ * "Next to manage profiles button should be a guest log in button that opens
+ *  up a new profile without walkthrough, loaded with the standard favorites.
+ *  Make that guest profile the same thing tv.treasurestatecapital.com/tv goes
+ *  to at first."
+ *
+ * ONE Guest, not one per press. A button that made a new profile every time
+ * would fill the twelve seats in an evening of friends. So the box keeps a
+ * single profile called Guest, makes it the first time anybody asks, and
+ * hands back the same one after that. Like the owner, it is known by its name.
+ *
+ * Made here rather than in the browser so the television gets the same Guest
+ * the phone does: the favourites are worked out from the live channel list
+ * this box already holds, and every screen reads them from one record.
+ */
+const GUEST_PROFILE = 'guest';
+
+/** Every one-time overlay marked as seen. A guest is here to watch something. */
+const GUEST_SEEN = {
+  tourDone: true,
+  liveTourDone: true,
+  startersDone: true,
+  reportNoticeSeen: true,
+  dlExplainSeen: true,
+};
+
+/*
+ * The standard favourites: the big networks, the first of each this provider
+ * carries. The TWIN of STARTER_NETWORKS in public/app.js, which offers the
+ * same list to a brand-new profile to pick from — change one, change both.
+ *
+ * Matched on WHOLE words, because NBC is inside CNBC and ESPN is inside ESPNU.
+ */
+const GUEST_NETWORKS = [
+  'ESPN', 'ESPN 2', 'ESPN2', 'FOX SPORTS 1', 'FS1', 'NFL NETWORK', 'NBA TV',
+  'MLB NETWORK', 'TNT', 'TBS', 'USA', 'AMC', 'FX', 'HBO', 'SHOWTIME',
+  'CNN', 'FOX NEWS', 'MSNBC', 'ABC', 'CBS', 'NBC', 'FOX', 'BRAVO',
+  'DISCOVERY', 'HISTORY', 'NATIONAL GEOGRAPHIC', 'FOOD NETWORK', 'HGTV',
+  'CARTOON NETWORK', 'DISNEY CHANNEL', 'NICKELODEON', 'COMEDY CENTRAL',
+  'SYFY', 'TLC', 'ANIMAL PLANET', 'MTV', 'BET', 'PARAMOUNT NETWORK',
+  'GOLF CHANNEL', 'CBS SPORTS NETWORK', 'TCM', 'FREEFORM', 'HALLMARK CHANNEL',
+];
+const GUEST_FAVORITES = 18;
+/* An event rather than a channel — a PPV, a 24/7 loop, a dated one-off. */
+const GUEST_NOT_A_CHANNEL = /\b(24\/?7|PPV|VOD|PPV\d+)\b|\d{1,2}[./]\d{1,2}[./]\d{2,4}/i;
+
+function isGuestProfile(profile) {
+  return String(profile?.name || '').trim().toLowerCase() === GUEST_PROFILE;
+}
+
+const guestWords = (name) =>
+  String(name || '').toUpperCase().split(/[^A-Z0-9&+]+/).filter(Boolean);
+
+function guestRun(hay, want) {
+  for (let i = 0; i + want.length <= hay.length; i += 1) {
+    if (want.every((w, j) => hay[i + j] === w)) return true;
+  }
+  return false;
+}
+
+/**
+ * Favourites for the Guest, in the shape the browser itself writes:
+ * `{ key: 'live:<id>', item }`, with the item exactly as /api/library sent it.
+ */
+function guestFavorites(items) {
+  const pool = (items || []).filter((i) =>
+    i && i.kind === 'live' && !GUEST_NOT_A_CHANNEL.test(String(i.name || '')));
+  const out = [];
+  const taken = new Set();
+  for (const network of GUEST_NETWORKS) {
+    if (out.length >= GUEST_FAVORITES) break;
+    const want = guestWords(network);
+    let best = null;
+    for (const channel of pool) {
+      if (taken.has(String(channel.id))) continue;
+      if (!guestRun(guestWords(channel.name), want)) continue;
+      /* The shortest name wins: the plain network rather than a regional. */
+      if (!best || String(channel.name).length < String(best.name).length) best = channel;
+    }
+    if (!best) continue;
+    taken.add(String(best.id));
+    out.push(best);
+  }
+  return out.map((item) => ({ key: `live:${item.id}`, item }));
+}
+
+/**
+ * The live channel list, from what the box already holds if it can. Only when
+ * it holds nothing is the provider asked — once, and not for long, because a
+ * guest waiting on a spinner is the thing this button exists to avoid.
+ */
+async function guestLiveItems(cfg) {
+  for (const [key, entry] of libraryCache) {
+    if (!key.startsWith(`v${LIBRARY_SHAPE}:live:`)) continue;
+    const items = (entry.payload && entry.payload.items) || [];
+    if (items.length) return items;
+  }
+  if (!cfg) return [];
+  const key = `v${LIBRARY_SHAPE}:live:`;
+  const payload = await Promise.race([
+    rebuildLibrary(cfg, 'live', '', key),
+    new Promise((resolve) => { setTimeout(() => resolve(null), 12000).unref(); }),
+  ]).catch(() => null);
+  return (payload && payload.items) || [];
+}
+
 /* --------------------------------------------------------------- reports ---
  *
  * Everyone who is not Hunter gets a suggestion box where the Pi health button
@@ -8811,7 +8918,7 @@ async function handleApi(req, res, pathname, query) {
 
       const profile = blankProfile(
         name,
-        String(incoming.color || '#A21F24').slice(0, 24),
+        String(incoming.color || '#E50914').slice(0, 24),
         String(incoming.emoji || '🎬').slice(0, 8)
       );
 
@@ -8865,6 +8972,49 @@ async function handleApi(req, res, pathname, query) {
       return json(res, 200, { current: wanted, rev: data.rev });
     }
     return json(res, 405, { error: 'Method not allowed' });
+  }
+
+  /*
+   * The Guest — made the first time anybody asks, the same one every time
+   * after. Ahead of the /api/profiles/:id routes for the same reason "current"
+   * is: "guest" is a word, not an id.
+   *
+   * Not behind the profile lock. The lock is about who may add and remove
+   * profiles of their own; this adds nothing anybody chose, and at most once.
+   */
+  if (pathname === '/api/profiles/guest') {
+    if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
+
+    /* The slow part first, before the file is read — so nothing written to
+       profiles.json in the meantime is overwritten by a stale copy. */
+    const already = readProfiles().profiles.find(isGuestProfile);
+    const favorites = already && already.guestSeeded ? null : guestFavorites(await guestLiveItems(cfg));
+
+    const data = readProfiles();
+    let guest = data.profiles.find(isGuestProfile);
+    let changed = false;
+    const created = !guest;
+    if (!guest) {
+      if (data.profiles.length >= 12) {
+        return json(res, 409, {
+          error: 'This box already holds twelve profiles. Remove one to make room for Guest.',
+        });
+      }
+      guest = blankProfile('Guest', '#4D4D4D', '👋');
+      Object.assign(guest, GUEST_SEEN);
+      data.profiles.push(guest);
+      changed = true;
+    }
+    /* Seeded once. A guest who unstars something keeps it unstarred; a box
+       that had no channel list the first time tries again next time. */
+    if (!guest.guestSeeded && favorites && favorites.length) {
+      const have = new Set((guest.favorites || []).map((f) => f.key));
+      guest.favorites = [...(guest.favorites || []), ...favorites.filter((f) => !have.has(f.key))];
+      guest.guestSeeded = true;
+      changed = true;
+    }
+    if (changed) writeProfiles(data);
+    return json(res, 200, { ...publicProfile(guest), created });
   }
 
   const profileMatch =

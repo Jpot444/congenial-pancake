@@ -280,8 +280,14 @@ const portFree = async () => {
       /profiles\.follow\(\)\.catch/.test(app), 'closePlayer does not catch up');
 
     const tv = fs.readFileSync(path.join(ROOT, 'public/tv/js/state.js'), 'utf8');
+    /* Whoever last used THIS screen wins. A screen that has never chosen
+       used to fall back to the box's `current`; it now opens as the Guest —
+       "make that guest profile the same thing /tv goes to at first" — which
+       guest.test.js drives end to end. Either way the box's pick does not
+       override this screen's own. */
     check('the Shield opens as whoever last used the Shield',
-      /localStorage\.getItem\(PROFILE_KEY\) \|\| data\.current/.test(tv),
+      /const remembered = localStorage\.getItem\(PROFILE_KEY\);\s*let wanted = remembered;/.test(tv)
+        && /ensureGuest\(\)/.test(tv),
       'tv/state.js still lets the box decide who this screen is');
     /* And neither front end restarts itself as somebody else because a pick
        was made in another room. The one hand-over that stays is a profile

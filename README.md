@@ -9,17 +9,27 @@ that runs in any browser on the network.
 
 The bison in the header and on the loading screen is the real Treasure State
 Capital mark, not a redraw. It's extracted from the logo plate into
-`public/bison.png` — a white silhouette on transparency — by
-`scripts/extract-bison.js`, which decodes the PNG with nothing but Node's own
-`zlib`, keys the flat red background out through the green channel (the plate
-sits near G=31, the mark at G=255, and using that ramp as alpha keeps the
-antialiased edges smooth), and crops to the emblem, stopping short of the
-vertical rule that separates it from the wordmark.
+`public/bison.png` by `scripts/extract-bison.js`, which decodes the PNG with
+nothing but Node's own `zlib`, keys the flat red background out through the
+green channel (the plate sits near G=31, the mark at G=255, and using that
+ramp as alpha keeps the antialiased edges smooth), and crops to the emblem,
+stopping short of the vertical rule that separates it from the wordmark.
 
-The header bar is the brand crimson **#A21F24**, sampled from the mark itself.
-Everything below it is a warm, low-lit neutral rather than flat black — a
-screening room rather than a terminal — with a trace of the same red in every
-surface so the header doesn't sit on top of an unrelated grey app.
+That gives a white silhouette. `scripts/make-app-icon.js` then paints it in
+the brand red, in place, keeping the transparency, and builds the home-screen
+icon from it. Running it twice changes nothing. To recolour the bull, change
+`BULL` in that script and run it.
+
+**The palette follows the Netflix look:** Netflix red **#E50914** for the
+bull, the wordmark and accents that mean something; near-black **#141414**
+for the page; true neutral greys for surfaces; white text, with **#B3B3B3**
+for secondary text. Headers are black, with the red mark on them. It used to
+be a crimson header over warm, brown-tinted surfaces.
+
+What it borrows is the look, not the brand. Netflix's own guidelines govern
+their logo, name and the licensed Netflix Sans typeface, and none of those
+are used here. The wordmark is Bebas Neue and the body text is Helvetica
+Neue / Arial.
 
 No npm install, no build step — one Node file and three static files.
 
@@ -46,9 +56,8 @@ in step again; the test suite checks the committed icon is byte-for-byte what
 the script produces, so they cannot drift silently. The same bytes also sit
 at `/apple-touch-icon.png` and `/apple-touch-icon-precomposed.png`, the bare
 paths iPadOS requests on its own when it ignores the link tags.
-`apple-mobile-web-app-title` names it *Treasureflix*. The `<title>` (the
-browser tab) is *Treasureflix — Live TV, Movies & Series*, which is too long
-to sit under an icon.
+`apple-mobile-web-app-title` names it *Treasureflix*, the same as the
+`<title>` (the browser tab).
 
 iOS caches home-screen icons hard: an existing shortcut keeps the old tile
 until it is removed and added again.
@@ -508,6 +517,29 @@ engine was running.
 Netflix-style personas. Each carries its own favorites, pinned categories,
 watch history and ratings, all stored server-side in `profiles.json` so a
 profile is the same on every device.
+
+### Guest
+
+**Guest**, next to *Manage profiles*, is for somebody who's only here for the
+evening. The box keeps **one** Guest profile and makes it the first time
+anybody asks (`POST /api/profiles/guest`), so pressing the button twice never
+makes two. It starts:
+
+- **past every walkthrough**: no tour, no Live TV note, no starter sheet
+- **with the standard favourites**: the first matching channel for each of the
+  big networks (ESPN, FS1, NBC, CNN, HBO…), worked out from the channel list
+  the box already holds. Matching is on whole words (NBC, not CNBC), with
+  pay-per-view and 24/7 events left out. It's the same list a new profile is
+  offered to pick from (`STARTER_NETWORKS` in `public/app.js`,
+  `GUEST_NETWORKS` in `server.js`; change one, change both).
+
+Favourites are seeded once. A guest who unstars a channel keeps it unstarred.
+The profile lock doesn't apply, since the Guest isn't a profile anybody chose.
+
+**`/tv` opens as Guest** on a screen that has never chosen anyone, or one that
+remembers a profile that no longer exists. A screen where somebody was chosen
+opens as them. `/tv` shares that memory with the browser portal on the same
+address, so picking a profile on the main site decides it for `/tv` too.
 
 ### What is shared, and what is not
 

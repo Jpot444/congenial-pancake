@@ -61,6 +61,11 @@ export async function api(path, params, options = {}) {
 /* ------------------------------------------------------------- profiles ── */
 
 export const getProfiles = () => api('/api/profiles');
+/* The box's one Guest, made on first ask — see /api/profiles/guest. */
+/* Longer than the usual wait: the very first ask may have to fetch the channel
+   list from the provider to work out the Guest's favourites. */
+export const ensureGuest = () =>
+  api('/api/profiles/guest', null, { method: 'POST', timeout: 20000 });
 /* Who the box is showing. Told to the box rather than kept here, because the
    Shield, the phone and the two web addresses cannot see each other's
    storage — only the box's answer is shared by all of them. */

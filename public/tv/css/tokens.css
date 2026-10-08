@@ -33,29 +33,29 @@
 
 :root {
   /* brand — sampled from the Treasure State Capital mark itself */
-  --brand-red: #A21F24;
-  --brand-red-deep: #6E1418;
-  --brand-red-dark: #3A0A0D;
-  --brand-red-light: #B0242A;
-  --brand-red-shade: #8C1A1F;
+  --brand-red: #E50914;
+  --brand-red-deep: #831010;
+  --brand-red-dark: #400709;
+  --brand-red-light: #F6121D;
+  --brand-red-shade: #B20710;
 
   /* surfaces */
-  --bg: #15100F;
-  --bg-raised: #1D1715;
-  --bg-card: #241C1A;
-  --line: #3A2D2A;
-  --line-soft: #2A211F;
-  --line-hover-warm: #4A3A36;
+  --bg: #141414;
+  --bg-raised: #181818;
+  --bg-card: #232323;
+  --line: #333333;
+  --line-soft: #262626;
+  --line-hover-warm: #4D4D4D;
 
   /* text */
-  --text: #F6F1EE;
-  --muted: #A3928C;
-  --muted-dim: #705F5A;
+  --text: #FFFFFF;
+  --muted: #B3B3B3;
+  --muted-dim: #808080;
   --on-light: #08080a;
 
   /* semantic */
-  --live: #FF6B5E;
-  --live-soft: #ff8b82;
+  --live: #F5333F;
+  --live-soft: #FF6B73;
   --ok: #57C88B;
   --ok-soft: #7FD4A0;
   --warn: #E9A13B;
@@ -63,8 +63,8 @@
   --uhd: #FFD98A;
 
   /* profile swatches, in the order the profile editor offers them */
-  --swatch-1: #A21F24;
-  --swatch-2: #6E1418;
+  --swatch-1: #E50914;
+  --swatch-2: #831010;
   --swatch-3: #2F5D50;
   --swatch-4: #2B4C7E;
   --swatch-5: #7A4E1D;
@@ -87,8 +87,8 @@
   --scrim-bottom: linear-gradient(0deg, rgba(0, 0, 0, .78), rgba(0, 0, 0, 0));
   --blur-badge: blur(8px);
   --brand-field: radial-gradient(120% 90% at 50% 35%, var(--brand-red) 0%, var(--brand-red-deep) 55%, var(--brand-red-dark) 100%);
-  --header-field: linear-gradient(180deg, var(--brand-red-light) 0%, var(--brand-red) 58%, var(--brand-red-shade) 100%);
-  --fallback-tile: linear-gradient(150deg, #2A201E, #17110F);
+  --header-field: linear-gradient(180deg, #000 0%, rgba(20, 20, 20, .96) 100%);
+  --fallback-tile: linear-gradient(150deg, #2A2A2A, #161616);
 
   /* motion — one curve for the whole product; nothing bounces */
   --ease: cubic-bezier(.22, .61, .36, 1);

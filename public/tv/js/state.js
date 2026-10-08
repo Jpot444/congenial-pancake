@@ -10,7 +10,7 @@
  */
 
 import {
-  getProfiles, putCurrentProfile, getProfilePrefs, putProfilePrefs, getTaste,
+  getProfiles, ensureGuest, putCurrentProfile, getProfilePrefs, putProfilePrefs, getTaste,
   getLibrary, getEpgNow, getHealth,
 } from './api.js';
 
@@ -53,19 +53,38 @@ const EPG_MAX = 40;
  * favourites, the ratings, all held once on the Pi. That is untouched.
  */
 export async function loadProfile() {
-  const data = await getProfiles();
+  let data = await getProfiles();
+  /*
+   * A screen that has never chosen opens as the GUEST.
+   *
+   * "Make that guest profile the same thing tv.treasurestatecapital.com/tv
+   *  goes to at first."
+   *
+   * This app has no picker of its own, so the first television it is opened
+   * on — a friend's Xbox, a hotel set — used to land on whoever the box last
+   * showed, which is the owner's own profile, history and all. A remembered
+   * choice still wins: this shares `portal.profile` with the browser portal
+   * on the same address, so picking somebody there decides it here too.
+   */
+  const remembered = localStorage.getItem(PROFILE_KEY);
+  let wanted = remembered;
+  if (!remembered || !(data.profiles || []).some((p) => p.id === remembered)) {
+    const guest = await ensureGuest().catch(() => null);
+    if (guest && guest.id) {
+      wanted = guest.id;
+      if (guest.created) data = await getProfiles();   // so the list has it
+    } else {
+      wanted = data.current;   // no Guest to be had — the old fallback
+    }
+  }
   const list = data.profiles || [];
   if (!list.length) throw new Error('This box has no profiles yet. Make one in the browser portal first.');
-  /* This television opens as whoever last used THIS television. The box's
-     answer is the fallback for a screen that has never chosen — see the note
-     on the same decision in the browser portal. */
-  const wanted = localStorage.getItem(PROFILE_KEY) || data.current;
   state.profile = list.find((p) => p.id === wanted) || list[0];
   state.rev = Number.isFinite(data.rev) ? data.rev : -1;
   localStorage.setItem(PROFILE_KEY, state.profile.id);
-  /* If the box had no answer, this is now it — so the phone opened next lands
-     on the same person rather than starting the disagreement over. */
-  if (!data.current) putCurrentProfile(state.profile.id).catch(() => {});
+  /* Opening is not choosing, and opening as Guest least of all: the box's
+     answer is left as whatever somebody last picked on purpose. */
+  if (!data.current && !wanted) putCurrentProfile(state.profile.id).catch(() => {});
   state.prefs = await getProfilePrefs(state.profile.id).catch(() => null);
   return state.profile;
 }

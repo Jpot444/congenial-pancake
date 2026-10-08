@@ -4,7 +4,12 @@
  *
  *   node scripts/make-app-icon.js
  *
- * Writes public/app-icon.png (180x180, opaque, the bison centered on the
+ * First paints public/bison.png in the brand red (BULL below), in place:
+ * every pixel's colour is replaced and its transparency kept, so running it
+ * twice changes nothing, and a white silhouette fresh from extract-bison.js
+ * comes out red. Change BULL and run this to recolour the logo everywhere.
+ *
+ * Then writes public/app-icon.png (180x180, opaque, the bison centered on the
  * app's own background) plus two byte-identical copies at the bare paths
  * iPadOS asks for on its own: apple-touch-icon.png and
  * apple-touch-icon-precomposed.png.
@@ -27,7 +32,10 @@ const zlib = require('zlib');
 const ROOT = path.join(__dirname, '..');
 const SIZE = 180;
 // --bg from styles.css: the room the app itself sits in.
-const BG = [0x15, 0x10, 0x0f];
+const BG = [0x14, 0x14, 0x14];
+// --brand-red from styles.css. The bull is drawn in it everywhere it appears —
+// header, loading screen, profile screen, favicon and this icon.
+const BULL = [0xe5, 0x09, 0x14];
 // Breathing room, so the rounded-corner mask iOS applies never clips the mark.
 const PAD = 0.16;
 
@@ -89,7 +97,7 @@ function readPng(file) {
 
 /* ---- PNG out ---- */
 
-function writePng(file, size, rgba) {
+function writePng(file, size, rgba, height = size) {
   const chunk = (type, payload) => {
     const body = Buffer.concat([Buffer.from(type, 'ascii'), payload]);
     const head = Buffer.alloc(4);
@@ -99,13 +107,13 @@ function writePng(file, size, rgba) {
     return Buffer.concat([head, body, crc]);
   };
   const stride = size * 4;
-  const raw = Buffer.alloc((stride + 1) * size);
-  for (let y = 0; y < size; y += 1) {
+  const raw = Buffer.alloc((stride + 1) * height);
+  for (let y = 0; y < height; y += 1) {
     rgba.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
   }
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
+  ihdr.writeUInt32BE(height, 4);
   ihdr[8] = 8;  // bit depth
   ihdr[9] = 6;  // RGBA
   fs.writeFileSync(file, Buffer.concat([
@@ -116,9 +124,16 @@ function writePng(file, size, rgba) {
   ]));
 }
 
-/* ---- the icon ---- */
+/* ---- the logo, in the brand red ---- */
 
-const src = readPng(path.join(ROOT, 'public/bison.png'));
+const LOGO = path.join(ROOT, 'public/bison.png');
+const src = readPng(LOGO);
+for (let i = 0; i < src.px.length; i += 4) {
+  [src.px[i], src.px[i + 1], src.px[i + 2]] = BULL;   // alpha untouched
+}
+writePng(LOGO, src.width, src.px, src.height);
+
+/* ---- the icon ---- */
 
 const avail = SIZE * (1 - 2 * PAD);
 const scale = Math.min(avail / src.width, avail / src.height);

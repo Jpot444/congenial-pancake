@@ -38,8 +38,8 @@ const check = (name, ok, detail) => {
 };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** The crimson the desktop gives the wordmark. */
-const CRIMSON = 'rgb(228, 38, 46)';
+/** The brand red (Netflix red, #E50914) the desktop gives the wordmark. */
+const CRIMSON = 'rgb(229, 9, 20)';
 
 /* Real phones, and the two ends of what has to work. 360 is where the words
    are expected to be gone; the rest must show them whole. */
@@ -116,8 +116,8 @@ const readBar = (page, width) => page.evaluate((w) => {
        background-image, since --header-field is a gradient. */
     check(`${label}: the bar is a flat dark field`,
       bar.bgImage === 'none' && /^rgba?\(1[0-9], 1[0-9], 1[0-9]/.test(bar.bg), bar.bg);
-    check(`${label}: with the crimson hairline under it`,
-      /162, 31, 36/.test(bar.shadow), bar.shadow.slice(0, 60));
+    check(`${label}: with the brand-red hairline under it`,
+      /229, 9, 20/.test(bar.shadow), bar.shadow.slice(0, 60));
     check(`${label}: the second line stays off`, bar.subShown === false);
 
     if (wantsWords) {

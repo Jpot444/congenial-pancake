@@ -123,7 +123,7 @@ html.tv body { font-size: clamp(17px, 0.94vw, 25px); }
   padding: clamp(14px, 0.9vw, 26px) clamp(20px, 1.4vw, 40px);
   /* Readable over whatever is behind it, without a hard edge across the top
      of two pictures. */
-  background: linear-gradient(180deg, rgba(8, 5, 5, .92) 0%, rgba(8, 5, 5, .72) 55%, transparent 100%);
+  background: linear-gradient(180deg, rgba(8, 8, 8, .92) 0%, rgba(8, 8, 8, .72) 55%, transparent 100%);
   padding-bottom: clamp(26px, 1.8vw, 50px);
   transition: opacity .25s ease;
 }

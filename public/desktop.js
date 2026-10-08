@@ -2937,9 +2937,9 @@
   let heroShowing = [];
 
   const FIELDS = [
-    'radial-gradient(120% 110% at 22% 18%,#3c2a24,#1a1210 62%,#100b0a)',
+    'radial-gradient(120% 110% at 22% 18%,#333333,#1A1A1A 62%,#0F0F0F)',
     'radial-gradient(120% 110% at 74% 26%,#243440,#141b20 60%,#0d1115)',
-    'radial-gradient(120% 110% at 34% 22%,#4a2a22,#20120f 62%,#120a09)',
+    'radial-gradient(120% 110% at 34% 22%,#3A3A3A,#1C1C1C 62%,#121212)',
     'radial-gradient(120% 110% at 60% 30%,#2c3a2c,#161e17 60%,#0d120e)',
     'radial-gradient(120% 110% at 40% 20%,#3a2c40,#1a151f 60%,#100d13)',
     'radial-gradient(120% 110% at 66% 24%,#40382a,#1e1a13 60%,#12100b)',

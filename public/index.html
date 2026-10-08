@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Treasureflix — Live TV, Movies &amp; Series</title>
+  <title>Treasureflix</title>
   <link rel="stylesheet" href="/styles.css" />
   <!-- The desktop portal. Every rule in it hangs off `html.desk`, which
        desktop.js sets only in desktop layout on a window wide enough to hold
@@ -23,8 +23,8 @@
        drift apart. iOS ignores SVG icons for this entirely. -->
   <link rel="apple-touch-icon" sizes="180x180" href="/app-icon.png" />
   <link rel="icon" type="image/png" href="/bison.png" />
-  <!-- What the icon is called underneath. Without this iOS uses the whole
-       document title, subtitle and all, which is too long for a home screen. -->
+  <!-- What the icon is called underneath. Kept even though the title now
+       says the same thing, so the two can never quietly drift apart. -->
   <meta name="apple-mobile-web-app-title" content="Treasureflix" />
   <!-- Run as an app rather than as a page in a browser.
        Without this, tapping the home-screen icon opens a Safari view WITH
@@ -63,7 +63,13 @@
     <h1 class="profiles-title">Who's watching?</h1>
     <p class="profiles-sub">Treasure State Technology Ventures</p>
     <div class="profile-grid" id="profileGrid"></div>
-    <button class="btn btn-ghost btn-manage" id="manageBtn" hidden>Manage profiles</button>
+    <!-- Guest beside Manage: one shared profile the box keeps, already past
+         the walkthrough and already holding the standard channels, for
+         somebody who is only here for the evening. -->
+    <div class="profiles-actions">
+      <button class="btn btn-ghost btn-manage" id="manageBtn" hidden>Manage profiles</button>
+      <button class="btn btn-ghost btn-manage" id="guestBtn">Guest</button>
+    </div>
     <!-- The password is optional now. This is where it is turned on or off,
          shown only while managing so it is not the first thing anyone sees. -->
     <button class="btn-lock" id="lockBtn" hidden></button>

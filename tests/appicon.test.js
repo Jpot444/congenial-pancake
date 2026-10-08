@@ -99,7 +99,9 @@ const readPng = decoder(fs, zlib);
     for (let x = 0; x < img.width; x += 1) {
       const [r, g, b, a] = px(x, y);
       if (a < 255) transparent += 1;
-      if (r > 200 && g > 200 && b > 200) {
+      /* The bull is brand red (#E50914): strong red, almost no green or blue.
+         The background is #141414, so nothing else in the icon looks like it. */
+      if (r > 180 && g < 60 && b < 70) {
         white += 1;
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
@@ -111,7 +113,24 @@ const readPng = decoder(fs, zlib);
   console.log(`   ${transparent} transparent px, mark x ${minX}-${maxX}, y ${minY}-${maxY}`);
   check('opaque in every pixel — transparency is the white iPad tile',
     transparent === 0, `${transparent} transparent pixels`);
-  check('there is a bison in it', white > 1500, `${white} white pixels`);
+  check('there is a bison in it, in the brand red', white > 1500, `${white} red pixels`);
+
+  /* And the logo itself, which the header, loading screen and profile screen
+     all draw. Red in every visible pixel, transparency untouched. */
+  const logoBytes = Buffer.from(await (await fetch(`${BASE}/bison.png`)).arrayBuffer());
+  const logoTmp = path.join(__dirname, 'logo-fetched.png');
+  fs.writeFileSync(logoTmp, logoBytes);
+  const logo = readPng(logoTmp);
+  fs.unlinkSync(logoTmp);
+  let shown = 0;
+  let notRed = 0;
+  for (let i = 0; i < logo.px.length; i += 4) {
+    if (!logo.px[i + 3]) continue;
+    shown += 1;
+    if (logo.px[i] !== 0xe5 || logo.px[i + 1] !== 0x09 || logo.px[i + 2] !== 0x14) notRed += 1;
+  }
+  check('the logo the pages draw is the brand red, not white',
+    shown > 1500 && notRed === 0, `${shown} visible px, ${notRed} not #E50914`);
 
   const [br, bgc, bb] = px(2, 2);
   check('on the app\'s own dark background, not on white',

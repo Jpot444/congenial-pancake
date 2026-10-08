@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '44.6';
+const VERSION = '44.7';
 
 const PAGE_SIZE = 60;
 
@@ -145,7 +145,7 @@ const prefs = {
  */
 
 const AVATARS = ['🎬', '🍿', '📺', '🎥', '🐂', '🌾', '⭐', '🎯', '🃏', '🚀', '🎸', '🏈'];
-const SWATCHES = ['#A21F24', '#6E1418', '#2F5D50', '#2B4C7E', '#7A4E1D', '#4A3A63'];
+const SWATCHES = ['#E50914', '#831010', '#2F5D50', '#2B4C7E', '#7A4E1D', '#4A3A63'];
 
 const profiles = {
   all: [],
@@ -19411,6 +19411,8 @@ function renderProfileGate() {
 
   $('#manageBtn').hidden = profiles.all.length === 0;
   $('#manageBtn').textContent = managing ? 'Done' : 'Manage profiles';
+  // Not while managing: that screen edits the profiles there are.
+  $('#guestBtn').hidden = managing;
   $('#profileGate').classList.toggle('is-managing', managing);
 
   const lock = $('#lockBtn');
@@ -19475,6 +19477,31 @@ function showProfileGate() {
 $('#manageBtn').addEventListener('click', () => {
   managing = !managing;
   renderProfileGate();
+});
+
+/*
+ * The Guest. The box makes it the first time, already past every walkthrough
+ * and holding the standard channels, and hands back the same one after that —
+ * so this is a pick like any other tile, with one request in front of it.
+ */
+$('#guestBtn').addEventListener('click', async () => {
+  const button = $('#guestBtn');
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/profiles/guest', { method: 'POST' });
+    const guest = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(guest.error || `the box answered ${res.status}`);
+    await profiles.load();
+    const match = profiles.all.find((p) => p.id === guest.id) || guest;
+    await profiles.select(match);
+    $('#profileGate').hidden = true;
+    profiles.watch();
+    await startApp();
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 $('#profileChip').addEventListener('click', () => {
