@@ -890,7 +890,19 @@ exit 0
   // is covered above; this is the half the household actually sees.
   console.log('\n  as somebody else');
   const asOther = await page.evaluate(async () => {
-    profiles.current = { id: 'gst', name: 'Ben' };
+    /* A REAL profile on the box, not an id made up in the page. The page
+       checks every five seconds whether the profile it shows still exists,
+       and a made-up one reads as deleted elsewhere, so the page reloads to
+       the picker. Run alone, that check happened to miss this step; under a
+       busy machine it landed inside it and destroyed the page mid-evaluate. */
+    let ben = (await (await fetch('/api/profiles')).json()).profiles
+      .find((p) => p.name === 'Ben');
+    if (!ben) {
+      ben = await (await fetch('/api/profiles', { method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Ben', emoji: '🎬', color: '#2B4C7E' }) })).json();
+    }
+    profiles.current = { id: ben.id, name: 'Ben' };
     profiles.data = { ...(profiles.data || {}), owner: false };
     reporter.applyButtons();
     // Leave the archive first: assigning the hash it already holds fires no
