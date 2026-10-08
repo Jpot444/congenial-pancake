@@ -8740,6 +8740,7 @@ async function handleApi(req, res, pathname, query) {
            out of a dashboard. */
         accountId: String(held.accountId || ''),
         appId: String(held.appId || ''),
+        icon: iconThrough,
       });
     }
     if (req.method === 'PUT') {
@@ -8769,8 +8770,9 @@ async function handleApi(req, res, pathname, query) {
         return json(res, 200, { set: false, accountId: '', appId: '' });
       }
       writeConfig({ ...cfg, cloudflare: next });
+      if (cloudflare.ready(next)) await letIconThrough('settings saved');
       return json(res, 200, {
-        set: Boolean(cloudflare.ready(next)), accountId, appId,
+        set: Boolean(cloudflare.ready(next)), accountId, appId, icon: iconThrough,
       });
     }
     return json(res, 405, { error: 'Method not allowed' });
@@ -11829,6 +11831,21 @@ function cloudflareSettings(cfg) {
   return cloudflare.ready(cf) ? cf : null;
 }
 
+/** Whether the home-screen icon is reachable through Access — see cloudflare.js. */
+let iconThrough = { ok: false, error: '', at: 0 };
+
+async function letIconThrough(why) {
+  const cf = cloudflareSettings(readConfig());
+  if (!cf) return;
+  try {
+    const out = await cloudflare.letIconThrough(cf);
+    iconThrough = { ok: true, error: '', at: Date.now(), uris: out.uris };
+  } catch (err) {
+    iconThrough = { ok: false, error: err.message, at: Date.now() };
+    console.log(`  cloudflare: could not let the home-screen icon through (${why}): ${err.message}`);
+  }
+}
+
 /**
  * Shut it, whatever the box currently believes.
  *
@@ -12189,6 +12206,7 @@ server.listen(PORT, HOST, () => {
    * is shut immediately.
    */
   const bootCfg = readConfig();
+  if (bootCfg && cloudflareSettings(bootCfg)) letIconThrough('boot');
   if (bootCfg && cloudflareSettings(bootCfg)) {
     const until = Number(bootCfg.openUntil) || 0;
     if (!until || Date.now() >= until) {

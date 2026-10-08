@@ -35,7 +35,11 @@ const check = (name, ok, detail) => {
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* ---- a Cloudflare that is not Cloudflare -------------------------------- */
+/* `policies` is the protected application's list — the one the open-house
+   checks below read. Any application created through the API keeps its own. */
 let policies = [];
+const created = [];
+const ownPolicies = new Map();
 let nextId = 1;
 let refuse = '';
 const seen = [];
@@ -53,10 +57,33 @@ function cloudflareStandIn() {
     if (refuse) return send({ success: false, errors: [{ message: refuse }], result: null });
 
     if (/\/access\/apps$/.test(url.pathname)) {
+      if (req.method === 'POST') {
+        let raw = '';
+        req.on('data', (c) => { raw += c; });
+        return req.on('end', () => {
+          const made = { id: `app-made-${nextId += 1}`, ...JSON.parse(raw || '{}') };
+          created.push(made);
+          ownPolicies.set(made.id, []);
+          send({ success: true, result: made });
+        });
+      }
       return send({ success: true, result: [
         { id: 'app-1', name: 'Treasureflix', domain: 'tv.example.com' },
         { id: 'app-2', name: 'Something else', domain: 'other.example.com' },
+        ...created,
       ] });
+    }
+    const appPol = /\/access\/apps\/([^/]+)\/policies$/.exec(url.pathname);
+    if (appPol && ownPolicies.has(appPol[1])) {
+      const list = ownPolicies.get(appPol[1]);
+      if (req.method === 'GET') return send({ success: true, result: list });
+      let raw = '';
+      req.on('data', (c) => { raw += c; });
+      return req.on('end', () => {
+        const made = { id: `pol-${nextId += 1}`, ...JSON.parse(raw || '{}') };
+        list.push(made);
+        send({ success: true, result: made });
+      });
     }
     if (/\/access\/apps\/[^/]+\/policies$/.test(url.pathname)) {
       if (req.method === 'GET') return send({ success: true, result: policies });
@@ -464,6 +491,37 @@ async function browserPage() {
       await page.context().browser().close();
     }
 
+    /* ---- the home-screen icon, let through on its own ------------------- */
+    /*
+     * "Now it's a small black square with the bull in it surrounded by white"
+     *
+     * iOS fetches the touch icon without the Access cookie and gets the login
+     * page. The box gives the three icon files an Access application of their
+     * own with a bypass — those paths and nothing else.
+     */
+    console.log('\n  the home-screen icon');
+    console.log('   ', JSON.stringify(created.map((a) => ({ name: a.name, domain: a.domain,
+      destinations: a.destinations }))));
+    const iconApps = created.filter((a) => a.name === 'Treasureflix — home-screen icon');
+    check('the box gave the icon an Access application of its own, at boot',
+      iconApps.length === 1, String(iconApps.length));
+    const uris = (iconApps[0]?.destinations || []).map((d) => d.uri).sort();
+    check('covering the three icon files on the site\u2019s own address — and nothing else',
+      JSON.stringify(uris) === JSON.stringify(['tv.example.com/app-icon.png',
+        'tv.example.com/apple-touch-icon-precomposed.png', 'tv.example.com/apple-touch-icon.png']),
+      JSON.stringify(uris));
+    check('as a self-hosted app that stays off the launcher',
+      iconApps[0]?.type === 'self_hosted' && iconApps[0]?.app_launcher_visible === false);
+    const iconPols = ownPolicies.get(iconApps[0]?.id) || [];
+    check('with one policy: let anyone through',
+      iconPols.length === 1 && iconPols[0].decision === 'bypass'
+        && JSON.stringify(iconPols[0].include) === '[{"everyone":{}}]', JSON.stringify(iconPols));
+    check('and the site\u2019s own application was not touched',
+      !policies.some((p) => /icon/i.test(p.name || '')), JSON.stringify(policies));
+    const said = await call(`/api/cloudflare?${ME}`);
+    check('the panel can see it worked', said.data.icon && said.data.icon.ok === true,
+      JSON.stringify(said.data.icon));
+
     /* ---- a door left open across a reboot ------------------------------- */
     /*
      * THE CASE THAT MATTERS MOST. The minute tick can only close the door
@@ -484,6 +542,9 @@ async function browserPage() {
     check('the box comes back', await up(), log.slice(-300));
     await wait(1200);
     console.log('   ', JSON.stringify(policies));
+    check('a restart does not make the icon a second application',
+      created.filter((a) => a.name === 'Treasureflix — home-screen icon').length === 1,
+      String(created.length));
     check('it shuts the door on the way up, without being asked',
       policies.length === 0, JSON.stringify(policies));
     check('and says so where somebody would look',

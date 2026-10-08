@@ -160,4 +160,63 @@ async function close(cf) {
   return { changed: true };
 }
 
-module.exports = { configure, ready, apps, isOpen, open, close, POLICY_NAME };
+/*
+ * THE HOME-SCREEN ICON, let through on its own.
+ *
+ * "Now it's a small black square with the bull in it surrounded by white"
+ *
+ * iOS fetches a page's touch icon by itself, outside the page's session —
+ * without the Access login cookie — so behind Access it is handed the login
+ * page instead of a PNG, gives up, and draws the favicon small on a white
+ * tile. Every change to the favicon changed what the phone showed, in exactly
+ * that way, which is how this was pinned down.
+ *
+ * So the three icon files get an Access application of their own, covering
+ * those paths and nothing else, with a single policy letting anyone through.
+ * Access applies the most specific path, so the icon is reachable and every
+ * other path on the site is exactly as protected as it was.
+ *
+ * Like the open-house policy, it is known by its NAME and nothing else is
+ * ever touched: the main application is read only to learn its hostname.
+ */
+const ICON_APP_NAME = 'Treasureflix — home-screen icon';
+const ICON_PATHS = ['/app-icon.png', '/apple-touch-icon.png', '/apple-touch-icon-precomposed.png'];
+
+async function letIconThrough(cf) {
+  const list = await call(cf, '/access/apps');
+  const all = Array.isArray(list) ? list : [];
+  const main = all.find((a) => a && a.id === cf.appId);
+  if (!main || !main.domain) throw new Error('Could not read the protected application to find its address');
+  const host = String(main.domain).replace(/^https?:\/\//, '').split('/')[0];
+  const uris = ICON_PATHS.map((p) => `${host}${p}`);
+
+  let app = all.find((a) => a && a.name === ICON_APP_NAME);
+  let created = false;
+  if (!app) {
+    app = await call(cf, '/access/apps', {
+      method: 'POST',
+      body: {
+        name: ICON_APP_NAME,
+        type: 'self_hosted',
+        domain: uris[0],
+        destinations: uris.map((uri) => ({ type: 'public', uri })),
+        app_launcher_visible: false,
+      },
+    });
+    created = true;
+  }
+  const pols = await call(cf, `/access/apps/${encodeURIComponent(app.id)}/policies`);
+  if (!(Array.isArray(pols) ? pols : []).some((p) => p && p.decision === 'bypass')) {
+    await call(cf, `/access/apps/${encodeURIComponent(app.id)}/policies`, {
+      method: 'POST',
+      body: { name: 'Anyone — the icon only', decision: 'bypass',
+        include: [{ everyone: {} }], precedence: 1 },
+    });
+    created = true;
+  }
+  if (created) store.log(`  cloudflare: home-screen icon let through (${uris.join(', ')})`);
+  return { created, uris };
+}
+
+module.exports = { configure, ready, apps, isOpen, open, close, POLICY_NAME,
+  letIconThrough, ICON_APP_NAME, ICON_PATHS };

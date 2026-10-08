@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '45.5';
+const VERSION = '45.6';
 
 const PAGE_SIZE = 60;
 
@@ -4699,6 +4699,12 @@ const frontDoor = {
     try {
       const cf = await api('/api/cloudflare', { profileId: profiles.current?.id || '' });
       $('#doorTokenState').textContent = cf.set ? '· saved' : '· none yet';
+      /* The home-screen icon's own way past Access (cloudflare.js). Said only
+         when it failed — a phone showing the bull small on white is the
+         symptom, and this is the reason. */
+      if (cf.set && cf.icon && cf.icon.at && !cf.icon.ok) {
+        this.say(`The home-screen icon could not be let through: ${cf.icon.error}`, true);
+      }
       $('#doorToken').placeholder = cf.set
         ? 'Saved — paste another to replace it'
         : 'Paste the token';

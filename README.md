@@ -73,6 +73,22 @@ Whichever one iOS uses, it's the finished square: pure black, and the bull at
 0.09 padding (about 80% of the width). The test applies iOS's rounded-corner
 mask (radius about 22%) and checks no red pixel falls outside it.
 
+**The fix that actually worked on the phone: let the icon past Access.**
+*"Now it's a small black square with the bull in it surrounded by white"*.
+That's iOS drawing the favicon the way it draws favicons, small on a white
+tile, which settled it. iOS isn't using the touch icon at all, because its own
+fetch of it is answered with the Cloudflare login page. So when Cloudflare is
+set up (Front door), the box gives the three icon files (`/app-icon.png`,
+`/apple-touch-icon.png`, `/apple-touch-icon-precomposed.png`) an Access
+application of their own, `Treasureflix — home-screen icon`. It's
+self-hosted, kept off the launcher, and has one bypass/everyone policy. Access
+applies the most specific path, so the icons are reachable and every other
+path is exactly as protected as before. It runs at boot and whenever the
+Cloudflare settings are saved, and it's idempotent. The box knows the app by
+name and only reads the site's own application, to learn its hostname. A
+failure is shown in Front door → Cloudflare setup. Covered in
+`openhouse.test.js`.
+
 iOS caches home-screen icons hard: an existing shortcut keeps the old tile
 until it is removed and added again.
 
