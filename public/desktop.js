@@ -2655,7 +2655,16 @@
 
     hero.addEventListener('click', (e) => {
       const go = e.target.closest('[data-go]');
-      if (go) return features[Number(go.dataset.go)]?.go();
+      if (go) {
+        const f = features[Number(go.dataset.go)];
+        /* Watch live on the channel already playing behind the words: hand
+           the picture over, so the player carries it on rather than starting
+           the channel again. */
+        if (f && f.kind === 'live' && String(f.liveId || f.item?.id || '') === heroLive.key) {
+          window.offerHandoff?.(heroLive.handOff());
+        }
+        return f?.go();
+      }
       const info = e.target.closest('[data-info]');
       if (info) {
         const f = features[Number(info.dataset.info)];
@@ -2958,6 +2967,31 @@
         this.start(hero, feature, id);
       }, pause);
       return undefined;
+    },
+
+    /**
+     * Give the playing picture away instead of destroying it — to the player,
+     * on Watch live, so the channel carries on rather than reloading. Only a
+     * picture actually on screen is worth handing over. After this the
+     * billboard holds nothing, and stop() has nothing of it to tear down.
+     */
+    handOff() {
+      const { video, hls, key } = this;
+      if (!video || !hls || !video.classList.contains('is-on')) return null;
+      clearTimeout(this.settle);
+      clearTimeout(this.retry);
+      clearTimeout(this.idle);
+      clearTimeout(this.firstFrame);
+      this.settle = this.retry = this.idle = this.firstFrame = null;
+      this.video = null;
+      this.hls = null;
+      this.key = '';
+      this.why = 'handed to the player';
+      /* The sound comes up on the press itself, before the player has even
+         opened: a press is a gesture, so the browser allows it, and it is
+         the first thing that says "you are watching this now". */
+      video.muted = false;
+      return { id: key, video, hls };
     },
 
     /** Hand the connection back. Safe to call at any point, including twice. */

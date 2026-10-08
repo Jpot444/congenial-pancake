@@ -2599,6 +2599,25 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 
 @keyframes fade { from { opacity: 0; } }
 
+/* The billboard's picture, on its way into the player — see beginRelay in
+   app.js. Over everything, so the player fading in underneath never fades
+   the picture itself, and gliding from where the billboard had it to where
+   the player's frame is. */
+.relay-video {
+  position: fixed;
+  z-index: 260;
+  object-fit: contain;
+  background: #000;
+  pointer-events: none;
+  transition:
+    left .45s var(--ease), top .45s var(--ease),
+    width .45s var(--ease), height .45s var(--ease),
+    opacity .4s var(--ease);
+}
+.relay-video.is-leaving { opacity: 0; }
+/* The player arrives as a fade rather than a cut, under the moving picture. */
+.player-overlay.is-relay { animation: fade .45s var(--ease); }
+
 .player-shell {
   position: relative; /* the live strip anchors to the shell's bottom */
   width: 100%;

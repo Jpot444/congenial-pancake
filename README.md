@@ -4308,6 +4308,30 @@ answers 403 `autoplayOff` while it's off. A screen in another room that loaded
 before the switch finds out on its next ask and stops without retrying.
 Stored as `homeAutoplay` in `prefs.json`, on unless set to `false`.
 
+**Watch live doesn't reload it.** *"I just want a seamless transition where
+the main screen fades away and the channel is immediately playing"*. The
+billboard and the player read the same stream on the box, so there was never
+anything to reconnect. The page just threw away a picture it already had, and
+the player built a fresh 10-second buffer, seated somewhere else. Now Watch
+live on the channel that's playing **hands the billboard's `<video>` over**
+(`heroLive.handOff` → `offerHandoff` → `beginRelay`):
+
+1. On the press, its sound comes up.
+2. It glides from the billboard to the player's frame, on top of everything,
+   while the player fades in beneath it.
+3. The player's own copy loads the same playlist silently with
+   `autoStartLoad: false`, then starts at the billboard's **exact moment**,
+   matched by **segment number + offset**, which both copies share.
+4. Once that copy has 1.5s buffered at that moment, the billboard's copy
+   fades off it and the sound moves across.
+
+Anything that hasn't swapped within 8 seconds falls back to the ordinary start,
+and an unclaimed hand-over expires after 15. `relay.test.js` drives it with
+real hls.js (vendored in `tests/vendor/`, Apache-2.0, because the CDN is
+unreachable from the test machine) on a real live VP9 stream. The picture never
+blanks, the sound never drops beyond the swap itself, there's no "Building a
+buffer", and the player lands on the billboard's segment in about a second.
+
 `heroLive.why` records which rule said no, in its own words. *"It did not ask"*
 and *"it asked and the box refused"* look identical from outside and are
 completely different faults — the first is this layer deciding, the second is

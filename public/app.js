@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '45.2';
+const VERSION = '45.3';
 
 const PAGE_SIZE = 60;
 
@@ -13899,11 +13899,16 @@ function attach(url, format, opts = {}) {
       // pull as much of that cushion into memory as it can. Live keeps the
       // tight settings — a big forward buffer there is just added latency.
       const live = format === 'ts' || currentLiveItem;
+      /* Taking over from the billboard: nothing is fetched until the
+         billboard's moment is known, so the first segment asked for is the
+         one it is showing — see followRelay. */
+      const relaying = Boolean(live && relay);
       engineKind = 'hls.js';
       engine = new Hls(
         live
           ? { ...LIVE_HLS, ...(opts.dvr ? { liveSyncDuration: LIVE_DVR_SEAT } : {}),
-            ...(lowMode() ? LOW_PATIENCE : {}) }
+            ...(lowMode() ? LOW_PATIENCE : {}),
+            ...(relaying ? { autoStartLoad: false } : {}) }
           : {
               ...(lowMode() ? LOW_PATIENCE : {}),
               lowLatencyMode: false,
@@ -13935,7 +13940,8 @@ function attach(url, format, opts = {}) {
       );
       engine.loadSource(url);
       engine.attachMedia(video);
-      if (live) waitForCushion(video);
+      if (relaying) followRelay(video);
+      else if (live) waitForCushion(video);
       else {
         /*
          * Start it.
@@ -18654,6 +18660,178 @@ function preparePlayer(item) {
   return myToken;
 }
 
+/* ─────────────────────────────── the hand-over from the home billboard ─── *
+ *
+ * "After I click watch live of the preview channel it reloads the channel, I
+ *  just want a seamless transition where the main screen fades away and the
+ *  channel is immediately playing"
+ *
+ * It reloaded because the player started its own copy from nothing: a blank
+ * frame, "Building a buffer", then pictures from a moment ten seconds away
+ * from the one that was on the billboard. The billboard and the player read
+ * the SAME stream on the box — the warm ingest — so there was never anything
+ * to reconnect; only the page threw away a picture it already had.
+ *
+ * So the billboard hands its playing <video> over (see heroLive.handOff in
+ * desktop.js). It glides from the billboard to the player's frame with its
+ * sound turned up, while the player fades in beneath it. The player's own copy
+ * loads the same playlist silently and starts at the EXACT moment the
+ * billboard is showing — matched by segment number, which both copies share,
+ * plus the offset into it — and only once that copy has pictures at that
+ * moment does the billboard's fade away over it. Anything that goes wrong
+ * inside RELAY_MAX_MS falls back to the ordinary start, with nothing lost.
+ */
+const RELAY_MAX_MS = 8000;
+/** Offered by the billboard a moment before openPlayer runs. */
+let relayOffer = null;
+/** The hand-over in progress: { id, video, hls, timer, poll, wantMuted }. */
+let relay = null;
+
+function offerHandoff(handoff) {
+  dropRelayOffer();
+  if (!handoff || !handoff.video) return;
+  relayOffer = { ...handoff, at: Date.now() };
+  /* Unclaimed — the lookup before the player failed, say — it does not go on
+     playing, with its sound up, behind a page that moved on. */
+  const mine = relayOffer;
+  relayOffer.expire = setTimeout(() => { if (relayOffer === mine) dropRelayOffer(); }, 15000);
+}
+
+function dropRelayOffer() {
+  if (relayOffer) {
+    clearTimeout(relayOffer.expire);
+    freeRelayMedia(relayOffer);
+  }
+  relayOffer = null;
+}
+
+function freeRelayMedia(r) {
+  try { r.hls?.destroy(); } catch { /* already gone */ }
+  try {
+    r.video.pause();
+    r.video.removeAttribute('src');
+    r.video.load();
+  } catch { /* going away regardless */ }
+  r.video.remove();
+}
+
+/** Take the billboard's picture into the player, if it is this channel. */
+function beginRelay(item) {
+  const offer = relayOffer;
+  relayOffer = null;
+  if (!offer) return false;
+  clearTimeout(offer.expire);
+  /* Fifteen seconds: Watch live on the last-watched slide looks the channel
+     up first, and on a box whose channel list is not loaded yet that is a
+     fetch. The billboard keeps playing in place meanwhile. */
+  if (item.kind !== 'live' || String(item.id) !== String(offer.id)
+    || Date.now() - offer.at > 15000) {
+    freeRelayMedia(offer);
+    return false;
+  }
+  endRelay(false);
+  const v = offer.video;
+  const from = v.getBoundingClientRect();
+  const to = $('#video').getBoundingClientRect();
+  v.className = 'relay-video';
+  v.removeAttribute('aria-hidden');
+  /* Starts exactly where it was on the billboard, then glides to the frame. */
+  Object.assign(v.style, { left: `${from.left}px`, top: `${from.top}px`,
+    width: `${from.width}px`, height: `${from.height}px` });
+  document.body.append(v);
+  void v.offsetWidth;   // commit the starting box before moving it
+  Object.assign(v.style, { left: `${to.left}px`, top: `${to.top}px`,
+    width: `${to.width}px`, height: `${to.height}px` });
+  /* The sound comes up as it moves. A click is what got us here, so the
+     browser allows it; if not, the picture carries on silent. */
+  v.volume = $('#video').volume;
+  v.muted = false;
+  v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+  relay = { ...offer, timer: setTimeout(() => endRelay(false), RELAY_MAX_MS), poll: null,
+    wantMuted: $('#video').muted };
+  $('#playerOverlay').classList.add('is-relay');
+  return true;
+}
+
+/** Where, on the player's own timeline, the billboard's current frame is. */
+function relayTarget(r) {
+  try {
+    const theirs = r.hls?.levels?.[Math.max(0, r.hls.currentLevel)]?.details?.fragments || [];
+    const t = r.video.currentTime;
+    const f = theirs.find((x) => t >= x.start && t < x.start + x.duration);
+    if (!f) return null;
+    const ours = engine?.levels?.[Math.max(0, engine.currentLevel)]?.details?.fragments || [];
+    const m = ours.find((x) => x.sn === f.sn);
+    return m ? m.start + (t - f.start) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The player's copy, loading underneath. Silent and unseen until it holds
+ * pictures at the billboard's moment, then the two swap.
+ */
+function followRelay(video) {
+  const r = relay;
+  if (!r) return;
+  video.muted = true;
+  status('');
+  engine.once(Hls.Events.LEVEL_LOADED, () => {
+    if (relay !== r) return;
+    const at = relayTarget(r);
+    engine.startLoad(Number.isFinite(at) ? at : -1);
+  });
+  r.poll = setInterval(() => {
+    if (relay !== r) return;
+    const at = relayTarget(r);
+    if (!Number.isFinite(at)) return;
+    let ahead = 0;
+    for (let i = 0; i < video.buffered.length; i += 1) {
+      if (video.buffered.start(i) <= at + 0.1 && video.buffered.end(i) > at) {
+        ahead = video.buffered.end(i) - at;
+      }
+    }
+    if (ahead < 1.5) return;
+    clearInterval(r.poll);
+    r.poll = null;
+    /* Re-read at the last moment: the billboard has kept playing. */
+    const now = relayTarget(r) ?? at;
+    if (Math.abs(video.currentTime - now) > 0.15) video.currentTime = now;
+    video.play().then(() => {
+      video.addEventListener('timeupdate', () => endRelay(true), { once: true });
+    }).catch(() => endRelay(false));
+  }, 100);
+}
+
+/**
+ * Finish it. `swapped` is the good ending — the player has the picture and
+ * the billboard's copy fades off it. Otherwise the billboard's copy just goes
+ * and the player starts the ordinary way.
+ */
+function endRelay(swapped) {
+  const r = relay;
+  if (!r) return;
+  relay = null;
+  clearTimeout(r.timer);
+  clearInterval(r.poll);
+  $('#playerOverlay').classList.remove('is-relay');
+  const video = $('#video');
+  if (video) video.muted = r.wantMuted;
+  r.video.muted = true;
+  if (swapped) {
+    r.video.classList.add('is-leaving');
+    setTimeout(() => freeRelayMedia(r), 450);
+    return;
+  }
+  freeRelayMedia(r);
+  /* The ordinary start, for a copy that was waiting on the hand-over. */
+  if (engine && currentLiveItem && engineKind === 'hls.js') {
+    try { engine.startLoad(-1); } catch { /* already loading */ }
+    if (video && video.paused) waitForCushion(video);
+  }
+}
+
 /**
  * Open something.
  *
@@ -18671,6 +18849,9 @@ async function openPlayer(item, { resume = 'ask' } = {}) {
   if (item.kind === 'series') return openSeries(item);
 
   const myToken = preparePlayer(item);
+  /* The billboard's own picture, if this is its channel — taken before the
+     billboard is told to stand down, so there is something to hand over. */
+  const relaying = beginRelay(item);
   /* Whatever this turns out to need, it needs it more than the wallpaper
      behind the page underneath does. */
   yieldBillboard();
@@ -18724,7 +18905,7 @@ async function openPlayer(item, { resume = 'ask' } = {}) {
       // The answer can take a few seconds while the Pi opens its live buffer
       // for this channel. A blank player is indistinguishable from a broken
       // one, which a measured session spent 15 silent seconds proving.
-      status('Tuning in — preparing the channel…');
+      if (!relaying) status('Tuning in — preparing the channel…');
     }
     const { url, format, seekTo, dvr, local } = await resolveStream(item, { startAt });
     if (myToken !== playToken) return; // player closed while we were buffering
@@ -19173,6 +19354,9 @@ async function renderSeries(item, mount, onInfo) {
 
 function closePlayer() {
   playToken += 1; // cancel any open/episode pick still awaiting its stream
+  // A hand-over from the billboard still in the air goes with the player.
+  endRelay(false);
+  dropRelayOffer();
   // The floating window shows the stream this close is about to tear down, so
   // it goes too. Both dialects, same as the button.
   if (pip.active()) {
