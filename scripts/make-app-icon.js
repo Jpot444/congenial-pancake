@@ -37,7 +37,11 @@ const BG = [0x14, 0x14, 0x14];
 // header, loading screen, profile screen, favicon and this icon.
 const BULL = [0xe5, 0x09, 0x14];
 // Breathing room, so the rounded-corner mask iOS applies never clips the mark.
-const PAD = 0.16;
+// 0.075 is as tight as that allows for this shape: the bull is wide, so its
+// width is what fills the tile, and its corners sit well inside the curve.
+// It was 0.16, which left the bull at two thirds of the icon's width —
+// "isn't at full scale".
+const PAD = 0.075;
 
 /* ---- PNG in ---- */
 
@@ -184,5 +188,34 @@ for (let y = 0; y < SIZE; y += 1) {
 
 for (const name of ['app-icon.png', 'apple-touch-icon.png', 'apple-touch-icon-precomposed.png']) {
   writePng(path.join(ROOT, 'public', name), SIZE, icon);
+}
+
+/*
+ * And INTO the page, as a data: URI.
+ *
+ * "The logo when I try to add the app from safari on my phone isn't at full
+ *  scale, the Red Bull is surrounded by white"
+ *
+ * That is not this icon — this one is on #141414. It is bison.png, the
+ * transparent favicon, padded with white by iOS: what it falls back to when
+ * its own fetch of the touch icon fails. And it fails behind Cloudflare
+ * Access, because iOS fetches the icon outside the page's session, without
+ * the login cookie, and is handed the Access login page instead of a PNG.
+ *
+ * An icon carried inside the page needs no fetch, so there is nothing for
+ * Access to intercept. Written here so the page and the PNG are always the
+ * same bytes; appicon.test.js checks that they are.
+ */
+const dataUri = `data:image/png;base64,${fs.readFileSync(path.join(ROOT, 'public', 'app-icon.png')).toString('base64')}`;
+for (const page of ['public/index.html', 'public/tv/index.html']) {
+  const file = path.join(ROOT, page);
+  const html = fs.readFileSync(file, 'utf8');
+  const next = html.replace(
+    /(<link rel="apple-touch-icon" sizes="180x180" href=")[^"]*(" \/>)/,
+    `$1${dataUri}$2`);
+  if (next === html && !html.includes(dataUri)) {
+    throw new Error(`${page} has no <link rel="apple-touch-icon" sizes="180x180" href="…" /> to fill in`);
+  }
+  if (next !== html) fs.writeFileSync(file, next);
 }
 console.log(`app-icon: ${SIZE}x${SIZE} opaque, bison ${Math.round(dw)}x${Math.round(dh)} centered`);

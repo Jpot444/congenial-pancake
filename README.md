@@ -59,6 +59,18 @@ paths iPadOS requests on its own when it ignores the link tags.
 `apple-mobile-web-app-title` names it *Treasureflix*, the same as the
 `<title>` (the browser tab).
 
+**And it's carried inside the page.** *"the Red Bull is surrounded by
+white"*. That was never this icon, which sits on `#141414`. It was the
+transparent favicon padded with white by iOS, which is what it falls back to
+when its own fetch of the touch icon fails. Behind Cloudflare Access that
+fetch fails every time: iOS makes it outside the page's session, without the
+login cookie, and gets the Access login page instead of a PNG. So
+`make-app-icon.js` also writes the icon into `index.html` and `tv/index.html`
+as a `data:` URI. There's nothing to fetch, so nothing to intercept, and the
+test checks the inline copy is byte-for-byte the PNG. The bull is also bigger
+now: 0.075 padding instead of 0.16, so it spans 153 of the 180px instead of
+two thirds.
+
 iOS caches home-screen icons hard: an existing shortcut keeps the old tile
 until it is removed and added again.
 

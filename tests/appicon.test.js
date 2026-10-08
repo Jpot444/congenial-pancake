@@ -58,8 +58,16 @@ const readPng = decoder(fs, zlib);
   const link = /<link[^>]+rel="apple-touch-icon"[^>]*>/.exec(head)?.[0] || '';
   check('the head asks for an apple-touch-icon', Boolean(link), 'no such link tag');
   const href = /href="([^"]+)"/.exec(link)?.[1] || '';
-  check('pointing at the manufactured icon, not the raw logo',
-    href === '/app-icon.png', href);
+  /* Carried IN the page, not fetched. iOS fetches a linked touch icon outside
+     the page's session, so behind Cloudflare Access it got the login page,
+     fell back to the transparent favicon and padded it with white — "the Red
+     Bull is surrounded by white". */
+  check('carried inside the page, so nothing has to fetch it',
+    href.startsWith('data:image/png;base64,'), href.slice(0, 40));
+  const inline = Buffer.from(href.slice('data:image/png;base64,'.length), 'base64');
+  const servedIcon = Buffer.from(await (await fetch(`${BASE}/app-icon.png`)).arrayBuffer());
+  check('and it is the manufactured icon, byte for byte, not the raw logo',
+    inline.length > 0 && inline.equals(servedIcon), `${inline.length} vs ${servedIcon.length} bytes`);
   check('with its size declared', /sizes="180x180"/.test(link), link);
 
   const name = /<meta[^>]+name="apple-mobile-web-app-title"[^>]+content="([^"]+)"/.exec(head)?.[1];
@@ -70,7 +78,7 @@ const readPng = decoder(fs, zlib);
 
   // --- and the server serves it -------------------------------------------
   console.log('\n  what the server sends back');
-  const res = await fetch(BASE + href);
+  const res = await fetch(`${BASE}/app-icon.png`);
   check('it is actually there', res.status === 200, String(res.status));
   check('sent as a PNG', res.headers.get('content-type') === 'image/png',
     String(res.headers.get('content-type')));
@@ -138,6 +146,9 @@ const readPng = decoder(fs, zlib);
   const margin = Math.min(minX, minY, img.width - 1 - maxX, img.height - 1 - maxY);
   check('with margin, so the rounded-corner mask cannot clip the mark',
     margin >= 12, `${margin}px`);
+  /* And not lost in the middle of it: "isn't at full scale". */
+  check('and filling the tile — the bull is most of its width',
+    maxX - minX + 1 >= img.width * 0.8, `${maxX - minX + 1} of ${img.width}px`);
 
   // --- the paths iPadOS asks for by itself ---------------------------------
   //
