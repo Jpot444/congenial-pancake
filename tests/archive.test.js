@@ -17,7 +17,7 @@ const PATHS = require('./paths.js');
 const ROOT = PATHS.ROOT;
 const DIR = '/tmp/portal-arc';
 const PORT = 8483;
-const UI = 'http://127.0.0.1:8481';
+const UI = `http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`;
 
 const fails = [];
 const check = (name, ok, detail) => {

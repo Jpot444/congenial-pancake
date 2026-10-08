@@ -2838,7 +2838,9 @@
           /* m3u8, said rather than left to the box's default: hls.js is the
              only thing this element is wired to play, and a raw MPEG-TS
              answer would sit there as a black box until it timed out. */
-          const res = await fetch(`/api/play?kind=live&ext=m3u8&id=${encodeURIComponent(id)}`,
+          /* billboard=1: the box gives way to anybody who presses a real
+             channel while this one is let go — see BILLBOARD_LET_GO_MS. */
+          const res = await fetch(`/api/play?kind=live&ext=m3u8&billboard=1&id=${encodeURIComponent(id)}`,
             { headers: { accept: 'application/json' } });
           /* Refused — almost always no connection free, and usually only for
              a moment: the channel somebody just closed is still letting go

@@ -4860,7 +4860,35 @@ function spawnLiveDvr(session, input, resumed = false) {
  * Shared: a second viewer of the same channel joins the same window on the
  * same single provider connection.
  */
-async function ensureLiveDvr(cfg, channelId, low = false) {
+/*
+ * The home-page billboard is wallpaper, and wallpaper never wins.
+ *
+ * It holds a connection while it plays, and the page lets go of it the moment
+ * somebody opens a channel — but the box only notices an ingest is unwatched
+ * after LIVE_DVR.idleMs, 45 seconds. On a one-connection account that was 45
+ * seconds in which the channel somebody actually pressed had to fight the
+ * billboard's leftover for the only login.
+ *
+ * So the billboard's ingests are marked, and a real tune-in that finds the
+ * pool full first drops any billboard ingest nobody has fetched for a few
+ * seconds — the page has plainly let go of it. With a second login the
+ * billboard simply takes the spare and none of this is reached.
+ */
+const BILLBOARD_LET_GO_MS = 6000;
+
+function dropIdleBillboards(cfg, why) {
+  let dropped = 0;
+  for (const [sid, sess] of [...remuxSessions]) {
+    if (!sess.live || !sess.billboard) continue;
+    if (Date.now() - sess.lastAccess < BILLBOARD_LET_GO_MS) continue;
+    killSession(sid);
+    dropped += 1;
+  }
+  if (dropped) console.log(`  billboard: let go of ${dropped} stream(s) — ${why}`);
+  return dropped;
+}
+
+async function ensureLiveDvr(cfg, channelId, low = false, { billboard = false } = {}) {
   // The shrunk feed is a different ingest of the same channel and gets its
   // own name: one viewer on weak Wi-Fi must not replace the full-size feed
   // everybody else in the house is watching.
@@ -4868,9 +4896,12 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
   const existing = remuxSessions.get(id);
   if (existing && !(existing.exited && Date.now() - existing.lastAccess > LIVE_DVR.restartWindowMs)) {
     existing.lastAccess = Date.now();
+    // Somebody really watching it makes it theirs, not the billboard's.
+    if (!billboard) existing.billboard = false;
     return existing;
   }
   if (existing) killSession(id);
+  if (!billboard && !providers.pick(cfg)) dropIdleBillboards(cfg, 'somebody tuned in to a channel');
 
   fs.mkdirSync(HLS_DIR, { recursive: true });
   const dir = path.join(HLS_DIR, id);
@@ -4924,6 +4955,7 @@ async function ensureLiveDvr(cfg, channelId, low = false) {
     dir,
     live: true,
     low,
+    billboard,
     lastAccess: Date.now(),
     fromProvider: true,
     idleMs: LIVE_DVR.idleMs,
@@ -11313,7 +11345,8 @@ async function handleApi(req, res, pathname, query) {
       if (kind === 'live' && (format === 'm3u8' || lowWanted)
           && hasFfmpeg() && /^[\w-]+$/.test(id)) {
         try {
-          const session = await ensureLiveDvr(cfg, id, lowWanted);
+          const session = await ensureLiveDvr(cfg, id, lowWanted,
+            { billboard: query.get('billboard') === '1' });
           return json(res, 200, {
             url: `/hls/${session.id}/index.m3u8`, format: 'm3u8', dvr: true,
             low: lowWanted, swapped,

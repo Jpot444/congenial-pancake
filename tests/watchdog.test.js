@@ -10,7 +10,7 @@
 const { chromium } = require('./playwright.js');
 const fs = require('fs');
 
-const BASE = 'http://127.0.0.1:8481';
+const BASE = `http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`;
 const CLIP = fs.readFileSync(__dirname + '/clip.wav');
 const SHOTS = __dirname + '/shots';
 

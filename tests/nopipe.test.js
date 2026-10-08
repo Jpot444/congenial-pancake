@@ -38,7 +38,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const PATHS = require('./paths.js');
 
-const PORT = process.env.PORT || 8481;
+const PORT = process.env.PORTAL_PORT || process.env.PORT || 8481;
 const DIR = '/tmp/portal-nopipe';
 
 const fails = [];

@@ -39,7 +39,7 @@
  * below is that nothing took its place.
  */
 const { chromium } = require('./playwright.js');
-const BASE = 'http://127.0.0.1:8481';
+const BASE = `http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`;
 
 /* Model 3/Y centre screen: 1920×1200 native, and the browser gets about this
    much of it once Tesla's own chrome is off the top. */

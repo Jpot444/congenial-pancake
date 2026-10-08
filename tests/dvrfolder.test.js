@@ -35,7 +35,7 @@
  * now, which is already the page for what is on the box.
  */
 const { chromium } = require('./playwright.js');
-const BASE = 'http://127.0.0.1:8481';
+const BASE = `http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`;
 
 const fails = [];
 const check = (name, ok, detail) => {

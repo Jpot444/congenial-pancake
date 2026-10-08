@@ -20,7 +20,7 @@ const { chromium } = require('./playwright.js');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const BASE = 'http://127.0.0.1:8481';
+const BASE = `http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`;
 // Where the portal under test keeps its files. This suite is unusual in
 // reading them directly — a report is only really stored if it is on the
 // box's disk — so it has to know the directory rather than only the URL.
@@ -37,7 +37,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const post = (body) => new Promise((resolve, reject) => {
   const payload = JSON.stringify(body);
-  const req = http.request({ hostname: '127.0.0.1', port: 8481, path: '/api/reports',
+  const req = http.request({ hostname: '127.0.0.1', port: Number(process.env.PORTAL_PORT || 8481), path: '/api/reports',
     method: 'POST', headers: { 'content-type': 'application/json',
       'content-length': Buffer.byteLength(payload) } }, async (res) => {
     let text = '';
@@ -51,7 +51,7 @@ const post = (body) => new Promise((resolve, reject) => {
 /** Tell the box who is watching — the one place that answer now lives. */
 const putCurrent = (id) => new Promise((resolve, reject) => {
   const payload = JSON.stringify({ id });
-  const req = http.request({ hostname: '127.0.0.1', port: 8481, path: '/api/profiles/current',
+  const req = http.request({ hostname: '127.0.0.1', port: Number(process.env.PORTAL_PORT || 8481), path: '/api/profiles/current',
     method: 'PUT', headers: { 'content-type': 'application/json',
       'content-length': Buffer.byteLength(payload) } }, (res) => {
     res.resume();

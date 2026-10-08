@@ -27,7 +27,7 @@
  * take Movies' away.
  */
 const { chromium } = require('./playwright.js');
-const BASE = 'http://127.0.0.1:8481';
+const BASE = `http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`;
 
 const fails = [];
 const check = (name, ok, detail) => {
@@ -776,7 +776,7 @@ async function open(browser, { scores = SCORES, status = 200 } = {}) {
   /* The whole address, not the path: a line telling somebody to open
      '/api/scores' asks them to work out what to put in front of it. */
   check('and names the door to knock on, in full',
-    /http:\/\/127\.0\.0\.1:8481\/api\/scores/.test(brokenRow), brokenRow);
+    new RegExp(`http://127\\.0\\.0\\.1:${process.env.PORTAL_PORT || 8481}/api/scores`).test(brokenRow), brokenRow);
   await broken.close();
 
   await browser.close();

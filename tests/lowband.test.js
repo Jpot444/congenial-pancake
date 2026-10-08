@@ -23,7 +23,7 @@ const PATHS = require('./paths.js');
 const ROOT = PATHS.ROOT;
 const SERVER = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
 const APP = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
-const UI = 'http://127.0.0.1:8481';
+const UI = `http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`;
 
 const fails = [];
 const check = (name, ok, detail) => {
@@ -119,7 +119,7 @@ function lift(name, extra = '') {
   console.log('\n  every way in carries it');
   check('films and episodes', /low: query\.get\('low'\) === '1'/.test(SERVER));
   check('the archive drive', /const low = query\.get\('low'\) === '1';/.test(SERVER));
-  check('live channels', /ensureLiveDvr\(cfg, id, lowWanted\)/.test(SERVER));
+  check('live channels', /ensureLiveDvr\(cfg, id, lowWanted[,)]/.test(SERVER));
   check('a shrunk archive conversion is cached under its own name, so nobody',
     /arc-\$\{low \? 'lo-' : ''\}/.test(SERVER));
   console.log('       is served the wrong size from the cache');

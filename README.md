@@ -4237,9 +4237,9 @@ aimed at one way it used to spend a login on nobody:
 | rule | the case it answers |
 | --- | --- |
 | **big screens only** | not the car, not the television, not a phone borrowing this layout — the three places a page gets left up for hours. This is the half that was asked for by name. Also off under `prefers-reduced-motion`, checked in JS and not only in CSS: hiding it in the stylesheet would still open the connection and still hold it. |
-| **it settles first** | arrow-keying along three features would have opened three streams. Nothing is asked for until a slide has been still for 1.4s. |
+| **it settles first** | arrow-keying along three features would have opened three streams. Nothing is asked for until a slide has been still for 0.6s (1.4s originally; see below). |
 | **it stops when nobody is looking** | another page, a hidden tab, or five minutes idle. The old version had none of these, and that is precisely how it ate a subscription. |
-| **it gives up in silence** | a box with no connection free leaves the still exactly as it was, with nothing said. A decoration does not get to put an error over the page it is decorating. |
+| **it fails in silence** | a box with no connection free leaves the still exactly as it was, with nothing said. A decoration does not get to put an error over the page it is decorating. |
 
 And a fifth that only showed up once it was running: **a repaint is not a
 second connection.** Home rebuilds its billboard on every render — a library
@@ -4264,6 +4264,23 @@ has not been fetched yet. So the billboard had neither a mark nor anything to
 identify itself by, for the one feature this exists to fill. The history row it
 came from knows the channel id perfectly well, so the feature carries `liveId`
 now and the stream no longer depends on the library having arrived.
+
+**It used to try once.** *"you need to be sitting on the home screen for about
+30 seconds"*: a refusal, a stream error, or a remembered address the box had
+already dropped (it's kept for a minute, and the box drops an unwatched channel
+after 45 seconds) left the still standing until something unrelated happened
+to rebuild home. Now each of those throws the address away and tries again on
+a short backoff (1.5s, 2.5s, 4s… about a minute in all). It also tries again if
+there's no picture within 9 seconds of attaching. In the suite it plays 3
+seconds after a refused box frees up, with nothing redrawn.
+
+**And it gives way.** Its requests carry `billboard=1`, and the box marks those
+ingests. When a real tune-in finds every login in use, the box first drops any
+billboard ingest the page hasn't fetched for 6 seconds, which means the page
+let go when somebody opened a channel. Without that, the leftover held the only
+login for the 45 seconds the box takes to notice it's unwatched. With a second
+login on the account the billboard just takes the spare one. Covered by
+`billboardyield.test.js`.
 
 `heroLive.why` records which rule said no, in its own words. *"It did not ask"*
 and *"it asked and the box refused"* look identical from outside and are

@@ -91,7 +91,7 @@ const PATHS = require('./paths.js');
    than by a second implementation that can drift from it. */
 const titleMatch = require('../public/title-match.js');
 
-const BASE = 'http://127.0.0.1:8481';
+const BASE = `http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`;
 /* The server half stands up its own box and its own provider, on ports of
    their own, because what it is about is the box talking to a provider — which
    the browser half necessarily stubs out. */

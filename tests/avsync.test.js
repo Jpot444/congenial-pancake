@@ -16,7 +16,7 @@ const PATHS = require('./paths.js');
 const fs = require('fs');
 
 const SRC = PATHS.SERVER;
-const BASE = 'http://127.0.0.1:8481';
+const BASE = `http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`;
 const CLIP = fs.readFileSync(__dirname + '/clip.wav');
 const fails = [];
 const check = (name, ok, detail) => {

@@ -315,7 +315,7 @@ exit 0
       } : null;
     }, update);
 
-    await page.goto('http://127.0.0.1:8481', { waitUntil: 'networkidle' });
+    await page.goto(`http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`, { waitUntil: 'networkidle' });
     if (await page.locator('#profileGate').isVisible()) {
       await page.locator('.profile-tile').first().click();
       await page.waitForTimeout(1200);

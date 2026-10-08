@@ -23,7 +23,7 @@ const fs = require('fs');
 const path = require('path');
 const PATHS = require('./paths.js');
 
-const BASE = 'http://127.0.0.1:8481';
+const BASE = `http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`;
 const fails = [];
 const check = (name, ok, detail) => {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${!ok && detail ? ` — ${detail}` : ''}`);

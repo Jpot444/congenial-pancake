@@ -43,7 +43,7 @@ const ROOT = path.join(__dirname, '..');
 const DIR = '/tmp/portal-ncaaf';
 const PORT = 8487;
 const FEED_PORT = 8488;
-const BASE = 'http://127.0.0.1:8481';
+const BASE = `http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`;
 
 /* The fixture's kickoff is written the way a scoreboard writes one — a date
    and a clock face in Eastern — so the test has to build the same two pieces
@@ -1171,7 +1171,7 @@ const NFL_NIGHT = {
     /did not answer/.test(note.empty) && !/feed answered/.test(note.empty), note.empty);
   check('naming what came back', /403/.test(note.empty), note.empty);
   check('and the door to knock on, in full',
-    /http:\/\/127\.0\.0\.1:8481\/api\/scores/.test(note.empty), note.empty);
+    new RegExp(`http://127\\.0\\.0\\.1:${process.env.PORTAL_PORT || 8481}/api/scores`).test(note.empty), note.empty);
 
   console.log('\n  and the guide is asked about football, not about soccer');
   const asked = page.__epgAsked.join(' ');

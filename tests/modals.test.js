@@ -9,7 +9,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const browser = await chromium.launch();
   for (const [w, h, tag] of [[1280, 900, 'desktop'], [390, 844, 'phone']]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
-    await page.goto('http://127.0.0.1:8481', { waitUntil: 'networkidle' });
+    await page.goto(`http://127.0.0.1:${process.env.PORTAL_PORT || 8481}`, { waitUntil: 'networkidle' });
     const ids = await page.evaluate(() =>
       [...document.querySelectorAll('.modal')].map((m) => m.id));
     for (const id of ids) {
