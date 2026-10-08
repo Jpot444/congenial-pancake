@@ -3935,6 +3935,9 @@ setInterval(() => {
     // only CPU — and the moment any other title needs the encoder, the
     // sweep in startRemux takes it anyway.
     if (id.startsWith('arc-') && !s.exited) continue;
+    // The warm billboard is idle on purpose — see WARM. It goes when
+    // somebody needs the slot, or when autoplay is switched off.
+    if (s.warm && s.billboard && !s.exited) continue;
     // Live ingests hold a provider connection open, so they go sooner.
     const idle = s.idleMs || 5 * 60 * 1000;
     if (Date.now() - s.lastAccess > idle) killSession(id);
@@ -4502,6 +4505,11 @@ function holdersSentence(held) {
 function makeRoomForRecording(row) {
   const idleFor = (session) => Date.now() - session.lastAccess;
 
+  /* The billboard first, before anything that is costing somebody something.
+     It is wallpaper; a recording is somebody's programme. */
+  const cfg = readConfig();
+  if (cfg && yieldBillboards(cfg, `recording ${row.title}`)) return true;
+
   /* A conversion nobody is reading. `live` sessions are the channel windows;
      the rest are films and episodes being converted for somebody. */
   const cold = [...remuxSessions.values()]
@@ -4866,32 +4874,132 @@ function spawnLiveDvr(session, input, resumed = false) {
 /*
  * The home-page billboard is wallpaper, and wallpaper never wins.
  *
- * It holds a connection while it plays, and the page lets go of it the moment
- * somebody opens a channel — but the box only notices an ingest is unwatched
- * after LIVE_DVR.idleMs, 45 seconds. On a one-connection account that was 45
- * seconds in which the channel somebody actually pressed had to fight the
- * billboard's leftover for the only login.
+ * "I would be ok with dedicating one of the streams for the autoplay
+ *  permitted it isn't priority when I'm watching other things"
  *
- * So the billboard's ingests are marked, and a real tune-in that finds the
- * pool full first drops any billboard ingest nobody has fetched for a few
- * seconds — the page has plainly let go of it. With a second login the
- * billboard simply takes the spare and none of this is reached.
+ * Its ingests are marked `billboard`. Anything somebody actually chose — a
+ * channel, a film, a recording — that finds every login in use first drops
+ * EVERY billboard ingest, whether or not a page is showing it at that moment.
+ * The page sees its stream end and quietly shows the still. It used to spare
+ * a billboard that was still being fetched; real viewing now beats it
+ * outright, which is the condition the offer came with.
  */
-const BILLBOARD_LET_GO_MS = 6000;
-
-function dropIdleBillboards(cfg, why) {
+function yieldBillboards(cfg, why) {
   let dropped = 0;
   for (const [sid, sess] of [...remuxSessions]) {
     if (!sess.live || !sess.billboard) continue;
-    if (Date.now() - sess.lastAccess < BILLBOARD_LET_GO_MS) continue;
     killSession(sid);
     dropped += 1;
   }
-  if (dropped) console.log(`  billboard: let go of ${dropped} stream(s) — ${why}`);
+  if (dropped) {
+    console.log(`  billboard: gave way (${dropped} stream) — ${why}`);
+    /* And does not take the slot straight back the moment it frees: somebody
+       switching channels frees one for a second, and that second is theirs. */
+    warm.backoffUntil = Date.now() + WARM.backoffMs;
+  }
   return dropped;
 }
 
-async function ensureLiveDvr(cfg, channelId, low = false, { billboard = false } = {}) {
+/** Make room for something somebody chose, if the pool is full. */
+function makeRoomForViewer(cfg, why) {
+  if (providers.pick(cfg)) return 0;
+  return yieldBillboards(cfg, why);
+}
+
+/*
+ * THE WARM BILLBOARD.
+ *
+ * "it is still taking a long time for autoplay to start on load up"
+ *
+ * Because every load started the channel from cold: the provider's stream
+ * opened, ffmpeg began cutting it, and the page waited for a window to build —
+ * and a provider slow to start failed the five-second speed test, fell back to
+ * the direct path, missed the page's first-frame deadline and went round again.
+ *
+ * So with a connection to spare, the box keeps the billboard's channel running
+ * ALL THE TIME. A page landing on home joins an ingest with a full window
+ * behind it and has pictures as fast as hls.js can fetch two segments.
+ *
+ * Only ever with room to spare, and never at anybody's expense:
+ *   - two or more connections on the account (on one, warming would hold the
+ *     only connection hostage to wallpaper);
+ *   - a free one right now, and no download running or queued — a download
+ *     somebody asked for beats wallpaper too;
+ *   - autoplay switched on;
+ *   - not within a couple of minutes of having just given way.
+ * It is exempt from the 45-second idle reap (that is the point) and never
+ * counts as activity for the auto-updater, so it cannot hold a deploy.
+ *
+ * Which channel: the last one any billboard asked for, else the most recent
+ * live row in the history of whoever the box is showing — which is what the
+ * page will ask for.
+ */
+const WARM = {
+  tickMs: 20000,
+  backoffMs: 2 * 60 * 1000,
+  /* Generous, unlike a viewer's five seconds: nobody is waiting on this one,
+     and a provider slow to start is still worth having warm. */
+  startWaitMs: 30000,
+  /* A billboard channel asked for longer ago than this is a guess no better
+     than the history. */
+  wantedMs: 24 * 60 * 60 * 1000,
+};
+const warm = { want: null, backoffUntil: 0, starting: false };
+
+function billboardChannel() {
+  if (warm.want && Date.now() - warm.want.at < WARM.wantedMs) return warm.want.id;
+  const data = readProfiles();
+  const who = findProfile(data, currentProfileId(data))
+    || data.profiles.find(isOwnerProfile) || null;
+  const row = (who?.history || [])
+    .filter((r) => r && r.kind === 'live' && r.id !== undefined && r.id !== null)
+    .sort((a, b) => (b.at || 0) - (a.at || 0))[0];
+  return row ? String(row.id) : '';
+}
+
+async function warmBillboard() {
+  if (warm.starting) return;
+  const cfg = readConfig();
+  if (!cfg || cfg.mode !== 'xtream' || !hasFfmpeg()) return;
+  if (readPrefs().homeAutoplay === false) return;
+  const id = billboardChannel();
+  if (!id || !/^[\w-]+$/.test(id)) return;
+
+  const sid = `live-${id}`;
+  const existing = remuxSessions.get(sid);
+  if (existing && !existing.exited) {
+    /* Already running. If a viewer had taken it over and has since left, it
+       goes back to being the billboard's rather than being reaped and
+       reopened from cold. */
+    if (!existing.billboard && Date.now() - existing.lastAccess > 6000) existing.billboard = true;
+    if (existing.billboard) existing.warm = true;
+    return;
+  }
+  /* One warm channel at most: a different one left over from before is let go. */
+  for (const [other, sess] of [...remuxSessions]) {
+    if (sess.warm && other !== sid) killSession(other);
+  }
+  if (Date.now() < warm.backoffUntil) return;
+  if (providers.capacity(cfg) < 2 || providers.free(cfg) < 1) return;
+  if ([...downloads.values()].some((j) => !j.archivePath
+    && (j.status === 'queued' || j.status === 'downloading'))) return;
+
+  warm.starting = true;
+  try {
+    const session = await ensureLiveDvr(cfg, id, false,
+      { billboard: true, waitMs: WARM.startWaitMs });
+    session.warm = true;
+    console.log(`  billboard: keeping channel ${id} warm`);
+  } catch (err) {
+    warm.backoffUntil = Date.now() + WARM.backoffMs;
+    console.log(`  billboard: could not warm channel ${id} — ${redactUrl(err.message)}`);
+  } finally {
+    warm.starting = false;
+  }
+}
+setInterval(() => safely('warm billboard', () => warmBillboard()), WARM.tickMs).unref();
+
+async function ensureLiveDvr(cfg, channelId, low = false, { billboard = false, waitMs = 0 } = {}) {
   // The shrunk feed is a different ingest of the same channel and gets its
   // own name: one viewer on weak Wi-Fi must not replace the full-size feed
   // everybody else in the house is watching.
@@ -4899,12 +5007,16 @@ async function ensureLiveDvr(cfg, channelId, low = false, { billboard = false } 
   const existing = remuxSessions.get(id);
   if (existing && !(existing.exited && Date.now() - existing.lastAccess > LIVE_DVR.restartWindowMs)) {
     existing.lastAccess = Date.now();
-    // Somebody really watching it makes it theirs, not the billboard's.
-    if (!billboard) existing.billboard = false;
+    // Somebody really watching it makes it theirs, not the billboard's —
+    // including the warm one, which then joins them instantly.
+    if (!billboard) {
+      existing.billboard = false;
+      existing.warm = false;
+    }
     return existing;
   }
   if (existing) killSession(id);
-  if (!billboard && !providers.pick(cfg)) dropIdleBillboards(cfg, 'somebody tuned in to a channel');
+  if (!billboard) makeRoomForViewer(cfg, 'somebody tuned in to a channel');
 
   fs.mkdirSync(HLS_DIR, { recursive: true });
   const dir = path.join(HLS_DIR, id);
@@ -4989,7 +5101,8 @@ async function ensureLiveDvr(cfg, channelId, low = false, { billboard = false } 
     : providers.take(account.id);
   remuxSessions.set(id, session);
   lastProviderActiveAt = Date.now();
-  autoPauseActiveDownload();
+  /* Wallpaper never pauses somebody's download. */
+  if (!billboard) autoPauseActiveDownload();
   spawnLiveDvr(session, input);
 
   // Two segments inside the short wait, and that bar is doing real work: it
@@ -5001,7 +5114,7 @@ async function ensureLiveDvr(cfg, channelId, low = false, { billboard = false } 
   // rides the ingest frontier, stalling every few seconds. Slow feeds belong
   // on the direct path, and this bar is what sends them there.
   const playlist = path.join(dir, 'index.m3u8');
-  const deadline = Date.now() + LIVE_DVR.startWaitMs;
+  const deadline = Date.now() + (waitMs || LIVE_DVR.startWaitMs);
   while (Date.now() < deadline) {
     session.lastAccess = Date.now(); // warming is not idleness
     if (fs.existsSync(playlist)) {
@@ -9602,7 +9715,10 @@ async function handleApi(req, res, pathname, query) {
 
   if (pathname === '/api/activity') {
     const streaming = providerStreams > 0;
-    const watching = [...remuxSessions.values()].some((s) => Date.now() - s.lastAccess < 60_000);
+    /* Not the billboard: a home page left open would otherwise hold every
+       deploy for the updater's full ten minutes, for muted wallpaper. */
+    const watching = [...remuxSessions.values()]
+      .some((s) => !s.billboard && Date.now() - s.lastAccess < 60_000);
     const downloading = providerDownloads().length > 0;
     // Generous window: Safari can leave a real gap between range requests while
     // it chews through what it already has, and a false idle here costs someone
@@ -10892,6 +11008,7 @@ async function handleApi(req, res, pathname, query) {
          every one of them down account #1 is how two logins still behave like
          one. startRemux reads the choice back out of the URL and holds the
          slot for the life of the conversion. */
+      makeRoomForViewer(cfg, `somebody opened ${kind} ${id}`);
       const chosen = providers.pick(cfg, { reserve: true }) || cfg;
       input = buildStreamUrl(chosen, kind === 'series' ? 'series' : 'movie', id, ext);
       // Keyed on what identifies the title, never on the URL that carries the
@@ -11366,8 +11483,9 @@ async function handleApi(req, res, pathname, query) {
       if (kind === 'live' && (format === 'm3u8' || lowWanted)
           && hasFfmpeg() && /^[\w-]+$/.test(id)) {
         try {
-          const session = await ensureLiveDvr(cfg, id, lowWanted,
-            { billboard: query.get('billboard') === '1' });
+          const asBillboard = query.get('billboard') === '1';
+          if (asBillboard && !lowWanted) warm.want = { id: String(id), at: Date.now() };
+          const session = await ensureLiveDvr(cfg, id, lowWanted, { billboard: asBillboard });
           return json(res, 200, {
             url: `/hls/${session.id}/index.m3u8`, format: 'm3u8', dvr: true,
             low: lowWanted, swapped,
@@ -11419,6 +11537,9 @@ async function handleApi(req, res, pathname, query) {
          because the URL is built here and the pipe opens in the NEXT request:
          without it, two things started together would both be told to use the
          same free account and one of them would be refused. */
+      /* Somebody pressing a channel or a film, on the direct path, also
+         beats the billboard to a full pool. */
+      if (query.get('billboard') !== '1') makeRoomForViewer(cfg, `somebody opened ${kind} ${id}`);
       const chosen = providers.pick(cfg, { reserve: true });
       /* Option B, and the only place it is visible.
        *

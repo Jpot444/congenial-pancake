@@ -4274,13 +4274,31 @@ a short backoff (1.5s, 2.5s, 4s… about a minute in all). It also tries again i
 there's no picture within 9 seconds of attaching. In the suite it plays 3
 seconds after a refused box frees up, with nothing redrawn.
 
-**And it gives way.** Its requests carry `billboard=1`, and the box marks those
-ingests. When a real tune-in finds every login in use, the box first drops any
-billboard ingest the page hasn't fetched for 6 seconds, which means the page
-let go when somebody opened a channel. Without that, the leftover held the only
-login for the 45 seconds the box takes to notice it's unwatched. With a second
-login on the account the billboard just takes the spare one. Covered by
-`billboardyield.test.js`.
+**It's kept warm.** *"it is still taking a long time for autoplay to start
+on load up"*: every load started the channel from cold, and a provider slow to
+start failed the 5-second speed test, fell back to the direct path, missed the
+page's first-frame deadline and went round again. So with a connection to
+spare, the box keeps the billboard's channel running all the time
+(`warmBillboard`, every 20s). A page landing on home joins a window that's
+already built. The channel is the last one a billboard asked for, else the
+newest live row in the current profile's history. It warms only when:
+
+- the account has **2+ connections** (on one, it would hold the only one);
+- one is **free right now**, and **no download** is running or queued;
+- autoplay is on, and it hasn't just given way (2-minute backoff).
+
+The warm stream is exempt from the 45-second idle reap. It **never counts as
+activity** for the auto-updater, so it can't hold a deploy, and it never
+pauses a download.
+
+**And it's never priority.** Its requests carry `billboard=1`, and the box
+marks those ingests. Anything somebody chose (a channel on either path, a film
+being converted, a recording) that finds every login in use first drops
+**every** billboard ingest, even one a page is showing that second
+(`makeRoomForViewer`). It then holds off re-warming for 2 minutes, so a
+channel switch keeps its slot. A viewer who opens the warm channel itself just
+joins it, and when they leave it goes back to being the billboard's instead of
+reopening from cold. Covered by `billboardyield.test.js`.
 
 **It can be switched off.** *Autoplay on the home screen*, in the health
 panel beside low bandwidth, is box-wide like it, because what it switches off
