@@ -27,7 +27,7 @@ No npm install, no build step — one Node file and three static files.
 
 Added to the home screen from Safari, this used to come up as a **"P"** on a
 grey tile. A site with no `apple-touch-icon` gets a screenshot or the first
-letter of its document title, and the title still begins "Portal" — so both
+letter of its document title, which began "Portal" at the time — so both
 halves of that were the same omission.
 
 The icon is `public/app-icon.png` — the bison **manufactured into the shape
@@ -46,8 +46,9 @@ in step again; the test suite checks the committed icon is byte-for-byte what
 the script produces, so they cannot drift silently. The same bytes also sit
 at `/apple-touch-icon.png` and `/apple-touch-icon-precomposed.png`, the bare
 paths iPadOS requests on its own when it ignores the link tags.
-`apple-mobile-web-app-title` names it *Treasureflix*, which is what the
-app is called everywhere except its `<title>`.
+`apple-mobile-web-app-title` names it *Treasureflix*. The `<title>` (the
+browser tab) is *Treasureflix — Live TV, Movies & Series*, which is too long
+to sit under an icon.
 
 iOS caches home-screen icons hard: an existing shortcut keeps the old tile
 until it is removed and added again.
