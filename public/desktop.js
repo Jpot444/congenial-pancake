@@ -2700,17 +2700,32 @@
    *   hand the slot back. The old version had none of these and that is
    *   precisely how it ate a subscription.
    *
-   *   AND IT GIVES UP QUIETLY. A box that refuses — no connection free, which
+   *   AND IT FAILS QUIETLY. A box that refuses — no connection free, which
    *   is the exact failure this risks — leaves the still exactly as it was,
    *   with nothing said. The billboard is decoration; it does not get to
    *   report an error over the top of the page.
+   *
+   *   BUT IT DOES NOT GIVE UP. "you need to be sitting on the home screen for
+   *   about 30 seconds" — because it used to try ONCE. A refusal, a stream
+   *   that errored, or an address the box had already reaped (it keeps one
+   *   for a minute; the box drops an unwatched channel after 45 seconds) left
+   *   the still standing until something unrelated happened to rebuild home.
+   *   Now any of those is tried again on a short backoff, with the address
+   *   thrown away, until there is a picture or HERO_RETRY_MS runs out.
    *
    * Watch live still opens the channel properly, with sound, at whatever the
    * player does. This is muted wallpaper and nothing else.
    */
 
-  /** A slide has to be still this long before it is worth a connection. */
-  const HERO_SETTLE_MS = 1400;
+  /** A slide has to be still this long before it is worth a connection. Long
+      enough that flicking through the three features does not open three
+      streams; short enough that landing on home is not a wait. */
+  const HERO_SETTLE_MS = 600;
+  /** Pauses between tries after a refusal or a failure: about a minute in
+      all, and then the still stands until the next time home is drawn. */
+  const HERO_RETRY_MS = [1500, 2500, 4000, 6000, 8000, 10000, 12000, 15000];
+  /** Attached, but no picture by now: something is stuck, so try again. */
+  const HERO_FIRST_FRAME_MS = 9000;
   /** And a page nobody has touched for this long is not being watched. */
   const HERO_IDLE_MS = 5 * 60 * 1000;
   /** How long the address the box gave for a channel is worth re-using. */
@@ -2739,6 +2754,12 @@
     video: null,
     settle: null,
     idle: null,
+    /** The next try, after a refusal or a failure — see again(). */
+    retry: null,
+    /** How many tries this feature has had, which picks the next pause. */
+    tries: 0,
+    /** No picture yet this long after attaching — see HERO_FIRST_FRAME_MS. */
+    firstFrame: null,
     /** { id, play, at } — the last address the box gave. See start(). */
     held: null,
     /** The channel currently asked for, so a repeat paint does not restart it. */
@@ -2781,6 +2802,7 @@
       if (!id) return this.no('the channel has no id');
       this.why = 'settling';
       this.key = id;
+      this.tries = 0;
       this.settle = setTimeout(() => {
         this.settle = null;
         this.start(hero, feature, id);
@@ -2813,19 +2835,23 @@
       if (play) this.why = 'reusing the address it was given a moment ago';
       if (!play) {
         try {
-          const res = await fetch(`/api/play?kind=live&id=${encodeURIComponent(id)}`,
+          /* m3u8, said rather than left to the box's default: hls.js is the
+             only thing this element is wired to play, and a raw MPEG-TS
+             answer would sit there as a black box until it timed out. */
+          const res = await fetch(`/api/play?kind=live&ext=m3u8&id=${encodeURIComponent(id)}`,
             { headers: { accept: 'application/json' } });
-          /* Refused — almost always no connection free. The still stands and
-             nothing is said: a billboard does not get to put an error over
-             the page it is decorating. */
-          if (!res.ok) return this.no(`the box answered ${res.status}`);
+          /* Refused — almost always no connection free, and usually only for
+             a moment: the channel somebody just closed is still letting go
+             of it. The still stands and nothing is said, and it is asked
+             again shortly. */
+          if (!res.ok) return this.again(hero, feature, id, `the box answered ${res.status}`);
           play = await res.json();
         } catch (err) {
-          return this.no(`the box could not be reached: ${err.message}`);
+          return this.again(hero, feature, id, `the box could not be reached: ${err.message}`);
         }
         if (play && play.url) this.held = { id, play, at: Date.now() };
       }
-      if (!play || !play.url) return this.no('the box gave no address');
+      if (!play || !play.url) return this.again(hero, feature, id, 'the box gave no address');
       if (this.key !== id || state.tab !== 'home' || document.hidden) {
         return this.no('the page moved on while the box was answering');
       }
@@ -2854,9 +2880,22 @@
          worse than the mark. */
       video.addEventListener('playing', () => {
         if (this.video !== video) return;
+        clearTimeout(this.firstFrame);
+        this.firstFrame = null;
+        this.tries = 0;
         video.classList.add('is-on');
         video.closest('.slide')?.classList.add('has-live');
       }, { once: true });
+      /* A picture or another go. An address the box has since reaped answers
+         404 to hls.js and to a plain <video> alike, and both used to end
+         right there. */
+      const failed = (why) => {
+        if (this.video !== video) return;
+        this.held = null;          // whatever it was, it is not worth reusing
+        this.again(hero, feature, id, why);
+      };
+      video.addEventListener('error', () => failed('the stream would not play'), { once: true });
+      this.firstFrame = setTimeout(() => failed('no picture in time'), HERO_FIRST_FRAME_MS);
 
       if (play.format === 'm3u8' && window.Hls?.isSupported()) {
         /* Its own instance. The portal's player keeps `engine` for the thing
@@ -2865,7 +2904,7 @@
         const hls = new window.Hls({ lowLatencyMode: false, liveSyncDuration: 32 });
         this.hls = hls;
         hls.on(window.Hls.Events.ERROR, (_e, data) => {
-          if (data?.fatal) this.stop();
+          if (data?.fatal) failed(`the stream failed: ${data.details || data.type || 'fatal'}`);
         });
         hls.loadSource(play.url);
         hls.attachMedia(video);
@@ -2885,13 +2924,43 @@
       return undefined;
     },
 
+    /**
+     * Try again shortly, if this is still the feature on the screen.
+     *
+     * What used to be the end of it — see "BUT IT DOES NOT GIVE UP" above. The
+     * stream (if any) is let go first, so a retry is never a second
+     * connection held alongside the first.
+     */
+    again(hero, feature, id, reason) {
+      this.detach();
+      if (this.key !== id) return this.no(reason);
+      if (this.tries >= HERO_RETRY_MS.length) return this.no(`${reason} — gave up for now`);
+      const pause = HERO_RETRY_MS[this.tries];
+      this.tries += 1;
+      this.why = `${reason} — trying again in ${(pause / 1000).toFixed(1)}s`;
+      this.retry = setTimeout(() => {
+        this.retry = null;
+        this.start(hero, feature, id);
+      }, pause);
+      return undefined;
+    },
+
     /** Hand the connection back. Safe to call at any point, including twice. */
     stop() {
       clearTimeout(this.settle);
-      clearTimeout(this.idle);
+      clearTimeout(this.retry);
       this.settle = null;
-      this.idle = null;
+      this.retry = null;
       this.key = '';
+      this.detach();
+    },
+
+    /** Let go of the stream, but not of which feature is wanted. */
+    detach() {
+      clearTimeout(this.idle);
+      clearTimeout(this.firstFrame);
+      this.idle = null;
+      this.firstFrame = null;
       if (this.hls) {
         try { this.hls.destroy(); } catch { /* already gone */ }
         this.hls = null;

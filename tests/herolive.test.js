@@ -111,6 +111,19 @@ const LIVE = { categories: [{ id: 'c1', name: 'USA SPORTS' }], items: CHANNELS,
   await page.route('**/api/scores**', (r) =>
     r.fulfill({ status: 200, contentType: 'application/json',
       body: '{"games":[],"feeds":[]}' }));
+  /* What the box says was watched last, served from here like everything
+     else this page reads. home() below also sets it in the page, but the page
+     re-reads taste from the box whenever the profile moves — and on the
+     shared test box, whatever the suites before this one played is what the
+     box would say. Which made this pass alone and fail in a full run with
+     "the feature is not a channel". */
+  await page.route('**/api/profiles/*/taste', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        recentlyWatched: [{ kind: 'live', id: CHANNELS[0].id, name: CHANNELS[0].name,
+          key: `live:${CHANNELS[0].id}`, at: Date.now() }],
+        continueWatching: [], categoryAffinity: [], ratings: {},
+      }) }));
 
   /* Every request for a stream, which is the thing being counted: each one is
      a connection this box may not have to spare. */
@@ -336,15 +349,72 @@ const LIVE = { categories: [{ id: 'c1', name: 'USA SPORTS' }], items: CHANNELS,
   const said = await page.evaluate(() =>
     (document.querySelector('#toast')?.textContent || '').trim());
   console.log('   ', JSON.stringify(refused), 'asked:', JSON.stringify(asks), 'said:', said);
-  check('it asks', asks.length === 1, JSON.stringify(asks));
-  check('and then leaves the billboard exactly as it was',
+  check('it asks', asks.length >= 1, JSON.stringify(asks));
+  check('and meanwhile leaves the billboard exactly as it was',
     refused.video === false && refused.marked === 0, JSON.stringify(refused));
   check('without a word about it', !/connection|refus|error/i.test(said), said);
   /* But it does write down what happened, where somebody looking for it can
      find it. Silence on the screen is not the same as silence everywhere. */
   check('while still recording what the box said',
     /the box answered 409/.test(refused.why), refused.why);
+
+  /*
+   * "you need to be sitting on the home screen for about 30 seconds"
+   *
+   * Because it asked ONCE. A refusal is usually a moment — the channel just
+   * closed is still letting go of the connection — and the billboard sat as a
+   * still until something unrelated rebuilt home. Now it asks again on a short
+   * backoff, and the moment the box has a connection it plays, with nothing
+   * repainted and nothing pressed.
+   */
+  console.log('\n  and when the connection comes free a moment later');
+  await wait(2500);
+  const asked = asks.length;
+  console.log('    asked', asked, 'times while refused ·', refused.why);
+  check('it asks again rather than giving up', asked >= 2, JSON.stringify(asks));
+  check('a few times, not in a tight loop', asked <= 4, JSON.stringify(asks));
   refuse = false;
+  const freedAt = Date.now();
+  let freed = await shape();
+  while (!freed.playing && Date.now() - freedAt < 12000) {
+    await wait(250);
+    freed = await shape();
+  }
+  const took = ((Date.now() - freedAt) / 1000).toFixed(1);
+  console.log(`    playing ${took}s after the box had a connection again`, JSON.stringify(freed));
+  check('it starts playing on its own, without home being redrawn',
+    freed.playing === true, JSON.stringify(freed));
+  check('within a few seconds of the connection coming free', Number(took) <= 8, `${took}s`);
+
+  /*
+   * The other way it used to stick. The address the box gives is kept for a
+   * minute so a rebuild does not ask again — but the box drops a channel
+   * nobody is fetching after 45 seconds, so between the two a stale address
+   * was re-attached, answered 404, and that was the end of it.
+   */
+  console.log('\n  and an address the box has already let go of');
+  await page.evaluate(() => {
+    const h = window.__ttDesktop.heroLive;
+    h.stop();
+    h.held = { id: h.held?.id || String(document.querySelector('#dkHero') && ''),
+      play: { url: '/hls/reaped-session/index.m3u8', format: 'm3u8' }, at: Date.now() };
+  });
+  await page.route('**/hls/reaped-session/**', (r) =>
+    r.fulfill({ status: 404, contentType: 'text/plain', body: 'Session expired' }));
+  asks = [];
+  await page.evaluate((id) => { window.__ttDesktop.heroLive.held.id = String(id); },
+    CHANNELS[0].id);
+  await home('desk');
+  let stale = await shape();
+  const staleAt = Date.now();
+  while (!stale.playing && Date.now() - staleAt < 12000) {
+    await wait(250);
+    stale = await shape();
+  }
+  console.log('   ', JSON.stringify(stale), 'asked:', JSON.stringify(asks));
+  check('a dead address is dropped and a fresh one asked for',
+    asks.length >= 1, JSON.stringify(asks));
+  check('and the billboard plays', stale.playing === true, JSON.stringify(stale));
 
   /* ---- the guide it sits above ------------------------------------------- */
   /*

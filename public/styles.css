@@ -736,9 +736,10 @@ svg {
   display: block;
   width: 100%;
   height: auto;
-  filter:
-    drop-shadow(0 10px 40px rgba(229, 9, 20, .55))
-    drop-shadow(0 2px 3px rgba(0, 0, 0, .6));
+  /* Flat #E50914, the way Netflix draws its own mark: no red halo. The halo
+     spread the red into the dark around it and made it read as neon. Only
+     a small dark shadow to seat it on the background. */
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .6));
 }
 
 .loader.is-booting .loader-bison { animation: markIn 1.5s var(--ease) .35s backwards; }
@@ -761,7 +762,9 @@ svg {
   mask-size: 100% 100%;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
-  background: linear-gradient(105deg, transparent 34%, rgba(255, 255, 255, .9) 50%, transparent 66%);
+  /* A gleam, not a flash: at .9 the band turned the red bull white-pink as
+     it passed, which is the other half of what looked neon. */
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, .22) 50%, transparent 62%);
   background-size: 280% 100%;
   background-position: 180% 0;
   opacity: 0;

@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '44.7';
+const VERSION = '44.8';
 
 const PAGE_SIZE = 60;
 
@@ -4654,11 +4654,13 @@ const frontDoor = {
     note.classList.remove('is-bad', 'is-open');
 
     if (data.configured === false) {
-      note.textContent = 'Not set up yet. Add a Cloudflare API token below and '
-        + 'this box can let the door off the latch for a few hours at a time.';
+      note.textContent = 'Not set up yet. Open Cloudflare setup below and add an '
+        + 'API token, and this box can let the door off the latch for a few hours.';
       left.textContent = '';
       sw.hidden = true;
-      $('#doorSetup').open = true;
+      /* Left folded, like Listings. Opened by itself it was a column of form
+         fields on every box without a token — enough to push the health card
+         back into needing a scroll, which is what it was squared up to end. */
       this.stop();
       this.fillSetup();
       return;

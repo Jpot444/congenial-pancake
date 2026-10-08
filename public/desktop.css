@@ -96,7 +96,7 @@
 .desk .site-header.lifted .brand-title {
   font-size: 22px;
   color: #E50914;
-  text-shadow: 0 0 22px rgba(229, 9, 20, .5);
+  text-shadow: none;   /* flat red; a red glow is what made it look neon */
 }
 
 .desk .brand-sub {
@@ -3403,7 +3403,7 @@ body.is-reordering .cht { transition: none; }
 .desk body.has-tabbar .site-header.lifted .brand-title {
   font-size: 17px;
   color: #E50914;
-  text-shadow: 0 0 18px rgba(229, 9, 20, .45);
+  text-shadow: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
