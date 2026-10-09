@@ -152,7 +152,12 @@ const CHANNEL = { kind: 'live', id: 701, num: 701, name: 'US| RELAY ONE', logo: 
       window.__trace.push({
         t: Math.round(performance.now() - t0),
         picture: Boolean(relayLive || mainLive),
-        sound: Boolean((relayLive && !relayV.muted) || (mainLive && !main.muted)),
+        sound: Boolean((relayLive && !relayV.muted && relayV.volume > 0)
+          || (mainLive && !main.muted && main.volume > 0)),
+        /* The Safari trap: a video that starts muted and is unmuted by code
+           outside a click is silenced there. The player's copy must be kept
+           quiet by volume, never by `muted`. */
+        mainMuted: Boolean(main && main.muted),
         relay: Boolean(document.querySelector('.relay-video')),
         status: status(),
       });
@@ -191,6 +196,9 @@ const CHANNEL = { kind: 'live', id: 701, num: 701, name: 'US| RELAY ONE', logo: 
     JSON.stringify(gaps.slice(0, 3)));
   /* A sample or two of silence is the instant of the swap itself. */
   check('and sound all the way through', silent.length <= 2, JSON.stringify(silent.slice(0, 3)));
+  const mutedAtAll = trace.filter((x) => x.mainMuted);
+  check('the player\u2019s copy is never muted on the way — Safari would keep it silent',
+    mutedAtAll.length === 0, JSON.stringify(mutedAtAll.slice(0, 2)));
   check('the player never says it is building a buffer', buffering.length === 0,
     JSON.stringify(buffering.slice(0, 2)));
   check('the player’s own copy takes over within a few seconds', took < 6000, `${took}ms`);
@@ -206,10 +214,11 @@ const CHANNEL = { kind: 'live', id: 701, num: 701, name: 'US| RELAY ONE', logo: 
     const v = document.querySelector('#video');
     const frags = engine?.levels?.[Math.max(0, engine.currentLevel)]?.details?.fragments || [];
     const f = frags.find((x) => v.currentTime >= x.start && v.currentTime < x.start + x.duration);
-    return f ? { sn: f.sn, offset: v.currentTime - f.start, muted: v.muted } : null;
+    return f ? { sn: f.sn, offset: v.currentTime - f.start, muted: v.muted, volume: v.volume } : null;
   });
   console.log('    player now at', JSON.stringify(where));
-  check('the player has the sound now', where && where.muted === false, JSON.stringify(where));
+  check('the player has the sound now, at full volume',
+    where && where.muted === false && where.volume === 1, JSON.stringify(where));
   /* A segment is 2s here. The billboard sat about 32s behind the end of a
      60s playlist (segments 500-529), so it was around 513-514 when pressed;
      a reload would seat the player 45s back instead, around 507 — six or

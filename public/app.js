@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '46.0';
+const VERSION = '46.1';
 
 const PAGE_SIZE = 60;
 
@@ -18711,7 +18711,7 @@ function preparePlayer(item) {
 const RELAY_MAX_MS = 8000;
 /** Offered by the billboard a moment before openPlayer runs. */
 let relayOffer = null;
-/** The hand-over in progress: { id, video, hls, timer, poll, wantMuted }. */
+/** The hand-over in progress: { id, video, hls, timer, poll, wantVolume }. */
 let relay = null;
 
 function offerHandoff(handoff) {
@@ -18775,7 +18775,7 @@ function beginRelay(item) {
   v.muted = false;
   v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
   relay = { ...offer, timer: setTimeout(() => endRelay(false), RELAY_MAX_MS), poll: null,
-    wantMuted: $('#video').muted };
+    wantVolume: $('#video').volume };
   $('#playerOverlay').classList.add('is-relay');
   return true;
 }
@@ -18802,7 +18802,12 @@ function relayTarget(r) {
 function followRelay(video) {
   const r = relay;
   if (!r) return;
-  video.muted = true;
+  /* Silent by VOLUME, never by `muted`. Safari will not let a video that
+     started muted be unmuted by code outside a click — it pauses or silences
+     it — and the swap happens a second after the click. Chrome allows it,
+     which is why this passed in a test browser and had no sound on a Mac:
+     "sound isnt coming through now". Volume is never policed. */
+  video.volume = 0;
   status('');
   engine.once(Hls.Events.LEVEL_LOADED, () => {
     if (relay !== r) return;
@@ -18844,13 +18849,30 @@ function endRelay(swapped) {
   clearInterval(r.poll);
   $('#playerOverlay').classList.remove('is-relay');
   const video = $('#video');
-  if (video) video.muted = r.wantMuted;
-  r.video.muted = true;
   if (swapped) {
+    /* The sound crosses over rather than cutting: the billboard's copy down,
+       the player's up, over about a third of a second. */
+    const want = r.wantVolume;
+    const from = r.video.volume;
+    const steps = 10;
+    let step = 0;
+    const ramp = setInterval(() => {
+      step += 1;
+      const k = step / steps;
+      if (video) video.volume = Math.min(1, want * k);
+      r.video.volume = Math.max(0, from * (1 - k));
+      if (step >= steps) {
+        clearInterval(ramp);
+        if (video) video.volume = want;
+        r.video.muted = true;
+      }
+    }, 30);
     r.video.classList.add('is-leaving');
     setTimeout(() => freeRelayMedia(r), 450);
     return;
   }
+  if (video) video.volume = r.wantVolume;
+  r.video.muted = true;
   freeRelayMedia(r);
   /* The ordinary start, for a copy that was waiting on the hand-over. */
   if (engine && currentLiveItem && engineKind === 'hls.js') {

@@ -2662,6 +2662,15 @@
            the channel again. */
         if (f && f.kind === 'live' && String(f.liveId || f.item?.id || '') === heroLive.key) {
           window.offerHandoff?.(heroLive.handOff());
+          /* And the player's own <video> is told it may make sound, NOW,
+             inside the click — Safari only allows sound from an element a
+             gesture has touched, and the player starts it a second from now.
+             Only an empty element: one still holding a source would start
+             playing it. */
+          const main = document.querySelector('#video');
+          if (main && !main.currentSrc) {
+            try { main.play()?.catch?.(() => {}); } catch { /* nothing to play yet */ }
+          }
         }
         return f?.go();
       }

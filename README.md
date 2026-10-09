@@ -4376,6 +4376,16 @@ live on the channel that's playing **hands the billboard's `<video>` over**
 4. Once that copy has 1.5s buffered at that moment, the billboard's copy
    fades off it and the sound moves across.
 
+**Quiet by volume, never by `muted`.** *"sound isnt coming through now"*, on
+a Mac. The player's copy used to be muted while it caught up and unmuted at
+the swap, a second after the click. Safari won't let code unmute a video
+that started muted outside a gesture, so it stayed silent there. Chrome
+allows it, which is why the tests passed. Now the copy is held at volume 0
+and the sound crossfades over about 0.3s at the swap. The click also calls
+`play()` on the empty player element, which is how Safari decides an element
+may make sound. `relay.test.js` fails if the player's copy is ever muted
+during a hand-over.
+
 Anything that hasn't swapped within 8 seconds falls back to the ordinary start,
 and an unclaimed hand-over expires after 15. `relay.test.js` drives it with
 real hls.js (vendored in `tests/vendor/`, Apache-2.0, because the CDN is
