@@ -9,16 +9,81 @@
      the page so no fetch of it can be intercepted. -->
 <link rel="apple-touch-icon" sizes="1024x1024" href="/app-icon.png?v=d1060d248a" />
 <meta name="apple-mobile-web-app-title" content="Treasureflix" />
+<!-- The start screen's own styles, inline, so it paints with the first bytes
+     of the page — before any stylesheet or script has arrived. See #boot. -->
+<style>
+  #boot {
+    position: fixed; inset: 0; z-index: 1000;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: #000; color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    transition: opacity .45s ease;
+  }
+  #boot.is-done { opacity: 0; pointer-events: none; }
+  #boot img { width: min(26vw, 340px); height: auto; display: block; }
+  #boot .boot-title {
+    margin-top: 2.2vh;
+    font-family: 'Bebas Neue', 'Arial Narrow', sans-serif;
+    font-size: min(7.6vw, 104px); line-height: .9; letter-spacing: .01em;
+    color: #E50914;
+  }
+  #boot .boot-sub {
+    margin-top: 1.2vh; font-size: min(1.15vw, 15px); letter-spacing: .3em;
+    text-transform: uppercase; color: rgba(255, 255, 255, .55);
+  }
+  #boot .boot-line {
+    position: relative; overflow: hidden;
+    width: min(24vw, 320px); height: 2px; margin-top: 4.4vh;
+    background: rgba(255, 255, 255, .12);
+  }
+  #boot .boot-line::after {
+    content: ''; position: absolute; top: 0; bottom: 0; width: 38%;
+    background: #E50914; animation: bootSweep 1.3s ease-in-out infinite;
+  }
+  @keyframes bootSweep { from { left: -38%; } to { left: 100%; } }
+  #boot .boot-say {
+    margin-top: 1.8vh; font-size: min(1.25vw, 16px); color: rgba(255, 255, 255, .62);
+    min-height: 1.4em;
+  }
+  @media (prefers-reduced-motion: reduce) { #boot .boot-line::after { animation: none; left: 31%; } }
+</style>
 <link rel="stylesheet" href="css/tokens.css" />
 <link rel="stylesheet" href="css/tv.css" />
 <!-- The same two players the browser portal uses, and for the same reasons:
      mpegts.js opens the provider's MPEG-TS live streams, hls.js opens the
      Pi's own HLS output. Both are optional — if neither loads, the app falls
      back to the <video> element's native playback. -->
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js"></script>
+<!-- Deferred: they used to hold the WHOLE page blank until both had arrived
+     from the CDN, which on a television is seconds. Deferred scripts still
+     run in order and before the app module at the foot of the page, so the
+     app finds them exactly as before. -->
+<script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js"></script>
 </head>
 <body>
+
+<!-- The start screen. "I would rather have the start screen than a blank page
+     at first." In the page itself, so it is there before anything is fetched;
+     the app takes it down once its first screen has drawn (bootDone in
+     js/app.js). -->
+<div id="boot" role="status" aria-live="polite">
+  <img src="/bison.png" alt="" />
+  <div class="boot-title">Treasureflix</div>
+  <div class="boot-sub">Treasure State Technology Ventures</div>
+  <div class="boot-line"></div>
+  <div class="boot-say" id="bootSay">Starting…</div>
+</div>
+<script>
+  /* If the app never says it is up — a script that will not load, a box that
+     will not answer — the start screen says so rather than sweeping for ever. */
+  setTimeout(function () {
+    var say = document.getElementById('bootSay');
+    var boot = document.getElementById('boot');
+    if (boot && !boot.classList.contains('is-done') && say) {
+      say.textContent = 'Still starting \u2014 if this stays, check the box is on.';
+    }
+  }, 20000);
+</script>
 
 <div class="fitter">
   <!-- 1920×1080, scaled to whatever the panel is. Never reflowed: a Shield is

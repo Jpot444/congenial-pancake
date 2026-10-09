@@ -112,6 +112,23 @@ export const app = {
 
 /* ------------------------------------------------------------- painting ── */
 
+/* ---------------------------------------------------------- the start screen ── */
+/* #boot is in the page itself, so it is up before anything loads. These say
+   what it is waiting on, and take it down once the first screen has drawn. */
+function bootSay(words) {
+  const node = document.getElementById('bootSay');
+  if (node) node.textContent = words;
+}
+let booted = false;
+function bootDone() {
+  if (booted) return;
+  booted = true;
+  const node = document.getElementById('boot');
+  if (!node) return;
+  node.classList.add('is-done');
+  setTimeout(() => node.remove(), 500);
+}
+
 async function render({ keepFocus = false } = {}) {
   const screen = SCREENS[state.screen];
   if (!screen) return;
@@ -143,6 +160,7 @@ async function render({ keepFocus = false } = {}) {
   if (keepFocus) focus.pos = { r: keptRow, c: keptCol };
   focus.el = null;
   focus.apply();
+  bootDone();
 }
 
 function paintNav() {
@@ -312,13 +330,16 @@ async function boot() {
   paintClock();
   setInterval(paintClock, 15000);
 
+  bootSay('Connecting to the box…');
   try {
     await loadProfile();
     paintProfile();
   } catch (err) {
     clear(dom.screen).append(el('div', 'empty', err.message));
+    bootDone();   // the reason is on the screen behind it, so show it
     return;
   }
+  bootSay(`Welcome, ${state.profile?.name || ''} — loading Live TV…`);
 
   /* Health and taste are wanted by the chrome and by three screens, and
      neither is worth blocking the first paint on. */

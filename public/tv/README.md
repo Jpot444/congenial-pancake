@@ -50,6 +50,26 @@ If the box is ever offline at boot, vendor them next to this README and change
 the two `<script>` tags — the app falls back to the `<video>` element's own
 playback when neither is present.
 
+## The start screen
+
+> *"accessing https://tv.treasurestatecapital.com/tv/ shows a blank screen at
+> first and then things load after a few seconds, I would rather have the
+> start screen than a blank page at first"*
+
+Two causes. hls.js and mpegts.js were plain `<script>` tags in the `<head>`,
+so the browser drew **nothing** until both had come from the CDN. They're
+`defer` now. Deferred scripts still run in order and before the app module
+at the foot of the page, so the app finds them as before. And there was
+nothing to draw until the app had the profile and its first screen.
+
+So `#boot` is in `index.html` itself, styled inline: the red bull, the
+wordmark and a sweeping line on black. It paints with the first bytes of the
+page, says what it's waiting on (`bootSay`), and fades out once the first
+screen has drawn (`bootDone`, called from `render()`). If the box can't be
+reached it steps aside so the reason shows. After 20 seconds with no app, it
+says to check the box. `tests/tvboot.test.js` runs it with a 3-second CDN and
+a slow box: the start screen is up in about half a second.
+
 ## A controller, not just a remote
 
 > "how can i use the player on an xbox"
