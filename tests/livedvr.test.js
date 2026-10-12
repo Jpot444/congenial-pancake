@@ -146,8 +146,41 @@ const get = (p) => new Promise((resolve, reject) => {
   // cannot, and a viewer seated in ITS shallow window rides the ingest
   // frontier, stalling every few seconds — measured, and worse than the
   // direct path. The bar is what routes slow feeds to the direct path.
-  check('readiness asks for two segments fast — a speed test, not existence',
-    /\.length >= 2\) return session/.test(SERVER));
+  check('readiness is decided by dvrReady — a speed test, not existence',
+    /if \(dvrReady\(text, Date\.now\(\) - startedAt\)\) return session;/.test(SERVER));
+  /*
+   * And it measures SPEED, not a count of segments. "There was jumping on the
+   * most recent stream": 6 segments of ~11s on the provider, so a healthy
+   * feed could not show two of them inside five seconds, fell to the direct
+   * path, and the direct path's playlist went backwards.
+   */
+  {
+    const ready = new Function(`
+      const LIVE_DVR = { minBankRate: ${(/minBankRate: ([\d.]+)/.exec(SERVER) || [])[1]} };
+      ${(() => {
+        const at = SERVER.indexOf('function dvrReady(');
+        let depth = 0;
+        let i = SERVER.indexOf('{', SERVER.indexOf(')', at));
+        for (; i < SERVER.length; i += 1) {
+          if (SERVER[i] === '{') depth += 1;
+          else if (SERVER[i] === '}' && --depth === 0) break;
+        }
+        return SERVER.slice(at, i + 1);
+      })()}
+      return dvrReady;`)();
+    const list = (...d) => `#EXTM3U\n${d.map((x, n) => `#EXTINF:${x},\nseg${n}.ts`).join('\n')}\n`;
+    check('two segments is still ready, as before', ready(list(4, 4), 3000) === true);
+    check('ONE 11-second segment made in 4 seconds is ready — 2.75x realtime',
+      ready(list(11.04), 4000) === true);
+    check('one 4-second segment that took 4 seconds is NOT — a trickle',
+      ready(list(4), 4000) === false);
+    check('one 11-second segment that took 10 seconds is NOT — barely realtime',
+      ready(list(11), 10000) === false);
+    check('nothing written is not ready', ready('#EXTM3U\n', 2000) === false);
+  }
+  check('a segment still being written earns one short extension at the deadline',
+    /if \(!extended && segmentInProgress\(dir\)\)/.test(SERVER)
+      && Number((/longSegmentGraceMs: (\d+)/.exec(SERVER) || [])[1]) <= 6000);
   check('and gives up quickly rather than making every tune-in wait',
     Number((/startWaitMs: (\d+)/.exec(SERVER) || [])[1]) <= 6000,
     (/startWaitMs: (\d+)/.exec(SERVER) || [])[1]);

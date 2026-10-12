@@ -536,6 +536,22 @@ files. (Streaming inside the portal handles `.mkv` automatically; see below.)
 
 ## How playback works
 
+**A live channel takes the box's own window whenever its feed is fast, and
+"fast" is measured, not counted.** *"There was jumping on the most recent
+stream"*. The report said `remux session none (playing directly)`, a
+provider playlist of 6 segments of ~11s, `WENT BACKWARDS 10.9s`, segment 595
+failing five times, and five seconds of nothing before `loadstart`. The box
+had tried its own window for its full 5 seconds and given up, because
+readiness meant *two segments*. Two of this provider's 11-second segments are
+22 seconds of picture plus the start of a third, so a healthy feed couldn't
+show them in time and fell to the direct path. That path's playlist comes
+from different provider servers on different refreshes, so it goes backwards.
+`dvrReady` now accepts two segments, or **one segment holding at least 1.5×
+as much picture as it took to make**. Healthy feeds bank the backlog several
+times faster than realtime; a trickle can't pass 1×. If nothing is finished at
+the deadline but a segment is visibly being written (ffmpeg's `*.tmp`), it
+gets one 5-second extension. Covered in `livedvr.test.js`.
+
 Providers don't send CORS headers and usually serve plain HTTP, so the browser
 can't touch them directly. Everything is proxied through the local server:
 

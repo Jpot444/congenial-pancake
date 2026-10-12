@@ -4021,6 +4021,12 @@ const LIVE_DVR = {
   // ingest frontier, stalling every few seconds, which a measured session
   // showed to be worse than the direct path it replaced.
   startWaitMs: 5000,
+  // One more go at the deadline when a segment is visibly being written —
+  // a long-segment channel, not a dead one. See ensureLiveDvr.
+  longSegmentGraceMs: 5000,
+  // How much faster than realtime a single first segment must have been made
+  // to count as ready. See dvrReady.
+  minBankRate: 1.5,
   // Live is reaped faster than the 5-minute VOD default: an ingest holds a
   // provider connection open, and hls.js re-fetches the playlist every few
   // seconds, so 45 quiet seconds means nobody is watching.
@@ -4029,6 +4035,43 @@ const LIVE_DVR = {
   // no fetches, an exit is an ending.
   restartWindowMs: 30000,
 };
+
+/**
+ * Whether a fresh ingest is ready for a viewer: FAST, not merely started.
+ *
+ * It used to be "two segments inside five seconds", and that is a count
+ * standing in for a speed. On a provider whose segments are 11 seconds long
+ * two of them are 22 seconds of picture plus the start of a third — a
+ * perfectly healthy feed misses that, falls to the direct path, and the
+ * direct path on this provider is the playlist that goes backwards:
+ *
+ *   "There was jumping on the most recent stream" — remux session none
+ *   (playing directly), 6 segments of ~11s, WENT BACKWARDS 10.9s,
+ *   fragLoadError seg 595 ×5, and five seconds of nothing before loadstart.
+ *
+ * So: two segments, as before; or ONE segment holding at least
+ * minBankRate times as much picture as it took to make. A healthy feed banks
+ * the backlog several times faster than realtime (an 11s segment in 4s is
+ * 2.75x); a throttled one cannot get past about 1x.
+ */
+function dvrReady(text, tookMs) {
+  const segments = (String(text).match(/\.(m4s|ts)\b/g) || []).length;
+  if (segments >= 2) return true;
+  if (segments < 1) return false;
+  const banked = [...String(text).matchAll(/#EXTINF:([\d.]+)/g)]
+    .reduce((sum, m) => sum + Number(m[1]), 0);
+  return banked >= Math.max(0.5, tookMs / 1000) * LIVE_DVR.minBankRate;
+}
+
+/** A segment being written — ffmpeg's temp_file names it *.tmp until done. */
+function segmentInProgress(dir) {
+  try {
+    return fs.readdirSync(dir).some((f) => /\.tmp$/.test(f)
+      && fs.statSync(path.join(dir, f)).size > 0);
+  } catch {
+    return false;
+  }
+}
 
 function liveDvrArgs(input, dir, resumed = false, low = false) {
   // Shrinking a live channel is the same trade as shrinking a film, with one
@@ -5105,21 +5148,32 @@ async function ensureLiveDvr(cfg, channelId, low = false, { billboard = false, w
   if (!billboard) autoPauseActiveDownload();
   spawnLiveDvr(session, input);
 
-  // Two segments inside the short wait, and that bar is doing real work: it
-  // is a SPEED test, not just an existence test. A healthy feed banks the
-  // provider's backlog several times faster than realtime, so two segments
-  // appear in two or three seconds. A feed being throttled to about realtime
-  // cannot produce them in time — and that is exactly the feed on which a
-  // shallow buffer is worse than no buffer, because a viewer seated in it
-  // rides the ingest frontier, stalling every few seconds. Slow feeds belong
-  // on the direct path, and this bar is what sends them there.
+  // Ready means FAST, measured as speed rather than counted — see dvrReady.
+  // A feed throttled to about realtime cannot pass, and that is exactly the
+  // feed on which a shallow buffer is worse than no buffer, because a viewer
+  // seated in it rides the ingest frontier, stalling every few seconds. Slow
+  // feeds belong on the direct path, and this is what sends them there.
   const playlist = path.join(dir, 'index.m3u8');
-  const deadline = Date.now() + (waitMs || LIVE_DVR.startWaitMs);
-  while (Date.now() < deadline) {
+  const startedAt = Date.now();
+  let deadline = startedAt + (waitMs || LIVE_DVR.startWaitMs);
+  let extended = false;
+  for (;;) {
+    if (Date.now() >= deadline) {
+      /* Nothing finished, but a segment visibly being written: a channel
+         with long segments, not a dead or trickling one. Once, a little
+         longer — the alternative is the direct path, which on this provider
+         is the playlist that goes backwards. */
+      if (!extended && segmentInProgress(dir)) {
+        extended = true;
+        deadline += LIVE_DVR.longSegmentGraceMs;
+        continue;
+      }
+      break;
+    }
     session.lastAccess = Date.now(); // warming is not idleness
     if (fs.existsSync(playlist)) {
       const text = fs.readFileSync(playlist, 'utf8');
-      if ((text.match(/\.(m4s|ts)/g) || []).length >= 2) return session;
+      if (dvrReady(text, Date.now() - startedAt)) return session;
     }
     if (session.exited && session.exitCode !== 0) {
       const detail = session._stderr.split('\n').filter(Boolean).pop() || `exit ${session.exitCode}`;
