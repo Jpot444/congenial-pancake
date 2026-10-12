@@ -4959,6 +4959,47 @@ once, not for ever.
 `tests/livewedge.test.js` drives the shipped decision with a stand-in media
 element, because what is under test is the judgement, not the decoder.
 
+## One node per live channel
+
+> "any time i am running the iptv player after a while on live tv i start
+> getting skips in the time"
+
+Every skip fix before this one dealt with the symptom. This is the cause.
+
+The provider's address does not serve a live playlist. It answers
+`/live/<user>/<pass>/<id>.m3u8` with a **302 to one of many nodes**
+(`us9.…`, `us14.…`, `g2.…`) with a token in the path, and it picks a different
+node almost every time it is asked. The nodes carry the same channel under
+**different numbering**. The direct proxy asked the front door afresh on every
+refresh, so a player refreshing every few seconds was getting a different node
+almost every time:
+
+```
+live: 606171 came back renumbered (1958 → 385) — serving the playlist the player already has
+live: 606171 has stayed renumbered (1958 → 389) — taking it as a genuine restart
+live: 606171 came back renumbered (1970 → 396) — serving the playlist the player already has
+live: 606171 has stayed renumbered (1970 → 400) — taking it as a genuine restart
+```
+
+`forwardOnlyPlaylist` and its holds were ways of living with this. Each hold
+gives the player no new segments for one refresh. Each time a hold ran out,
+the other node's timeline went through and the picture skipped. The longer a
+channel stayed on, the more of those it piled up.
+
+The box's own ingest never had the problem, because ffmpeg's HLS reader
+refreshes from the URL it was **redirected to**. The proxy now does the same
+(`livePins`): it keeps the first redirect for a channel and sends every later
+refresh straight to that node. One node, one numbering.
+
+The front door is asked again only when the node stops being usable: an
+error, a refusal, a finished playlist (the placeholder clip), or a window that
+hasn't moved for 30 seconds. That costs one renumbering, which
+`forwardOnlyPlaylist` still absorbs, once instead of every few seconds.
+
+`tests/livepin.test.js` sets up a front door that alternates between two nodes
+600 segments apart. Before the fix: 12 refreshes, 12 asks of the front door,
+and half of them held as renumbered. After: one ask, one node, a clean climb.
+
 ## Which channels are holding the connections
 
 > "i have a multiview going that is streaming fine. I have another window with

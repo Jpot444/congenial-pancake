@@ -5785,6 +5785,74 @@ function forwardOnlyPlaylist(url, text) {
   return text;
 }
 
+/*
+ * One node per live channel, for as long as it keeps answering.
+ *
+ * The cause of every "it skips after a while" report on a direct stream. The
+ * provider's front door does not serve a live playlist: it answers
+ * /live/<user>/<pass>/<id>.m3u8 with a 302 to one of many nodes —
+ * us9.…, us14.…, g2.… — with a token in the path, and a different node on
+ * almost every ask. The proxy asked the front door afresh on EVERY refresh,
+ * so a player refreshing every few seconds was handed a playlist from a new
+ * node each time, and the nodes do not agree about numbering:
+ *
+ *   live: 606171 came back renumbered (1958 → 385)
+ *   live: 606171 has stayed renumbered (1958 → 389) — taking it as a genuine restart
+ *   live: 606171 came back renumbered (1970 → 396)
+ *   live: 606171 has stayed renumbered (1970 → 400) — …
+ *
+ * forwardOnlyPlaylist and its holds were all ways of living with that. Each
+ * hold starves the player of new segments for a refresh; each time a hold
+ * runs out, the other node's timeline goes through and the picture skips.
+ * The longer a channel is watched, the more of those it collects.
+ *
+ * ffmpeg never had the problem — its HLS reader refreshes from the URL it was
+ * redirected to, which is why the box's own ingest never skipped like this.
+ * The proxy now does the same: the first redirect for a channel is kept, and
+ * every refresh goes straight to that node. One node, one numbering.
+ *
+ * The front door is asked again only when the node stops being usable: an
+ * error, a refusal, something that is not a live playlist, or a playlist that
+ * has stopped moving (a node can go stale while still answering). That costs
+ * one renumbering, which forwardOnlyPlaylist is still there to absorb —
+ * once, instead of every few seconds.
+ */
+const livePins = new Map();
+const LIVE_PIN_IDLE_MS = 2 * 60 * 1000;
+/* A live window that has not changed for this long is a node that has
+   stopped publishing. Longer than any segment this provider cuts (twelve
+   seconds at most) with room for a slow one. */
+const LIVE_PIN_STALE_MS = 30 * 1000;
+
+function pinLivePlaylist(target, finalUrl, text) {
+  /* Only a redirect is worth pinning, and only a live playlist: a finished
+     one has nothing more to fetch, and the placeholder clip is finished. */
+  if (!finalUrl || finalUrl === target) return;
+  if (!/#EXTM3U/.test(text) || /#EXT-X-ENDLIST/.test(text)) return;
+  const now = Date.now();
+  livePins.set(target, { url: finalUrl, text, changedAt: now, usedAt: now });
+  console.log(`  live: ${playlistKey(target)} pinned to ${new URL(finalUrl).host}`);
+  if (livePins.size > 50) {
+    for (const [k, v] of livePins) {
+      if (now - v.usedAt > LIVE_PIN_IDLE_MS) livePins.delete(k);
+    }
+  }
+}
+
+/** Whether a playlist fetched from a pinned node can be served. */
+function pinStillGood(pin, text) {
+  const now = Date.now();
+  if (!/#EXTM3U/.test(text) || /#EXT-X-ENDLIST/.test(text)) return false;
+  if (text !== pin.text) {
+    pin.text = text;
+    pin.changedAt = now;
+  } else if (now - pin.changedAt > LIVE_PIN_STALE_MS) {
+    return false;
+  }
+  pin.usedAt = now;
+  return true;
+}
+
 function isPlaylist(url, contentType) {
   const ct = (contentType || '').toLowerCase();
   return (
@@ -5813,11 +5881,37 @@ async function handleStream(req, res, query) {
   const headers = {};
   if (req.headers.range) headers.range = req.headers.range;
 
-  let upstream;
-  try {
-    upstream = await request(target, { headers, allowUrl: proxyAllowed });
-  } catch (err) {
-    return send(res, 502, `Upstream error: ${err.message}`);
+  /* A live playlist this box has already been redirected for is refreshed
+     from the node it was sent to — see livePins. */
+  let upstream = null;
+  let pinnedText = null;
+  const pin = livePins.get(target);
+  if (pin) {
+    try {
+      const up = await request(pin.url, { headers, allowUrl: proxyAllowed });
+      if ((up.statusCode || 0) < 400 && isPlaylist(up.finalUrl, up.headers['content-type'])) {
+        const text = (await readBody(up, 8 * 1024 * 1024)).toString('utf8');
+        if (pinStillGood(pin, text)) {
+          upstream = up;
+          pinnedText = text;
+        }
+      } else {
+        up.resume();
+      }
+    } catch { /* the node is gone; ask the front door again below */ }
+    if (!upstream) {
+      livePins.delete(target);
+      console.log(`  live: ${playlistKey(target)} lost its node `
+        + `(${new URL(pin.url).host}) — asking the provider for another`);
+    }
+  }
+
+  if (!upstream) {
+    try {
+      upstream = await request(target, { headers, allowUrl: proxyAllowed });
+    } catch (err) {
+      return send(res, 502, `Upstream error: ${err.message}`);
+    }
   }
 
   req.on('close', () => {
@@ -5831,16 +5925,19 @@ async function handleStream(req, res, query) {
        HLS request consume the /api/play reservation, then drop it the moment
        the text arrived, so the segments that actually occupy the provider
        arrived as extra takes on an account that already looked full. */
-    let body;
-    try {
-      body = await readBody(upstream, 8 * 1024 * 1024);
-    } catch (err) {
-      return send(res, 502, `Upstream error: ${err.message}`);
+    let text = pinnedText;
+    if (text === null) {
+      try {
+        text = (await readBody(upstream, 8 * 1024 * 1024)).toString('utf8');
+      } catch (err) {
+        return send(res, 502, `Upstream error: ${err.message}`);
+      }
+      pinLivePlaylist(target, upstream.finalUrl, text);
     }
     /* Checked for a sequence that went backwards BEFORE the URLs are
        rewritten, so the comparison is against the provider's own numbering
        rather than against a string this box has already edited. */
-    const forward = forwardOnlyPlaylist(upstream.finalUrl, body.toString('utf8'));
+    const forward = forwardOnlyPlaylist(upstream.finalUrl, text);
     const rewritten = rewritePlaylist(forward, upstream.finalUrl);
     res.writeHead(upstream.statusCode || 200, {
       'content-type': 'application/vnd.apple.mpegurl',
