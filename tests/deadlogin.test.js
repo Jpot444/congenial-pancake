@@ -82,5 +82,25 @@ check('nothing is offered as free', providers.pick(allDead) === null);
 const last = providers.fallback(allDead);
 check('the fallback is still the login there is', last && last.id === 'old', last && last.id);
 
+console.log('\n  a login something was just killed on');
+/* The provider counts a dropped connection for a while after it drops, so
+   asking the same login again at once can be refused — or answered with a
+   placeholder clip — while the box's own count says it is free. */
+providers.note('a1', { status: 'Active', exp_date: String(now + day), max_connections: '1' });
+providers.note('b1', { status: 'Active', exp_date: String(now + day), max_connections: '1' });
+const two = { mode: 'xtream', accounts: [
+  { id: 'a1', host: HOST, username: 'a1', password: 'x' },
+  { id: 'b1', host: HOST, username: 'b1', password: 'y' },
+] };
+check('with another login free, the one just used is passed over',
+  (providers.pick(two, { avoid: 'a1' }) || {}).id === 'b1', JSON.stringify(providers.pick(two, { avoid: 'a1' })));
+check('without one to avoid, the order is as it always was',
+  (providers.pick(two) || {}).id === 'a1');
+const onlyA = providers.pick(two, { reserve: true, avoid: 'a1' });   // takes b1
+const left = providers.pick(two, { avoid: 'a1' });
+check('and when it is the only one with room, it is still used', left && left.id === 'a1',
+  JSON.stringify(left));
+if (onlyA && onlyA.ticket) providers.claim(onlyA.id, onlyA.ticket);
+
 console.log(`\n  ${fails.length ? `FAILED: ${fails.join(', ')}` : 'all passed'}`);
 process.exit(fails.length ? 1 : 0);

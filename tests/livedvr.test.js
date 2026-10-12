@@ -137,7 +137,7 @@ const get = (p) => new Promise((resolve, reject) => {
     && /const account = spare \|\| providers\.fallback\(cfg\)/.test(SERVER));
   check('and whether it started into a full pool is carried to the failure',
     /const crowded = !spare;/.test(SERVER)
-    && /\{ crowded \}\)/.test(SERVER));
+    && /\{ crowded[,\s}]/.test(SERVER));
   check('and banks a published run of it rather than trickling in from the edge',
     /'-live_start_index', resumed \? '-1' : `-\$\{COLD_START_SEGMENTS\}`,\s*'-i', input/
       .test(SERVER));
@@ -350,7 +350,7 @@ const get = (p) => new Promise((resolve, reject) => {
     /\/\* direct proxy below \*\//.test(SERVER));
   const playHandler = SERVER.slice(SERVER.indexOf("pathname === '/api/play'"));
   check('and a successful DVR tune does not first reserve a proxy slot it will never use',
-    playHandler.indexOf('ensureLiveDvr') < playHandler.indexOf("pick(cfg, { reserve: true })"),
+    playHandler.indexOf('ensureLiveDvr') < playHandler.indexOf('pick(cfg, { reserve: true'),
     'reserve still sits above the DVR attempt');
   check('the channel id is checked before it becomes a directory name',
     /\/\^\[\\w-\]\+\$\/\.test\(id\)/.test(SERVER));

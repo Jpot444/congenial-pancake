@@ -201,16 +201,26 @@ function inUse(cfg) {
  * so the request that builds the URL and the request that opens the pipe agree
  * about which account they meant.
  */
-function pick(cfg, { reserve = false } = {}) {
+function pick(cfg, { reserve = false, avoid = '' } = {}) {
   let best = null;
   let bestRoom = 0;
-  for (const account of usable(cfg)) {
-    const held = slot(account.id);
-    const room = slotsFor(account.id) - held.streams - held.reserved.length;
-    if (room > bestRoom) {
-      best = account;
-      bestRoom = room;
+  /* `avoid`: a login something has just been killed on. The provider counts
+     a dropped connection for a while after it drops, so the same login asked
+     again at once can be refused, or handed a placeholder clip, while the
+     box's own count says it is free. Another login with room wins; this one
+     only if it is the only choice. */
+  const avoiding = String(avoid || '');
+  for (const pass of avoiding ? [true, false] : [false]) {
+    for (const account of usable(cfg)) {
+      if (pass && account.id === avoiding) continue;
+      const held = slot(account.id);
+      const room = slotsFor(account.id) - held.streams - held.reserved.length;
+      if (room > bestRoom) {
+        best = account;
+        bestRoom = room;
+      }
     }
+    if (best) break;
   }
   if (!best) return null;
   /* The reservation is handed back on the account object so the caller can

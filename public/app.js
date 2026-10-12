@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '46.3';
+const VERSION = '46.4';
 
 const PAGE_SIZE = 60;
 
@@ -14003,8 +14003,10 @@ function attach(url, format, opts = {}) {
          is on the record. That is the only place an encoder restart shows —
          see notePlaylist. */
       if (Hls.Events.LEVEL_UPDATED) {
+        const mine = engine;
         engine.on(Hls.Events.LEVEL_UPDATED, (_, data) => {
           try { playback.notePlaylist(data && data.details); } catch { /* a report is not worth a throw */ }
+          if (engine === mine && live) watchForPlaceholder(data && data.details);
         });
       }
       engine.on(Hls.Events.ERROR, (_, data) => {
@@ -16721,6 +16723,59 @@ $('#video').addEventListener('ended', () => upNext.reveal());
  * connection away and starts a fresh one at the same spot: a new remux session
  * for a converted film, a re-resolve for live, a re-attach for a local file.
  */
+/*
+ * A live channel that stops being one.
+ *
+ * "playlist reset seq 634→0", "playlist vod, 1 segments of ~11s" — thirty
+ * seconds in, the provider swapped the channel for its placeholder clip (what
+ * it sends a login it thinks has too many connections), marked finished. The
+ * engine took it as a film with nothing more coming, played out its buffer
+ * and froze at 70.1s, and nothing tried again.
+ *
+ * So the player re-tunes, the way the ↻ button does: the channel is asked for
+ * afresh through /api/play, which lands on the box's own window when the feed
+ * is fast enough and otherwise on a different login from the one that was
+ * refused. At most once in RETUNE_GAP_MS and RETUNE_MAX times per channel, so
+ * a provider that really has nothing to give is not hammered.
+ */
+const RETUNE_GAP_MS = 30000;
+const RETUNE_MAX = 3;
+const placeholderWatch = { item: null, seq: -1, tries: 0, at: 0 };
+
+function watchForPlaceholder(details) {
+  if (!details || !currentLiveItem) return;
+  if (placeholderWatch.item !== currentLiveItem) {
+    Object.assign(placeholderWatch, { item: currentLiveItem, seq: -1, tries: 0, at: 0 });
+  }
+  const seq = Number(details.startSN);
+  const was = placeholderWatch.seq;
+  const finished = details.endList === true || details.live === false;
+  const restarted = Number.isFinite(seq) && was >= 20 && seq <= 1;
+  if (Number.isFinite(seq) && !finished) placeholderWatch.seq = Math.max(was, seq);
+  if (!finished && !restarted) return;
+  if (placeholderWatch.tries >= RETUNE_MAX) return;
+  if (Date.now() - placeholderWatch.at < RETUNE_GAP_MS) return;
+  placeholderWatch.tries += 1;
+  placeholderWatch.at = Date.now();
+  placeholderWatch.seq = -1;
+  retuneLive(finished
+    ? 'The provider stopped sending the channel — tuning back in…'
+    : 'The channel restarted at the provider — tuning back in…');
+}
+
+async function retuneLive(words) {
+  const item = currentLiveItem;
+  if (!item) return;
+  toast(words);
+  try {
+    const { url, format, dvr } = await resolveStream(item);
+    if (currentLiveItem !== item) return;   // somebody changed channel meanwhile
+    attach(url, format, { dvr });
+  } catch (err) {
+    status(`Couldn't tune back in: ${err.message}`);
+  }
+}
+
 async function reloadStream() {
   const video = $('#video');
   const button = $('#reloadBtn');
@@ -16733,8 +16788,10 @@ async function reloadStream() {
     if (!film.active) {
       if (!currentLiveItem) return toast('Nothing to reload.');
       toast('Reloading the channel…');
-      const { url, format } = await resolveStream(currentLiveItem);
-      attach(url, format);
+      const { url, format, dvr } = await resolveStream(currentLiveItem);
+      /* `dvr` carried, or a channel on the box's own window is seated as
+         though it were the provider's — 32s back instead of 45. */
+      attach(url, format, { dvr });
       return;
     }
 

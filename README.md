@@ -552,6 +552,30 @@ times faster than realtime; a trickle can't pass 1×. If nothing is finished at
 the deadline but a segment is visibly being written (ffmpeg's `*.tmp`), it
 gets one 5-second extension. Covered in `livedvr.test.js`.
 
+**And a channel the provider swaps for its placeholder gets tuned back in.**
+A second report: `playlist reset seq 634→0`, `playlist vod, 1 segments`, and
+the picture frozen at 70.1s. Thirty seconds in, the provider had replaced the
+channel with its placeholder clip, marked finished: what it sends a login it
+thinks has too many connections. The direct path's filter waved any finished
+playlist through, so the engine took it for a film with nothing more coming,
+and nothing tried again. Three changes:
+
+- **The player re-tunes** (`watchForPlaceholder`). A live channel whose
+  playlist turns finished, or restarts at segment 0 after being well past it,
+  is asked for afresh through `/api/play`, as the ↻ button does. At most once
+  in 30s and 3 times per channel. The ↻ re-tune also keeps the `dvr` flag
+  now, so a box-window channel is seated 45s back rather than 32s.
+- **A failed ingest's login is avoided.** The provider keeps counting a
+  dropped connection for a while, so when the box's window fails to start,
+  the direct fallback asks a different login first (`pick({ avoid })`) and
+  uses the same one only if nothing else has room.
+- **The box logs it**: `live: … turned into a finished playlist (seq 634 → 0)
+  — the provider replaced the channel`.
+
+`placeholder.test.js` swaps a real live stream for exactly that placeholder
+mid-play. The player re-tunes within about a second and plays again, and
+doesn't hammer a provider that keeps sending it.
+
 Providers don't send CORS headers and usually serve plain HTTP, so the browser
 can't touch them directly. Everything is proxied through the local server:
 

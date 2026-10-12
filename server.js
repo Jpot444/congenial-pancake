@@ -5178,12 +5178,14 @@ async function ensureLiveDvr(cfg, channelId, low = false, { billboard = false, w
     if (session.exited && session.exitCode !== 0) {
       const detail = session._stderr.split('\n').filter(Boolean).pop() || `exit ${session.exitCode}`;
       killSession(id);
-      throw Object.assign(new Error(`Live ingest failed: ${redactUrl(detail)}`), { crowded });
+      throw Object.assign(new Error(`Live ingest failed: ${redactUrl(detail)}`),
+        { crowded, account: account && account.id });
     }
     await new Promise((r) => setTimeout(r, 250));
   }
   killSession(id);
-  throw Object.assign(new Error('Live ingest timed out starting'), { crowded });
+  throw Object.assign(new Error('Live ingest timed out starting'),
+    { crowded, account: account && account.id });
 }
 
 /* ---- archive thumbnails ---- */
@@ -5621,8 +5623,20 @@ function directReport(channelId) {
  * The playlist to serve: this one, or the last one if this one went backwards.
  */
 function forwardOnlyPlaylist(url, text) {
-  /* A finished playlist is not a live one and has no edge to protect. */
-  if (/#EXT-X-ENDLIST/.test(text)) return text;
+  /* A finished playlist is not a live one and has no edge to protect —
+     unless this address WAS live a moment ago. Then it is the provider
+     swapping the channel for its placeholder clip (seq 634 → 0, one segment,
+     ENDLIST: "too many connections"), and it is said so in the log. Passed
+     on, because the player re-tunes when it sees it; held back, the player
+     would play out its buffer against segments that no longer exist. */
+  if (/#EXT-X-ENDLIST/.test(text)) {
+    const was = lastPlaylists.get(playlistKey(url));
+    if (was && Date.now() - was.at < LAST_PLAYLIST_MS) {
+      console.log(`  live: ${playlistKey(url)} turned into a finished playlist `
+        + `(seq ${was.seq} → ${mediaSequence(text)}) — the provider replaced the channel`);
+    }
+    return text;
+  }
   const seq = mediaSequence(text);
   if (seq === null) return text;
 
@@ -11498,6 +11512,7 @@ async function handleApi(req, res, pathname, query) {
        * a fault that does not apply to them.
        */
       let swapped = null;
+      let avoidLogin = '';
       if (kind === 'live' && /^[\w-]+$/.test(id) && query.get('nofallback') !== '1') {
         const rows = knownCatalogue('live');
         const mine = rows.find((c) => String(c.id) === String(id));
@@ -11576,6 +11591,10 @@ async function handleApi(req, res, pathname, query) {
            * and the direct path is the right answer for it — that fallback is
            * deliberate and measured, and is left exactly as it was.
            */
+          /* The login the failed ingest was on: the provider is probably
+             still counting that connection, so the direct path below asks
+             another one first. */
+          if (err && err.account) avoidLogin = err.account;
           if (err && err.crowded) {
             const held = connectionHolders();
             const said = holdersSentence(held);
@@ -11598,7 +11617,7 @@ async function handleApi(req, res, pathname, query) {
       /* Somebody pressing a channel or a film, on the direct path, also
          beats the billboard to a full pool. */
       if (query.get('billboard') !== '1') makeRoomForViewer(cfg, `somebody opened ${kind} ${id}`);
-      const chosen = providers.pick(cfg, { reserve: true });
+      const chosen = providers.pick(cfg, { reserve: true, avoid: avoidLogin });
       /* Option B, and the only place it is visible.
        *
        * A box with nothing free is the ordinary state of a single-login
