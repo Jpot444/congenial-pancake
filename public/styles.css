@@ -3646,6 +3646,26 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
     }
+    /*
+     * Three, on a screen that is not wide.
+     *
+     * "I'm watching on my iPad with on desktop view there is a lot of dead
+     *  space" — one large beside two stacked is an 8:3 box, and on an iPad's
+     *  1.4-wide stage it filled the width and left bands above and below.
+     * One large ON TOP and the two small side by side UNDER it is a 32:27 box,
+     * and the crossover between the two is 16:9 again: narrower than that and
+     * the large picture comes out about a quarter bigger this way, with the
+     * whole grid filling the height instead of a strip across the middle.
+     */
+    .mv-grid[data-count="3"]:not(.is-solo) {
+      --mv-ar: 32/27;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-rows: minmax(0, 2fr) minmax(0, 1fr);
+    }
+    .mv-grid[data-count="3"]:not(.is-solo) > .mv-cell:first-child {
+      grid-row: auto;
+      grid-column: span 2;
+    }
   }
 }
 

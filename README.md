@@ -5590,6 +5590,15 @@ iPad and not from a desktop. Stacking there is 475k px² of picture against
 than by the window, because the window includes the bar at the top and the
 other-games panel at the side — furniture the grid was never going to get.
 
+**Three follows the same rule.** *"I'm watching on my iPad with on desktop
+view there is a lot of dead space"*. One large beside two stacked is an 8:3
+strip, which on an iPad filled the width and left bands above and below. On a
+stage narrower than 16:9 it's now **one large on top, two small side by side
+under it** (32:27), and the crossover is 16:9 again. On an iPad Pro
+(1376×960) the large picture goes from 907 to 1042px wide, and the three
+together cover 916k px² of screen against 694k. `mvspace.test.js` measures
+both, and checks that a wide screen still puts the large one beside the two.
+
 Held inside `@supports (width: 1cqw)`, so a browser too old for container
 queries keeps the old fill-everything layout rather than a collapsed one.
 

@@ -110,7 +110,8 @@ const fits = ({ w, h }, ratio) => {
 };
 
 /* The shapes each arrangement makes, out of 16:9 cells. */
-const AR = { solo: 16 / 9, beside: 32 / 9, stacked: 8 / 9, three: 8 / 3, four: 16 / 9 };
+const AR = { solo: 16 / 9, beside: 32 / 9, stacked: 8 / 9, three: 8 / 3, threeTall: 32 / 27,
+  four: 16 / 9 };
 
 (async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
@@ -189,7 +190,60 @@ const AR = { solo: 16 / 9, beside: 32 / 9, stacked: 8 / 9, three: 8 / 3, four: 1
 
   /* ---- 2. three and four, same screen ----------------------------------- */
   console.log('\n  and the other counts on the same screen');
-  for (const [count, ratio] of [[3, AR.three], [4, AR.four]]) {
+  /*
+   * Three, specifically. "I'm watching on my iPad with on desktop view there
+   * is a lot of dead space" — one large beside two stacked is an 8:3 strip
+   * across a 1.4-wide screen. On anything narrower than 16:9 the large one
+   * goes on top and the two small side by side under it.
+   */
+  m = await layoutFor(3);
+  {
+    const tall = fits(m.stage, AR.threeTall);
+    const wide = fits(m.stage, AR.three);
+    const big = m.cells[0] || {};
+    /* The large cell's width in each arrangement: the whole grid on top, or
+       two thirds of it beside. */
+    const bigTall = tall.w;
+    const bigWide = wide.w * (2 / 3);
+    console.log(`    3: ${JSON.stringify(m.cells)} — large cell ${Math.round(big.w)}px wide;`
+      + ` beside would make it ${Math.round(bigWide)}px`);
+    check('three: the large one on top, the two small side by side under it',
+      m.rows === 2 && m.cols === 2 && Math.round(big.w) > Math.round((m.cells[1] || {}).w || 0) * 1.8,
+      `rows ${m.rows} cols ${m.cols} ${JSON.stringify(m.cells)}`);
+    check('  which puts more picture on this screen than beside did',
+      tall.area > wide.area * 1.2, `${Math.round(tall.area / 1000)}k vs ${Math.round(wide.area / 1000)}k`);
+    check('  and the large picture is bigger, by a tenth or more here', big.w >= bigWide * 1.1,
+      `${Math.round(big.w)} vs ${Math.round(bigWide)}px`);
+    check('  and the grid is as big as the room allows', m.picture >= tall.area * 0.95,
+      `${Math.round(m.picture / 1000)}k of ${Math.round(tall.area / 1000)}k`);
+    check('  every cell picture-shaped, nothing letterboxed', shapely(m) && worstBand(m) <= 8,
+      `${JSON.stringify(m.cells)} worst ${worstBand(m)}px`);
+    check('  and all on screen', m.onScreen, JSON.stringify(m));
+    await page.screenshot({ path: `${SHOTS}/mvspace-ipad-3.png` });
+  }
+  /* The iPad in the photo: Safari's bars take more of the height, so the
+     stage is squarer still, and the gain is bigger. */
+  await page.setViewportSize({ width: 1376, height: 960 });
+  await wait(400);
+  m = await layoutFor(3);
+  {
+    const bigWide = fits(m.stage, AR.three).w * (2 / 3);
+    const big = m.cells[0] || {};
+    console.log(`    3 on a 1376x960 iPad Pro: large cell ${Math.round(big.w)}px wide;`
+      + ` beside would make it ${Math.round(bigWide)}px`);
+    const tall = fits(m.stage, AR.threeTall).area;
+    const wide = fits(m.stage, AR.three).area;
+    console.log(`    all three pictures: ${Math.round(tall / 1000)}k px² stacked vs `
+      + `${Math.round(wide / 1000)}k beside`);
+    check('  on the iPad Pro the large picture is about 15% bigger',
+      big.w >= bigWide * 1.12, `${Math.round(big.w)} vs ${Math.round(bigWide)}px`);
+    check('  and the three together cover about a third more of the screen',
+      tall >= wide * 1.25, `${Math.round(tall / 1000)}k vs ${Math.round(wide / 1000)}k`);
+    await page.screenshot({ path: `${SHOTS}/mvspace-ipadpro-3.png` });
+  }
+  await page.setViewportSize({ width: 1180, height: 820 });
+  await wait(400);
+  for (const [count, ratio] of [[4, AR.four]]) {
     // eslint-disable-next-line no-await-in-loop
     m = await layoutFor(count);
     const best = fits(m.stage, ratio).area;
@@ -239,6 +293,16 @@ const AR = { solo: 16 / 9, beside: 32 / 9, stacked: 8 / 9, three: 8 / 3, four: 1
     m.picture >= fits(m.stage, AR.beside).area * 0.96,
     `${Math.round(m.picture / 1000)}k of ${Math.round(fits(m.stage, AR.beside).area / 1000)}k`);
   await page.screenshot({ path: `${SHOTS}/mvspace-desk-2.png` });
+  /* And three keeps the large one beside the two on a wide screen, where that
+     is the arrangement that wins. */
+  m = await layoutFor(3);
+  check('three stays large-beside-two on a wide screen',
+    m.rows === 2 && m.cols === 2 && Math.round((m.cells[0] || {}).h)
+      > Math.round((m.cells[1] || {}).h || 0) * 1.8,
+    JSON.stringify(m.cells));
+  check('  filling the room for that shape', m.picture >= fits(m.stage, AR.three).area * 0.95,
+    `${Math.round(m.picture / 1000)}k of ${Math.round(fits(m.stage, AR.three).area / 1000)}k`);
+  m = await layoutFor(2);
 
   /* ---- 5. the panel still gets its room --------------------------------- */
   /*
