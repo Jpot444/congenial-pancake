@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '46.7';
+const VERSION = '46.8';
 
 const PAGE_SIZE = 60;
 
@@ -13569,7 +13569,7 @@ function renderArchive() {
   more.hidden = data.items.length <= state.archive.visible;
   more.onclick = () => {
     state.archive.visible += PAGE_SIZE;
-    renderArchive();
+    keepingPlace(() => renderArchive());   // the same jump to the top, here too
   };
 
   const empty = $('#emptyState');
@@ -19569,17 +19569,44 @@ document.addEventListener('keydown', (event) => {
 
 /* --------------------------------------------------------------- chrome */
 
+/*
+ * Draw again without losing the place on the page.
+ *
+ * "Clicking show more always returns me to the top, I want to stay on my
+ * location on the page." render() empties the grid and fills it again, and in
+ * between the page is short — so the browser clamps the scroll to the top and
+ * nothing ever puts it back. The position is read first, put back in the same
+ * task (before anything paints), and again over the next frames for anything
+ * that draws a beat later. On the phone shell the view scrolls, not the
+ * document — see scrollViewTop.
+ */
+function keepingPlace(draw) {
+  const view = document.body.classList.contains('has-tabbar')
+    ? document.querySelector('#appView:not([hidden])')
+    : null;
+  const at = view ? view.scrollTop : window.scrollY;
+  const put = () => {
+    if (view) view.scrollTop = at;
+    else window.scrollTo(0, at);
+  };
+  const out = draw();
+  put();
+  requestAnimationFrame(() => { put(); requestAnimationFrame(put); });
+  Promise.resolve(out).then(() => requestAnimationFrame(put)).catch(() => {});
+  return out;
+}
+
 $('#loadMore').addEventListener('click', () => {
   /* The schedule counts in guide pages, not grid pages: a row of it is a
      provider call where a card is not, and the two sizes are different for
      that reason. Same button either way — it means "more of this". */
   if (state.tab === 'live' && state.listings) {
     listingsShown += LISTINGS_MAX;
-    render();
+    keepingPlace(() => render());
     return;
   }
   state.visible += PAGE_SIZE;
-  render();
+  keepingPlace(() => render());
 });
 
 /**
