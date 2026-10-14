@@ -6082,7 +6082,8 @@ function windowOf(listings, now) {
 const libraryCache = new Map();
 const LIBRARY_TTL = 30 * 60 * 1000;
 /** Payload shape version — bump when projectItem gains or loses a field. */
-const LIBRARY_SHAPE = 8;
+// 9: movies carry `us4k` (the 4K row). A cache written by 8 lacks it.
+const LIBRARY_SHAPE = 9;
 const LIBRARY_CACHE_PATH = path.join(ROOT, 'library-cache.json');
 
 /**
@@ -8455,6 +8456,8 @@ const looksLikeTag = (token) => token.length <= 5 && /^[A-Z0-9][A-Z0-9+&]*$/.tes
 
 /** Marks a title as 4K wherever the provider chose to say so. */
 const UHD_TAG = /(^|[^A-Z0-9])(4K|UHD|2160P)([^A-Z0-9]|$)/i;
+/** Filed as US or English: "EN - ACTION", "US | 4K", a title tagged "EN US". */
+const US_MARK = /(^|[^A-Z])(US|USA|EN|ENG|ENGLISH)([^A-Z]|$)/i;
 
 /**
  * The title with the provider's prefixes taken off the front.
@@ -8593,14 +8596,37 @@ async function buildLibrary(cfg, tab, pattern) {
   const cats = Array.isArray(rawCats) ? rawCats : [];
   const items = Array.isArray(rawItems) ? rawItems : [];
 
-  const keptCats = cats.filter((c) => match(c.category_name));
+  /* A 4K category that is plainly US or English is kept even when the
+     language filter would not have — "US | 4K MOVIES" does not start with
+     "EN -", and without this every film in it would never reach the library,
+     let alone the 4K row. */
+  const fourKUs = (name) => UHD_TAG.test(name || '') && US_MARK.test(name || '');
+  const keptCats = cats.filter((c) => match(c.category_name)
+    || (kind === 'movie' && fourKUs(c.category_name)));
   const allowed = new Set(keptCats.map((c) => String(c.category_id)));
+  const catName = new Map(cats.map((c) => [String(c.category_id), String(c.category_name || '')]));
 
   return {
     categories: keptCats.map((c) => ({ id: String(c.category_id), name: c.category_name })),
     items: items
       .filter((row) => allowed.has(String(row.category_id ?? '')))
-      .map((row) => projectItem(row, kind)),
+      .map((row) => {
+        const item = projectItem(row, kind);
+        if (kind === 'movie') {
+          /*
+           * "In movies add a 4K category where all the 4K US movies go"
+           *
+           * Worked out HERE, where the category names are, so the browser
+           * and the television share one answer. 4K by the title or by the
+           * category it is filed in; US by the category or the title's own
+           * filing tags — "EN - ACTION", "US | 4K", "EN US 4K".
+           */
+          const filed = catName.get(String(row.category_id ?? '')) || '';
+          item.us4k = (item.uhd || UHD_TAG.test(filed))
+            && (US_MARK.test(filed) || US_MARK.test(item.tag || ''));
+        }
+        return item;
+      }),
     totals: { categories: cats.length, items: items.length },
   };
 }

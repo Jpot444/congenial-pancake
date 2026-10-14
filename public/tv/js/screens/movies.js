@@ -37,6 +37,9 @@ export async function render(host, app) {
   addRow(root, 'CONTINUE WATCHING', 'Picks up where you stopped', resumeRow());
   addRow(root, 'FOR YOU', 'From what this profile has watched', forYouRow());
   addRow(root, 'NEW RELEASES', `${items.length.toLocaleString()} titles · newest first`, newestRow());
+  /* The same films as the browser's 4K row: the box marks them (us4k). */
+  const fourK = items.filter((m) => m.us4k === true);
+  if (fourK.length) addRow(root, '4K', `${fourK.length.toLocaleString()} in 4K · newest first`, fourKRow(fourK));
   addRow(root, 'TOP RATED', 'Highest rated in the library', topRatedRow());
 
   if (state.errors.movies) {
@@ -122,6 +125,13 @@ function newestRow() {
     .sort((a, b) => Number(b.added || 0) - Number(a.added || 0))
     .slice(0, ROW_MAX)
     .map((item) => ({ item, sub: item.rating ? `★ ${item.rating}` : '' }));
+}
+
+function fourKRow(list) {
+  return [...list]
+    .sort((a, b) => Number(b.added || 0) - Number(a.added || 0))
+    .slice(0, ROW_MAX)
+    .map((item) => ({ item, sub: '4K' }));
 }
 
 function topRatedRow() {

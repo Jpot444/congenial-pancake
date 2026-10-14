@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '46.6';
+const VERSION = '46.7';
 
 const PAGE_SIZE = 60;
 
@@ -7329,6 +7329,11 @@ function titleMissLines() {
 const MOVIE_ROWS = [
   { title: 'For You', special: 'recent' },
   { title: 'New Releases', match: [/^EN\s*-\s*NEW RELEASE/i], fallbackAll: true, sort: 'added' },
+  /* "In movies add a 4K category where all the 4K US movies go". The box
+     decides which those are (`us4k`, worked out in buildLibrary where the
+     category names are), so this row and the television's agree. Newest
+     first, and opening it is the whole list, not forty. */
+  { title: '4K', us4k: true, sort: 'added' },
   { title: 'IMDB Top 250', match: [/^EN\s*-\s*IMDB TOP 250/i] },
   { title: 'Action', match: [/^EN\s*-\s*ACTION/i, /^EN\s*-\s*ADVENTURE/i] },
   { title: 'Comedy', match: [/^EN\s*-\s*COMEDY/i] },
@@ -7572,7 +7577,8 @@ function buildShelves(tab) {
       : pool.filter(
           (i) =>
             ids.has(String(i.categoryId)) ||
-            (def.genre && def.genre.test(i.genre || ''))
+            (def.genre && def.genre.test(i.genre || '')) ||
+            (def.us4k && i.us4k === true)
         );
 
     // Every row here matches on the provider's own category names, and a

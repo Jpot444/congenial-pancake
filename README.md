@@ -534,6 +534,29 @@ Saved files keep their original container. Most of this library is `.mkv`, which
 the iPad's built-in player won't open — use **VLC** or **Infuse** for saved
 files. (Streaming inside the portal handles `.mkv` automatically; see below.)
 
+## A 4K row in Movies
+
+*"In movies add a 4K category where all the 4K US movies go"*. The box
+decides which films those are, in `buildLibrary`, because that's where the
+category names are. Both the browser and the television read its answer
+(`us4k` on each film) rather than each guessing:
+
+- **4K**: the title's own tag (4K, UHD, 2160p), or the category it's filed in.
+- **US**: filed as US or English, by category (`EN - ACTION`, `US | 4K`) or by
+  the title's filing tags.
+
+A 4K category that's plainly US but doesn't start with `EN -` (say `US | 4K
+MOVIES`) is kept even when the language filter would have dropped it. Without
+that, every film in it would never reach the library. Foreign 4K categories
+are still left out.
+
+On the web it's a shelf after New Releases (`MOVIE_ROWS`), so it's a row on
+the page, a chip in the desktop category bar, and the full list as a grid
+when opened. It's newest first and grouped, so a film with HD and 4K copies is
+one card. The television has the same row. `LIBRARY_SHAPE` went to 9, so the
+first Movies load after the update rebuilds the list from the provider.
+Covered by `fourk.test.js`, against a stand-in provider panel.
+
 ## How playback works
 
 **A live channel takes the box's own window whenever its feed is fast, and
