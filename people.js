@@ -100,11 +100,13 @@ function fold(name) {
  * recommendation, so anything ambiguous stays.
  */
 const COMPANY_WORDS = new Set([
-  'animation', 'bros', 'brothers', 'cinema', 'cinemas', 'company', 'corporation',
-  'distribution', 'entertainment', 'enterprises', 'filmes', 'films',
-  'gmbh', 'group', 'industries', 'international', 'media', 'network', 'networks',
-  'partners', 'pictures', 'prods', 'production', 'productions',
-  'releasing', 'studio', 'studios', 'television', 'ventures', 'worldwide',
+  'animation', 'broadcasting', 'bros', 'brothers', 'channel', 'cinema', 'cinemas',
+  'company', 'corporation', 'distribution', 'entertainment', 'enterprises',
+  'features', 'filmes', 'filmproduktion', 'films', 'gmbh', 'group', 'holdings',
+  'industries', 'international', 'media', 'network', 'networks', 'originals',
+  'partners', 'pictures', 'prods', 'producciones', 'production', 'productions',
+  'produktion', 'produzioni', 'releasing', 'studio', 'studios', 'television', 'tv',
+  'ventures', 'worldwide',
 ]);
 /* Singular `film` and `picture` are deliberately NOT on that list. They are
    the only two words here a person's name could plausibly end in, and a
@@ -119,14 +121,58 @@ const COMPANY_SUFFIX = new Set([
   'sa', 'ag', 'bv', 'ab', 'oy', 'srl', 'spa', 'kg',
 ]);
 
+/*
+ * Studios by their bare name.
+ *
+ * "It frequently shows 'paramount' or another studio or production company in
+ *  the cast and crew section" — the words above only catch a company that says
+ * what it is. "Paramount", "Legendary", "A24" do not, and the provider writes
+ * them into `cast` as readily as into `director`.
+ *
+ * Matched against the WHOLE name only, so a person who shares a word with one
+ * of these — Megan Fox, Columbus Short, Walt Disney — is never touched.
+ * A name led by one of BRANDS ("Paramount Players", "Marvel Entertainment",
+ * "Netflix Original") is caught too: those first words are not first names.
+ */
+const STUDIOS = new Set([
+  '20th century', '20th century fox', '20th century studios', 'twentieth century fox',
+  'a24', 'aardman', 'abc', 'amazon', 'amazon mgm', 'amblin', 'amc', 'annapurna',
+  'apple', 'apple tv', 'bad robot', 'bbc', 'blumhouse', 'castle rock', 'cbs',
+  'channel 4', 'columbia', 'constantin', 'dimension', 'disney', 'dreamworks',
+  'dreamworks skg', 'film4', 'focus', 'focus features', 'fox', 'fox searchlight',
+  'fx', 'gaumont', 'ghibli', 'hbo', 'hbo max', 'hulu', 'illumination', 'imagine',
+  'itv', 'laika', 'legendary', 'lions gate', 'lionsgate', 'lucasfilm', 'marvel',
+  'metro goldwyn mayer', 'mgm', 'miramax', 'nbc', 'nbcuniversal', 'neon', 'netflix',
+  'new line', 'new regency', 'nickelodeon', 'orion', 'paramount', 'pathe', 'pbs',
+  'peacock', 'pixar', 'plan b', 'prime video', 'regency', 'relativity', 'searchlight',
+  'showtime', 'skydance', 'sony', 'starz', 'studiocanal', 'stx', 'stxfilms', 'summit',
+  'syfy', 'toho', 'touchstone', 'tristar', 'united artists', 'universal',
+  'village roadshow', 'warner', 'warner bros', 'warnermedia', 'wb', 'working title',
+]);
+const BRANDS = new Set([
+  'a24', 'blumhouse', 'columbia', 'dreamworks', 'hbo', 'lionsgate', 'lucasfilm',
+  'marvel', 'mgm', 'miramax', 'netflix', 'nickelodeon', 'paramount', 'pixar',
+  'skydance', 'studiocanal', 'tristar', 'universal',
+]);
+/* Not `warner`: Warner Baxter won the second Best Actor Oscar. Warner Bros.
+   is caught by `bros` anyway. */
+
 /** Is this a company rather than a person? */
 function isCompany(name) {
-  const words = String(name || '')
+  const raw = String(name || '');
+  /* Canal+, Disney+, Apple TV+, Paramount+ — nobody's name has a plus in it. */
+  if (raw.includes('+')) return true;
+  const words = raw
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
-    .replace(/[.,]/g, ' ')
+    .replace(/[.,'’!]/g, ' ')
+    .replace(/-/g, ' ')
     .split(/\s+/)
     .filter(Boolean);
   if (!words.length) return false;
+  if (STUDIOS.has(words.join(' '))) return true;
+  if (words.length > 1 && BRANDS.has(words[0])) return true;
   if (words.some((word) => COMPANY_WORDS.has(word))) return true;
   return words.length > 1 && COMPANY_SUFFIX.has(words[words.length - 1]);
 }

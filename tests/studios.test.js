@@ -43,6 +43,16 @@ const COMPANIES = [
   'Canal+ International', 'BBC Films', 'Lionsgate Television',
   'Village Roadshow Pictures', 'Some Holding Inc', 'Another One Ltd.',
   'Constantin Film Produktion GmbH', 'Gaumont Distribution',
+  /* "It frequently shows 'paramount' or another studio or production company
+     in the cast and crew section" — the bare names, that say nothing about
+     being a company. */
+  'Paramount', 'paramount', 'Paramount+', 'Paramount Players', 'Universal',
+  'Legendary', 'A24', 'Lionsgate', 'Lions Gate', 'Netflix', 'Netflix Original',
+  'HBO', 'HBO Max', 'Disney', 'Disney+', 'Canal+', 'Apple TV+', 'MGM',
+  'Metro-Goldwyn-Mayer', 'Blumhouse', 'Skydance', 'Marvel', 'Marvel Entertainment',
+  'DreamWorks', 'Lucasfilm', 'Focus Features', 'Searchlight', 'TriStar',
+  'Columbia', '20th Century Fox', 'Twentieth Century Fox', 'New Line', 'Amblin',
+  'Pathé', 'Working Title', 'Plan B', 'Neon',
 ];
 
 /*
@@ -59,6 +69,11 @@ const PEOPLE = [
   'Park Chan-wook', 'Ang Lee', 'Denis Villeneuve', 'Jean-Pierre Jeunet',
   'Kathryn Bigelow', 'Bong Joon-ho', 'Sofia Coppola', 'Guillermo del Toro',
   'Mary Pickford', 'Peter Weir', 'Chloé Zhao', 'Taika Waititi',
+  /* And the ones who share a word with a studio on the bare-name list: the
+     name is matched whole, so these stay. */
+  'Megan Fox', 'Michael J. Fox', 'Jamie Foxx', 'Walt Disney', 'Zendaya',
+  'Columbus Short', 'Apple Martin', 'Summer Glau', 'Orion Lee', 'Neon Hitch',
+  'Jay-Z', '50 Cent', 'Warner Baxter', 'David Warner', 'Ed Harris',
 ];
 
 (async () => {
@@ -93,6 +108,16 @@ const PEOPLE = [
   check('and the man who directed it is what is left',
     read.directors[0] === 'Harold Ramis', JSON.stringify(read.directors));
   check('the cast is untouched', read.cast.length === 4, JSON.stringify(read.cast));
+
+  /* ---- a studio in the CAST ----------------------------------------------- */
+  console.log('\n  a studio filed as an actor');
+  const cast = people.peopleIn({ cast: 'Tom Cruise, Paramount, Rebecca Ferguson, Skydance',
+    director: 'Christopher McQuarrie, Paramount Pictures' });
+  console.log('   ', JSON.stringify(cast));
+  check('the cast is only actors', JSON.stringify(cast.cast)
+    === JSON.stringify(['Tom Cruise', 'Rebecca Ferguson']), JSON.stringify(cast.cast));
+  check('and the director only the director', JSON.stringify(cast.directors)
+    === JSON.stringify(['Christopher McQuarrie']), JSON.stringify(cast.directors));
 
   /* ---- a film whose director is ONLY companies -------------------------- */
   /*
