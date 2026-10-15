@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '47.0';
+const VERSION = '47.1';
 
 const PAGE_SIZE = 60;
 
@@ -19752,6 +19752,10 @@ function renderProfileGate() {
   let seat = 0;
 
   for (const profile of profiles.all) {
+    /* The Guest button under the grid IS the guest, so it gets no card of its
+       own — except while managing, where it can still be edited. Matched by
+       name, the same way the box finds it (isGuestProfile in server.js). */
+    if (!managing && profile.name.trim().toLowerCase() === 'guest') continue;
     const tile = el('button', 'profile-tile');
     tile.style.setProperty('--i', seat++);
     const avatar = el('span', 'profile-avatar');
