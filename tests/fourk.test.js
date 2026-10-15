@@ -122,6 +122,7 @@ const MOVIES = [
     await page.route('**/cdn.jsdelivr.net/**', (r) => r.abort());
     await page.addInitScript(() => {
       localStorage.setItem('portal.profile', 'own1');
+      sessionStorage.setItem('portal.profile', 'own1');
       localStorage.setItem('portal.layout', 'desk');
     });
     await page.goto(`${BASE}/#/movies`, { waitUntil: 'domcontentloaded' });

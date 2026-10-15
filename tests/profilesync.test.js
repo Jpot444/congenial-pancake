@@ -244,9 +244,11 @@ const portFree = async () => {
      */
     console.log('\n  and both front ends are wired to it');
     const app = fs.readFileSync(PATHS.APP, 'utf8');
-    check('the portal opens as whoever last used the portal',
-      /localStorage\.getItem\('portal\.profile'\) \|\| res\.current/.test(app),
-      'app.js still lets the box decide who this device is');
+    /* Since then, every launch asks — see tests/whoami.test.js. Only this
+       session's own pick reopens anything, and never the box's answer. */
+    check('the portal asks on launch rather than reopening as anybody',
+      /const wanted = sessionProfile\.get\(\);/.test(app) && !/\|\| res\.current/.test(app),
+      'app.js still opens as a remembered or box-chosen profile');
     check('the portal tells the box when somebody picks',
       /fetch\('\/api\/profiles\/current'/.test(app));
     check('and polls for what the other rooms did',

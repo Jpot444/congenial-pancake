@@ -41,6 +41,7 @@ async function run(browser, layout, viewport) {
   });
   await page.addInitScript((l) => {
     localStorage.setItem('portal.profile', 'own1');
+    sessionStorage.setItem('portal.profile', 'own1');
     localStorage.setItem('portal.layout', l);
   }, layout);
   await page.goto(`${BASE}/#/movies`, { waitUntil: 'domcontentloaded' });

@@ -83,7 +83,10 @@ const HLS_JS = path.join(__dirname, 'vendor', 'hls-1.5.17.min.js');
   await page.route('**/api/scores**', json({ games: [], feeds: [] }));
   await page.route('**/api/xtream**', json({ epg_listings: [] }));
 
-  await page.addInitScript(() => localStorage.setItem('portal.profile', 'own1'));
+  await page.addInitScript(() => {
+    localStorage.setItem('portal.profile', 'own1');
+    sessionStorage.setItem('portal.profile', 'own1');
+  });
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.Hls, null, { timeout: 15000 });
   await page.evaluate(() => {

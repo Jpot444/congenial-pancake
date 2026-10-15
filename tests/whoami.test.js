@@ -1,28 +1,17 @@
 /**
- * This screen opens as whoever last used THIS screen.
+ * Every launch asks who is watching.
  *
- * "whenever i open the app it looks like i load into the last users profile.
- *  I should be loading into the last one i used"
+ * "sometimes on the iptv player it is opening auto into the last used profile,
+ *  i want to select the profile each time"
  *
- * The sync work that came before put the answer to "who is watching" on the
- * box, because the service answers on three addresses and a browser keeps a
- * separate store per origin — the same television on two of them had two
- * memories of itself and no way to reconcile them. That much was right, and the
- * part of it that matters is untouched: one set of profiles on the Pi, one
- * history, one set of favourites, every device reading and writing the same
- * records.
+ * Before that, a screen opened as whoever last used THIS screen, falling back
+ * to whoever the box last saw picked. Neither opens anything now: a fresh
+ * launch puts the picker up. A choice holds for the rest of that session —
+ * through the reloads the app does by itself (the updater, a hand-over) — and
+ * a pick made in another room still leaves this screen alone.
  *
- * What was wrong was letting the box's answer decide what a screen OPENS as.
- * A television in the front room and a phone in a pocket are not one viewer
- * taking turns; they are two people. Whoever picked last, in any room, decided
- * for everybody — and the five-second poll then re-decided it, so a screen
- * corrected by hand went back a moment later.
- *
- * So: the device's own memory wins, and the box's answer is the fallback for a
- * screen that has never chosen. A new phone, or this service opened on an
- * address it has not been opened on before, still lands on whoever is actually
- * watching rather than on a picker — which is the good half of what the box's
- * answer was doing, kept.
+ * Shared is unchanged: one set of profiles on the Pi, one history, one set of
+ * favourites, every device reading and writing the same records.
  */
 const { chromium } = require('./playwright.js');
 
@@ -84,23 +73,22 @@ const KID = { id: 'own2', name: 'Kid', emoji: '🎯', color: '#2B4C7E' };
   const whoAmI = () => page.evaluate(() => ({
     id: profiles.current?.id || '',
     name: profiles.current?.name || '',
-    remembered: localStorage.getItem('portal.profile') || '',
+    remembered: sessionStorage.getItem('portal.profile') || '',
     gate: !document.querySelector('#profileGate')?.hidden,
   }));
 
   /* ---- 1. a screen that has never chosen ------------------------------- */
-  /*
-   * The good half of what the box's answer was doing, and worth keeping: a new
-   * device — or this service reached on an address it has not been opened on
-   * before — lands on whoever is actually watching rather than on a picker.
-   */
   console.log('\n  a screen opened for the first time');
   await page.goto(BASE, { waitUntil: 'networkidle' });
-  await wait(1200);
+  /* Until the page has decided one way or the other — a fixed pause was not
+     always long enough with other suites running beside this one. */
+  await page.waitForFunction(() => profiles.current
+    || !document.querySelector('#profileGate')?.hidden, null, { timeout: 15000 })
+    .catch(() => {});
   let me = await whoAmI();
   console.log('   ', JSON.stringify(me));
-  check('follows the box, having nothing of its own to go on',
-    me.id === 'own2', JSON.stringify(me));
+  check('asks, rather than following the box', me.id === '' && me.gate === true,
+    JSON.stringify(me));
 
   /* ---- 2. somebody chooses on this screen ------------------------------ */
   console.log('\n  and then somebody picks Hunter on it');
@@ -133,15 +121,34 @@ const KID = { id: 'own2', name: 'Kid', emoji: '🎯', color: '#2B4C7E' };
   check('this screen is left alone while it is being used',
     me.id === 'own1', JSON.stringify(me));
 
-  /* ---- 4. and it opens as itself next time ----------------------------- */
-  console.log('\n  and this screen is opened again');
+  /* ---- 4. a reload is not a launch ------------------------------------- */
+  /* The updater restarting the box, a hand-over: the app reloads itself, and
+     nobody should have to pick again for that. */
+  console.log('\n  and this screen reloads');
   await page.reload({ waitUntil: 'networkidle' });
   await wait(1400);
   me = await whoAmI();
   console.log('   ', JSON.stringify(me), '· the box still says:', boxCurrent);
-  check('it opens as Hunter, not as whoever picked last',
+  check('it stays Hunter, not whoever picked last',
     me.id === 'own1', JSON.stringify(me));
-  check('and does not put the picker up either', me.gate === false, JSON.stringify(me));
+  check('and does not put the picker up', me.gate === false, JSON.stringify(me));
+
+  /* ---- 4b. but opening it again asks ----------------------------------- */
+  /* The same browser and storage, a new tab — which is what opening the app
+     again is. localStorage still says Hunter; that no longer decides. */
+  console.log('\n  and the app is opened again');
+  const again = await context.newPage();
+  await again.goto(BASE, { waitUntil: 'networkidle' });
+  await wait(1400);
+  const relaunch = await again.evaluate(() => ({
+    id: profiles.current?.id || '',
+    gate: !document.querySelector('#profileGate')?.hidden,
+    stored: localStorage.getItem('portal.profile') || '',
+  }));
+  console.log('   ', JSON.stringify(relaunch));
+  check('it puts the picker up', relaunch.gate === true && relaunch.id === '',
+    JSON.stringify(relaunch));
+  await again.close();
 
   /* ---- 5. a different device is still a different device --------------- */
   /*
@@ -177,10 +184,11 @@ const KID = { id: 'own2', name: 'Kid', emoji: '🎯', color: '#2B4C7E' };
   await wait(1400);
   const them = await phone.evaluate(() => ({
     id: profiles.current?.id || '', name: profiles.current?.name || '',
+    gate: !document.querySelector('#profileGate')?.hidden,
   }));
   console.log('   ', JSON.stringify(them));
-  check('opens as the Kid, who is who the box says is watching',
-    them.id === 'own2', JSON.stringify(them));
+  check('asks too, rather than opening as whoever the box says',
+    them.id === '' && them.gate === true, JSON.stringify(them));
   /* And the first screen is still Hunter, which is the point of all of it. */
   me = await whoAmI();
   check('while the first screen is still Hunter', me.id === 'own1', JSON.stringify(me));

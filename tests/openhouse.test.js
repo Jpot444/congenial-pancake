@@ -202,6 +202,7 @@ async function browserPage() {
      the one-time overlays are marked seen so nothing sits over the panel. */
   await page.addInitScript(() => {
     localStorage.setItem('portal.profile', 'own1');
+    sessionStorage.setItem('portal.profile', 'own1');
     localStorage.setItem('portal.layout', 'desk');
   });
   await page.goto(`http://127.0.0.1:${PORT}/`);

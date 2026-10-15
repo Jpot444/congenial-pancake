@@ -167,7 +167,10 @@ error: 403 from http://cf.boffworld.com/live/hunter99/s3cr3tP@ss/12.ts`;
      */
     await putCurrent(who.id);
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
-    await page.evaluate((id) => localStorage.setItem('portal.profile', id), who.id);
+    await page.evaluate((id) => {
+      localStorage.setItem('portal.profile', id);
+      sessionStorage.setItem('portal.profile', id);
+    }, who.id);
     await page.goto(BASE, { waitUntil: 'networkidle' });
     await page.waitForTimeout(2000);
   };

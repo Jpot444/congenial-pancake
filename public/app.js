@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '46.9';
+const VERSION = '47.0';
 
 const PAGE_SIZE = 60;
 
@@ -149,6 +149,14 @@ const prefs = {
 const AVATARS = ['🎬', '🍿', '📺', '🎥', '🐂', '🌾', '⭐', '🎯', '🃏', '🚀', '🎸', '🏈'];
 const SWATCHES = ['#E50914', '#831010', '#2F5D50', '#2B4C7E', '#7A4E1D', '#4A3A63'];
 
+/* Who this browser session is watching as. Wrapped because sessionStorage can
+   throw (private windows, blocked site data); without it, the picker asks. */
+const sessionProfile = {
+  get() { try { return sessionStorage.getItem('portal.profile'); } catch { return null; } },
+  set(id) { try { sessionStorage.setItem('portal.profile', id); } catch { /* asks next time */ } },
+  clear() { try { sessionStorage.removeItem('portal.profile'); } catch { /* nothing to forget */ } },
+};
+
 const profiles = {
   all: [],
   current: null,
@@ -190,8 +198,21 @@ const profiles = {
      * every device reading and writing the same records. That was the ask, and
      * none of it lives here.
      */
-    const wanted = localStorage.getItem('portal.profile') || res.current;
-    const match = this.all.find((p) => p.id === wanted);
+    /*
+     * ...and only for as long as this session lasts.
+     *
+     *     "sometimes on the iptv player it is opening auto into the last used
+     *      profile, i want to select the profile each time"
+     *
+     * So a fresh launch asks, every time: the remembered pick now lives in
+     * sessionStorage, which a reload keeps (the updater restarting things,
+     * handOver below) and closing the app or the tab forgets. Neither this
+     * device's old answer nor the box's `current` opens anything by itself
+     * any more. localStorage is still written in select(), because the TV app
+     * on the same address reads it and has no picker of its own.
+     */
+    const wanted = sessionProfile.get();
+    const match = wanted && this.all.find((p) => p.id === wanted);
     /*
      * Opening is not choosing.
      *
@@ -210,8 +231,9 @@ const profiles = {
 
   async select(profile, { silent = false, publish = true } = {}) {
     this.current = profile;
-    // Kept in step as the fallback described in load(), and so a box that is
-    // unreachable for a moment still opens on the right face.
+    // This session's answer, so a reload stays on the same face; and the
+    // longer-lived one the TV app reads.
+    sessionProfile.set(profile.id);
     localStorage.setItem('portal.profile', profile.id);
     this.data = await api(`/api/profiles/${profile.id}/prefs`);
     /* Tell the box, so every other device follows. Not when this WAS the box
@@ -289,6 +311,7 @@ const profiles = {
     const mine = this.all.find((p) => p.id === this.current.id);
     if (!mine) {
       localStorage.removeItem('portal.profile');
+      sessionProfile.clear();
       return this.handOver({ id: '', name: 'somebody else' });
     }
     /* Renamed, recoloured or given a different face elsewhere. */
@@ -383,7 +406,10 @@ const profiles = {
    * starting clean is the only way to be sure none of it is left behind.
    */
   handOver(next) {
-    if (next.id) localStorage.setItem('portal.profile', next.id);
+    if (next.id) {
+      localStorage.setItem('portal.profile', next.id);
+      sessionProfile.set(next.id);
+    }
     const overlay = $('#playerOverlay');
     if (overlay && !overlay.hidden) {
       if (this.pendingHandOver) return;
@@ -20005,6 +20031,7 @@ $('#profileDelete').addEventListener('click', async () => {
     if (profiles.current && profiles.current.id === editingProfile.id) {
       profiles.current = null;
       localStorage.removeItem('portal.profile');
+      sessionProfile.clear();
       $('#profileChip').hidden = true;
     }
     closeProfileModal();

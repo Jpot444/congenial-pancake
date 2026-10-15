@@ -104,6 +104,7 @@ const CHANNEL = { kind: 'live', id: 701, num: 701, name: 'US| RELAY ONE', logo: 
 
   await page.addInitScript(() => {
     localStorage.setItem('portal.profile', 'own1');
+    sessionStorage.setItem('portal.profile', 'own1');
     localStorage.setItem('portal.layout', 'desk');
   });
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
