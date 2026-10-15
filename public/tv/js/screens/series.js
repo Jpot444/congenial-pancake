@@ -7,7 +7,7 @@
  */
 
 import { el, clear, cleanName } from '../ui.js';
-import { loadLibrary, loadTaste, continueWatching, affinity, state } from '../state.js';
+import { loadLibrary, loadTaste, isGuest, continueWatching, affinity, state } from '../state.js';
 import { posterCard, rowHead, strip, rowBlock } from './cards.js';
 
 const ROW_MAX = 24;
@@ -26,7 +26,8 @@ export async function render(host, app) {
 
   rows = [];
   addRow(root, 'KEEP WATCHING', 'Next episode is queued', keepWatchingRow());
-  addRow(root, 'FOR YOU', 'From what this profile has watched', forYouRow());
+  // Not for the Guest, who will not use it.
+  if (!isGuest()) addRow(root, 'FOR YOU', 'From what this profile has watched', forYouRow());
   addRow(root, 'RECENTLY UPDATED', 'New episodes first', newestRow());
   addRow(root, 'ALL SHOWS', `A–Z · ${items.length.toLocaleString()}`, allRow());
 

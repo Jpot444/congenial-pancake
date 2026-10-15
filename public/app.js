@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '47.1';
+const VERSION = '47.2';
 
 const PAGE_SIZE = 60;
 
@@ -227,6 +227,11 @@ const profiles = {
      * memory is the only answer anywhere and worth writing down.
      */
     if (match) await this.select(match, { silent: true, publish: !res.current });
+  },
+
+  /** The box's one Guest — found by name, as isGuestProfile in server.js does. */
+  isGuest(profile = this.current) {
+    return String(profile?.name || '').trim().toLowerCase() === 'guest';
   },
 
   async select(profile, { silent = false, publish = true } = {}) {
@@ -7449,6 +7454,7 @@ function forYouItems(tab) {
  * anything from anywhere else. See `notInterested` below.
  */
 async function loadForYou({ force = false, tab = 'movies' } = {}) {
+  if (profiles.isGuest()) return;   // no row to fill — see buildShelves
   const held = forYou[tab === 'series' ? 'series' : 'movies'];
   if (held.asking) return held.asking;
   if (!force && held.at && Date.now() - held.at < 5 * 60 * 1000) return null;
@@ -7565,6 +7571,9 @@ function buildShelves(tab) {
   const rows = [];
   for (const def of SHELF_DEFS[tab] || []) {
     if (def.special === 'recent') {
+      /* Not for the Guest: a visitor's picks are not worth asking for, and
+         a row asking "what do you love" is in their way. */
+      if (profiles.isGuest()) continue;
       const items = forYouItems(tab);
       /* On Movies and Series this row is always here.
        *
@@ -19755,7 +19764,7 @@ function renderProfileGate() {
     /* The Guest button under the grid IS the guest, so it gets no card of its
        own — except while managing, where it can still be edited. Matched by
        name, the same way the box finds it (isGuestProfile in server.js). */
-    if (!managing && profile.name.trim().toLowerCase() === 'guest') continue;
+    if (!managing && profiles.isGuest(profile)) continue;
     const tile = el('button', 'profile-tile');
     tile.style.setProperty('--i', seat++);
     const avatar = el('span', 'profile-avatar');

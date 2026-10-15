@@ -52,6 +52,9 @@ const EPG_MAX = 40;
  * What is shared between screens is what is IN a profile — the history, the
  * favourites, the ratings, all held once on the Pi. That is untouched.
  */
+/** The box's one Guest — found by name, as isGuestProfile in server.js does. */
+export const isGuest = () => String(state.profile?.name || '').trim().toLowerCase() === 'guest';
+
 export async function loadProfile() {
   let data = await getProfiles();
   /*
