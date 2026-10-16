@@ -1046,7 +1046,8 @@
             <rect x="11" y="11" width="8" height="5.5" rx="1" fill="currentColor" stroke="none"/>
           </svg>
         </button>
-        <!-- Live keeps the browser's own controls, and on iOS those put
+        <!-- Unused since live moved onto the film bar, which has its own.
+             Live used to keep the browser's own controls, and on iOS those put
              fullscreen in the top-left corner of the picture — under our back
              button. This is ours, in the corner our buttons already live in,
              so getting a game full-screen never depends on reaching around
@@ -1074,7 +1075,9 @@
       </div>
     </div>
 
-    <!-- The bottom strip for live on Apple touch devices. The top row was
+    <!-- Unused since live moved onto the film bar, which has play/pause and
+         captions of its own.
+         The bottom strip for live on Apple touch devices. The top row was
          carrying eight controls on a phone — crowded to the point of the CC
          badge overlapping the back button — so play/pause sits at the bottom
          of the screen where a thumb already is, and the captions button docks
@@ -1112,7 +1115,8 @@
     </div>
 
     <!-- Shown instead of the native controls for a remuxed film, because the
-         native scrubber can only ever be as long as what's been remuxed. -->
+         native scrubber can only ever be as long as what's been remuxed — and
+         for a live channel too (.is-live), so live has the same buttons. -->
     <div class="vod-bar" id="vodBar" hidden>
       <!-- `display: contents` on a desktop, so these three sit in the bar as
            they always have. On a phone the wrapper becomes a real box and

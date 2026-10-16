@@ -3023,6 +3023,11 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .vod-btn svg { width: 18px; height: 18px; }
 #vodPlayIcon path { fill: currentColor; stroke: none; }
 
+/* A channel on the film bar has no runtime, so no total: the clock on the
+   left reads the delay behind the live edge, and the LIVE pill up top is
+   where the edge is. */
+.vod-bar.is-live #vodTotal { display: none; }
+
 .vod-time {
   flex-shrink: 0;
   font-size: 12.5px;

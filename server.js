@@ -3130,7 +3130,8 @@ function probeSource(input) {
         '-user_agent', UA,
         '-analyzeduration', '1000000',
         '-probesize', '600000',
-        '-show_entries', 'stream=index,codec_name,codec_type:stream_tags=language,title',
+        '-show_entries', 'stream=index,codec_name,codec_type:stream_tags=language,title'
+          + ':stream_disposition=forced,hearing_impaired',
         '-show_entries', 'format=duration',
         '-of', 'default=noprint_wrappers=1',
         input,
@@ -3177,7 +3178,7 @@ function parseProbe(out) {
     let m;
     if ((m = /^index=(\d+)$/.exec(line))) {
       flush();
-      cur = { index: Number(m[1]), type: '', codec: '', lang: '', title: '' };
+      cur = { index: Number(m[1]), type: '', codec: '', lang: '', title: '', forced: false, sdh: false };
     } else if ((m = /^codec_name=(.+)$/.exec(line))) {
       if (cur) cur.codec = m[1].toLowerCase();
     } else if ((m = /^codec_type=(.+)$/.exec(line))) {
@@ -3186,6 +3187,10 @@ function parseProbe(out) {
       if (cur) cur.lang = m[1].toLowerCase();
     } else if ((m = /^TAG:title=(.*)$/i.exec(line))) {
       if (cur) cur.title = m[1];
+    } else if ((m = /^DISPOSITION:forced=1$/i.exec(line))) {
+      if (cur) cur.forced = true;
+    } else if ((m = /^DISPOSITION:hearing_impaired=1$/i.exec(line))) {
+      if (cur) cur.sdh = true;
     } else if ((m = /^duration=([\d.]+)$/.exec(line))) {
       duration = Math.floor(Number(m[1]) || 0);
     }
@@ -3198,7 +3203,7 @@ function parseProbe(out) {
   // Numbered within their own type, because that is how `-map 0:s:N` counts.
   const subs = streams
     .filter((s) => s.type === 'subtitle')
-    .map((s, i) => ({ at: i, codec: s.codec, lang: s.lang, title: s.title }))
+    .map((s, i) => ({ at: i, codec: s.codec, lang: s.lang, title: s.title, forced: s.forced, sdh: s.sdh }))
     .filter((s) => TEXT_SUBTITLE_CODECS.has(s.codec));
 
   return { codec, duration, subs };
@@ -3554,7 +3559,13 @@ function subtitleLabel(sub) {
   // The file's own title wins when it has one — "English (SDH)", "Forced" and
   // "Signs & Songs" are distinctions a language code cannot carry.
   if (sub.title && name) return `${name} — ${sub.title}`;
-  return sub.title || name || 'Subtitles';
+  if (sub.title) return sub.title;
+  // No title, but the file still flags what it is. Four untitled English
+  // streams were four identical "English" rows; these two flags are most of
+  // what tells them apart.
+  const flag = sub.forced ? 'Forced' : sub.sdh ? 'SDH' : '';
+  if (flag) return `${name || 'Subtitles'} — ${flag}`;
+  return name || 'Subtitles';
 }
 
 /**

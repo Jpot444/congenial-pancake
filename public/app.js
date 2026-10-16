@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '47.2';
+const VERSION = '48';
 
 const PAGE_SIZE = 60;
 
@@ -17034,11 +17034,11 @@ function enterCinema(item) {
    * file on the drive is not a conversion.
    */
   $('#cinemaMultiview').hidden = !(item.kind === 'live' || fromArchive);
-  // A film has its own fullscreen button in the film bar; this is live's.
-  $('#liveFull').hidden = item.kind !== 'live';
-  // The bottom strip — play/pause and captions — exists exactly where the
-  // native control strip does not.
-  $('#liveBar').hidden = !(item.kind === 'live' && isIOS());
+  // Live runs on the film bar now (see liveScrub), which has its own
+  // fullscreen, play/pause and captions, so live's stand-ins for those stay
+  // put away everywhere.
+  $('#liveFull').hidden = true;
+  $('#liveBar').hidden = true;
   reservePlayerActions();
   $('#cinemaTitle').textContent = item.name || '';
   $('#cinemaSub').textContent = '';
@@ -17107,10 +17107,10 @@ document.addEventListener('keydown', (event) => {
     $('#vodPlay').click();
   } else if (event.key === 'ArrowLeft') {
     event.preventDefault();
-    seekFilm(filmPosition() - 10);
+    skipBy(-10);
   } else if (event.key === 'ArrowRight') {
     event.preventDefault();
-    seekFilm(filmPosition() + 10);
+    skipBy(10);
   } else if (event.key === 'f') {
     $('#vodFull').click();
   }
@@ -17146,7 +17146,9 @@ function hideFilmBar() {
   // Note: does NOT exit cinema — live TV runs full screen with no film bar.
   film.active = false;
   film.item = null;
+  liveScrub.active = false;
   $('#vodBar').hidden = true;
+  $('#vodBar').classList.remove('is-live');
   // On Apple touch devices a live channel runs on OUR chrome alone. The
   // native strip draws its fullscreen and captions buttons in the top-left
   // corner of the picture — directly under our back button, which eats the
@@ -17160,6 +17162,7 @@ function hideFilmBar() {
 }
 
 function paintFilmBar() {
+  if (liveScrub.active) return paintLiveBar();
   if (!film.active) return;
   const pos = filmPosition();
 
@@ -17190,6 +17193,97 @@ function paintFilmBar() {
   icon.innerHTML = $('#video').paused
     ? '<path d="M7 5l12 7-12 7z"/>'
     : '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';
+}
+
+/* ------------------------------------------------------ live scrubber ---
+ *
+ * "I like the way the player buttons for movies and series are custom. I want
+ *  those same buttons for live TV"
+ *
+ * So a channel runs on the film bar too, instead of the browser's own
+ * controls: the same skip buttons, play, scrubber, captions, mute and
+ * fullscreen, in the same places, on every device.
+ *
+ * The bar is the same; what it measures is not. A channel has no runtime, so
+ * the track spans the window the Pi's live buffer holds (about two minutes,
+ * see livedvr.test.js), the knob is where the picture is inside it, and the
+ * clock reads how far behind the live edge that is. The skips move within
+ * the window and stop short of either end rather than past it. There is no
+ * total — the LIVE pill already says where the edge is, and is still the
+ * way back to it.
+ */
+const liveScrub = {
+  active: false,
+
+  /** The span that can be seeked into, as [start, end] in element time. */
+  window() {
+    const video = $('#video');
+    // Seekable is the window when the engine publishes one. Some players
+    // report it open-ended instead, and then what is downloaded is the most
+    // that can be reached.
+    for (const ranges of [video.seekable, video.buffered]) {
+      if (!ranges.length) continue;
+      const start = ranges.start(0);
+      const end = ranges.end(ranges.length - 1);
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start) return [start, end];
+    }
+    return null;
+  },
+
+  seek(target) {
+    const win = this.window();
+    if (!win) return;
+    // Short of the edge by the same margin the LIVE pill keeps: closer than
+    // that and there is nothing downloaded yet to land on.
+    const t = Math.max(win[0] + 0.5, Math.min(win[1] - 1.5, target));
+    playback.expectMove('the live bar was used');
+    $('#video').currentTime = t;
+    paintFilmBar();
+  },
+};
+
+function showLiveBar() {
+  liveScrub.active = true;
+  $('#video').controls = false;     // ours replaces it, as for a film
+  $('#vodBar').hidden = false;
+  $('#vodBar').classList.add('is-live');
+  paintFilmBar();
+  captions.paint();
+}
+
+function paintLiveBar() {
+  const video = $('#video');
+  const win = liveScrub.window();
+  const span = win ? win[1] - win[0] : 0;
+  const pct = span ? Math.max(0, Math.min(100, ((video.currentTime - win[0]) / span) * 100)) : 100;
+  $('#vodPlayed').style.width = `${pct}%`;
+  $('#vodKnob').style.left = `${pct}%`;
+
+  const behind = currentLag();
+  $('#vodElapsed').textContent = behind === null ? '' : `−${hms(behind)}`;
+
+  // What is downloaded around the playhead — instant to seek within, the
+  // same thing the lighter band means on a film.
+  let lo = 0;
+  let hi = 0;
+  for (let i = 0; span && i < video.buffered.length; i += 1) {
+    if (video.buffered.start(i) <= video.currentTime + 0.5 && video.buffered.end(i) >= video.currentTime) {
+      lo = Math.max(0, (video.buffered.start(i) - win[0]) / span);
+      hi = Math.min(1, (video.buffered.end(i) - win[0]) / span);
+    }
+  }
+  $('#vodReady').style.left = `${lo * 100}%`;
+  $('#vodReady').style.width = `${Math.max(0, hi - lo) * 100}%`;
+
+  $('#vodPlayIcon').innerHTML = video.paused
+    ? '<path d="M7 5l12 7-12 7z"/>'
+    : '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';
+}
+
+/** The ten-second skips and the arrow keys, on whichever bar is up. */
+function skipBy(seconds) {
+  if (liveScrub.active) liveScrub.seek($('#video').currentTime + seconds);
+  else seekFilm(filmPosition() + seconds);
 }
 
 /** Seek to an absolute point in the film, remuxing again if we must. */
@@ -17341,11 +17435,30 @@ function trackFraction(event) {
 }
 
 $('#vodTrack').addEventListener('click', (event) => {
+  if (liveScrub.active) {
+    const win = liveScrub.window();
+    if (win) liveScrub.seek(win[0] + trackFraction(event) * (win[1] - win[0]));
+    return;
+  }
   if (!film.duration) return;
   seekFilm(trackFraction(event) * film.duration);
 });
 
 $('#vodTrack').addEventListener('mousemove', (event) => {
+  if (liveScrub.active) {
+    const win = liveScrub.window();
+    if (!win) return;
+    // How far behind live that point is: the delay now, plus or minus the
+    // distance from the playhead.
+    const at = win[0] + trackFraction(event) * (win[1] - win[0]);
+    const lag = currentLag();
+    const behind = Math.max(0, lag === null ? win[1] - at : lag + $('#video').currentTime - at);
+    const hover = $('#vodHover');
+    hover.hidden = false;
+    hover.textContent = `−${hms(behind)}`;
+    hover.style.left = `${trackFraction(event) * 100}%`;
+    return;
+  }
   if (!film.duration) return;
   const hover = $('#vodHover');
   hover.hidden = false;
@@ -17357,8 +17470,8 @@ $('#vodTrack').addEventListener('mouseleave', () => ($('#vodHover').hidden = tru
 
 $('#vodTrack').addEventListener('keydown', (event) => {
   const step = event.shiftKey ? 300 : 30;
-  if (event.key === 'ArrowRight') seekFilm(filmPosition() + step);
-  else if (event.key === 'ArrowLeft') seekFilm(filmPosition() - step);
+  if (event.key === 'ArrowRight') skipBy(step);
+  else if (event.key === 'ArrowLeft') skipBy(-step);
   else return;
   event.preventDefault();
   // The document-level handler seeks on these keys too. Without this, one
@@ -17403,6 +17516,28 @@ const captions = {
     prefs.data.captionTrack = value || '';
   },
   timer: null,
+  /**
+   * Which of the tracks carrying the chosen label is on — 0 for the first.
+   *
+   * "the captions button for many saints of newark … has 4 buttons that say
+   *  english but none of them work"
+   *
+   * A label is not a name. A file with four English streams and no titles on
+   * them (full, SDH, forced, commentary) gets four tracks called "English",
+   * and choosing by label turned all four on at once and followed whichever
+   * came last — the same one from every button, and if that was the forced
+   * track, which is nearly empty, captions simply never appeared. The label
+   * is still what carries over to the next film; this says which one here.
+   */
+  nth: 0,
+  /**
+   * Tracks left on the element by earlier titles. A `<track>` goes when it is
+   * removed, but one an engine made with addTextTrack() can never be taken
+   * off the element again — so every channel hls.js gave an "English" track
+   * left one behind, and they piled up in the menu of whatever played next,
+   * with nothing in them.
+   */
+  leftovers: new Set(),
   /** Whether any fetch has yet returned actual cues — decides the cadence. */
   gotWords: false,
   /** True while iOS native fullscreen legitimately holds a track showing. */
@@ -17418,6 +17553,10 @@ const captions = {
     // Anything the engine put there is the engine's to remove, but it must not
     // be left showing over the next title.
     for (const track of $('#video').textTracks) track.mode = 'disabled';
+    // Nor offered in its menu. What is still here now is the engine's and can
+    // never be removed; see `leftovers`.
+    this.leftovers = new Set($('#video').textTracks);
+    this.nth = 0;
     this.drawCues(null);
     this.close();
     this.paint();
@@ -17495,8 +17634,8 @@ const captions = {
    */
   enforce() {
     if (this.native) return;
-    for (const track of this.list()) {
-      const want = this.chosen && track.label === this.chosen ? 'hidden' : 'disabled';
+    for (const track of this.list({ all: true })) {
+      const want = this.isChosen(track) ? 'hidden' : 'disabled';
       if (track.mode !== want) track.mode = want;
     }
     if (!this.chosen && this.followed) this.follow(null);
@@ -17615,11 +17754,33 @@ const captions = {
     }
   },
 
-  /** Every track the player has, in menu order. */
-  list() {
+  /**
+   * Every track this title has, in menu order.
+   *
+   * Leftovers from earlier titles are kept out — except on a channel, where
+   * hls.js hands its captions back to the "English" track it made last time
+   * rather than making another, so the leftover is this channel's own.
+   * `all` is for switching them off, which applies to every track there is.
+   */
+  list({ all = false } = {}) {
     return [...$('#video').textTracks].filter(
-      (t) => t.kind === 'subtitles' || t.kind === 'captions'
+      (t) => (t.kind === 'subtitles' || t.kind === 'captions')
+        && (all || currentLiveItem || !this.leftovers.has(t))
     );
+  },
+
+  /** Where a track falls among the ones sharing its label: 0, 1, 2… */
+  nthOf(track, tracks = this.list()) {
+    return tracks.filter((t) => t.label === track.label).indexOf(track);
+  },
+
+  /** Whether this is the one track that should be on. */
+  isChosen(track) {
+    if (!this.chosen || track.label !== this.chosen) return false;
+    const tracks = this.list();
+    const same = tracks.filter((t) => t.label === this.chosen);
+    // The one asked for, or the first of the name when this title has fewer.
+    return same.indexOf(track) === (this.nth < same.length ? this.nth : 0);
   },
 
   /** Turn on the one that matches what was chosen, if it is there. */
@@ -17628,27 +17789,30 @@ const captions = {
     // A newly added track starts disabled, and setting a mode is what makes a
     // browser load its cues at all. 'hidden', not 'showing': the cues load
     // and fire, and drawCues is what puts them on screen.
-    for (const track of this.list()) {
-      track.mode = track.label === this.chosen ? 'hidden' : 'disabled';
+    for (const track of this.list({ all: true })) {
+      track.mode = this.isChosen(track) ? 'hidden' : 'disabled';
       if (track.mode === 'hidden') this.follow(track);
     }
   },
 
-  /** Choose a track by label, or '' to turn captions off. */
-  choose(label) {
-    this.chosen = label || '';
+  /** Choose a track, or null to turn captions off. */
+  choose(pick) {
+    this.chosen = pick ? pick.label : '';
+    this.nth = pick ? Math.max(0, this.nthOf(pick)) : 0;
     let followed = null;
-    for (const track of this.list()) {
-      track.mode = track.label === this.chosen ? 'hidden' : 'disabled';
+    for (const track of this.list({ all: true })) {
+      track.mode = this.isChosen(track) ? 'hidden' : 'disabled';
       if (track.mode === 'hidden') followed = track;
     }
     this.follow(followed);
     // hls.js keeps its own idea of which subtitle rendition is loading, and
     // for an in-band track that is the switch that matters. Display stays off
-    // always — drawing is ours.
+    // always — drawing is ours. Same name, same count: the nth of them.
     if (engine && engineKind === 'hls.js' && Array.isArray(engine.subtitleTracks)) {
-      const at = engine.subtitleTracks.findIndex((t) => t.name === this.chosen);
-      engine.subtitleTrack = at;
+      const named = engine.subtitleTracks
+        .map((t, i) => (t.name === this.chosen ? i : -1))
+        .filter((i) => i >= 0);
+      engine.subtitleTrack = named.length ? named[Math.min(this.nth, named.length - 1)] : -1;
       engine.subtitleDisplay = false;
     }
     prefs.save();
@@ -17683,21 +17847,23 @@ const captions = {
       // carrying eight controls on a phone, crowded to the point of the CC
       // badge overlapping the back button. Live everywhere else keeps the top
       // bar, which has the room.
-      const liveTouch = !film.active && Boolean(currentLiveItem) && isIOS();
-      const top = !film.active && !liveTouch;
-      const home = film.active ? $('#vodBar') : liveTouch ? $('#liveBar') : $('.player-bar-actions');
+      // Live on the film bar counts as the film bar: same button, same spot.
+      const bar = film.active || liveScrub.active;
+      const liveTouch = !bar && Boolean(currentLiveItem) && isIOS();
+      const top = !bar && !liveTouch;
+      const home = bar ? $('#vodBar') : liveTouch ? $('#liveBar') : $('.player-bar-actions');
       // Ahead of the heart in the top bar, not against the edge: multi-view and
       // close are the two ways OUT of the player and they keep the corner. In
       // the live strip it goes last, which the layout pins to the right edge.
-      const before = film.active ? $('#vodMute') : top ? $('#favBtn') : null;
+      const before = bar ? $('#vodMute') : top ? $('#favBtn') : null;
       if (wrap.parentElement !== home || wrap.nextElementSibling !== before) {
         home.insertBefore(wrap, before);
       }
       wrap.classList.toggle('cc-top', top);
       $('#ccBtn').classList.toggle('icon-btn', top || liveTouch);
-      $('#ccBtn').classList.toggle('vod-btn', film.active);
+      $('#ccBtn').classList.toggle('vod-btn', bar);
     }
-    const on = Boolean(this.chosen) && this.list().some((t) => t.label === this.chosen);
+    const on = this.list().some((t) => this.isChosen(t));
     $('#ccBtn').classList.toggle('is-on', on);
     $('#ccBtn').title = on ? `Subtitles: ${this.chosen}` : 'Subtitles';
     if (!$('#ccMenu').hidden) this.renderMenu();
@@ -17723,19 +17889,24 @@ const captions = {
       return;
     }
 
-    const row = (label, value) => {
+    const row = (label, track) => {
       const b = el('button', 'cc-item');
       b.type = 'button';
       b.setAttribute('role', 'menuitemradio');
       b.textContent = label;
-      const on = (value || '') === this.chosen;
+      const on = track ? this.isChosen(track) : !tracks.some((t) => this.isChosen(t));
       b.classList.toggle('is-on', on);
       b.setAttribute('aria-checked', String(on));
-      b.addEventListener('click', () => this.choose(value));
+      b.addEventListener('click', () => this.choose(track));
       menu.append(b);
     };
-    row('Off', '');
-    for (const track of tracks) row(track.label || 'Subtitles', track.label);
+    row('Off', null);
+    // Four "English" rows that look the same cannot be told apart, so the
+    // second of a name onward is numbered.
+    for (const track of tracks) {
+      const n = this.nthOf(track, tracks);
+      row(`${track.label || 'Subtitles'}${n > 0 ? ` ${n + 1}` : ''}`, track);
+    }
   },
 
   toggleMenu() {
@@ -17852,8 +18023,8 @@ window.portalDiagnostics = () => ({
   currentTime: $('#video').currentTime,
 });
 
-$('#vodBack10').addEventListener('click', () => seekFilm(filmPosition() - 10));
-$('#vodFwd10').addEventListener('click', () => seekFilm(filmPosition() + 10));
+$('#vodBack10').addEventListener('click', () => skipBy(-10));
+$('#vodFwd10').addEventListener('click', () => skipBy(10));
 
 $('#vodPlay').addEventListener('click', () => {
   const video = $('#video');
@@ -18029,14 +18200,14 @@ for (const evt of ['enterpictureinpicture', 'leavepictureinpicture', 'webkitpres
  * the custom bar exists in the first place. */
 $('#video').addEventListener('webkitbeginfullscreen', () => {
   $('#video').controls = true;
-  if (film.active) $('#vodBar').hidden = true;
+  if (film.active || liveScrub.active) $('#vodBar').hidden = true;
   // Our caption overlay is DOM and the native player cannot show it; hand the
   // cues to the platform for the duration.
   captions.nativeMode(true);
 });
 
 $('#video').addEventListener('webkitendfullscreen', () => {
-  if (film.active) {
+  if (film.active || liveScrub.active) {
     $('#video').controls = false;
     $('#vodBar').hidden = false;
     paintFilmBar();
@@ -19061,6 +19232,7 @@ async function openPlayer(item, { resume = 'ask' } = {}) {
     if (item.kind === 'live') {
       stopLeadWatch();
       hideFilmBar();
+      showLiveBar();
     } else {
       startLeadWatch();
       // Films get the real-runtime scrubber; a local file already has a
