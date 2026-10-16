@@ -4135,9 +4135,20 @@ function liveDvrArgs(input, dir, resumed = false, low = false) {
      *
      * Bounding the cold start is what exposed this: with minutes of backlog
      * to chew through the ingest never sat at the edge waiting, so it never
-     * hit the EOF that ends it. */
+     * hit the EOF that ends it.
+     *
+     * And then it became the reason the box was never used at all. ffmpeg
+     * applies the flag to the PLAYLIST fetch too, and the end of a 537-byte
+     * playlist is an EOF like any other: measured on 2026-10-16, it
+     * re-fetched CNBC's playlist 19 times in a row ("Will reconnect at 537
+     * … End of file") before reading a single segment — twenty seconds of
+     * nothing, so every tune-in missed startWaitMs, fell back to the direct
+     * path, and the live buffer sat idle on every channel tried. Without the
+     * flag the same ingest had its first segment in 2.1s and ran three
+     * minutes at the edge with no reconnects and no exits. The respawn in
+     * spawnLiveDvr is still there for a feed that does end. */
     '-reconnect', '1', '-reconnect_streamed', '1',
-    '-reconnect_at_eof', '1', '-reconnect_on_network_error', '1',
+    '-reconnect_on_network_error', '1',
     '-reconnect_delay_max', '5',
     /* And the same fact one layer up: a live playlist that has not gained a
        segment yet is not a playlist that has ended. The default gives up far

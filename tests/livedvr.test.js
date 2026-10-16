@@ -112,8 +112,13 @@ const get = (p) => new Promise((resolve, reject) => {
 
      The film path had carried this flag for months. The live path had three
      of the four. */
-  check('and so is a live edge that has not published the next segment yet',
-    /'-reconnect_at_eof', '1'/.test(dvrArgs)
+  /* Since withdrawn. ffmpeg applies reconnect_at_eof to the playlist fetch
+     too and looped on the end of it — 19 re-fetches, twenty seconds before
+     the first segment, so every tune-in fell back to the direct path. The
+     hold counters cover a playlist that has not grown yet; the respawn
+     covers a feed that really ends. */
+  check('a live edge that has not published the next segment yet is waited on',
+    !/'-reconnect_at_eof'/.test(dvrArgs)
     && /'-m3u8_hold_counters'/.test(dvrArgs), dvrArgs.slice(0, 600));
   // The input decides startup time. A TS push feed arrives at 1x and a stream
   // copy can only cut on keyframes, so the first segments took longer than the
@@ -379,8 +384,12 @@ const get = (p) => new Promise((resolve, reject) => {
   console.log('\n  the client side of it');
   const seat = Number((/const LIVE_DVR_SEAT = (\d+)/.exec(APP) || [])[1]);
   console.log(`   seat: ${seat}s behind`);
-  check('the DVR seat is deeper than the direct one — the window can hold it',
-    seat > Number((/liveSyncDuration: (\d+)/.exec(APP) || [])[1]), String(seat));
+  /* Not deeper than the direct seat any more. The direct seat is priced by
+     the provider's window expiring under the playhead; the box's window does
+     not expire, so the only cost left is waiting for the next delivery —
+     which arrives every ~11s — and the seat only has to cover that. */
+  check('the DVR seat covers two of the provider\'s 11-second deliveries',
+    seat >= 22, String(seat));
   check('but inside the two minutes behind that is the outer limit',
     seat <= 60, String(seat));
   check('and it is only taken when the server says the DVR is serving',

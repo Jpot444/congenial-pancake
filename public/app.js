@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '48';
+const VERSION = '48.1';
 
 const PAGE_SIZE = 60;
 
@@ -709,6 +709,19 @@ const LIVE_PREROLL_CAP = 10;
 /**
  * The seat when the Pi's own live buffer is serving the channel.
  *
+ * "because the wifi has improved so much see if we can work on not having as
+ *  big of a delay behind live broadcast without buffering"
+ *
+ * 24 seconds, down from 45. The Pi is on ethernet now, and more to the point
+ * the box's window does not expire under the playhead, so the only thing the
+ * seat still has to cover is the wait for the next delivery. Measured on the
+ * box: the provider hands over a ~10s segment every ~10s, each one arrives in
+ * under a second, and the longest wait for the edge to move in three minutes
+ * was 10.7s. 24 seconds back keeps at least 12 seconds in hand at the worst
+ * point between deliveries — twice the longest slow spell ever recorded here.
+ *
+ * What follows is how the 45 was arrived at, kept for the reasoning.
+ *
  * The server ingests the channel once and republishes it with a window of
  * about two minutes (see live DVR in server.js), so the two failure modes that
  * priced the direct seat move apart: segments cannot expire under the playhead
@@ -717,7 +730,7 @@ const LIVE_PREROLL_CAP = 10;
  * over ten of the Pi's ~4s segments of runway while staying well inside the
  * two minutes behind live that is the outer limit of acceptable.
  */
-const LIVE_DVR_SEAT = 45;
+const LIVE_DVR_SEAT = 24;
 
 /**
  * How many times a multiview cell will pick itself back up before giving in.
