@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '48.1';
+const VERSION = '48.2';
 
 const PAGE_SIZE = 60;
 
@@ -14294,6 +14294,87 @@ function liveKeepsGoing(video, state) {
     reloadStream();
   }
 }
+
+/*
+ * And a film or episode has to keep going too.
+ *
+ * "sometimes im getting pauses in series or movies im streaming and need to
+ *  press the refresh button"
+ *
+ * The rule above only ever ran for live channels, so a film that froze
+ * waited for the viewer to press Reload. This is the same rule for films and
+ * the same three steps, but with more patience. A film has no live edge to
+ * fall behind, and a conversion that is only starting up can take a while to
+ * produce its first segment. Twenty seconds without moving is not a slow
+ * segment any more. The last step is Reload itself, which picks the film up
+ * from where it stopped.
+ */
+const FILM_STUCK = {
+  stuckSeconds: 20,
+  /* Reloads per freeze. If three in a row have not got it moving, the
+     provider is down and a fourth will not help. */
+  reloads: 3,
+};
+
+function filmKeepsGoing(video, state) {
+  const now = Date.now();
+  const at = video.currentTime;
+  /* A pause is the viewer's, the end is the end, and with no film open there
+     is nothing to rescue. Each restarts the clock. */
+  if (!film.active || video.paused || video.ended
+      || Math.abs(at - state.at) > 0.25) {
+    state.at = at;
+    state.since = now;
+    state.tries = 0;
+    return;
+  }
+
+  if (now - state.since < FILM_STUCK.stuckSeconds * 1000) return;
+  state.tries += 1;
+  state.since = now;
+
+  /* 1. Stranded in a gap with video held further on. Step over it; this
+     costs nothing. A hung seek gets nothing from another seek. */
+  if (!video.seeking) {
+    const ranges = video.buffered;
+    let inside = false;
+    let nextStart = null;
+    for (let i = 0; i < ranges.length; i += 1) {
+      if (at >= ranges.start(i) - 0.25 && at <= ranges.end(i)) inside = true;
+      if (nextStart === null && ranges.start(i) > at) nextStart = ranges.start(i);
+    }
+    if (!inside && nextStart !== null && state.tries === 1) {
+      playback.expectMove('the film was stranded in a gap; moved to the video in hand');
+      try { video.currentTime = nextStart + 0.1; } catch { /* not seekable yet */ }
+      return;
+    }
+  }
+
+  /* 2. A converted film plays through hls.js. Ask it to fetch again from
+     where we stand before reloading anything. */
+  if (state.tries === 1 && engineKind === 'hls.js' && engine) {
+    try {
+      engine.startLoad(at);
+      return;
+    } catch {
+      /* fall through to the reload */
+    }
+  }
+
+  /* 3. What the viewer was doing by hand. */
+  if (state.tries <= FILM_STUCK.reloads + 1) {
+    toast('Playback stopped — picking it up again.');
+    reloadStream();
+  }
+}
+
+const filmGoing = { at: 0, since: Date.now(), tries: 0 };
+/* A new source (a reload, a seek into a new conversion) gets a fresh clock
+   rather than one already counting down from the last. */
+$('#video').addEventListener('loadstart', () => {
+  filmGoing.since = Date.now();
+});
+setInterval(() => filmKeepsGoing($('#video'), filmGoing), 1000);
 
 function startLiveTracking() {
   stopLiveTracking();
