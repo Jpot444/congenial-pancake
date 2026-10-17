@@ -11212,6 +11212,8 @@ async function handleApi(req, res, pathname, query) {
   }
 
   /* ---- Remux a non-native container into HLS ---- */
+  if (pathname === '/api/shares') return handleShareApi(req, res, query);
+
   if (pathname === '/api/remux') {
     if (!hasFfmpeg()) {
       return json(res, 501, {
@@ -12063,6 +12065,302 @@ cloudflare.configure({
   log: (line) => console.log(line),
 });
 
+/* ------------------------------------------------------------ share links ---
+ *
+ * "If I want to create a one off link to send a friend a single thing on my
+ *  treasureflix is that possible? I'd like to select whatever it is I want to
+ *  share, have a link created, share it with them and they just need to press
+ *  play"
+ *
+ * A share is one title — a film or one episode — behind a random token. The
+ * friend's whole world is /share/<token>: a page with that title and a play
+ * button, and the handful of requests the page makes, every one of which names
+ * the token and is answered only for the title it was made for. Nothing under
+ * /share takes an id, a path or a URL from the browser.
+ *
+ * Cloudflare Access is told to let /share through without a login (see
+ * cloudflare.letSharesThrough), so this token check IS the lock for those
+ * paths. Tokens are 128 random bits, expire after SHARE_DAYS, and the owner can
+ * revoke one early.
+ */
+const SHARES_PATH = path.join(ROOT, 'shares.json');
+const SHARE_DAYS = 7;
+const SHARE_TOKEN = /^[A-Za-z0-9_-]{22}$/;
+const shares = new Map();
+
+function loadShares() {
+  try {
+    const rows = readJsonState(SHARES_PATH, 'shares.json') || [];
+    for (const row of rows) if (row && SHARE_TOKEN.test(row.token)) shares.set(row.token, row);
+  } catch {
+    /* none yet */
+  }
+}
+
+function saveShares() {
+  // Expired links are kept a day so a friend who taps late is told it ran
+  // out, rather than that it never existed; after that they go.
+  const keep = Date.now() - 24 * 3600 * 1000;
+  for (const [token, s] of shares) if (s.expiresAt < keep) shares.delete(token);
+  writeJsonAtomic(SHARES_PATH, [...shares.values()]);
+}
+
+/** The share behind a token, or why there is none. */
+function findShare(token) {
+  const s = SHARE_TOKEN.test(token || '') ? shares.get(token) : null;
+  if (!s) return { error: 'This link doesn\'t exist.' };
+  if (s.revoked) return { error: 'This link was turned off.' };
+  if (Date.now() > s.expiresAt) return { error: 'This link has expired.' };
+  return { share: s };
+}
+
+/** A finished download of the shared title, which plays without the provider. */
+function shareDownload(s) {
+  for (const job of downloads.values()) {
+    if (job.status === 'done' && job.kind === s.kind && String(job.streamId) === String(s.streamId)
+        && job.file && fs.existsSync(path.join(DOWNLOAD_DIR, job.file))) return job;
+  }
+  return null;
+}
+
+/** What the owner's screens see of a share. */
+function shareRow(s, base) {
+  return {
+    token: s.token,
+    url: `${base}/share/${s.token}`,
+    title: s.title,
+    subtitle: s.subtitle,
+    createdAt: s.createdAt,
+    expiresAt: s.expiresAt,
+    revoked: Boolean(s.revoked),
+    opens: s.opens || 0,
+    lastOpenedAt: s.lastOpenedAt || 0,
+  };
+}
+
+/** Whether /share is reachable without a login — see cloudflare.js. */
+let sharesThrough = { ok: false, error: '', at: 0, host: '' };
+
+async function letSharesThrough(why) {
+  const cf = cloudflareSettings(readConfig());
+  if (!cf) return sharesThrough;
+  try {
+    const out = await cloudflare.letSharesThrough(cf);
+    sharesThrough = { ok: true, error: '', at: Date.now(), host: out.host };
+  } catch (err) {
+    sharesThrough = { ok: false, error: err.message, at: Date.now(), host: '' };
+    console.log(`  cloudflare: could not let share links through (${why}): ${err.message}`);
+  }
+  return sharesThrough;
+}
+
+/** Where a friend should be sent: the public address, never the house one. */
+function shareBase(req) {
+  const host = String(req.headers.host || '');
+  if (req.headers['cf-ray'] && /^[\w.-]+$/.test(host)) return `https://${host}`;
+  if (sharesThrough.host) return `https://${sharesThrough.host}`;
+  return 'https://tv.treasurestatecapital.com';
+}
+
+const escapeHtml = (s) => String(s || '').replace(/[&<>"']/g,
+  (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/** The owner's side: make, list and turn off links. Behind the Access login. */
+async function handleShareApi(req, res, query) {
+  if (!isOwnerProfile(ownerOf(query.get('profileId')))) {
+    return json(res, 403, { error: 'Only the owner profile can share.' });
+  }
+  const base = shareBase(req);
+  if (req.method === 'GET') {
+    const rows = [...shares.values()].sort((a, b) => b.createdAt - a.createdAt);
+    return json(res, 200, { shares: rows.map((s) => shareRow(s, base)), through: sharesThrough });
+  }
+  if (req.method === 'DELETE') {
+    const s = shares.get(query.get('token') || '');
+    if (!s) return json(res, 404, { error: 'No such link' });
+    s.revoked = true;
+    saveShares();
+    // A friend mid-film is cut off now, not whenever the conversion ends.
+    for (const [id, sess] of [...remuxSessions]) if (sess.share === s.token) killSession(id);
+    return json(res, 200, shareRow(s, base));
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
+
+  let body;
+  try {
+    body = JSON.parse(await collectRequestBody(req));
+  } catch {
+    return json(res, 400, { error: 'Invalid JSON' });
+  }
+  const kind = body.kind === 'series' ? 'series' : body.kind === 'movie' ? 'movie' : '';
+  const streamId = String(body.streamId || '');
+  if (!kind || !/^[\w-]{1,40}$/.test(streamId)) {
+    return json(res, 400, { error: 'Only films and episodes can be shared.' });
+  }
+  const now = Date.now();
+  const s = {
+    token: crypto.randomBytes(16).toString('base64url'),
+    kind,
+    streamId,
+    ext: /^[a-z0-9]{2,5}$/i.test(String(body.ext || '')) ? String(body.ext).toLowerCase() : 'mp4',
+    vcodec: /^[\w.-]{1,20}$/.test(String(body.vcodec || '')) ? String(body.vcodec) : '',
+    title: String(body.title || 'Something to watch').slice(0, 200),
+    subtitle: String(body.subtitle || '').slice(0, 200),
+    poster: /^https?:\/\//i.test(String(body.poster || '')) ? String(body.poster).slice(0, 1000) : '',
+    duration: Math.max(0, Number(body.duration) || 0),
+    createdAt: now,
+    expiresAt: now + SHARE_DAYS * 24 * 3600 * 1000,
+    opens: 0,
+  };
+  shares.set(s.token, s);
+  saveShares();
+  // Make sure the door for /share exists before the link goes anywhere.
+  if (!sharesThrough.ok) await letSharesThrough('a link was made');
+  return json(res, 200, { ...shareRow(s, shareBase(req)), through: sharesThrough });
+}
+
+/** The friend's side. Everything under /share/<token>. */
+async function handleShare(req, res, pathname, query) {
+  const match = /^\/share\/([^/]+)(\/.*)?$/.exec(pathname);
+  if (!match) return send(res, 404, 'Not found');
+  const [, token, rest = ''] = match;
+  const { share: s, error } = findShare(token);
+  const page = rest === '' || rest === '/';
+
+  if (!s) {
+    if (!page) return json(res, 410, { error });
+    return sharePage(res, null, error);
+  }
+  const base = `/share/${s.token}`;
+  const job = shareDownload(s);
+  const native = Boolean(job && NATIVE_CONTAINERS.has(String(job.ext || '').toLowerCase()));
+
+  if (page) return sharePage(res, s, '', shareBase(req));
+
+  if (rest === '/info') {
+    s.opens = (s.opens || 0) + 1;
+    s.lastOpenedAt = Date.now();
+    saveShares();
+    return json(res, 200, {
+      title: s.title,
+      subtitle: s.subtitle,
+      poster: s.poster ? `${base}/poster` : '',
+      duration: s.duration,
+      expiresAt: s.expiresAt,
+      mode: native ? 'file' : 'remux',
+    });
+  }
+
+  if (rest === '/poster') {
+    if (!s.poster) return send(res, 404, 'Not found');
+    return handleImage(req, res, new URLSearchParams({ u: s.poster }));
+  }
+
+  if (rest === '/logo.png') return serveLocalFile(req, res, path.join(PUBLIC_DIR, 'bison.png'));
+
+  if (rest === '/file') {
+    if (!native) return send(res, 404, 'Not found');
+    localPlaybackAt = Date.now();
+    return serveLocalFile(req, res, path.join(DOWNLOAD_DIR, job.file));
+  }
+
+  if (rest === '/play') {
+    if (!hasFfmpeg()) return json(res, 501, { error: 'This box can\'t convert video right now.' });
+    const cfg = readConfig();
+    let input;
+    let fromProvider = false;
+    if (job) {
+      input = path.join(DOWNLOAD_DIR, job.file);
+    } else {
+      if (!cfg || cfg.mode !== 'xtream') return json(res, 503, { error: 'This box isn\'t connected right now.' });
+      makeRoomForViewer(cfg, `a share link opened ${s.kind} ${s.streamId}`);
+      const chosen = providers.pick(cfg, { reserve: true }) || cfg;
+      input = buildStreamUrl(chosen, s.kind, s.streamId, s.ext);
+      fromProvider = true;
+    }
+    // Only a session this link started can be replaced by it.
+    const replacing = remuxSessions.get(query.get('replaces') || '');
+    try {
+      const probed = await probeTitle(input, job ? `dl:${job.id}` : `${s.kind}:${s.streamId}:${s.ext}`);
+      const session = await startRemux(input, {
+        fromProvider,
+        videoCodec: s.vcodec.toLowerCase() || probed.codec,
+        startSeconds: Math.max(0, Math.floor(Number(query.get('start')) || 0)),
+        sourceDuration: probed.duration,
+        noSubs: true,
+        replaces: replacing && replacing.share === s.token ? replacing.id : '',
+      });
+      session.share = s.token;
+      return json(res, 200, {
+        url: `${base}/hls/${session.id}/index.m3u8`,
+        session: session.id,
+        prebuffer: session.prebuffer,
+        offset: session.offset,
+        duration: session.sourceDuration || s.duration,
+      });
+    } catch (err) {
+      return json(res, 502, { error: 'Couldn\'t start it. Try again in a minute.' });
+    }
+  }
+
+  // Everything below names a conversion, and only this link's own will do.
+  const own = (id) => {
+    const sess = remuxSessions.get(id || '');
+    return sess && sess.share === s.token ? sess : null;
+  };
+
+  if (rest === '/status') {
+    const sess = own(query.get('id'));
+    if (!sess) return json(res, 404, { error: 'Session expired' });
+    sess.lastAccess = Date.now();
+    const { seconds, complete } = remuxReadySeconds(sess);
+    return json(res, 200, {
+      seconds,
+      complete,
+      target: sess.prebuffer,
+      failed: Boolean(sess.exited && sess.exitCode !== 0 && !complete),
+    });
+  }
+
+  if (rest === '/stop') {
+    const sess = own(query.get('id'));
+    if (sess && !sess.live) killSession(sess.id);
+    return json(res, 200, { stopped: true });
+  }
+
+  const hls = /^\/hls\/([\w-]+)\/([\w.-]+)$/.exec(rest);
+  if (hls) {
+    if (!own(hls[1])) return send(res, 404, 'Not found');
+    return serveRemux(req, res, `/hls/${hls[1]}/${hls[2]}`);
+  }
+
+  return send(res, 404, 'Not found');
+}
+
+/** The page a friend lands on, with the title filled in for link previews. */
+function sharePage(res, s, error, origin = '') {
+  let html;
+  try {
+    html = fs.readFileSync(path.join(PUBLIC_DIR, 'share.html'), 'utf8');
+  } catch {
+    return send(res, 500, 'Missing share page');
+  }
+  const title = s ? (s.subtitle ? `${s.title} — ${s.subtitle}` : s.title) : 'Treasureflix';
+  const image = s && s.poster && origin ? `${origin}/share/${s.token}/poster` : '';
+  html = html
+    .replaceAll('{{TITLE}}', escapeHtml(title))
+    .replaceAll('{{DESC}}', escapeHtml(s ? 'Tap to watch on Treasureflix.' : error))
+    .replaceAll('{{IMAGE}}', escapeHtml(image))
+    .replaceAll('{{ERROR}}', escapeHtml(error));
+  res.writeHead(s ? 200 : 410, {
+    'content-type': 'text/html; charset=utf-8',
+    'cache-control': 'no-store',
+    'referrer-policy': 'no-referrer',
+    'x-robots-tag': 'noindex',
+  });
+  res.end(html);
+}
+
 /** The settings, or null when they have not been filled in. */
 function cloudflareSettings(cfg) {
   const cf = (cfg && cfg.cloudflare) || null;
@@ -12351,12 +12649,22 @@ function noteIconRequest(req, res, pathname) {
 }
 
 const server = http.createServer(async (req, res) => {
+  /* Paths are taken as written. Cloudflare lets /share through without a
+     login, so a path that only LOOKS like it is under /share — one with a
+     `..` that the URL parser below would fold into /api/... — must never reach
+     anything else. Nothing this app links to is spelled with dot segments,
+     encoded slashes or a leading double slash, so those are simply refused. */
+  const rawPath = String(req.url || '/').split('?')[0];
+  if (/(^|\/)\.\.?(\/|$)|%2e|%2f|%5c|\\/i.test(rawPath) || rawPath.startsWith('//')) {
+    return send(res, 400, 'Bad path');
+  }
   const parsed = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const { pathname, searchParams } = parsed;
 
   try {
     if (pathname.startsWith('/api/')) return await handleApi(req, res, pathname, searchParams);
     if (pathname.startsWith('/hls/')) return serveRemux(req, res, pathname);
+    if (pathname.startsWith('/share/')) return await handleShare(req, res, pathname, searchParams);
     if (pathname === '/archive/file') {
       // resolve() is the security boundary: traversal, absolute paths, and
       // anything not in the index all come back null.
@@ -12392,6 +12700,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 loadDownloads();
+loadShares();
 /* Read straight after, so a box that has been running since before Downloads
    knew about profiles comes up with every file belonging to somebody. */
 adoptDownloads();
@@ -12501,6 +12810,7 @@ server.listen(PORT, HOST, () => {
    */
   const bootCfg = readConfig();
   if (bootCfg && cloudflareSettings(bootCfg)) letIconThrough('boot');
+  if (bootCfg && cloudflareSettings(bootCfg) && shares.size) letSharesThrough('boot');
   if (bootCfg && cloudflareSettings(bootCfg)) {
     const until = Number(bootCfg.openUntil) || 0;
     if (!until || Date.now() >= until) {

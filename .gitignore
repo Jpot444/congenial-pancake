@@ -21,3 +21,4 @@ tests/shots/
 crash.log
 channel-health.json
 watch-log.json
+shares.json

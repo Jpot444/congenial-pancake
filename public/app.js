@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '49';
+const VERSION = '50';
 
 const PAGE_SIZE = 60;
 
@@ -19212,6 +19212,9 @@ function preparePlayer(item) {
     downloadable && Boolean(downloadJobFor('movie', item.id)?.status === 'done'));
   if (downloadBtn.classList.contains('is-saved')) downloadBtn.title = 'Already downloaded';
 
+  // Nothing to share until a film or episode is actually playing.
+  setShareTarget(null);
+
   // Picture in picture, when this browser can do it at all. Decided per open
   // rather than once at startup for the same reason as the buttons above: the
   // answer belongs to the element, and the bar reserves width from what shows.
@@ -19433,6 +19436,140 @@ function endRelay(swapped) {
  * so, and putting the modal up on top of them would be the same question
  * twice. Anything that does not pass one gets the modal, as before.
  */
+/* ---------------------------------------------------------- share links ---
+ *
+ * "I'd like to select whatever it is I want to share, have a link created,
+ *  share it with them and they just need to press play"
+ *
+ * One film or one episode, behind a link that works for a week. The friend
+ * gets a page with the poster and a play button and nothing else of the box;
+ * the server makes sure of that (handleShare in server.js). From here it is
+ * the button in the player and the one on each episode row.
+ */
+const SHARE_ICON = '<svg viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
+
+/** What the player's share button would share right now, or null. */
+let shareTarget = null;
+
+function setShareTarget(target) {
+  shareTarget = target && reporter.isOwner() ? target : null;
+  $('#shareBtn').hidden = !shareTarget;
+  reservePlayerActions();
+}
+
+$('#shareBtn').addEventListener('click', () => {
+  if (shareTarget) offerShare(shareTarget);
+});
+
+/** The poster as the provider serves it, not through this box's image proxy. */
+function sharePoster(logo) {
+  const src = String(logo || '');
+  return src.startsWith('/img?u=') ? decodeURIComponent(src.slice('/img?u='.length)) : src;
+}
+
+/** A film that can be shared: the provider's own, not a drive file or a direct URL. */
+function movieShare(item, runtime) {
+  if (item.kind !== 'movie' || item.localOnly || item.archivePath || item.directUrl) return null;
+  return {
+    kind: 'movie',
+    streamId: item.id,
+    ext: item.ext || 'mp4',
+    vcodec: item.vcodec || '',
+    title: item.name,
+    subtitle: '',
+    poster: sharePoster(item.logo),
+    duration: runtime || 0,
+  };
+}
+
+function episodeShare(item, episode, season) {
+  return {
+    kind: 'series',
+    streamId: episode.id,
+    ext: episode.container_extension || 'mp4',
+    vcodec: episode.info?.video?.codec_name || '',
+    title: item.name,
+    subtitle: `S${season} · E${episode.episode_num}${episode.title ? ` — ${episode.title}` : ''}`,
+    poster: sharePoster(item.logo),
+    duration: parseRuntime(episode.info) || 0,
+  };
+}
+
+/**
+ * Make the link, then offer it.
+ *
+ * The share sheet is opened from a button on a little card rather than
+ * straight after the request, because iOS only allows it from a fresh tap,
+ * and the wait for the link uses that tap up.
+ */
+async function offerShare(target) {
+  let made;
+  try {
+    const res = await fetch(`/api/shares?profileId=${encodeURIComponent(profiles.current?.id || '')}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(target),
+    });
+    made = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(made.error || 'Could not make a link.');
+  } catch (err) {
+    toast(`Couldn't make a link: ${err.message}`);
+    return;
+  }
+  if (made.through && !made.through.ok) {
+    toast('Link made, but Cloudflare would not open /share — your friend will hit the login.');
+  }
+
+  const name = target.subtitle ? `${target.title} — ${target.subtitle}` : target.title;
+  const sheet = el('div', 'share-sheet');
+  const card = el('div', 'share-card');
+  const head = el('h3');
+  head.textContent = 'Share with a friend';
+  const what = el('p', 'share-what');
+  what.textContent = name;
+  const link = el('input', 'share-link');
+  link.readOnly = true;
+  link.value = made.url;
+  const note = el('p', 'share-note');
+  note.textContent = 'Anyone with this link can watch just this, for 7 days. No login needed.';
+  const buttons = el('div', 'share-buttons');
+  const close = () => sheet.remove();
+
+  if (navigator.share) {
+    const send = el('button', 'btn btn-primary');
+    send.textContent = 'Send…';
+    send.addEventListener('click', async () => {
+      try {
+        await navigator.share({ title: name, text: `Watch ${name}`, url: made.url });
+        close();
+      } catch {
+        /* cancelled — the card stays so the link is not lost */
+      }
+    });
+    buttons.append(send);
+  }
+  const copy = el('button', 'btn btn-ghost');
+  copy.textContent = 'Copy link';
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(made.url);
+    } catch {
+      link.select();
+      document.execCommand('copy');
+    }
+    copy.textContent = 'Copied';
+  });
+  const done = el('button', 'btn btn-ghost');
+  done.textContent = 'Done';
+  done.addEventListener('click', close);
+  buttons.append(copy, done);
+
+  card.append(head, what, link, note, buttons);
+  sheet.append(card);
+  sheet.addEventListener('click', (event) => { if (event.target === sheet) close(); });
+  document.body.append(sheet);
+}
+
 async function openPlayer(item, { resume = 'ask' } = {}) {
   // A show is browsed on its own card now, not inside the player. Anything
   // still asking the player to open one — an old bookmark, a stale history
@@ -19519,6 +19656,7 @@ async function openPlayer(item, { resume = 'ask' } = {}) {
         // remux session to report one and no provider metadata to ask.
         const runtime = parseRuntime(vodInfo) || lastRemux.sourceDuration || item.duration || 0;
         showFilmBar(item, runtime);
+        setShareTarget(movieShare(item, runtime));
         applyVodInfo(vodInfo);
         if (item.archivePath) {
           $('#cinemaSub').textContent =
@@ -19822,6 +19960,7 @@ async function renderSeries(item, mount, onInfo) {
       showSource(local);
       attach(url, format, { seekTo });
       showFilmBar(item, parseRuntime(episode.info), override);
+      setShareTarget(episodeShare(item, episode, season));
       // After showFilmBar — enterCinema clears the subtitle line.
       $('#cinemaSub').textContent = sub;
       startLeadWatch();
@@ -19899,7 +20038,21 @@ async function renderSeries(item, mount, onInfo) {
         if (done.ok) showSeason(season);
       });
 
-      row.append(num, name, size, grab);
+      row.append(num, name, size);
+      // A link for a friend to just this episode. Owner only, like every
+      // other way of handing the box to somebody outside the house.
+      if (reporter.isOwner()) {
+        const share = el('button', 'ep-dl ep-share');
+        share.title = 'Share this episode with a friend';
+        share.setAttribute('aria-label', 'Share this episode with a friend');
+        share.innerHTML = SHARE_ICON;
+        share.addEventListener('click', (event) => {
+          event.stopPropagation();
+          offerShare(episodeShare(item, episode, season));
+        });
+        row.append(share);
+      }
+      row.append(grab);
       row.addEventListener('click', () => startEpisode(season, index));
       list.append(row);
     });

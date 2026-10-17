@@ -218,5 +218,59 @@ async function letIconThrough(cf) {
   return { created, uris };
 }
 
+/*
+ * SHARE LINKS, let through on their own.
+ *
+ * "I'd like to select whatever it is I want to share, have a link created,
+ *  share it with them and they just need to press play"
+ *
+ * A friend has no Access login and should never be asked for one. So /share
+ * gets an application of its own, the same way the icon does: that one path
+ * and everything under it, with a single policy letting anyone through.
+ * Everything else on the site stays exactly as protected as it was.
+ *
+ * The bypass is not the lock. Every request under /share must carry a share
+ * token the box made, and the box answers only for the one title that token
+ * names — see handleShare in server.js. Without a token the path is a 404.
+ */
+const SHARE_APP_NAME = 'Treasureflix — share links';
+const SHARE_PATH = '/share';
+
+async function letSharesThrough(cf) {
+  const list = await call(cf, '/access/apps');
+  const all = Array.isArray(list) ? list : [];
+  const main = all.find((a) => a && a.id === cf.appId);
+  if (!main || !main.domain) throw new Error('Could not read the protected application to find its address');
+  const host = String(main.domain).replace(/^https?:\/\//, '').split('/')[0];
+  const uri = `${host}${SHARE_PATH}`;
+
+  let app = all.find((a) => a && a.name === SHARE_APP_NAME);
+  let created = false;
+  if (!app) {
+    app = await call(cf, '/access/apps', {
+      method: 'POST',
+      body: {
+        name: SHARE_APP_NAME,
+        type: 'self_hosted',
+        domain: uri,
+        destinations: [{ type: 'public', uri }],
+        app_launcher_visible: false,
+      },
+    });
+    created = true;
+  }
+  const pols = await call(cf, `/access/apps/${encodeURIComponent(app.id)}/policies`);
+  if (!(Array.isArray(pols) ? pols : []).some((p) => p && p.decision === 'bypass')) {
+    await call(cf, `/access/apps/${encodeURIComponent(app.id)}/policies`, {
+      method: 'POST',
+      body: { name: 'Anyone with a share link', decision: 'bypass',
+        include: [{ everyone: {} }], precedence: 1 },
+    });
+    created = true;
+  }
+  if (created) store.log(`  cloudflare: share links let through (${uri})`);
+  return { created, host, uri };
+}
+
 module.exports = { configure, ready, apps, isOpen, open, close, POLICY_NAME,
-  letIconThrough, ICON_APP_NAME, ICON_PATHS };
+  letIconThrough, ICON_APP_NAME, ICON_PATHS, letSharesThrough, SHARE_APP_NAME };

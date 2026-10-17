@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>{{TITLE}}</title>
+<meta property="og:title" content="{{TITLE}}">
+<meta property="og:description" content="{{DESC}}">
+<meta property="og:image" content="{{IMAGE}}">
+<meta property="og:site_name" content="Treasureflix">
+<meta name="theme-color" content="#141414">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
+<!--
+  The page a friend lands on from a share link.
+
+  It can only ever see the one title its link was made for: every request it
+  makes is under /share/<token>, and the server answers those for that title
+  and nothing else. No profile, no library, no settings.
+-->
+<style>
+  :root {
+    --bg: #141414;
+    --surface: #1f1f1f;
+    --text: #fff;
+    --muted: #b3b3b3;
+    --red: #e50914;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 16px/1.4 "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+
+  .card { position: relative; min-height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; padding: 32px 16px; text-align: center; overflow: hidden; }
+  .backdrop { position: absolute; inset: -40px; background: center / cover no-repeat;
+    filter: blur(30px) brightness(.35); transform: scale(1.1); z-index: 0; }
+  .card > *:not(.backdrop) { position: relative; z-index: 1; }
+  .brand { display: flex; align-items: center; gap: 8px; margin-bottom: 28px;
+    font-family: "Bebas Neue", Impact, sans-serif; font-size: 26px; letter-spacing: .04em; color: var(--red); }
+  .brand img { height: 26px; }
+  .poster { width: min(220px, 55vw); aspect-ratio: 2 / 3; object-fit: cover; border-radius: 6px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.6); background: var(--surface); }
+  h1 { margin: 22px 0 4px; font-size: 26px; line-height: 1.15; max-width: 560px; }
+  .sub { margin: 0; color: var(--muted); }
+  .play { margin-top: 26px; display: inline-flex; align-items: center; gap: 10px; padding: 14px 34px;
+    border: 0; border-radius: 6px; background: var(--red); font-size: 19px; font-weight: 700; }
+  .play svg { width: 22px; height: 22px; fill: currentColor; }
+  .play:disabled { opacity: .6; }
+  .note { margin-top: 18px; color: var(--muted); font-size: 13px; min-height: 1.4em; }
+  .error h1 { margin-top: 0; }
+
+  .player { position: fixed; inset: 0; background: #000; display: none; z-index: 10; }
+  .player.on { display: block; }
+  .player video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  .loading { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center;
+    justify-content: center; gap: 14px; color: var(--muted); pointer-events: none; }
+  .loading.on { display: flex; }
+  .spinner { width: 44px; height: 44px; border-radius: 50%; border: 4px solid rgba(255,255,255,.2);
+    border-top-color: var(--red); animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .close { position: absolute; top: max(12px, env(safe-area-inset-top)); left: 12px; width: 44px; height: 44px;
+    border: 0; border-radius: 50%; background: rgba(0,0,0,.5); font-size: 26px; line-height: 44px; }
+  .bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 12px;
+    padding: 18px 16px max(18px, env(safe-area-inset-bottom));
+    background: linear-gradient(transparent, rgba(0,0,0,.85)); transition: opacity .3s; }
+  .player.idle .bar, .player.idle .close { opacity: 0; }
+  .bar button { width: 40px; height: 40px; flex: none; border: 0; background: none; padding: 6px; }
+  .bar svg { width: 100%; height: 100%; fill: currentColor; }
+  .track { position: relative; flex: 1; height: 28px; cursor: pointer; touch-action: none; }
+  .track::before, .ready, .done { content: ""; position: absolute; left: 0; top: 12px; height: 4px; border-radius: 2px; }
+  .track::before { right: 0; background: rgba(255,255,255,.25); }
+  .ready { background: rgba(255,255,255,.45); }
+  .done { background: var(--red); }
+  .knob { position: absolute; top: 7px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: var(--red); }
+  .time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; }
+</style>
+</head>
+<body>
+<main class="card" id="card">
+  <div class="backdrop" id="backdrop"></div>
+  <div class="brand"><img src="" id="logo" alt="">Treasureflix</div>
+  <img class="poster" id="poster" alt="" hidden>
+  <h1 id="title">{{TITLE}}</h1>
+  <p class="sub" id="sub"></p>
+  <button class="play" id="play" hidden>
+    <svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>Play
+  </button>
+  <p class="note" id="note"></p>
+</main>
+
+<div class="player" id="player">
+  <video id="video" playsinline webkit-playsinline preload="none"></video>
+  <div class="loading" id="loading"><div class="spinner"></div><span id="loadingText">Getting it ready…</span></div>
+  <button class="close" id="close" aria-label="Close">×</button>
+  <div class="bar" id="bar" hidden>
+    <button id="toggle" aria-label="Play or pause"><svg viewBox="0 0 24 24" id="toggleIcon"></svg></button>
+    <button id="back10" aria-label="Back 10 seconds"><svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg></button>
+    <div class="track" id="track"><div class="ready" id="ready"></div><div class="done" id="done"></div><div class="knob" id="knob"></div></div>
+    <span class="time" id="time">0:00</span>
+    <button id="full" aria-label="Full screen"><svg viewBox="0 0 24 24"><path d="M4 9V4h5v2H6v3zm11-5h5v5h-2V6h-3zM6 15v3h3v2H4v-5zm12 0h2v5h-5v-2h3z"/></svg></button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<script>
+(() => {
+  const ERROR = '{{ERROR}}';
+  const base = location.pathname.replace(/\/+$/, '');
+  const $ = (id) => document.getElementById(id);
+  const video = $('video');
+
+  if (ERROR) {
+    $('card').classList.add('error');
+    $('title').textContent = ERROR;
+    $('sub').textContent = 'Ask whoever sent it for a new one.';
+    return;
+  }
+  $('logo').src = `${base}/logo.png`;
+
+  const api = async (path) => {
+    const res = await fetch(`${base}${path}`, { cache: 'no-store' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Something went wrong. Try again.');
+    return body;
+  };
+  const hms = (s) => {
+    s = Math.max(0, Math.floor(s || 0));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = String(s % 60).padStart(2, '0');
+    return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`;
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  /* What is playing: the whole film as a file, or a conversion that starts at
+     `offset` seconds into it. A jump outside what has been converted asks the
+     box for a new conversion from there. */
+  const film = { info: null, duration: 0, offset: 0, session: '', hls: null, jumping: false };
+
+  const position = () => film.offset + (video.currentTime || 0);
+
+  function paint() {
+    const d = film.duration || (Number.isFinite(video.duration) ? video.duration : 0);
+    const at = position();
+    const pct = (x) => `${d ? Math.min(100, Math.max(0, (x / d) * 100)) : 0}%`;
+    $('done').style.width = pct(at);
+    $('knob').style.left = pct(at);
+    let end = 0;
+    for (let i = 0; i < video.buffered.length; i += 1) end = Math.max(end, video.buffered.end(i));
+    $('ready').style.left = pct(film.offset);
+    $('ready').style.width = pct(end);
+    $('time').textContent = d ? `${hms(at)} / ${hms(d)}` : hms(at);
+    $('toggleIcon').innerHTML = video.paused
+      ? '<path d="M7 5l12 7-12 7z"/>'
+      : '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';
+  }
+
+  function attach(url) {
+    if (film.hls) { film.hls.destroy(); film.hls = null; }
+    if (url.endsWith('.m3u8') && !video.canPlayType('application/vnd.apple.mpegurl')
+        && window.Hls && Hls.isSupported()) {
+      film.hls = new Hls({ startPosition: 0 });
+      film.hls.loadSource(url);
+      film.hls.attachMedia(video);
+      film.hls.on(Hls.Events.ERROR, (_, data) => {
+        if (!data.fatal) return;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) film.hls.startLoad();
+        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) film.hls.recoverMediaError();
+      });
+    } else {
+      video.src = url;
+    }
+    // Played once there is something to play: a play() straight after
+    // swapping the source is cancelled by the load it races.
+    film.wantPlay = true;
+    video.play().catch(() => {});
+  }
+
+  /** Start (or restart) the conversion at a point, and wait until it can play. */
+  async function convertFrom(seconds) {
+    loading(true, seconds ? `Jumping to ${hms(seconds)}…` : 'Getting it ready…');
+    const old = film.session;
+    const got = await api(`/play?start=${Math.floor(seconds)}&replaces=${encodeURIComponent(old)}`);
+    film.session = got.session;
+    film.offset = got.offset || seconds;
+    if (got.duration) film.duration = got.duration;
+    const want = Math.min(got.prebuffer || 8, 30);
+    for (let i = 0; i < 120; i += 1) {
+      const st = await api(`/status?id=${encodeURIComponent(got.session)}`);
+      if (st.failed) throw new Error('It stopped converting. Try again.');
+      if (st.complete || st.seconds >= want) break;
+      await sleep(1000);
+    }
+    attach(got.url);
+    loading(false);
+  }
+
+  function loading(on, text) {
+    $('loading').classList.toggle('on', on);
+    if (text) $('loadingText').textContent = text;
+  }
+
+  async function seek(target) {
+    const d = film.duration || video.duration || 0;
+    target = Math.max(0, d ? Math.min(d - 2, target) : target);
+    if (film.info.mode === 'file' || !film.session) {
+      video.currentTime = target;
+      return paint();
+    }
+    // Inside what is already converted: an ordinary seek.
+    let end = 0;
+    for (let i = 0; i < video.buffered.length; i += 1) end = Math.max(end, video.buffered.end(i));
+    const rel = target - film.offset;
+    if (rel >= 0 && rel < end - 1) {
+      video.currentTime = rel;
+      return paint();
+    }
+    if (film.jumping) return;
+    film.jumping = true;
+    video.pause();
+    try {
+      await convertFrom(target);
+    } catch (err) {
+      loading(false);
+      $('loadingText').textContent = err.message;
+    } finally {
+      film.jumping = false;
+    }
+  }
+
+  async function start() {
+    $('player').classList.add('on');
+    $('bar').hidden = false;
+    try {
+      if (film.info.mode === 'file') {
+        film.offset = 0;
+        attach(`${base}/file`);
+      } else {
+        await convertFrom(0);
+      }
+    } catch (err) {
+      loading(true, err.message);
+      $('loading').querySelector('.spinner').hidden = true;
+    }
+    wake();
+  }
+
+  function stop() {
+    video.pause();
+    if (film.hls) { film.hls.destroy(); film.hls = null; }
+    video.removeAttribute('src');
+    video.load();
+    if (film.session) fetch(`${base}/stop?id=${encodeURIComponent(film.session)}`).catch(() => {});
+    film.session = '';
+    $('player').classList.remove('on');
+    loading(false);
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }
+
+  // The bar fades while the film plays and comes back on any touch.
+  let idleTimer = 0;
+  function wake() {
+    $('player').classList.remove('idle');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { if (!video.paused) $('player').classList.add('idle'); }, 3000);
+  }
+
+  $('play').addEventListener('click', start);
+  $('close').addEventListener('click', stop);
+  $('toggle').addEventListener('click', () => (video.paused ? video.play() : video.pause()));
+  $('back10').addEventListener('click', () => seek(position() - 10));
+  $('full').addEventListener('click', () => {
+    const el = $('player');
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+    else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+  });
+  $('track').addEventListener('click', (e) => {
+    const d = film.duration || video.duration || 0;
+    const r = $('track').getBoundingClientRect();
+    if (d) seek(((e.clientX - r.left) / r.width) * d);
+  });
+  ['pointermove', 'touchstart', 'click'].forEach((t) => $('player').addEventListener(t, wake, { passive: true }));
+  ['timeupdate', 'play', 'pause', 'progress', 'loadedmetadata'].forEach((t) => video.addEventListener(t, paint));
+  video.addEventListener('waiting', () => { if (!film.jumping) loading(true, 'Loading…'); });
+  video.addEventListener('playing', () => { film.wantPlay = false; loading(false); });
+  video.addEventListener('canplay', () => {
+    if (film.wantPlay && video.paused) video.play().catch(() => {});
+  });
+  window.addEventListener('pagehide', () => {
+    if (film.session) navigator.sendBeacon?.(`${base}/stop?id=${encodeURIComponent(film.session)}`);
+  });
+
+  api('/info').then((info) => {
+    film.info = info;
+    film.duration = info.duration || 0;
+    $('title').textContent = info.title;
+    $('sub').textContent = info.subtitle || '';
+    if (info.poster) {
+      $('poster').src = info.poster;
+      $('poster').hidden = false;
+      $('backdrop').style.backgroundImage = `url("${info.poster}")`;
+    }
+    const days = Math.max(1, Math.ceil((info.expiresAt - Date.now()) / 86400000));
+    $('note').textContent = `This link works for ${days} more day${days === 1 ? '' : 's'}.`;
+    $('play').hidden = false;
+  }).catch((err) => {
+    $('title').textContent = err.message;
+  });
+})();
+</script>
+</body>
+</html>
