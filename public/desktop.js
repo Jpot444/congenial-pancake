@@ -3326,6 +3326,9 @@
 
     const tab = state.tab;
 
+    /* The phone draws its own home (phone.js) — see there for why. Asked
+       before buildHome so the billboard and its muted stream never start. */
+    if (tab === 'home' && window.phoneHome?.on()) { hideCatbar(); return; }
     if (tab === 'home') { hideCatbar(); buildHome(); return; }
 
     /* app.js hides the home view rather than emptying it, so the page this
