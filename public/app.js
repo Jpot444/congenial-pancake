@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '50.1';
+const VERSION = '50.2';
 
 const PAGE_SIZE = 60;
 
@@ -10625,6 +10625,18 @@ function filmCard(item) {
     actions.append(download);
   }
 
+  // A link for a friend, from here rather than the player: sharing a film is
+  // not something done while watching it.
+  const shareable = reporter.isOwner() && movieShare(item);
+  if (shareable) {
+    const share = el('button', 'icon-btn film-icon-btn film-share');
+    share.innerHTML = shareIcon();
+    share.title = 'Share with a friend';
+    share.setAttribute('aria-label', share.title);
+    share.addEventListener('click', () => offerShare(shareable));
+    actions.append(share);
+  }
+
   const hide = el('button', 'icon-btn film-icon-btn film-hide');
   hide.append(filmIcon('trash'));
   hide.title = 'Hide this — it stops showing in lists and search';
@@ -19317,9 +19329,6 @@ function preparePlayer(item) {
     downloadable && Boolean(downloadJobFor('movie', item.id)?.status === 'done'));
   if (downloadBtn.classList.contains('is-saved')) downloadBtn.title = 'Already downloaded';
 
-  // Nothing to share until a film or episode is actually playing.
-  setShareTarget(null);
-
   // Picture in picture, when this browser can do it at all. Decided per open
   // rather than once at startup for the same reason as the buttons above: the
   // answer belongs to the element, and the bar reserves width from what shows.
@@ -19549,22 +19558,17 @@ function endRelay(swapped) {
  * One film or one episode, behind a link that works for a week. The friend
  * gets a page with the poster and a play button and nothing else of the box;
  * the server makes sure of that (handleShare in server.js). From here it is
- * the button in the player and the one on each episode row.
+ * the button on a film's page and the one on each episode row of a show's.
+ *
+ * "I don't want to share whatever it is from within the episode or movie, if
+ *  I'm sharing it I'm not watching it so I want the link creation put in the
+ *  card instead"
  */
-const SHARE_ICON = '<svg viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
-
-/** What the player's share button would share right now, or null. */
-let shareTarget = null;
-
-function setShareTarget(target) {
-  shareTarget = target && reporter.isOwner() ? target : null;
-  $('#shareBtn').hidden = !shareTarget;
-  reservePlayerActions();
+/* A function rather than a constant: a film page opened straight from a link
+   can be drawn before the script has reached this line. */
+function shareIcon() {
+  return '<svg viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
 }
-
-$('#shareBtn').addEventListener('click', () => {
-  if (shareTarget) offerShare(shareTarget);
-});
 
 /** The poster as the provider serves it, not through this box's image proxy. */
 function sharePoster(logo) {
@@ -19761,7 +19765,6 @@ async function openPlayer(item, { resume = 'ask' } = {}) {
         // remux session to report one and no provider metadata to ask.
         const runtime = parseRuntime(vodInfo) || lastRemux.sourceDuration || item.duration || 0;
         showFilmBar(item, runtime);
-        setShareTarget(movieShare(item, runtime));
         applyVodInfo(vodInfo);
         if (item.archivePath) {
           $('#cinemaSub').textContent =
@@ -20065,7 +20068,6 @@ async function renderSeries(item, mount, onInfo) {
       showSource(local);
       attach(url, format, { seekTo });
       showFilmBar(item, parseRuntime(episode.info), override);
-      setShareTarget(episodeShare(item, episode, season));
       // After showFilmBar — enterCinema clears the subtitle line.
       $('#cinemaSub').textContent = sub;
       startLeadWatch();
@@ -20150,7 +20152,7 @@ async function renderSeries(item, mount, onInfo) {
         const share = el('button', 'ep-dl ep-share');
         share.title = 'Share this episode with a friend';
         share.setAttribute('aria-label', 'Share this episode with a friend');
-        share.innerHTML = SHARE_ICON;
+        share.innerHTML = shareIcon();
         share.addEventListener('click', (event) => {
           event.stopPropagation();
           offerShare(episodeShare(item, episode, season));
