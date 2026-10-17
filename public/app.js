@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '50';
+const VERSION = '50.1';
 
 const PAGE_SIZE = 60;
 
@@ -4924,6 +4924,110 @@ $('#doorFind').addEventListener('click', () => frontDoor.find());
 $('#doorSave').addEventListener('click', () => frontDoor.save());
 $('#doorForget').addEventListener('click', () => frontDoor.forget());
 
+/*
+ * Shared links, in the control panel.
+ *
+ * "Add that kill link screen to the control panel I have in my Hunters
+ *  profile"
+ *
+ * Every link handed out, what it plays, whether anybody has opened it, and a
+ * button that turns it off now rather than when its week runs out. Owner only,
+ * like the front door: these are holes in the login, and the server refuses
+ * anybody else anyway.
+ */
+const sharedLinks = {
+  async load() {
+    const panel = $('#sharesPanel');
+    panel.hidden = !reporter.isOwner();
+    if (panel.hidden) return;
+    const note = $('#sharesNote');
+    const list = $('#sharesList');
+    try {
+      const data = await api('/api/shares', { profileId: profiles.current?.id || '' });
+      const rows = data.shares || [];
+      const live = rows.filter((s) => !s.revoked && s.expiresAt > Date.now());
+      $('#sharesCount').textContent = live.length ? String(live.length) : '';
+      list.innerHTML = '';
+      note.hidden = rows.length > 0;
+      note.textContent = 'No links yet. Share a film from the player, or an episode from its row.';
+      // Working links first, newest first within each group.
+      const order = (s) => (!s.revoked && s.expiresAt > Date.now() ? 0 : 1);
+      rows.sort((a, b) => order(a) - order(b) || b.createdAt - a.createdAt);
+      for (const s of rows) list.append(this.row(s));
+    } catch (err) {
+      note.hidden = false;
+      note.textContent = `Could not read the links: ${err.message}`;
+    }
+  },
+
+  row(s) {
+    const working = !s.revoked && s.expiresAt > Date.now();
+    const row = el('div', `report share-row${working ? '' : ' is-off'}`);
+
+    const head = el('div', 'report-head');
+    const what = el('span', 'report-who');
+    what.textContent = s.subtitle ? `${s.title} — ${s.subtitle}` : s.title;
+    const when = el('span', 'report-when');
+    when.textContent = `made ${whenWords(s.createdAt)}`;
+    head.append(what, when);
+
+    const state = el('p', 'report-body share-state');
+    const opened = s.opens
+      ? `opened ${s.opens} time${s.opens === 1 ? '' : 's'}, last ${whenWords(s.lastOpenedAt)}`
+      : 'not opened yet';
+    if (s.revoked) state.textContent = `Turned off · ${opened}`;
+    else if (!working) state.textContent = `Expired · ${opened}`;
+    else {
+      const days = Math.max(1, Math.ceil((s.expiresAt - Date.now()) / 86400000));
+      state.textContent = `Works ${days} more day${days === 1 ? '' : 's'} · ${opened}`;
+    }
+    row.append(head, state);
+
+    if (working) {
+      const actions = el('div', 'share-row-actions');
+      const copy = el('button', 'btn btn-ghost btn-sm');
+      copy.type = 'button';
+      copy.textContent = 'Copy link';
+      copy.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(s.url);
+          copy.textContent = 'Copied';
+        } catch {
+          copy.textContent = s.url;
+        }
+      });
+      const kill = el('button', 'btn btn-ghost btn-sm btn-danger');
+      kill.type = 'button';
+      kill.textContent = 'Turn off';
+      kill.addEventListener('click', async () => {
+        // Two presses, not a dialog: the first one only arms it.
+        if (!kill.classList.contains('is-armed')) {
+          kill.classList.add('is-armed');
+          kill.textContent = 'Tap again to turn off';
+          setTimeout(() => {
+            kill.classList.remove('is-armed');
+            kill.textContent = 'Turn off';
+          }, 4000);
+          return;
+        }
+        kill.disabled = true;
+        try {
+          const res = await fetch(`/api/shares?profileId=${encodeURIComponent(profiles.current?.id || '')}`
+            + `&token=${encodeURIComponent(s.token)}`, { method: 'DELETE' });
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'refused');
+          toast('Link turned off. Anyone watching it was stopped.');
+        } catch (err) {
+          toast(`Couldn't turn it off: ${err.message}`);
+        }
+        this.load();
+      });
+      actions.append(copy, kill);
+      row.append(actions);
+    }
+    return row;
+  },
+};
+
 /** "four minutes ago", for a timestamp the viewer should not have to subtract. */
 function whenWords(at) {
   const mins = Math.round((Date.now() - at) / 60000);
@@ -4946,6 +5050,7 @@ const health = {
     this.loadReports();
     guideSources.load();
     frontDoor.load();
+    sharedLinks.load();
     await this.refresh();
     clearInterval(this.timer);
     this.timer = setInterval(() => {

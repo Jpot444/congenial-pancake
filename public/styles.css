@@ -6857,3 +6857,9 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
 .share-note { margin: 10px 0 18px; font-size: 13px; color: var(--muted); }
 .share-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
 .share-buttons .btn { flex: 1; justify-content: center; }
+
+/* --- shared links, in the control panel --- */
+.share-row.is-off { opacity: .55; }
+.share-row .share-state { color: var(--muted); }
+.share-row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.share-row-actions .btn-danger.is-armed { color: var(--live); border-color: var(--live); }
