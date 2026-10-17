@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '52.1';
+const VERSION = '52.2';
 
 const PAGE_SIZE = 60;
 
@@ -6769,7 +6769,12 @@ const mb = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`;
  */
 async function fetchWithProgress(url, onProgress) {
   const res = await fetch(url);
-  const total = Number(res.headers.get('content-length') || 0);
+  /* A compressed library says how big it really is, because content-length
+     is then the size on the wire and the bytes read here are the bytes after
+     the browser has unpacked them — measured against each other the bar
+     would run past full a few percent of the way in. */
+  const total = Number(res.headers.get('x-raw-length')
+    || (res.headers.get('content-encoding') ? 0 : res.headers.get('content-length')) || 0);
 
   if (!res.body || !total) {
     const data = await res.json();
@@ -21008,6 +21013,29 @@ async function startApp() {
       (state.downloads.items || []).some((j) => j.status === 'downloading' || j.status === 'queued');
     if (busy || state.tab === 'downloads') refreshDownloads({ rerender: true });
   }, 2000);
+
+  warmSearch();
+}
+
+/**
+ * Fetch the three libraries in the background once the first page is up.
+ *
+ * Search filters what is already in hand, so the first search of every visit
+ * used to wait on all three catalogues — tens of thousands of titles — before
+ * it could answer anything, and on the phone that wait came back every time
+ * the app was reopened. Fetched quietly a few seconds after opening, they are
+ * in hand by the time anybody reaches the box. One at a time, so a page being
+ * browsed is never queued behind all three, and not at all in low-data mode,
+ * where somebody has asked for exactly this sort of thing not to happen.
+ */
+function warmSearch() {
+  if (prefs.data.lowBandwidth === true) return;
+  setTimeout(async () => {
+    for (const tab of ['series', 'movies', 'live']) {
+      if (state.library[tab]) continue;
+      try { await loadTab(tab, { quiet: true }); } catch { /* the search asks again */ }
+    }
+  }, 3000);
 }
 
 (async function boot() {

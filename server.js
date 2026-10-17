@@ -18,6 +18,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
 const { URL } = require('url');
@@ -8673,6 +8674,54 @@ function json(res, status, payload) {
   res.end(body);
 }
 
+/**
+ * A library, compressed — and compressed once.
+ *
+ * The libraries are the largest thing this box sends by a distance: five
+ * megabytes of films under the English filter and fifty without it, written
+ * out as plain JSON on every request. That was the whole of the wait before a
+ * first search, and on a phone over the tunnel it came back every time the
+ * app was reopened. Gzip takes them to about a fifth.
+ *
+ * Packing fifty megabytes is a second of a Pi's time, so the packed copy is
+ * kept beside the payload it came from and dropped with it: the next request
+ * for an unchanged library is a buffer write. Keyed on the flags as well,
+ * because `stale` and `cached` are part of the body.
+ */
+const packedLibraries = new WeakMap();
+
+async function sendLibrary(req, res, payload, flags) {
+  if (!/\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) {
+    return json(res, 200, { ...payload, ...flags });
+  }
+  let packed = packedLibraries.get(payload);
+  if (!packed) packedLibraries.set(payload, (packed = new Map()));
+  const key = JSON.stringify(flags);
+  if (!packed.has(key)) {
+    packed.set(key, new Promise((resolve, reject) => {
+      const raw = Buffer.from(JSON.stringify({ ...payload, ...flags }));
+      zlib.gzip(raw, { level: 6 }, (err, gz) => (err ? reject(err) : resolve({ raw: raw.length, gz })));
+    }));
+  }
+  let body;
+  try {
+    body = await packed.get(key);
+  } catch {
+    packed.delete(key);
+    return json(res, 200, { ...payload, ...flags });
+  }
+  res.writeHead(200, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-encoding': 'gzip',
+    'content-length': body.gz.length,
+    // What the browser will have once it is unpacked, for the progress bar.
+    'x-raw-length': body.raw,
+    vary: 'accept-encoding',
+    'cache-control': 'no-store',
+  });
+  res.end(body.gz);
+}
+
 function send(res, status, text) {
   res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' });
   res.end(text);
@@ -11193,19 +11242,19 @@ async function handleApi(req, res, pathname, query) {
     const fresh = hit && Date.now() - hit.at < LIBRARY_TTL;
 
     if (!query.get('refresh') && fresh) {
-      return json(res, 200, { ...hit.payload, cached: true });
+      return sendLibrary(req, res, hit.payload, { cached: true });
     }
 
     // Stale-while-revalidate: an expired entry is still last night's catalogue,
     // which beats a 15-second blank grid. Serve it now, refresh behind it.
     if (!query.get('refresh') && hit) {
       rebuildLibrary(cfg, tab, pattern, cacheKey);
-      return json(res, 200, { ...hit.payload, cached: true, stale: true });
+      return sendLibrary(req, res, hit.payload, { cached: true, stale: true });
     }
 
     try {
       const payload = await rebuildLibrary(cfg, tab, pattern, cacheKey);
-      return json(res, 200, { ...payload, cached: false });
+      return sendLibrary(req, res, payload, { cached: false });
     } catch (err) {
       return json(res, 502, { error: err.message });
     }
