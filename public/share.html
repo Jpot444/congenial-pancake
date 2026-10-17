@@ -52,6 +52,17 @@
   .note { margin-top: 18px; color: var(--muted); font-size: 13px; min-height: 1.4em; }
   .error h1 { margin-top: 0; }
 
+  .ask-open { margin-top: 6px; border: 1px solid rgba(255,255,255,.3); border-radius: 6px;
+    background: transparent; padding: 9px 18px; font-size: 14px; }
+  .ask { margin-top: 14px; width: min(340px, 100%); display: flex; flex-direction: column; gap: 10px; text-align: left; }
+  .ask[hidden] { display: none; }
+  .ask label { font-size: 13px; color: var(--muted); }
+  .ask input { width: 100%; margin-top: 4px; padding: 11px 12px; border: 1px solid #333; border-radius: 6px;
+    background: var(--surface); color: var(--text); font-size: 16px; }
+  .ask button { padding: 12px; border: 0; border-radius: 6px; background: #fff; color: #000; font-weight: 700; }
+  .ask button:disabled { opacity: .6; }
+  .ask-said { font-size: 14px; color: var(--muted); margin: 4px 0 0; }
+
   .player { position: fixed; inset: 0; background: #000; display: none; z-index: 10; }
   .player.on { display: block; }
   .player video { width: 100%; height: 100%; object-fit: contain; background: #000; }
@@ -89,6 +100,13 @@
     <svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>Play
   </button>
   <p class="note" id="note"></p>
+  <button class="ask-open" id="askOpen" hidden>Want full access?</button>
+  <form class="ask" id="ask" hidden>
+    <label>Your name<input id="askName" autocomplete="name" maxlength="80" required></label>
+    <label>Your email<input id="askEmail" type="email" autocomplete="email" maxlength="254" required></label>
+    <button type="submit" id="askSend">Ask for access</button>
+    <p class="ask-said" id="askSaid"></p>
+  </form>
 </main>
 
 <div class="player" id="player">
@@ -267,6 +285,35 @@
   }
 
   $('play').addEventListener('click', start);
+
+  /* "Want full access?" — a name and an email, sent to whoever owns the box.
+     Nothing happens to anybody's access until they approve it. */
+  $('askOpen').addEventListener('click', () => {
+    $('askOpen').hidden = true;
+    $('ask').hidden = false;
+    $('askName').focus();
+  });
+  $('ask').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    $('askSend').disabled = true;
+    $('askSaid').textContent = '';
+    try {
+      const res = await fetch(`${base}/request`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: $('askName').value, email: $('askEmail').value }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'That didn\'t go through. Try again.');
+      $('ask').querySelectorAll('label, button').forEach((n) => { n.hidden = true; });
+      $('askSaid').textContent = body.already
+        ? 'You\'ve already asked. You\'ll hear back soon.'
+        : 'Sent. If you\'re approved, go to tv.treasurestatecapital.com and sign in with that email. Cloudflare will send you a code.';
+    } catch (err) {
+      $('askSaid').textContent = err.message;
+      $('askSend').disabled = false;
+    }
+  });
   $('close').addEventListener('click', stop);
   $('toggle').addEventListener('click', () => (video.paused ? video.play() : video.pause()));
   $('back10').addEventListener('click', () => seek(position() - 10));
@@ -304,6 +351,7 @@
     const days = Math.max(1, Math.ceil((info.expiresAt - Date.now()) / 86400000));
     $('note').textContent = `This link works for ${days} more day${days === 1 ? '' : 's'}.`;
     $('play').hidden = false;
+    $('askOpen').hidden = false;
   }).catch((err) => {
     $('title').textContent = err.message;
   });

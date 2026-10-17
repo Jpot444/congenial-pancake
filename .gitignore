@@ -22,3 +22,5 @@ crash.log
 channel-health.json
 watch-log.json
 shares.json
+access-requests.json
+notify.json

@@ -272,5 +272,78 @@ async function letSharesThrough(cf) {
   return { created, host, uri };
 }
 
+/*
+ * FRIENDS, let in by email.
+ *
+ * "add a 'want full access?' Button where people can then put there emails
+ *  and names, then it will get sent to me and I can approve or deny them for a
+ *  full account so they can get their email added to the cloudflair tunnel"
+ *
+ * One Allow policy of this module's own on the main application, listing the
+ * emails the owner approved. Access then sends each of them the same one-time
+ * code it sends the owner. Like the open house, it is known by its NAME and
+ * the owner's own policies are never read for anything but their precedence.
+ * The last email removed deletes the policy, so "nobody approved" is the
+ * absence of the thing.
+ */
+const FRIENDS_POLICY_NAME = 'Treasureflix — approved friends';
+
+const emailsOf = (policy) => ((policy && policy.include) || [])
+  .map((rule) => rule && rule.email && String(rule.email.email || '').toLowerCase())
+  .filter(Boolean);
+
+async function friendsPolicy(cf) {
+  return (await policies(cf)).find((p) => p && p.name === FRIENDS_POLICY_NAME) || null;
+}
+
+/** The approved emails, read from Cloudflare rather than from any notes here. */
+async function friends(cf) {
+  return emailsOf(await friendsPolicy(cf));
+}
+
+async function writeFriends(cf, policy, emails) {
+  const base = `/access/apps/${encodeURIComponent(cf.appId)}/policies`;
+  if (!emails.length) {
+    if (policy) await call(cf, `${base}/${encodeURIComponent(policy.id)}`, { method: 'DELETE' });
+    return;
+  }
+  const include = emails.map((email) => ({ email: { email } }));
+  if (policy) {
+    await call(cf, `${base}/${encodeURIComponent(policy.id)}`, {
+      method: 'PUT',
+      body: { name: FRIENDS_POLICY_NAME, decision: 'allow', include, precedence: policy.precedence },
+    });
+    return;
+  }
+  // At the end, for the same reason as the open house: precedences are unique
+  // and the front belongs to the owner's own rule.
+  const last = (await policies(cf)).reduce((max, p) => Math.max(max, Number(p.precedence) || 0), 0);
+  await call(cf, base, {
+    method: 'POST',
+    body: { name: FRIENDS_POLICY_NAME, decision: 'allow', include, precedence: last + 1 },
+  });
+}
+
+async function addFriend(cf, email) {
+  const who = String(email || '').trim().toLowerCase();
+  const policy = await friendsPolicy(cf);
+  const emails = emailsOf(policy);
+  if (emails.includes(who)) return { changed: false };
+  await writeFriends(cf, policy, [...emails, who]);
+  store.log(`  cloudflare: ${who} approved — added to ${FRIENDS_POLICY_NAME}`);
+  return { changed: true };
+}
+
+async function removeFriend(cf, email) {
+  const who = String(email || '').trim().toLowerCase();
+  const policy = await friendsPolicy(cf);
+  const emails = emailsOf(policy);
+  if (!emails.includes(who)) return { changed: false };
+  await writeFriends(cf, policy, emails.filter((e) => e !== who));
+  store.log(`  cloudflare: ${who} removed from ${FRIENDS_POLICY_NAME}`);
+  return { changed: true };
+}
+
 module.exports = { configure, ready, apps, isOpen, open, close, POLICY_NAME,
-  letIconThrough, ICON_APP_NAME, ICON_PATHS, letSharesThrough, SHARE_APP_NAME };
+  letIconThrough, ICON_APP_NAME, ICON_PATHS, letSharesThrough, SHARE_APP_NAME,
+  friends, addFriend, removeFriend, FRIENDS_POLICY_NAME };

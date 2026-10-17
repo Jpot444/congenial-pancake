@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '50.2';
+const VERSION = '51';
 
 const PAGE_SIZE = 60;
 
@@ -5028,6 +5028,125 @@ const sharedLinks = {
   },
 };
 
+/*
+ * Access requests, in the control panel.
+ *
+ * Somebody on a share page pressed "Want full access?" and left a name and an
+ * email. Approve puts the email on the Cloudflare rule this box keeps for
+ * friends, so Access sends them a code like it sends the owner; Deny just
+ * says no. The approved list underneath is read back from Cloudflare, so it is
+ * what is true there rather than what this box remembers.
+ */
+const accessRequests = {
+  async load() {
+    const panel = $('#accessPanel');
+    panel.hidden = !reporter.isOwner();
+    if (panel.hidden) return;
+    const note = $('#accessNote');
+    const list = $('#accessList');
+    try {
+      const data = await api('/api/access-requests', { profileId: profiles.current?.id || '' });
+      const pending = (data.requests || []).filter((r) => r.status === 'pending');
+      const decided = (data.requests || []).filter((r) => r.status !== 'pending').slice(0, 10);
+      $('#accessCount').textContent = pending.length ? String(pending.length) : '';
+      list.innerHTML = '';
+      for (const r of pending) list.append(this.row(r));
+      for (const r of decided) list.append(this.row(r));
+      note.hidden = pending.length > 0 && !data.error;
+      note.textContent = data.error
+        ? `Cloudflare: ${data.error}`
+        : 'Nobody waiting. Friends can ask from the bottom of any share link.';
+
+      const approved = data.approved || [];
+      const box = $('#accessApprovedBox');
+      box.hidden = !approved.length;
+      $('#accessApprovedSummary').textContent = `Approved through Treasureflix (${approved.length})`;
+      const holder = $('#accessApproved');
+      holder.innerHTML = '';
+      for (const email of approved) holder.append(this.approvedRow(email));
+    } catch (err) {
+      note.hidden = false;
+      note.textContent = `Could not read the requests: ${err.message}`;
+    }
+  },
+
+  async act(payload, done) {
+    try {
+      const res = await fetch(`/api/access-requests?profileId=${encodeURIComponent(profiles.current?.id || '')}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'refused');
+      toast(done);
+    } catch (err) {
+      toast(`That didn't work: ${err.message}`);
+    }
+    this.load();
+  },
+
+  row(r) {
+    const row = el('div', `report share-row${r.status === 'pending' ? '' : ' is-off'}`);
+    const head = el('div', 'report-head');
+    const who = el('span', 'report-who');
+    who.textContent = r.name;
+    const when = el('span', 'report-when');
+    when.textContent = whenWords(r.at);
+    head.append(who, when);
+    const body = el('p', 'report-body share-state');
+    const status = r.status === 'approved' ? 'Approved · ' : r.status === 'denied' ? 'Denied · ' : '';
+    body.textContent = `${status}${r.email} · from your link to “${r.shareTitle}”`;
+    row.append(head, body);
+    if (r.status === 'pending') {
+      const actions = el('div', 'share-row-actions');
+      const yes = el('button', 'btn btn-ghost btn-sm');
+      yes.type = 'button';
+      yes.textContent = 'Approve';
+      yes.addEventListener('click', () => {
+        yes.disabled = true;
+        this.act({ action: 'approve', id: r.id }, `${r.email} can sign in now.`);
+      });
+      const no = el('button', 'btn btn-ghost btn-sm btn-danger');
+      no.type = 'button';
+      no.textContent = 'Deny';
+      no.addEventListener('click', () => {
+        no.disabled = true;
+        this.act({ action: 'deny', id: r.id }, 'Denied.');
+      });
+      actions.append(yes, no);
+      row.append(actions);
+    }
+    return row;
+  },
+
+  approvedRow(email) {
+    const row = el('div', 'report share-row');
+    const line = el('div', 'report-head');
+    const who = el('span', 'report-who');
+    who.textContent = email;
+    line.append(who);
+    const remove = el('button', 'btn btn-ghost btn-sm btn-danger');
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => {
+      // Two presses, like turning off a link.
+      if (!remove.classList.contains('is-armed')) {
+        remove.classList.add('is-armed');
+        remove.textContent = 'Tap again to remove';
+        setTimeout(() => { remove.classList.remove('is-armed'); remove.textContent = 'Remove'; }, 4000);
+        return;
+      }
+      remove.disabled = true;
+      this.act({ action: 'remove', email }, `${email} can no longer sign in.`);
+    });
+    const actions = el('div', 'share-row-actions');
+    actions.append(remove);
+    row.append(line, actions);
+    return row;
+  },
+};
+
 /** "four minutes ago", for a timestamp the viewer should not have to subtract. */
 function whenWords(at) {
   const mins = Math.round((Date.now() - at) / 60000);
@@ -5051,6 +5170,7 @@ const health = {
     guideSources.load();
     frontDoor.load();
     sharedLinks.load();
+    accessRequests.load();
     await this.refresh();
     clearInterval(this.timer);
     this.timer = setInterval(() => {

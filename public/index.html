@@ -336,6 +336,21 @@
       <div class="reports-list" id="sharesList"></div>
     </div>
 
+    <!-- Friends who asked for the whole site from a share page. Approving puts
+         their email on Cloudflare's list; nothing changes until then. -->
+    <div class="reports access-panel" id="accessPanel" hidden>
+      <h3>
+        Access requests
+        <span class="reports-count" id="accessCount"></span>
+      </h3>
+      <p class="health-note" id="accessNote">Reading them…</p>
+      <div class="reports-list" id="accessList"></div>
+      <details class="gsrc-more" id="accessApprovedBox" hidden>
+        <summary id="accessApprovedSummary">Approved</summary>
+        <div class="reports-list" id="accessApproved"></div>
+      </details>
+    </div>
+
     <!-- What everyone else has sent in. Sits outside #healthBody for the same
          reason the connection test does: that block is replaced wholesale by
          the poll every few seconds. -->

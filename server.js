@@ -11213,6 +11213,7 @@ async function handleApi(req, res, pathname, query) {
 
   /* ---- Remux a non-native container into HLS ---- */
   if (pathname === '/api/shares') return handleShareApi(req, res, query);
+  if (pathname === '/api/access-requests') return handleAccessApi(req, res, query);
 
   if (pathname === '/api/remux') {
     if (!hasFfmpeg()) {
@@ -12256,6 +12257,8 @@ async function handleShare(req, res, pathname, query) {
     return handleImage(req, res, new URLSearchParams({ u: s.poster }));
   }
 
+  if (rest === '/request') return requestAccess(req, res, s);
+
   if (rest === '/logo.png') return serveLocalFile(req, res, path.join(PUBLIC_DIR, 'bison.png'));
 
   if (rest === '/file') {
@@ -12335,6 +12338,183 @@ async function handleShare(req, res, pathname, query) {
   }
 
   return send(res, 404, 'Not found');
+}
+
+/* ------------------------------------------------------- access requests ---
+ *
+ * "add a 'want full access?' Button where people can then put there emails
+ *  and names, then it will get sent to me and I can approve or deny them for a
+ *  full account so they can get their email added to the cloudflair tunnel"
+ *
+ * A friend on a share page leaves a name and an email. The owner hears about
+ * it on Telegram, and approves or denies it in the control panel. Approving
+ * puts the email on the Access policy this box keeps for friends (see
+ * cloudflare.addFriend), and from then on Cloudflare's own email code lets
+ * them in.
+ *
+ * The form is the one thing under /share that writes, so it is fenced: one
+ * pending request per email, a few per link and per address per hour, a cap
+ * on how many can be waiting, and short fields. Nothing a friend types is ever
+ * acted on without the owner pressing Approve.
+ */
+const ACCESS_REQUESTS_PATH = path.join(ROOT, 'access-requests.json');
+const NOTIFY_PATH = path.join(ROOT, 'notify.json');
+const ACCESS_EMAIL = /^[^\s@<>"]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$/;
+const ACCESS_LIMITS = { perLink: 5, perAddressHour: 3, pending: 40 };
+let accessRequests = [];
+const accessAsked = new Map(); // address → recent request times
+
+function loadAccessRequests() {
+  try {
+    accessRequests = readJsonState(ACCESS_REQUESTS_PATH, 'access-requests.json') || [];
+  } catch {
+    accessRequests = [];
+  }
+}
+
+function saveAccessRequests() {
+  // Decided ones are kept a month, so "did I already say no to this person"
+  // has an answer; pending ones are kept until somebody decides.
+  const keep = Date.now() - 30 * 24 * 3600 * 1000;
+  accessRequests = accessRequests.filter((r) => r.status === 'pending' || (r.decidedAt || r.at) > keep);
+  writeJsonAtomic(ACCESS_REQUESTS_PATH, accessRequests);
+}
+
+/** Tell the owner on Telegram. Best effort: the control panel has it either way. */
+function notifyOwner(text) {
+  let tg;
+  try {
+    tg = JSON.parse(fs.readFileSync(NOTIFY_PATH, 'utf8')).telegram;
+  } catch {
+    return;
+  }
+  if (!tg || !/^\d+:[\w-]+$/.test(String(tg.token || '')) || !tg.chatId) return;
+  const body = new URLSearchParams({ chat_id: String(tg.chatId), text, disable_web_page_preview: 'true' }).toString();
+  const req = https.request({
+    host: 'api.telegram.org',
+    path: `/bot${tg.token}/sendMessage`,
+    method: 'POST',
+    timeout: 10000,
+    headers: { 'content-type': 'application/x-www-form-urlencoded', 'content-length': Buffer.byteLength(body) },
+  }, (res) => {
+    res.resume();
+    if (res.statusCode !== 200) console.log(`  notify: Telegram answered ${res.statusCode}`);
+  });
+  req.on('timeout', () => req.destroy(new Error('timed out')));
+  req.on('error', (err) => console.log(`  notify: could not reach Telegram: ${err.message}`));
+  req.end(body);
+}
+
+/** A friend asking, from a share page. */
+async function requestAccess(req, res, s) {
+  if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
+  let body;
+  try {
+    body = JSON.parse(await collectRequestBody(req, 4096));
+  } catch {
+    return json(res, 400, { error: 'Something went wrong. Try again.' });
+  }
+  const name = String(body.name || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80);
+  const email = String(body.email || '').trim().toLowerCase();
+  if (!name) return json(res, 400, { error: 'Add your name.' });
+  if (!ACCESS_EMAIL.test(email)) return json(res, 400, { error: 'That email doesn\'t look right.' });
+
+  const pending = accessRequests.filter((r) => r.status === 'pending');
+  if (pending.some((r) => r.email === email)) {
+    return json(res, 200, { ok: true, already: true });
+  }
+  const address = String(req.headers['cf-connecting-ip'] || req.socket.remoteAddress || '');
+  const hourAgo = Date.now() - 3600 * 1000;
+  const recent = (accessAsked.get(address) || []).filter((t) => t > hourAgo);
+  if (recent.length >= ACCESS_LIMITS.perAddressHour
+      || pending.filter((r) => r.shareToken === s.token).length >= ACCESS_LIMITS.perLink
+      || pending.length >= ACCESS_LIMITS.pending) {
+    return json(res, 429, { error: 'Too many requests right now. Try again later.' });
+  }
+  recent.push(Date.now());
+  accessAsked.set(address, recent);
+
+  const row = {
+    id: crypto.randomBytes(8).toString('hex'),
+    name,
+    email,
+    shareToken: s.token,
+    shareTitle: s.subtitle ? `${s.title} — ${s.subtitle}` : s.title,
+    at: Date.now(),
+    status: 'pending',
+  };
+  accessRequests.push(row);
+  saveAccessRequests();
+  console.log(`  access: ${email} asked for full access (from "${row.shareTitle}")`);
+  notifyOwner(`🔑 Treasureflix access request\n\n${name}\n${email}\n\nCame from your link to “${row.shareTitle}”.`
+    + '\n\nApprove or deny it in Treasureflix → control panel → Access requests.');
+  return json(res, 200, { ok: true });
+}
+
+/** The owner's side: see the requests and the approved list, and decide. */
+async function handleAccessApi(req, res, query) {
+  if (!isOwnerProfile(ownerOf(query.get('profileId')))) {
+    return json(res, 403, { error: 'Only the owner profile can do this.' });
+  }
+  const cf = cloudflareSettings(readConfig());
+  if (req.method === 'GET') {
+    let approved = [];
+    let error = '';
+    if (cf) {
+      try {
+        approved = await cloudflare.friends(cf);
+      } catch (err) {
+        error = err.message;
+      }
+    } else {
+      error = 'Cloudflare is not set up on this box.';
+    }
+    return json(res, 200, {
+      requests: [...accessRequests].sort((a, b) => b.at - a.at),
+      approved,
+      error,
+    });
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
+
+  let body;
+  try {
+    body = JSON.parse(await collectRequestBody(req, 4096));
+  } catch {
+    return json(res, 400, { error: 'Invalid JSON' });
+  }
+  const action = String(body.action || '');
+  if (action === 'remove') {
+    if (!cf) return json(res, 400, { error: 'Cloudflare is not set up on this box.' });
+    const email = String(body.email || '').trim().toLowerCase();
+    try {
+      await cloudflare.removeFriend(cf, email);
+    } catch (err) {
+      return json(res, 502, { error: err.message });
+    }
+    return json(res, 200, { ok: true });
+  }
+  const row = accessRequests.find((r) => r.id === String(body.id || ''));
+  if (!row) return json(res, 404, { error: 'No such request' });
+  if (action === 'deny') {
+    row.status = 'denied';
+    row.decidedAt = Date.now();
+    saveAccessRequests();
+    return json(res, 200, { ok: true });
+  }
+  if (action === 'approve') {
+    if (!cf) return json(res, 400, { error: 'Cloudflare is not set up on this box.' });
+    try {
+      await cloudflare.addFriend(cf, row.email);
+    } catch (err) {
+      return json(res, 502, { error: `Cloudflare refused: ${err.message}` });
+    }
+    row.status = 'approved';
+    row.decidedAt = Date.now();
+    saveAccessRequests();
+    return json(res, 200, { ok: true });
+  }
+  return json(res, 400, { error: 'Unknown action' });
 }
 
 /** The page a friend lands on, with the title filled in for link previews. */
@@ -12701,6 +12881,7 @@ const server = http.createServer(async (req, res) => {
 
 loadDownloads();
 loadShares();
+loadAccessRequests();
 /* Read straight after, so a box that has been running since before Downloads
    knew about profiles comes up with every file belonging to somebody. */
 adoptDownloads();
