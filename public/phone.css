@@ -230,3 +230,34 @@ body.has-tabbar .tabbar a { flex: 1; }
 }
 .ph-sheet-item:active { background: rgba(255, 255, 255, .06); }
 .ph-sheet-note { color: var(--muted, #b3b3b3); font-size: 14px; }
+
+/* -------------------------------------------------------------- sports */
+/* The Live TV scoreboard, under On now. Always one swipeable row here, even
+   for a college Saturday the desktop lays out as a grid: on a phone a grid of
+   forty-eight is a page of its own. */
+.ph-sport-seg { display: flex; gap: 6px; }
+.ph-sport-seg button {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, .14); border-radius: 999px;
+  background: none; color: var(--muted, #b3b3b3);
+  font-size: 12.5px; font-weight: 600;
+}
+.ph-sport-seg button[hidden] { display: none; }
+.ph-sport-seg button.on { background: #fff; border-color: #fff; color: #000; }
+.ph-sport-seg svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.ph-scores-host #dkScores { margin: 0; }
+.ph-scores-host .sc-head { display: none; }
+.ph-scores-host .sc-strip,
+.ph-scores-host .sc-strip.is-grid {
+  display: flex !important;
+  grid-template-columns: none !important;
+  gap: 10px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding: 0 16px 4px;
+  scrollbar-width: none;
+}
+.ph-scores-host .sc-strip::-webkit-scrollbar { display: none; }
+.ph-scores-host .sc-card { flex: 0 0 78%; max-width: 300px; scroll-snap-align: start; }
+.ph-scores-host .sc-empty { padding: 0 16px; margin: 0; color: var(--muted, #b3b3b3); font-size: 14px; }

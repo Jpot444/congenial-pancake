@@ -186,6 +186,40 @@
     }
   }
 
+  /* ------------------------------------------------------------ scores */
+  /* "below on now add in the live tv sports selector I have"
+     The Live TV page's own scoreboard and switch, borrowed rather than
+     redrawn: desktop.js owns the slate, its polling, which sport has games
+     today and what pressing a game does. This is only where it sits. */
+  function scores() {
+    const dk = window.__ttDesktop;
+    if (!dk || typeof dk.scoreboard !== 'function') return null;
+    const section = make('section', 'ph-row ph-scores');
+    const head = make('div', 'ph-row-head');
+    head.append(make('h2', 'ph-row-title', 'Sports'));
+    const seg = make('div', 'ph-sport-seg');
+    for (const [sport, label, icon] of [['nfl', 'NFL', 'football'], ['mlb', 'MLB', 'baseball'],
+      ['ncaaf', 'College', 'cap']]) {
+      const b = make('button');
+      b.type = 'button';
+      b.dataset.sport = sport;
+      b.innerHTML = dk.ICON[icon] || '';
+      b.append(make('span', '', label));
+      b.addEventListener('click', () => dk.setScoreSport(sport));
+      seg.append(b);
+    }
+    head.append(seg);
+    const host = make('div', 'ph-scores-host');
+    section.append(head, host);
+    // In the page before the band is asked for, so it lands in the right place.
+    requestAnimationFrame(guard('scores', () => {
+      if (!host.isConnected) return;
+      dk.scoreboard(host);
+      dk.paintSportSegs();
+    }));
+    return section;
+  }
+
   /* ---------------------------------------------------------- the page */
   const buildHome = guard('home', function buildHome() {
     const view = document.getElementById('homeView');
@@ -213,6 +247,8 @@
     const channels = favs.filter((i) => i.kind === 'live');
     const titles = favs.filter((i) => i.kind !== 'live');
     if (channels.length) view.append(onNow(channels.slice(0, 12)));
+    const sports = scores();
+    if (sports) view.append(sports);
     if (titles.length) {
       view.append(rail('Your favorites', titles.slice(0, 20).map(poster),
         () => { location.hash = '#/favorites'; }));

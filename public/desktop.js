@@ -510,9 +510,7 @@
     listings.hidden = !live;
     const sports = bar.querySelector('#dkSportSeg');
     sports.hidden = !live;
-    for (const b of sports.querySelectorAll('button')) {
-      b.classList.toggle('on', b.dataset.sport === scoreSport());
-    }
+    paintSportSegs();
 
     if (!live) {
       const sel = bar.querySelector('#dkSortSel');
@@ -1312,13 +1310,75 @@
    * would have to be set on each of them.
    */
   const SPORTS = ['nfl', 'mlb', 'ncaaf'];
-  const scoreSport = () => (SPORTS.includes(profiles.data.scoreSport)
+  const preferredSport = () => (SPORTS.includes(profiles.data.scoreSport)
     ? profiles.data.scoreSport : 'mlb');
+
+  /*
+   * Only today's games count.
+   *
+   * "that selector should know what sports are on and auto select to it.
+   *  Meaning it shouldn't show me nfl games on Wednesday or baseball during
+   *  the offseason"
+   *
+   * The football feeds answer with the whole week — on a Wednesday ESPN's NFL
+   * scoreboard is Sunday's games, every one of them 'upcoming' — so a sport
+   * being in the slate said nothing about whether it is on. Today is local
+   * midnight to midnight; a game still being played counts whatever the
+   * clock says, so a Monday night game running past twelve keeps its band.
+   */
+  function gameToday(g) {
+    if (g.status === 'live') return true;
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const k = Number(g.kickoff) || 0;
+    return k >= start.getTime() && k < start.getTime() + 86400000;
+  }
+
+  /** The sports with a game today, each with how many and how many are live. */
+  function sportsToday() {
+    const out = new Map();
+    for (const g of slate.games) {
+      if (!gameToday(g)) continue;
+      const sport = g.sport || 'nfl';
+      const row = out.get(sport) || { count: 0, live: 0 };
+      row.count += 1;
+      if (g.status === 'live') row.live += 1;
+      out.set(sport, row);
+    }
+    return out;
+  }
+
+  /*
+   * The sport the band shows: the one chosen, while it has games today, and
+   * otherwise whichever does — the most games on now first, then the most
+   * today. Nothing is saved when it steps aside, so the chosen sport comes
+   * back by itself on its next game day.
+   */
+  const scoreSport = () => {
+    const chosen = preferredSport();
+    if (!slate.asked) return chosen;
+    const today = sportsToday();
+    if (!today.size || today.has(chosen)) return chosen;
+    return [...today.entries()]
+      .sort((a, b) => (b[1].live - a[1].live) || (b[1].count - a[1].count))[0][0];
+  };
+
+  /* Each sport's button is shown only on a day it has a game; with nothing on
+     anywhere they all stay, so the band can say so for whichever is pressed. */
+  function paintSportSegs() {
+    const today = slate.asked ? sportsToday() : new Map();
+    const current = scoreSport();
+    for (const b of document.querySelectorAll('#dkSportSeg button, .ph-sport-seg button')) {
+      b.hidden = Boolean(today.size) && !today.has(b.dataset.sport);
+      b.classList.toggle('on', b.dataset.sport === current);
+    }
+  }
 
   function setScoreSport(sport) {
     if (!SPORTS.includes(sport) || sport === scoreSport()) return;
     profiles.data.scoreSport = sport;
     profiles.save();
+    paintSportSegs();
     render();
     /* The guide is asked per sport — college needs it, the other two do not —
        so switching has to go and get it rather than drawing college against
@@ -1463,6 +1523,7 @@
       }, SLATE_SLOW_MS);
 
       const paint = () => {
+        paintSportSegs();
         const still = document.querySelector('#dkScores');
         if (still) paintScores(still);
       };
@@ -1593,7 +1654,7 @@
      * house could actually watch, so it is the one worth the space. A
      * tie-break rather than a filter — nothing is dropped, it is ordered. */
     const televised = (g) => (String(g.channelMatch || g.channelName || '') ? 1 : 0);
-    const games = slate.games.filter((g) => (g.sport || 'nfl') === sport)
+    const games = slate.games.filter((g) => (g.sport || 'nfl') === sport && gameToday(g))
       .sort((a, b) => (pinnedGame(b) - pinnedGame(a))
         || (SLATE_ORDER[a.status] ?? 3) - (SLATE_ORDER[b.status] ?? 3)
         || (sport === 'ncaaf' ? televised(b) - televised(a) : 0)
@@ -1657,9 +1718,15 @@
       } else {
         /* Which sport is empty matters: out of season is a different fact
            from nothing on tonight, and both are different from a feed that
-           did not answer. */
-        note.textContent = `No ${named} on right now — the feed answered, `
-          + 'with an empty slate. The other sport is one press away.';
+           did not answer. A week's feed that has games, just not today's,
+           says when the next one is. */
+        const next = slate.games
+          .filter((g) => (g.sport || 'nfl') === sport && Number(g.kickoff) > Date.now())
+          .sort((a, b) => a.kickoff - b.kickoff)[0];
+        note.textContent = next
+          ? `No ${named} today. Next: ${new Date(next.kickoff).toLocaleString([], {
+            weekday: 'long', hour: 'numeric', minute: '2-digit' })}.`
+          : `No ${named} today.`;
       }
       strip.append(note);
       return;
@@ -3372,6 +3439,8 @@
        "it did not ask" and "it asked and the box refused" look identical
        from outside and are completely different faults. */
     heroLive, heroBigScreen,
+    /* The phone puts the same band and switch under On now; see phone.js. */
+    setScoreSport, paintSportSegs, sportsToday,
     /* The car layer draws the same scoreboard somewhere else, and asks for it
        here rather than carrying a second copy of the band, the poll and the
        slate. See scoreboard() for what the argument does. */
