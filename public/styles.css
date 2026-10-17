@@ -6759,3 +6759,69 @@ body.is-reordering { user-select: none; -webkit-user-select: none; }
   color: var(--text);
   font-size: 13px;
 }
+
+/* ── Wrapped ────────────────────────────────────────────────────────────
+   The year in watching. Same cards as Treasuredible's listening stats, in
+   this house's red. */
+.wrapped { display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
+.wr-years { display: flex; flex-wrap: wrap; gap: 8px; }
+.wr-years button {
+  padding: 6px 16px; border-radius: 999px; border: 0; cursor: pointer;
+  background: var(--bg-card); color: var(--text); font: inherit; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wr-years button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+.wr-hero {
+  background: linear-gradient(135deg, var(--brand-red), var(--brand-red-dark));
+  color: #fff; border-radius: var(--radius); padding: 26px 26px 24px;
+}
+.wr-kicker { font-weight: 600; font-size: 18px; opacity: .85; }
+.wr-big {
+  font-family: var(--display); font-size: clamp(64px, 16vw, 112px); line-height: .95;
+  margin: 8px 0 4px; letter-spacing: var(--track-display); font-variant-numeric: tabular-nums;
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: .12em;
+}
+.wr-unit { font-size: .32em; line-height: 1.2; letter-spacing: var(--track-nav); }
+.wr-sub { margin-top: 8px; font-size: 17px; }
+.wr-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.wr-tile { background: var(--bg-card); border-radius: var(--radius); padding: 14px 16px; min-width: 0; }
+.wr-tile b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.wr-tile span { color: var(--muted); font-size: 15px; }
+.wr-card { background: var(--bg-card); border-radius: var(--radius); padding: 16px 18px; }
+.wr-card h3 { margin: 0 0 4px; font-size: 20px; }
+.wr-note { color: var(--muted); font-size: 15px; margin: 0 0 12px; }
+.wr-card .wr-note:last-child { margin-bottom: 0; }
+.wr-rank { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.wr-rank li { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.wr-rank .n {
+  flex: none; width: 1.6em; text-align: right; font-weight: 800; font-size: 20px;
+  color: var(--brand-red-light); font-variant-numeric: tabular-nums;
+}
+.wr-rank .art {
+  flex: none; width: 40px; height: 60px; border-radius: 6px; object-fit: cover;
+  background: var(--line-soft);
+}
+.wr-rank .who { flex: 1; min-width: 0; }
+.wr-rank .who div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wr-rank .who .t { font-weight: 600; }
+.wr-rank .who .a { color: var(--muted); font-size: 15px; }
+.wr-rank .time { flex: none; color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; }
+.wr-bars { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 3px; align-items: end; height: 120px; }
+.wr-bars i { display: block; background: var(--line); border-radius: 4px 4px 0 0; min-height: 2px; }
+.wr-bars i.top { background: var(--brand-red); }
+.wr-axis {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 3px; margin-top: 6px;
+  color: var(--muted); font-size: 12px; text-align: center; white-space: nowrap;
+}
+.wr-split { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--line); margin: 4px 0 10px; }
+.wr-split span { display: block; height: 100%; }
+.wr-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 14px; }
+.wr-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
+.wr-legend b { color: var(--text); font-weight: 600; }
+.wr-c1 { background: var(--brand-red); }
+.wr-c2 { background: var(--warn); }
+.wr-c3 { background: var(--muted-dim); }
+.wr-c4 { background: var(--ok); }
+.wr-empty { background: var(--bg-card); border-radius: var(--radius); padding: 24px; text-align: center; }
+.wr-empty p { color: var(--muted); }
+.wr-foot { color: var(--muted-dim); font-size: 13px; margin: 4px 2px 0; }

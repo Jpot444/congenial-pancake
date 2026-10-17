@@ -115,6 +115,7 @@ const providers = require('./providers');
 const cloudflare = require('./cloudflare');
 const recordings = require('./recordings');
 const recommend = require('./recommend');
+const watchlog = require('./watchlog');
 /* When two records are the same title. The page loads the very same file as a
    script — see the note at the top of it. */
 const titles = require('./public/title-match.js');
@@ -3958,6 +3959,11 @@ setInterval(() => {
 for (const signal of ['exit', 'SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     for (const id of [...remuxSessions.keys()]) killSession(id);
+    try {
+      watchlog.flush();
+    } catch {
+      /* best effort — at worst the last few seconds of watching */
+    }
     if (signal !== 'exit') process.exit(0);
   });
 }
@@ -9383,7 +9389,7 @@ async function handleApi(req, res, pathname, query) {
   }
 
   const profileMatch =
-    /^\/api\/profiles\/([\w-]+)(\/prefs|\/history|\/rating|\/taste|\/progress|\/foryou|\/seeds|\/notinterested)?$/.exec(pathname);
+    /^\/api\/profiles\/([\w-]+)(\/prefs|\/history|\/rating|\/taste|\/progress|\/foryou|\/seeds|\/notinterested|\/wrapped)?$/.exec(pathname);
   if (profileMatch) {
     const data = readProfiles();
     const profile = findProfile(data, profileMatch[1]);
@@ -9520,6 +9526,10 @@ async function handleApi(req, res, pathname, query) {
 
       profile.history = profile.history || [];
       const existing = profile.history.find((r) => r.key === incoming.key);
+      // The row is updated in place, so Wrapped is told where it stood first.
+      const before = existing
+        ? { at: existing.at, position: existing.position, completed: existing.completed }
+        : null;
       const row = existing || { key: incoming.key, firstAt: Date.now(), plays: 0 };
 
       row.kind = incoming.kind || row.kind || '';
@@ -9549,6 +9559,7 @@ async function handleApi(req, res, pathname, query) {
       row.at = Date.now();
 
       if (!existing) profile.history.push(row);
+      watchlog.beat(profile.id, before, row, row.at);
       // Keep the most recent slice; unbounded history would bloat the file.
       profile.history.sort((a, b) => b.at - a.at);
       if (profile.history.length > HISTORY_LIMIT) {
@@ -9562,6 +9573,12 @@ async function handleApi(req, res, pathname, query) {
          decide four times a minute that another room had changed something,
          and re-read and redraw itself under the viewer. */
       return json(res, 200, { ok: true, rev: data.rev });
+    }
+
+    /* the year in watching — see watchlog.js */
+    if (suffix === '/wrapped' && req.method === 'GET') {
+      const year = Number(query.get('year')) || new Date().getFullYear();
+      return json(res, 200, watchlog.stats(profile.id, year));
     }
 
     /* explicit thumbs — the strongest personalization signal */
@@ -9774,6 +9791,7 @@ async function handleApi(req, res, pathname, query) {
 
       data.profiles = data.profiles.filter((p) => p.id !== profile.id);
       writeProfiles(data);
+      watchlog.forget(profile.id);
       return json(res, 200, { removed: true });
     }
 
@@ -12446,6 +12464,11 @@ setTimeout(() => {
     }
   }
 }, 5000).unref?.();
+
+/* Wrapped's own record, and — the first time — everything before it, rebuilt
+   from the history. Before listening, so no beat can land ahead of it. */
+watchlog.configure({ file: path.join(ROOT, 'watch-log.json') });
+watchlog.backfill(readProfiles().profiles);
 
 server.listen(PORT, HOST, () => {
   /* How many connections this house actually has, asked at boot — and asked

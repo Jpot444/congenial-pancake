@@ -18,7 +18,7 @@
  * changed app.js is always picked up and the number cannot lie in the other
  * direction.
  */
-const VERSION = '48.2';
+const VERSION = '49';
 
 const PAGE_SIZE = 60;
 
@@ -11523,6 +11523,7 @@ function clearStage() {
   $('#seriesView').classList.remove('film-page');
   $('#downloadList').hidden = true;
   $('#archiveView').hidden = true;
+  $('#wrappedView').hidden = true;
   $('#rowsView').hidden = true;
   $('#grid').hidden = true;
   $('#emptyState').hidden = true;
@@ -11562,6 +11563,7 @@ function render() {
     favlive: 'Favorite channels',
     archive: 'Archive',
     downloads: 'Downloads',
+    wrapped: 'Wrapped',
   };
   $('#contentTitle').textContent = titles[state.tab];
   // Cleared here and set again by renderHome alone. render() returns early for
@@ -11588,6 +11590,7 @@ function render() {
 
   if (state.tab === 'downloads') return renderDownloads();
   if (state.tab === 'archive') return renderArchive();
+  if (state.tab === 'wrapped') return renderWrapped();
   // Before Home's own branch, not after: a search typed from the landing
   // page is a search, and painting the landing page again is what made it
   // look like the box did nothing.
@@ -12389,6 +12392,181 @@ function downloadsExplainer() {
   });
   box.append(dismiss);
   return box;
+}
+
+/* ---------------------------------------------------------------- wrapped */
+
+/*
+ * Wrapped — this profile's year in watching, the way Treasuredible has one
+ * for listening. The box keeps the minutes (watchlog.js); this only draws
+ * them. Whatever was watched before the box started counting is rebuilt from
+ * the history once, and the page says so rather than pass a floor off as a
+ * measurement.
+ */
+const wrapped = { year: null };
+
+const WR_MONTHS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+const WR_MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+  'August', 'September', 'October', 'November', 'December'];
+const WR_WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+/** 7380 -> "2 h 3 m", 300 -> "5 m" */
+function fmtWatched(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  return h ? `${h} h${m ? ` ${m} m` : ''}` : `${m} m`;
+}
+const wrDay = (day) =>
+  new Date(`${day}T12:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+const wrArgmax = (xs) => xs.indexOf(Math.max(...xs));
+const wrHour = (h) => new Date(2000, 0, 1, h).toLocaleTimeString(undefined, { hour: 'numeric' });
+const plural = (n, one, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+
+function viewerType(hours) {
+  const share = (from, to) => hours.slice(from, to).reduce((a, b) => a + b, 0);
+  const total = share(0, 24) || 1;
+  const [name, part] = [
+    ['Night owl', share(0, 4) + share(22, 24)],
+    ['Early bird', share(4, 10)],
+    ['Daytime watcher', share(10, 17)],
+    ['Prime-time regular', share(17, 22)],
+  ].sort((a, b) => b[1] - a[1])[0];
+  return { name, pct: Math.round((100 * part) / total) };
+}
+
+function wrBars(values, labels) {
+  const max = Math.max(...values, 1);
+  const top = wrArgmax(values);
+  const bars = values.map((v, i) =>
+    `<i class="${i === top && v ? 'top' : ''}" style="height:${(100 * v) / max}%" title="${fmtWatched(v)}"></i>`);
+  return `<div class="wr-bars" role="img">${bars.join('')}</div>` +
+    `<div class="wr-axis" aria-hidden="true">${labels.map((l) => `<span>${escapeHtml(l)}</span>`).join('')}</div>`;
+}
+
+function wrRank(items, label = (it) => fmtWatched(it.seconds), sub = () => '') {
+  return `<ol class="wr-rank">${items.map((it, i) => `
+    <li>
+      <span class="n">${i + 1}</span>
+      ${it.poster ? `<img class="art" src="${escapeHtml(it.poster)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+        : '<span class="art"></span>'}
+      <div class="who"><div class="t">${escapeHtml(it.title)}</div>${sub(it) ? `<div class="a">${escapeHtml(sub(it))}</div>` : ''}</div>
+      <span class="time">${escapeHtml(label(it))}</span>
+    </li>`).join('')}</ol>`;
+}
+
+const wrCard = (title, note, body) =>
+  `<section class="wr-card"><h3>${escapeHtml(title)}</h3>${note ? `<p class="wr-note">${escapeHtml(note)}</p>` : ''}${body}</section>`;
+
+function wrappedHtml(st, who) {
+  const years = st.years.length > 1
+    ? `<div class="wr-years">${st.years.map((y) =>
+        `<button type="button" data-year="${y}" aria-pressed="${y === st.year}">${y}</button>`).join('')}</div>`
+    : '';
+  if (!st.total) {
+    return `${years}<div class="wr-empty"><h3>Nothing yet for ${st.year}</h3>
+      <p>Press play on a film, a show or a channel and ${escapeHtml(who)}'s year starts adding up here.</p></div>`;
+  }
+  const minutes = Math.round(st.total / 60);
+  const type = viewerType(st.hours);
+  const bestMonth = wrArgmax(st.months);
+  const bestWeekday = wrArgmax(st.weekdays);
+  const bestHour = wrArgmax(st.hours);
+  const since = st.since && st.since.startsWith(`${st.year}-`) && st.since > `${st.year}-01-01`
+    ? ` since ${wrDay(st.since)}` : '';
+
+  const parts = [`
+    <div class="wr-hero">
+      <div class="wr-kicker">${escapeHtml(who)}'s ${st.year} in watching${since}</div>
+      <div class="wr-big">${minutes.toLocaleString()}<span class="wr-unit">minutes</span></div>
+      <div class="wr-sub">That's ${fmtWatched(st.total)} across ${plural(st.daysWatched, 'day')}${
+        st.daysWatched ? `, about ${fmtWatched(st.total / st.daysWatched)} a day you watched.` : '.'}</div>
+    </div>`];
+
+  const tiles = [
+    st.movieCount ? [st.movieCount.toLocaleString(), st.movieCount === 1 ? 'film started' : 'films started'] : null,
+    st.moviesFinished ? [st.moviesFinished.toLocaleString(), 'films finished'] : null,
+    st.episodeCount ? [st.episodeCount.toLocaleString(), `episodes of ${plural(st.showCount, 'show')}`] : null,
+    st.channelCount ? [st.channelCount.toLocaleString(), st.channelCount === 1 ? 'channel tuned' : 'channels tuned'] : null,
+    st.archiveCount ? [st.archiveCount.toLocaleString(), st.archiveCount === 1 ? 'archive clip' : 'archive clips'] : null,
+    [plural(st.streak, 'day'), 'longest streak'],
+    st.topDay ? [fmtWatched(st.topDay.seconds), `biggest day, ${wrDay(st.topDay.day)}`] : null,
+  ].filter(Boolean);
+  parts.push(`<div class="wr-tiles">${tiles.map(([v, label]) =>
+    `<div class="wr-tile"><b>${escapeHtml(v)}</b><span>${escapeHtml(label)}</span></div>`).join('')}</div>`);
+
+  if (st.topShows.length) {
+    const top = st.topShows[0];
+    parts.push(wrCard('Top shows', `${top.title} took up ${fmtWatched(top.seconds)} of your year.`,
+      wrRank(st.topShows.slice(0, 5), undefined, (s) => plural(s.episodes, 'episode'))));
+  }
+  if (st.binge) {
+    parts.push(wrCard('Biggest binge', `${plural(st.binge.episodes, 'episode')} of ${st.binge.title} on ${wrDay(st.binge.day)}.`, ''));
+  }
+  if (st.topMovies.length) {
+    parts.push(wrCard('Top films', '', wrRank(st.topMovies.slice(0, 5))));
+  }
+  if (st.topChannels.length) {
+    parts.push(wrCard('Top channels', '', wrRank(st.topChannels.slice(0, 5))));
+  }
+
+  const split = [['Films', st.movies, 'wr-c1'], ['Series', st.series, 'wr-c2'], ['Live TV', st.live, 'wr-c3'],
+    ['Archive', st.archive, 'wr-c4']]
+    .filter(([, s]) => s > 0);
+  if (split.length > 1) {
+    const total = split.reduce((n, [, s]) => n + s, 0);
+    const pct = (s) => Math.round((100 * s) / total);
+    const lead = [...split].sort((a, b) => b[1] - a[1])[0];
+    parts.push(wrCard('What you watched', `${pct(lead[1])}% ${lead[0].toLowerCase()}.`,
+      `<div class="wr-split" aria-hidden="true">${split.map(([, s, c]) =>
+        `<span class="${c}" style="width:${(100 * s) / total}%"></span>`).join('')}</div>
+       <div class="wr-legend">${split.map(([name, s, c]) =>
+        `<span><i class="${c}"></i>${name} <b>${fmtWatched(s)}</b></span>`).join('')}</div>`));
+  }
+
+  parts.push(
+    wrCard('Month by month', `${WR_MONTH_NAMES[bestMonth]} was your biggest month: ${fmtWatched(st.months[bestMonth])}.`,
+      wrBars(st.months, WR_MONTHS)),
+    wrCard(`You're a ${type.name.toLowerCase()}`, `${type.pct}% of your watching, and most of all around ${wrHour(bestHour)}.`,
+      wrBars(st.hours, st.hours.map((_, h) => (h % 6 === 0 ? wrHour(h) : '')))),
+    wrCard('Favorite day', `${WR_WEEKDAYS[bestWeekday]}s get the most screen time.`,
+      wrBars(st.weekdays, WR_WEEKDAYS.map((d) => d[0]))));
+
+  if (st.finishedMovies.length) {
+    const recent = st.finishedMovies.length > 10 ? ' The latest ten:' : '';
+    parts.push(wrCard('Finished', `${plural(st.finishedMovies.length, 'film')} watched to the end.${recent}`,
+      wrRank(st.finishedMovies.slice(0, 10), (f) => wrDay(f.day))));
+  }
+  if (st.estimated) {
+    parts.push(`<p class="wr-foot">Anything before ${wrDay(st.estimatedUntil)} is rebuilt from your watch history,
+      so it's a floor: a rewatch counts once, and a channel counts only its last sitting.</p>`);
+  }
+  return years + parts.join('');
+}
+
+async function renderWrapped() {
+  document.querySelector('.app-shell').classList.add('no-sidebar');
+  const view = $('#wrappedView');
+  view.hidden = false;
+  const who = profiles.current?.name || '';
+  $('#contentMeta').textContent = who;
+  if (!profiles.current) {
+    view.innerHTML = '<div class="wr-empty"><h3>Pick a profile first</h3></div>';
+    return;
+  }
+  let st;
+  try {
+    st = await api(`/api/profiles/${profiles.current.id}/wrapped`, { year: wrapped.year });
+  } catch (err) {
+    view.innerHTML = `<div class="wr-empty"><h3>Couldn't load Wrapped</h3><p>${escapeHtml(err.message)}</p></div>`;
+    return;
+  }
+  // Somebody may have left for another tab while the box was answering.
+  if (state.tab !== 'wrapped') return;
+  view.innerHTML = wrappedHtml(st, who);
+  view.querySelectorAll('.wr-years button').forEach((b) => b.addEventListener('click', () => {
+    wrapped.year = Number(b.dataset.year);
+    renderWrapped();
+  }));
 }
 
 function renderDownloads() {
@@ -13674,6 +13852,7 @@ async function goTo(tab, view = null) {
     await refreshDownloads();
     return render();
   }
+  if (tab === 'wrapped') return render();
   if (tab === 'archive') {
     // Hidden tabs can still be typed into the address bar. Not this one.
     if (!reporter.isOwner()) {
@@ -13732,7 +13911,7 @@ async function goTo(tab, view = null) {
   render();
 }
 
-const TABS = ['home', 'live', 'movies', 'series', 'favorites', 'favlive', 'archive', 'downloads'];
+const TABS = ['home', 'live', 'movies', 'series', 'favorites', 'favlive', 'archive', 'downloads', 'wrapped'];
 
 /**
  * The tab, and for a series the show that is open.
